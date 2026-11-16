@@ -184,6 +184,10 @@ Soft Body生成設定は次を保持する。
 
 ユーザーは目標辺長または目標要素数を選択して解像度を調整する。Physics Model Builderは選択された値をオフライン四面体化器の対応パラメータへ変換する。生成器が目標値を厳密に満たせない場合は実際の頂点数・四面体数・辺長分布を記録し、設定との差を警告する。max_tet_count超過は生成失敗とする。キャッシュキーには入力アセット識別子、生成器バージョン、全生成設定を含める。
 
+### 4.5 Asset Cache
+
+Physics Asset CacheにはPhysics Vertex / Element、Rest Pose、四面体Bm・V0・材料ID、質量・逆質量、全CSR隣接表、Cloth制約・Graph Coloring、Skin Weight、Render Vertex Binding、Collision Proxy、Physics Attribute Paintを保存する。Cache Headerにはschema_version、source_asset_id、source_asset_hash、generator_id / version / options、coordinate_system_version、material_layout_versionを含める。必要な識別情報が一致するCacheはそのままロードし、ランタイムで四面体化・Binding再生成を行わない。不一致・破損・未知の必須バージョンはCacheを無効化し、明示的なAsset Build工程で再生成する。Cacheの再生成先と原因を診断ログへ記録する。
+
 ## 5. SkinningウェイトのPhysics Meshへの転送
 
 四面体の内部頂点は元のRender Mesh頂点に存在しないため、単純な頂点番号対応はできない。
@@ -669,7 +673,7 @@ Rest Poseでの埋め込み誤差を計測し、最大誤差が基準を超え�
     rest_offset = x_render_rest - q_rest
     x_render = q_deformed + T1 * inverse(T0) * rest_offset
 
-対応三角形が退化・反転した場合は直前有効基底を使うのではなく、その頂点をBinding Errorとしてマークし、診断する。頂点IDの再検索は毎フレーム行わない。
+対応三角形が退化・反転した場合は直前有効基底を使うのではなく、その頂点をBinding Errorとしてマークし、診断する。頂点IDの再検索は毎フレーム行わない。Render Feedbackは位置、法線、接線のみを更新し、UV、カラー、マテリアル割当、描画インデックス、その他の変形対象外属性は元Render Meshから維持する。
 
 ### 12.3 Cloth Binding
 
@@ -746,6 +750,20 @@ Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物�
 ### 14.5 再現性
 
 Gatherの隣接IDを固定順序にし、同一GPU上で浮動小数点加算順序が変わらないようにする。整数Interlockedは容量カウント等に限定し、物理値の加算に使用しない。同一GPU・同一ドライバ・同一Buildで再現性を評価する。GPU間は許容誤差評価とする。
+
+### 14.6 可視化・結果比較
+
+Debug ViewはGPU上のPhysics / Render Bufferからデバッグ用線分・点・矢印を生成し、GPU内で描画する。通常のデバッグ可視化のためにPhysics VertexをCPUへReadbackしない。表示項目は以下とする。
+
+- Render Mesh / Physics Mesh / Collision-only Collider / Collision Proxy
+- 四面体辺、四面体品質、境界面、Render Binding対応点
+- Stretch / Shear / Bend制約と制約値
+- Broadphase階層セル、候補ペア、確定接触、接触法線
+- 速度・変位ベクトル、四面体J・体積誤差
+- Physics Attribute Heatmap（全チャンネル）
+- CCD対象候補、TOI、overflow、初期貫通修正量
+
+各テストRunの結果はRun Result JSONとして保存する。Run Resultはscenario_id、scenario_hash、asset_id / cache_version、build_id、GPU / driver情報、実行時間、Pass別GPU時間、Buffer割当Byte数、候補数、確定接触数、overflow / CCD回数、体積誤差、最大変位、各受け入れ試験結果を含む。同一scenario_hashのRunを並べて指標差と許容誤差を比較できる。D3D11で直接取得できない実VRAM全体量を推定値として断定せず、ライブラリが確保したGPU Buffer / Textureの合計Byte数を必須記録値とする。
 
 ## 15. GPU Pass・同期・Dispatch
 
@@ -849,6 +867,9 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 | T23 | Initial Repair Budget | 各頂点の累積修正量が上限を超えず、修正不能時に初期状態がCommitされない |
 | T24 | Test Controls / JSON | Play / Stop / Pause / Reset / Step / Time Scale / Gravity / Impulseを保存・再読込後も再現できる |
 | T25 | Physics Resolution | target edge length / target tet countの変更が生成規模へ反映され、実測値・キャッシュ識別が保存される |
+| T26 | Asset Cache | Cache hitでランタイム再生成せず、入力・生成設定の変更やCache破損を検出する |
+| T27 | Render Attribute Preservation | 物理変形後もUV / Color / Material / Indexが元Render Meshと一致する |
+| T28 | Visualizer / Run Result | GPU Readbackなしで全Debug Viewを表示し、同一scenario_hashのRunを比較できる |
 
 性能はSoft Body tet数、Cloth三角形数、接触密度、サブステップ数を変えたスケーリング曲線で評価する。代表規模は2k / 8k / 32k四面体、2k / 8k / 32k Cloth三角形を目安にし、組み合わせ衝突試験も記録する。3～40 FPSは測定対象であり全規模の保証値ではない。
 
@@ -906,6 +927,6 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
-- 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ項目、ペイントチャンネルと頂点ウェイト反映規則を明文化。
+- 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
