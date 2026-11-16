@@ -130,25 +130,13 @@ struct physics_vertex_state
 
 四面体ごとに4頂点インデックス、Rest Pose逆行列、Rest Volume、材料ID、品質フラグを保持する。
 
-Rest Pose位置を x0..x3 とし、
-
-
-```text
-D_m = [x_1-x_0, x_2-x_0, x_3-x_0]
-```
-
-
+Rest Pose位置を x0..x3 とし、以下をオフライン生成する。
 
 ```text
-V_0 = |det(D_m)|/6
+Dm = matrix(x1 - x0, x2 - x0, x3 - x0)
+V0 = abs(determinant(Dm)) / 6
+Bm = inverse(Dm)
 ```
-
-
-
-```text
-B_m = D_m^{-1}
-```
-
 
 をオフライン生成する。Rest Volumeが閾値以下、または逆行列が不安定な四面体は採用しない。頂点順序と符号付き体積を統一し、反転要素を検出する。
 
@@ -187,37 +175,21 @@ F = D_s B_m
 
 極分解:
 
-
 ```text
-F = R S
-```
-
-
-Rは回転行列、Sは対称変形行列とする。RはNewton polar iterationで近似する。
-
-
-```text
+F = R * S
 R_next = 0.5 * (R + transpose(inverse(R)))
 ```
 
-
-初期値はFとし、固定回数反復する。det(F)が小さい、逆行列が不安定、またはdet(F)が負となる場合は通常更新を行わず、異常要素フラグを記録して反転回復処理へ送る。反転要素に対する回復応力の式は別Passで定義し、NaNを伝播させない。
+Rは回転行列、Sは対称変形行列とする。RはNewton polar iterationで近似する。初期値はFとし、固定回数反復する。det(F)が小さい、逆行列が不安定、またはdet(F)が負となる場合は通常更新を行わず、異常要素フラグを記録して反転回復処理へ送る。反転要素に対する回復応力の式は別Passで定義し、NaNを伝播させない。
 
 ### 5.2 材料パラメータ
 
-ヤング率 E、ポアソン比 ν、密度 ρ、減衰係数を材料単位で保持する。
-
-
-```text
-mu = (numerator / denominator)
-```
-
-
+ヤング率 E、ポアソン比 nu、密度 rho、減衰係数を材料単位で保持する。
 
 ```text
-lambda = (numerator / denominator)
+mu = E / (2 * (1 + nu))
+lambda_lame = E * nu / ((1 + nu) * (1 - 2 * nu))
 ```
-
 
 νは非圧縮極限に近づけすぎない。初期UIの許容範囲は0.0～0.45とし、0.49等の高ポアソン比を直接指定するモードは初期版に含めない。材料パラメータはSI単位で入力し、メッシュスケール変更時に材料値を暗黙変更しない。
 
@@ -225,25 +197,16 @@ lambda = (numerator / denominator)
 
 初期版のCorotational応力を次で定義する。
 
-
 ```text
-P = 2mu(F-R) + lambda(J-1)cofactor(F)
+J = determinant(F)
+P = 2 * mu * (F - R) + lambda_lame * (J - 1) * cofactor(F)
 ```
-
-
-
-```text
-J = det(F)
-```
-
 
 cof(F)は余因子行列。四面体のRest Shape Function勾配を用い、頂点ごとの内部力を計算する。
 
-
 ```text
-f_i^{int} = -V_0 P  grad_X N_i
+f_internal_i = -V0 * P * grad_rest(N_i)
 ```
-
 
 4頂点分の力を四面体単位で計算し、頂点単位のGatherで集約する。四面体から頂点への浮動小数点Atomic Addは使わない。
 
@@ -251,17 +214,10 @@ f_i^{int} = -V_0 P  grad_X N_i
 
 初期版は半陰的Eulerを採用する。
 
-
 ```text
-v^{n+1} = v^n + delta t,M^{-1}(f^{ext}+f^{int})
+velocity_next = velocity + delta_t * inverse_mass * (force_external + force_internal)
+position_next = position + delta_t * velocity_next
 ```
-
-
-
-```text
-x^{n+1} = x^n + delta_t * velocity_next
-```
-
 
 減衰は指数減衰または速度比例減衰のどちらかに統一し、時間刻み依存性を避けるため係数の意味を文書化する。固定頂点は位置・速度をアニメーション目標に拘束する。
 
@@ -289,33 +245,15 @@ f_i = sum_{t in T(i)} f_{t,i}
 
 ### 6.1 XPBD基本式
 
-制約関数 C(x) = 0、Compliance α、サブステップ Δt、制約λを用いる。
-
-
-```text
-ilde{alpha} = alpha / delta t^2
-```
-
-
+制約関数 C(x) = 0、Compliance alpha、サブステップ delta_t、制約lambda_constraintを用いる。
 
 ```text
-delta_lambda =
-frac{-C(x)-tilde_ilde{alpha}lambda}
-{sum_i w_i | grad_i C|^2+tilde_ilde{alpha}}
+alpha_tilde = alpha / (delta_t * delta_t)
+delta_lambda = (-C(x) - alpha_tilde * lambda_constraint)
+               / (sum_i(inverse_mass_i * dot(gradient_i, gradient_i)) + alpha_tilde)
+lambda_next = lambda_constraint + delta_lambda
+delta_position_i = inverse_mass_i * gradient_i * delta_lambda
 ```
-
-
-
-```text
-lambda' = lambda+delta_lambda
-```
-
-
-
-```text
-delta_x_i = inverse_mass_i * gradient_i(C) * delta_lambda
-```
-
 
 w_iは逆質量。分母が極小、入力が非有限値、全頂点が固定の制約は補正を出さず診断カウンタを増やす。
 
@@ -325,16 +263,11 @@ w_iは逆質量。分母が極小、入力が非有限値、全頂点が固定�
 
 辺(i,j)の制約:
 
-
 ```text
-C_s = |x_i-x_j|-L_0
+C_stretch = length(x_i - x_j) - rest_length
+gradient_i = normalize(x_i - x_j)
+gradient_j = -gradient_i
 ```
-
-
-
-```text grad_i C_s = n,quad  grad_j C_s=-n
-```
-
 
 nは辺方向単位ベクトル。Rest Length L0はRest Poseから算出する。StretchはGraph Coloringを基本方式とする。同色内の制約が頂点を共有しないことを構築時に検証し、色単位でDispatchして位置を更新する。
 
@@ -344,13 +277,11 @@ nは辺方向単位ベクトル。Rest Length L0はRest Poseから算出する�
 
 ### 6.4 Bend
 
-隣接三角形の共有辺を挟む二面角 θを計算する。
-
+隣接三角形の共有辺を挟む二面角 thetaを計算する。
 
 ```text
-C_b = wrap(tilde_heta-tilde_heta_0)
+C_bend = wrap_angle(theta - rest_dihedral_angle)
 ```
-
 
 勾配は解析式を使用する。共有辺長や三角形面積が極小の場合は制約を無効化する。BendはGather Jacobiで解く。二面角の符号・wrap範囲を一貫させ、法線反転を検出する。
 
@@ -360,21 +291,12 @@ C_b = wrap(tilde_heta-tilde_heta_0)
 
 ### 6.6 Gather Jacobiの補正集約
 
-制約ごとにXPBD式でΔλを計算し、頂点ごとの補正寄与を固定スロットまたは可変長寄与バッファへ出力する。頂点→制約CSRを用いて頂点が寄与を総和する。
-
-
-```text
-delta x_i^{sum} = sum_{c in C(i)} delta x_{c,i}
-```
-
-
-Jacobi更新は同一反復開始時の位置を全制約が参照し、Gather後に一括更新する。過大補正を防ぐ緩和係数 ωを適用する。
-
+制約ごとにXPBD式でdelta_lambdaを計算し、頂点ごとの補正寄与を固定スロットまたは可変長寄与バッファへ出力する。頂点→制約CSRを用いて頂点が寄与を総和する。
 
 ```text
-x_new = x_old + omega * sum_constraint_corrections
+delta_position_sum_i = sum_over_incident_constraints(delta_position_constraint_i)
+position_next_i = position_current_i + omega * delta_position_sum_i
 ```
-
 
 初期値 ω=0.5を試験開始値とし、制約密度・反復数によって検証する。制約寄与数で無条件に平均化しない。ωは安定化パラメータであり、Complianceや材料硬さとは別に管理する。Graph ColoringとGatherで結果が異なるため、同じ試験条件で収束・伸び誤差・GPU時間を比較する。
 
@@ -382,39 +304,26 @@ x_new = x_old + omega * sum_constraint_corrections
 
 ### 7.1 接触の一般式
 
-接触制約は非貫通条件 C(x) ≥ 0 とし、λ ≥ 0を満たす不等式XPBDとして解く。
-
-
-```text
-delta_lambda =
-frac{-C(x)-tilde_ilde{alpha}lambda}
-{sum_i w_i| grad_i C|^2+tilde_ilde{alpha}}
-```
-
-
+接触制約は非貫通条件 C(x) >= 0 とし、lambda_constraint >= 0を満たす不等式XPBDとして解く。
 
 ```text
-lambda^{new}=max(0,lambda+delta_lambda)
+delta_lambda = (-C(x) - alpha_tilde * lambda_constraint)
+               / (sum_i(inverse_mass_i * dot(gradient_i, gradient_i)) + alpha_tilde)
+lambda_next = max(0, lambda_constraint + delta_lambda)
+applied_delta_lambda = lambda_next - lambda_constraint
 ```
-
 
 実際に加える補正は λ更新差分を用いる。法線は接触点の相対位置から決定し、ゼロ距離では前フレーム法線または安定した幾何法線を使用する。接触厚みは両形状の厚みの和として扱う。
 
 ### 7.2 Vertex-Triangle
 
-頂点pと三角形頂点a,b,cの最近接点を重心座標 β0,β1,β2で表す。
-
-
-```text
-q=betaeta_0a+betaeta_1b+betaeta_2c
-```
-
-
+頂点 p と三角形頂点 a,b,c の最近接点を重心座標 beta0,beta1,beta2で表す。
 
 ```text
-C_VT = dot(n, p - q) - thickness
+q = beta0 * a + beta1 * b + beta2 * c
+C_vt = dot(normal, p - q) - contact_thickness
+denominator = wp + beta0^2 * wa + beta1^2 * wb + beta2^2 * wc + alpha_tilde
 ```
-
 
 dは接触厚み。勾配は
 
@@ -435,13 +344,13 @@ w_p + betaeta_0^2w_a+betaeta_1^2w_b+betaeta_2^2w_c+tilde_ilde{alpha}
 
 ### 7.3 Edge-Edge
 
-辺Aの最近接点を (1-s)a0+s a1、辺Bを (1-t)b0+t b1とする。
-
+辺Aの最近接点を (1-s)*a0+s*a1、辺Bを (1-t)*b0+t*b1とする。
 
 ```text
-C_EE = dot(n, q_A - q_B) - thickness
+qA = (1 - s) * a0 + s * a1
+qB = (1 - t) * b0 + t * b1
+C_ee = dot(normal, qA - qB) - contact_thickness
 ```
-
 
 勾配はA側に +(1-s)n、+s n、B側に -(1-t)n、-t nを配分する。分母は各勾配の二乗と逆質量の積の総和にCompliance項を加える。
 
@@ -455,13 +364,11 @@ C_EE = dot(n, q_A - q_B) - thickness
 
 ### 7.5 摩擦
 
-法線接触を解いた後、接触点の相対接線変位 Δu_tを計算する。接線方向の補正を求め、Coulomb上限
-
+法線接触を解いた後、接触点の相対接線変位 delta_u_tを計算する。接線方向の補正を求め、Coulomb上限
 
 ```text
-abs(lambda_t) <= friction_coefficient * lambda_n
+length(lambda_tangent) <= friction_coefficient * lambda_normal
 ```
-
 
 でクランプする。μ_fは摩擦係数。静止摩擦・動摩擦を初期版で分離せず、単一係数から開始する。接線方向が不定な場合は摩擦補正を行わない。
 
@@ -475,13 +382,11 @@ abs(lambda_t) <= friction_coefficient * lambda_n
 
 セル座標は
 
-
 ```text
-cell(p) = floor(p / cell_width)floor
+cell_coord = floor(position / cell_width)
 ```
 
-
-とし、hはセル幅。セル幅の初期候補は代表衝突Proxyの平均辺長または代表接触厚みから設定し、複数値をベンチマークする。固定値を全アセットに強制しない。
+とし、cell_widthはセル幅。とし、hはセル幅。セル幅の初期候補は代表衝突Proxyの平均辺長または代表接触厚みから設定し、複数値をベンチマークする。固定値を全アセットに強制しない。
 
 Hash値と整数セル座標を両方保持する。Hash値一致だけで同一セルと判断しない。
 
@@ -527,11 +432,9 @@ VTは頂点と三角形の最近接点、面の向き、厚みを検査する。
 
 初期判定:
 
-
 ```text
 length(relative_displacement) > eta * contact_thickness
 ```
-
 
 ηは初期値0.5、dは接触厚み。これは対象選別の閾値であり、衝突の正しさを保証するものではない。
 
@@ -551,13 +454,11 @@ CCDが対象選別から漏れたケースを検出するため、高速移動�
 
 ### 10.1 目標位置
 
-各物理頂点に対応するRest位置をスキニングし、現在のアニメーション目標位置 x_anim^n を得る。前回目標位置 x_anim^(n-1)から
-
+各物理頂点に対応するRest位置をスキニングし、現在のアニメーション目標位置 x_anim_current を得る。前回目標位置 x_anim_previousから
 
 ```text
-v_{anim} = (x_{anim}^{n}-x_{anim}^{n-1})/delta t
+velocity_animation = (x_anim_current - x_anim_previous) / delta_t
 ```
-
 
 を計算する。目標位置と目標速度はGPUバッファへ格納する。
 
@@ -583,11 +484,9 @@ Clip切替、Teleport、Reset、時間巻き戻し時にAnimation Discontinuity�
 
 四面体内部頂点は4頂点の重心座標で位置を補間する。
 
-
 ```text
-x_r = sum_{i=0}^{3} betaeta_i x_i
+x_render = beta0 * x0 + beta1 * x1 + beta2 * x2 + beta3 * x3
 ```
-
 
 境界外頂点は対応境界三角形の補間位置とRest Pose offsetを使用する。offsetはRest Pose境界面の法線・接線基底で定義し、変形後は境界三角形から再構築した局所基底へ変換して適用する。基底の急変を避けるため、境界三角形IDは固定し、フレームごとの最近傍再検索をしない。
 
