@@ -180,12 +180,15 @@ Physics Mesh境界頂点について、元Render Mesh表面の最近接三角形
 
 ### 5.2 内部頂点
 
-内部四面体頂点のbone weightsは、境界頂点のウェイトをDirichlet境界条件とする四面体メッシュ上の調和拡張で求める。
+内部四面体頂点のbone weightsは、境界頂点のウェイトをDirichlet境界条件とする四面体メッシュ上の調和拡張で求める。初期版では正の辺重みを持つグラフLaplacianを使い、最大値原理を保てる構成にする。
 
-    L * w_joint = 0   // interior vertices
-    w_boundary = interpolated_surface_weights
+    edge_weight(i,j) = 1 / length(rest_position_i - rest_position_j)^2
+    L_ii = sum_j(edge_weight(i,j))
+    L_ij = -edge_weight(i,j)
 
-Lは四面体有限要素または非負重み付きグラフLaplacian。初期版はCPUオフラインで疎行列反復解法を行う。解の収束残差、各頂点のweight sum、負値を検査し、最後に0以上へ射影・正規化する。Bone influenceが多いアセットでは必要jointごとに解くための計算量を記録する。
+    L_II * weight_interior = -L_IB * weight_boundary
+
+Iは内部頂点、Bは境界頂点。jointごとに疎行列反復解法を行う。解の残差、各頂点のweight sum、負値を検査し、最後に0以上へ射影・正規化する。Bone influenceが多いアセットでは必要jointごとに解くための計算量を記録する。
 
 ### 5.3 GPU Skinning
 
@@ -225,13 +228,16 @@ EとPoisson比nuで入力する場合は以下に変換する。
 
 ### 6.4 回転抽出・反転要素
 
-通常要素はNewton polar iterationを使用する。
+通常要素はScaled Newton polar iterationを使用する。
 
-    R_next = 0.5 * (R + transpose(inverse(R)))
+    R0 = F
+    A = transpose(inverse(Rk))
+    gamma = sqrt(frobenius_norm(A) / frobenius_norm(Rk))
+    R_next = 0.5 * (gamma * Rk + A / gamma)
 
-初期値はF。det(F)が正で、最小特異値が閾値を超える要素のみ通常経路を使用する。反転または特異に近い要素を通常経路へ流さない。
+各反復で直交性残差 norm(transpose(R)*R - I) と更新差を検査する。最大反復回数は初期値8とし、収束しない場合はSVD補助Passへ送る。det(F)が正で、最小特異値が閾値を超え、Rがdet(R)=+1となる要素のみ通常経路で確定する。
 
-異常要素は別Passで3x3 Jacobi SVDを行う。F = U * Sigma * transpose(V)とし、特異値を降順に並べる。回転は最小特異値に対応する軸を必要に応じ反転してdet(R)=+1にする。特異値が閾値以下の場合は下限へクランプし、非有限値を出さない。SVD補助Passの対象数とGPU時間を計測する。
+異常要素は別Passで3x3 Jacobi SVDを行う。F = U * Sigma * transpose(V)とし、特異値を降順に並べる。必要な場合は最小特異値の軸を反転し、D=diag(1,1,det(U*transpose(V)))としてR=U*D*transpose(V)を構成する。特異値が閾値以下の場合は下限へクランプし、非有限値を出さない。SVD補助Passの対象数とGPU時間を計測する。
 
 さらに反転領域には以下の体積Barrierを加える。
 
@@ -310,6 +316,14 @@ muは主にせん断応答、Kは体積応答を制御する。局所圧縮・�
         / (sum_i(inverse_mass_i * dot(gradient_i, gradient_i))
            + alpha_tilde)
 
+Compliance alphaは制約関数の単位に依存する。エディタで扱う材料値は物理的な伸縮弾性率・せん断弾性率・曲げ剛性とし、Physics Mesh構築時にRest Geometryを使って各制約の剛性kへ変換する。各制約のalphaは1/kとする。制約関数の単位、kの単位、alphaの単位をConstraintDataに記録する。
+
+- Stretch距離制約: Cはm、kはN/m、alphaはm/N。
+- Shearひずみ制約: Cは無次元、kはJ、alphaは1/J。
+- Bend角度制約: Cはrad、kはN*m、alphaは1/(N*m)。
+
+初期版のCloth材料入力は面内引張剛性E_2D (N/m)、面内せん断剛性G_2D (N/m)、曲げ剛性D (N*m)とする。Stretch辺のdual widthをw、Rest LengthをL0とすると、k_stretch=E_2D*w/L0。Shear三角形はk_shear=G_2D*area。Bend hingeは共有辺長lとdual width wを使いk_bend=D*w/lとする。これらは離散化の初期モデルであり、解像度変更時のエネルギー一致を試験する。
+
 分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。λは各サブステップ開始時に0へ初期化し、同一サブステップの反復中は保持する。初期版ではサブステップ間Warm Startを行わない。
 
 ### 7.2 Stretch
@@ -380,6 +394,15 @@ Rest LengthはRest Poseから算出する。StretchはGraph Coloringを基本方
 ### 7.5 Graph Coloring
 
 制約の共有頂点を競合としてGreedy Coloringする。同色内の頂点重複をビルド時に検証する。色数、最大色サイズ、色別制約数を保存する。Stretchの色数が設定上限を超える場合はGather Jacobiへ切り替える。切替時に制約λを初期化し、同じサブステップ途中で方式を変更しない。
+
+### 7.5.1 Animation Tracking制約
+
+Clothの追従は頂点ごとのXPBDアタッチメント制約とする。固定頂点は逆質量0として目標位置へ直接固定する。柔軟頂点は次のベクトル制約を持つ。
+
+    C_animation = position - animation_target
+    alpha_tilde = alpha_animation / (delta_t * delta_t)
+
+各軸に対してXPBD更新を行い、lambda_animationはfloat3で頂点単位に保持する。lambdaは各サブステップ開始時にリセットし、反復中に維持する。Animation TrackingはStretch / Shear / BendのComplianceと独立して調整する。
 
 ### 7.6 Gather Jacobi
 
@@ -482,7 +505,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
 各Primitiveは、接触厚みを膨張させたAABBが設定上限max_cells_per_primitive以下のセル数になる最も細かいlevelへ登録する。最大levelでも上限を超える場合はBroadphase Errorとする。全Primitive総当たりへフォールバックしない。
 
-各query Primitiveは自分のlevelから最大levelまでを検索し、各levelのセル座標を比較する。小さいPrimitiveが大きいPrimitiveの登録levelを検索することで異なるlevel間の候補を取りこぼさない。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。
+各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。
 
 ### 9.2 接触厚みとセル範囲
 
@@ -565,7 +588,12 @@ d(t)<=r+toi_toleranceでTOIを確定する。t>1なら当該サブステップ�
 
 ### 11.4 TOI処理
 
-同一サブステップ内の最小TOIをGPU Reductionで求める。最小TOI近傍の接触をまとめて解決し、その時刻までの状態を確定する。接触Impulse・接触拘束を適用して残り時間を再積分し、必要ならBroadphaseを再構築する。
+同一サブステップ内の最小TOIをGPU Reductionで求める。TOI時刻は秒単位のtauで扱い、0 <= tau <= delta_t_substepとする。各頂点軌道はx(tau)=x_start+tau*velocityとして評価する。Conservative Advancementの進行量は次とする。
+
+    delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
+    tau_next = tau + delta_tau
+
+接触が確定したら全対象をtauまで進め、最小TOI近傍の接触をまとめて解決する。その後、残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力は残時間区間で再評価する。
 
 1サブステップ内のTOI分割上限は初期値2回。上限を超えた場合は残時間を進めずCCDIterationLimitとしてステップを未確定にし、時間刻みを細分化して再試行する。CCDの解決不能を貫通許容として扱わない。
 
@@ -581,8 +609,9 @@ Rest Poseでの埋め込み誤差を計測し、最大誤差が基準を超え�
 
 ### 12.2 境界外頂点
 
-境界三角形への最近接点q、重心座標、Rest Pose offsetを保存する。Rest Pose境界三角形から局所基底T0=[e1_0,e2_0,n0]を作り、Rest offsetをその基底座標で保持する。変形後は対応三角形からT1=[e1_1,e2_1,n1]を作る。
+境界三角形への最近接点q、重心座標、Rest Pose offsetを保存する。rest_offsetはRest Poseのモデル空間ベクトルとして保存し、Rest Pose境界三角形から局所基底T0=[e1_0,e2_0,n0]を作る。変形後は対応三角形からT1=[e1_1,e2_1,n1]を作る。
 
+    rest_offset = x_render_rest - q_rest
     x_render = q_deformed + T1 * inverse(T0) * rest_offset
 
 対応三角形が退化・反転した場合は直前有効基底を使うのではなく、その頂点をBinding Errorとしてマークし、診断する。頂点IDの再検索は毎フレーム行わない。
@@ -641,6 +670,7 @@ Gatherの隣接IDを固定順序にし、同一GPU上で浮動小数点加算順
 10. Candidate Generation / Deduplication
 11. 各ソルバー反復
     - Cloth Stretch Graph Color Passes
+    - Cloth Animation Tracking Constraint Output / Gather / Apply
     - Cloth Shear Constraint Output / Gather / Apply
     - Cloth Bend Constraint Output / Gather / Apply
     - Contact Narrowphase Refresh
