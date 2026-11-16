@@ -5,6 +5,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cgltf.h"
@@ -333,6 +334,47 @@ namespace skin_physics::asset::detail
             const cgltf_accessor* joints_1_accessor = find_attribute(primitive, cgltf_attribute_type_joints, 1);
             const cgltf_accessor* weights_1_accessor = find_attribute(primitive, cgltf_attribute_type_weights, 1);
 
+            std::vector<std::pair<std::string, std::vector<float>>> source_vertex_groups;
+            for (cgltf_size attribute_index = 0; attribute_index < primitive.attributes_count; ++attribute_index)
+            {
+                const cgltf_attribute& source_attribute = primitive.attributes[attribute_index];
+                if (source_attribute.type != cgltf_attribute_type_custom || source_attribute.name == nullptr ||
+                    source_attribute.data == nullptr)
+                {
+                    continue;
+                }
+
+                if (source_attribute.data->type != cgltf_type_scalar ||
+                    source_attribute.data->count != vertex_count)
+                {
+                    append_diagnostic(result, diagnostic_severity::warning, diagnostic_code::unsupported_feature,
+                        std::string("Custom non-scalar vertex attribute was not imported as a vertex group: ") +
+                        source_attribute.name);
+                    continue;
+                }
+
+                std::vector<float> group_weights;
+                if (!unpack_attribute(source_attribute.data, 1, vertex_count, group_weights))
+                {
+                    append_diagnostic(result, diagnostic_severity::error, diagnostic_code::invalid_attribute,
+                        std::string("Could not decode custom vertex attribute: ") + source_attribute.name);
+                    return false;
+                }
+
+                for (float weight : group_weights)
+                {
+                    if (!std::isfinite(weight) || weight < 0.0f || weight > 1.0f)
+                    {
+                        append_diagnostic(result, diagnostic_severity::error, diagnostic_code::invalid_attribute,
+                            std::string("Custom vertex group must contain weights in [0, 1]: ") + source_attribute.name);
+                        return false;
+                    }
+                }
+
+                source_vertex_groups.emplace_back(source_attribute.name, std::move(group_weights));
+            }
+
+
             std::vector<float> normals;
             std::vector<float> tangents;
             std::vector<float> texcoords;
@@ -494,6 +536,54 @@ namespace skin_physics::asset::detail
                 }
 
                 target_mesh.vertices.push_back(current);
+            }
+
+            // Keep each named vertex group aligned with the combined mesh vertex array.
+            for (vertex_group& existing_group : target_mesh.vertex_groups)
+            {
+                const auto source_group = std::find_if(
+                    source_vertex_groups.begin(),
+                    source_vertex_groups.end(),
+                    [&existing_group](const auto& item)
+                    {
+                        return item.first == existing_group.name;
+                    });
+
+                if (source_group == source_vertex_groups.end())
+                {
+                    existing_group.weights.resize(
+                        static_cast<std::size_t>(base_vertex + vertex_count),
+                        0.0f);
+                }
+                else
+                {
+                    existing_group.weights.insert(
+                        existing_group.weights.end(),
+                        source_group->second.begin(),
+                        source_group->second.end());
+                }
+            }
+
+            for (const auto& source_group : source_vertex_groups)
+            {
+                const auto existing_group = std::find_if(
+                    target_mesh.vertex_groups.begin(),
+                    target_mesh.vertex_groups.end(),
+                    [&source_group](const vertex_group& item)
+                    {
+                        return item.name == source_group.first;
+                    });
+                if (existing_group == target_mesh.vertex_groups.end())
+                {
+                    vertex_group new_group;
+                    new_group.name = source_group.first;
+                    new_group.weights.resize(static_cast<std::size_t>(base_vertex), 0.0f);
+                    new_group.weights.insert(
+                        new_group.weights.end(),
+                        source_group.second.begin(),
+                        source_group.second.end());
+                    target_mesh.vertex_groups.push_back(std::move(new_group));
+                }
             }
 
             const uint32_t first_index = static_cast<uint32_t>(target_mesh.indices.size());

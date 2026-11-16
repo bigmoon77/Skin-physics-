@@ -30,9 +30,14 @@ classDiagram
     }
     class Mesh {
         +Vertex[] vertices
+        +VertexGroup[] vertex_groups
         +uint32[] indices
         +Submesh[] submeshes
         +PhysicsMode mode
+    }
+    class VertexGroup {
+        +string name
+        +float[] weights
     }
     class Vertex {
         +float3 position
@@ -76,6 +81,7 @@ classDiagram
     GltfImporter --> Model
     Model *-- Mesh
     Mesh *-- Vertex
+    Mesh *-- VertexGroup
     Model *-- Node
     Model *-- Skin
     Model *-- AnimationClip

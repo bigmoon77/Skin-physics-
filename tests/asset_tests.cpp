@@ -62,6 +62,7 @@ namespace
             0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f
         };
+        const std::array<float, 3> pin_weights = { 0.0f, 0.5f, 1.0f };
         const std::array<float, 16> inverse_bind = {
             1.0f, 0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f, 0.0f,
@@ -81,11 +82,12 @@ namespace
         binary.write(reinterpret_cast<const char*>(times.data()), sizeof(times));
         binary.write(reinterpret_cast<const char*>(translations.data()), sizeof(translations));
         binary.write(reinterpret_cast<const char*>(inverse_bind.data()), sizeof(inverse_bind));
+        binary.write(reinterpret_cast<const char*>(pin_weights.data()), sizeof(pin_weights));
         require(static_cast<bool>(binary), "Could not write glTF test buffer.");
 
         const std::string json = R"({
             "asset": { "version": "2.0", "generator": "SkinPhysicsTests" },
-            "buffers": [{ "uri": "skin_animation.bin", "byteLength": 200 }],
+            "buffers": [{ "uri": "skin_animation.bin", "byteLength": 212 }],
             "bufferViews": [
                 { "buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962 },
                 { "buffer": 0, "byteOffset": 36, "byteLength": 6, "target": 34963 },
@@ -93,7 +95,8 @@ namespace
                 { "buffer": 0, "byteOffset": 56, "byteLength": 48, "target": 34962 },
                 { "buffer": 0, "byteOffset": 104, "byteLength": 8 },
                 { "buffer": 0, "byteOffset": 112, "byteLength": 24 },
-                { "buffer": 0, "byteOffset": 136, "byteLength": 64 }
+                { "buffer": 0, "byteOffset": 136, "byteLength": 64 },
+                { "buffer": 0, "byteOffset": 200, "byteLength": 12 }
             ],
             "accessors": [
                 { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" },
@@ -102,12 +105,13 @@ namespace
                 { "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4" },
                 { "bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR" },
                 { "bufferView": 6, "componentType": 5126, "count": 1, "type": "MAT4" },
-                { "bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3" }
+                { "bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3" },
+                { "bufferView": 7, "componentType": 5126, "count": 3, "type": "SCALAR" }
             ],
             "meshes": [{
                 "name": "Triangle",
                 "primitives": [{
-                    "attributes": { "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 },
+                    "attributes": { "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3, "_PIN_WEIGHT": 7 },
                     "indices": 1,
                     "mode": 4
                 }]
@@ -208,6 +212,10 @@ namespace
         require(result.asset.meshes.size() == 1, "glTF should import one mesh.");
         require(result.asset.meshes[0].vertices.size() == 3, "glTF should import three vertices.");
         require(result.asset.meshes[0].indices.size() == 3, "glTF should import one triangle.");
+        require(result.asset.meshes[0].vertex_groups.size() == 1, "glTF custom scalar attribute should become a named vertex group.");
+        require(result.asset.meshes[0].vertex_groups[0].name == "_PIN_WEIGHT", "Named vertex group should preserve its attribute name.");
+        require(std::abs(result.asset.meshes[0].vertex_groups[0].weights[1] - 0.5f) < 1.0e-6f,
+            "Named vertex group weights should be imported.");
         require(result.asset.nodes.size() == 2, "glTF should import its node hierarchy.");
         require(result.asset.skins.size() == 1, "glTF should import one skin.");
         require(result.asset.skins[0].joints.size() == 1, "glTF skin should contain one joint.");

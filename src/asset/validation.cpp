@@ -54,6 +54,26 @@ namespace skin_physics::asset
                 }
             }
 
+            for (const vertex_group& group : current_mesh.vertex_groups)
+            {
+                if (group.weights.size() != current_mesh.vertices.size())
+                {
+                    add_error(diagnostics, diagnostic_code::invalid_attribute,
+                        prefix + "contains a vertex group with a mismatched weight count.");
+                    continue;
+                }
+
+                for (float weight : group.weights)
+                {
+                    if (!finite(weight) || weight < 0.0f || weight > 1.0f)
+                    {
+                        add_error(diagnostics, diagnostic_code::invalid_attribute,
+                            prefix + "contains an invalid named vertex group weight.");
+                        break;
+                    }
+                }
+            }
+
             for (const submesh& section : current_mesh.submeshes)
             {
                 const uint64_t end_index = static_cast<uint64_t>(section.first_index) + section.index_count;

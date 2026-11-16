@@ -7,7 +7,7 @@ The repository is being implemented in stages. The current implementation milest
 ## Current implementation
 
 - C++17, Visual Studio solution and project files.
-- Common asset model for meshes, vertices, materials, nodes, skins and animation clips.
+- Common asset model for meshes, vertices, materials, named vertex groups, nodes, skins and animation clips.
 - OBJ importer with polygon triangulation, negative indices, smoothing groups and basic MTL material factors.
 - glTF 2.0 / GLB importer with triangle, triangle-strip and triangle-fan primitives, PBR material factors, node hierarchy, up to eight skin influences, inverse bind matrices, and STEP / LINEAR / CUBICSPLINE TRS animation tracks.
 - Common model validation and diagnostics.
