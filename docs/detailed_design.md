@@ -16,7 +16,7 @@
 
 | 領域 | 初期採用方式 | 補足・代替 |
 |---|---|---|
-| Soft Body | 四面体Corotational Linear Elasticity、半陰的Euler | 反転要素はSVD補助処理と体積Barrier |
+| Soft Body | 四面体Corotational Linear Elasticity、半陰的Euler | 反転要素はSVD補助処理と体積ペナルティ |
 | Cloth Stretch | XPBD距離制約、Graph Coloring | 色数超過時はGather Jacobi |
 | Cloth Shear | XPBD内積ひずみ制約、Gather Jacobi | 三角形局所Rest基底 |
 | Cloth Bend | XPBD符号付き二面角制約、Gather Jacobi | 退化ケースの検出必須 |
@@ -106,8 +106,8 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 | velocity | RWStructuredBuffer<float4> | サブステップごと | 速度 |
 | inverse_mass | StructuredBuffer<float> | 初期化時 | 逆質量 |
 | rest_position | StructuredBuffer<float4> | 初期化時 | Rest Pose |
-| animation_target | StructuredBuffer<float4> | 描画フレーム・サブステップ | Skinning目標 |
-| animation_velocity | StructuredBuffer<float4> | サブステップ | 目標速度 |
+| animation_target | UAV出力 / SRV入力 StructuredBuffer<float4> | 描画フレーム・サブステップ | Skinning目標 |
+| animation_velocity | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 目標速度 |
 | animation_lambda | RWStructuredBuffer<float4> | サブステップ反復 | Cloth追従制約の3軸λ |
 | tet_indices | StructuredBuffer<uint4> | 初期化時 | 四面体接続 |
 | tet_rest_data | StructuredBuffer<TetRestData> | 初期化時 | Bm、V0、材料ID |
@@ -116,11 +116,11 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 | cloth_constraints | StructuredBuffer<ConstraintData> | 初期化時 | Stretch / Shear / Bend |
 | constraint_lambda | RWStructuredBuffer<float> | 反復ごと | XPBD λ |
 | vertex_constraint_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Constraint CSR |
-| cell_records | StructuredBuffer<CellRecord> | サブステップ | Spatial Hash登録 |
+| cell_records | UAV出力 / SRV入力 StructuredBuffer<CellRecord> | サブステップ | Spatial Hash登録 |
 | contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | サブステップ | VT / EE候補 |
 | contact_data | SRV/UAV StructuredBuffer<ContactData> | 反復ごと | 接触法線・係数・λ |
 | vertex_contact_offsets / ids | StructuredBuffer<uint> | サブステップ | Vertex→Contact CSR |
-| contact_contrib | StructuredBuffer<float4> | 反復ごと | 接触補正寄与 |
+| contact_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | 反復ごと | 接触補正寄与 |
 | render_binding | StructuredBuffer<RenderBinding> | 初期化時 | Render Vertex対応 |
 | diagnostic_buffer | RWStructuredBuffer<uint> | Passごと | Count / Overflow / Error |
 
@@ -240,7 +240,7 @@ EとPoisson比nuで入力する場合は以下に変換する。
 
 異常要素は別Passで3x3 Jacobi SVDを行う。F = U * Sigma * transpose(V)とし、特異値を降順に並べる。必要な場合は最小特異値の軸を反転し、D=diag(1,1,det(U*transpose(V)))としてR=U*D*transpose(V)を構成する。特異値が閾値以下の場合は下限へクランプし、非有限値を出さない。SVD補助Passの対象数とGPU時間を計測する。
 
-さらに反転領域には以下の体積ペナルティを加える。これは有限の二次ペナルティであり、数学的な非反転Barrierとして反転を絶対に禁止するものではない。k_inversionの単位は応力と同じPaとする。
+さらに反転領域には以下の体積ペナルティを加える。これは有限の二次ペナルティであり、数学的な非反転ペナルティとして反転を絶対に禁止するものではない。k_inversionの単位は応力と同じPaとする。
 
     J = det(F)
     Psi_barrier = 0.5 * k_inversion * min(J - J_min, 0)^2
@@ -489,7 +489,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
 位置XPBD接触と速度Impulseを分離する。位置反復中に摩擦を重ねて適用しない。
 
-位置解決後にvelocity = (position_after - previous_position) / delta_tを再構築する。接触点の相対速度をv_rel、法線速度をv_n = dot(v_rel,n)とする。接触が接近中の場合のみ、
+Discrete contactでは位置解決後にvelocity = (position_after - previous_position) / delta_tを再構築する。TOIでImpulseを解決したcontactはimpact_resolvedフラグを設定し、同一Step終端のImpulse処理から除外する。TOIを伴わないDiscrete contactについて、接触点の相対速度をv_rel、法線速度をv_n = dot(v_rel,n)とする。接触が接近中の場合のみ、
 
     j_n = -(1 + restitution) * min(v_n, 0) / effective_inverse_mass
 
@@ -500,7 +500,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     j_t_candidate = -v_t / effective_inverse_mass
     j_t = clamp_magnitude(j_t_candidate, friction * j_n)
 
-接触の4頂点へ、接触勾配係数と逆質量でImpulseを配分する。摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。接触前の相対速度を保存し、同一接触で複数反復するたびに反発を重複適用しない。
+接触の4頂点へ、接触勾配係数と逆質量でImpulseを配分する。摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。接触前の相対速度を保存し、同一接触で複数反復するたびに反発を重複適用しない。TOI contactはimpact_resolvedフラグにより同じImpulseをStep終端で二重適用しない。
 
 ## 9. Broadphase Spatial Hash
 
@@ -550,7 +550,7 @@ VTとEEの最近接距離を正確に計算し、接触厚み以下だけを接�
 
 ### 10.1 初期貫通修正
 
-初期化時に一度Broadphase / Narrowphaseを実行し、初期接触を抽出する。位置XPBD接触を設定上限回数まで解き、頂点ごとの総修正量と残存貫通を計測する。1反復あたりの最大変位は近傍最小辺長の一定割合でClampする。初期値は0.1とし、過大変位でメッシュを一度に押し出さない。最大反復後も許容貫通を超える場合は警告またはAsset Load Errorとし、修正結果を自動確定しない。
+初期化時に一度Broadphase / Narrowphaseを実行し、初期接触を抽出する。位置XPBD接触を設定上限回数まで解き、頂点ごとの総修正量と残存貫通を計測する。各初期接触の制約評価値は、1反復あたり`C_effective = max(C, -0.1 * local_min_edge_length)`として過大な一括補正要求を制限する。この有効制約値をλ更新にも用い、位置だけを後からClampしてλと状態が乖離しないようにする。最大反復後も許容貫通を超える場合は警告またはAsset Load Errorとし、修正結果を自動確定しない。
 
 自己衝突除外:
 
@@ -591,11 +591,11 @@ EE:
 
 保守的な進行量:
 
-    delta_toi = safety * (d(t) - r) / max(v_bound, epsilon)
-    t_next = t + delta_toi
+    delta_tau = safety * (d(tau) - r) / max(v_bound, epsilon)
+    tau_next = tau + delta_tau
     safety = 0.8  // 初期値
 
-d(t)<=r+toi_toleranceでTOIを確定する。t>1なら当該サブステップでは接触なし。最大反復回数、最小進行量、距離許容誤差を設定する。進行不能または反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
+d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>delta_t_substepかつ終端距離がrより大きければ当該サブステップでは接触なし。最大反復回数、最小進行時間tau_tolerance、距離許容誤差distance_toleranceを設定する。進行不能または反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
 
 ### 11.4 TOI処理
 
@@ -604,7 +604,7 @@ d(t)<=r+toi_toleranceでTOIを確定する。t>1なら当該サブステップ�
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
 
-接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分して最小TOI近傍の接触をまとめて解決する。その後、残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。
+接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分する。Clothなど位置ベースの系では、この区間の変位から接触前速度を再構築する。Soft Bodyは積分器が保持するtau時点の速度を使う。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度から残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
 
 1サブステップ内のTOI分割上限は初期値2回。上限を超えた場合は残時間を進めずCCDIterationLimitとしてステップを未確定にし、時間刻みを細分化して再試行する。CCDの解決不能を貫通許容として扱わない。
 
@@ -672,7 +672,7 @@ Gatherの隣接IDを固定順序にし、同一GPU上で浮動小数点加算順
 1. Animation Target / Animation Velocity Update
 2. Physics Vertex Previous State Snapshot
 3. Soft Body Tet Deformation Gradient
-4. Soft Body Rotation / Stress / Inversion Barrier
+4. Soft Body Rotation / Stress / Inversion Penalty
 5. Soft Body Tet Force Contribution
 6. Soft Body Vertex Force Gather
 7. Soft Body Velocity / Position Prediction
@@ -756,6 +756,9 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 | T13 | Skin Weight | 全Physics Vertexのweight sumが1±1e-4、非負 |
 | T14 | Reproducibility | 同一GPU反復で位置RMS差がBBox対角の0.01%以下 |
 | T15 | Performance | GTX 1660 SUPERでPass時間、要素数、候補数、GPUメモリを取得 |
+| T16 | CCD impact response | TOI後に衝突方向速度が更新され、残時間で再貫通せずImpulseが一度だけ適用される |
+| T17 | Contact Patch | 重複接触の統合前後で過拘束が減り、最大貫通が設定閾値内 |
+| T18 | Bend Gradient | 解析勾配と有限差分勾配の相対誤差が1e-3以下 |
 
 性能はSoft Body tet数、Cloth三角形数、接触密度、サブステップ数を変えたスケーリング曲線で評価する。代表規模は2k / 8k / 32k四面体、2k / 8k / 32k Cloth三角形を目安にし、組み合わせ衝突試験も記録する。3～40 FPSは測定対象であり全規模の保証値ではない。
 
@@ -814,4 +817,4 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 ## 21. バージョン履歴
 
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
-- 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転要素処理、CFL推定、Skin Weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、双方向VT/EE、摩擦Impulse、階層Spatial Hash、Conservative Advancement、TOI分割、overflow状態管理を修正・具体化。
+- 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、Skin Weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Conservative Advancement、overflow時の同一Step再試行を修正・具体化。
