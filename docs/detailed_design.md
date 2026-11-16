@@ -197,7 +197,7 @@ Rは回転行列、Sは対称変形行列とする。RはNewton polar iteration�
 
 
 ```text
-R_{k+1} = fracrac{1}{2}(R_k + R_k^{-T})
+R_next = 0.5 * (R + transpose(inverse(R)))
 ```
 
 
@@ -209,17 +209,13 @@ R_{k+1} = fracrac{1}{2}(R_k + R_k^{-T})
 
 
 ```text
-mu = fracrac{E}{2(1+
-u)}
+mu = (numerator / denominator)
 ```
 
 
 
 ```text
-lambda = fracrac{E
-u}{(1+
-u)(1-2
-u)}
+lambda = (numerator / denominator)
 ```
 
 
@@ -231,13 +227,13 @@ u)}
 
 
 ```text
-P = 2mu(F-R) + lambda(J-1){cof}(F)
+P = 2mu(F-R) + lambda(J-1)cofactor(F)
 ```
 
 
 
 ```text
-J = determinant(F)
+J = det(F)
 ```
 
 
@@ -263,7 +259,7 @@ v^{n+1} = v^n + delta t,M^{-1}(f^{ext}+f^{int})
 
 
 ```text
-x^{n+1} = x^n + delta t,v^{n+1}
+x^{n+1} = x^n + delta_t * velocity_next
 ```
 
 
@@ -304,8 +300,8 @@ ilde{alpha} = alpha / delta t^2
 
 ```text
 delta_lambda =
-fracrac{-C(x)-	ilde{alpha}lambda}
-{sum_i w_i | grad_i C|^2+	ilde{alpha}}
+frac{-C(x)-tilde_ilde{alpha}lambda}
+{sum_i w_i | grad_i C|^2+tilde_ilde{alpha}}
 ```
 
 
@@ -317,7 +313,7 @@ lambda' = lambda+delta_lambda
 
 
 ```text
-delta x_i = w_i  grad_i C,delta_lambda
+delta_x_i = inverse_mass_i * gradient_i(C) * delta_lambda
 ```
 
 
@@ -352,7 +348,7 @@ nは辺方向単位ベクトル。Rest Length L0はRest Poseから算出する�
 
 
 ```text
-C_b = {wrap}(	heta-	heta_0)
+C_b = wrap(tilde_heta-tilde_heta_0)
 ```
 
 
@@ -376,7 +372,7 @@ Jacobi更新は同一反復開始時の位置を全制約が参照し、Gather�
 
 
 ```text
-x_i^{new}=x_i^{old}+omegadelta x_i^{sum}
+x_new = x_old + omega * sum_constraint_corrections
 ```
 
 
@@ -391,8 +387,8 @@ x_i^{new}=x_i^{old}+omegadelta x_i^{sum}
 
 ```text
 delta_lambda =
-fracrac{-C(x)-	ilde{alpha}lambda}
-{sum_i w_i| grad_i C|^2+	ilde{alpha}}
+frac{-C(x)-tilde_ilde{alpha}lambda}
+{sum_i w_i| grad_i C|^2+tilde_ilde{alpha}}
 ```
 
 
@@ -410,13 +406,13 @@ lambda^{new}=max(0,lambda+delta_lambda)
 
 
 ```text
-q=eta_0a+eta_1b+eta_2c
+q=betaeta_0a+betaeta_1b+betaeta_2c
 ```
 
 
 
 ```text
-C_{VT}= dot (p-q)-d
+C_VT = dot(n, p - q) - thickness
 ```
 
 
@@ -431,7 +427,7 @@ dは接触厚み。勾配は
 
 
 ```text
-w_p + eta_0^2w_a+eta_1^2w_b+eta_2^2w_c+	ilde{alpha}
+w_p + betaeta_0^2w_a+betaeta_1^2w_b+betaeta_2^2w_c+tilde_ilde{alpha}
 ```
 
 
@@ -443,7 +439,7 @@ w_p + eta_0^2w_a+eta_1^2w_b+eta_2^2w_c+	ilde{alpha}
 
 
 ```text
-C_{EE}= dot (q_A-q_B)-d
+C_EE = dot(n, q_A - q_B) - thickness
 ```
 
 
@@ -463,7 +459,7 @@ C_{EE}= dot (q_A-q_B)-d
 
 
 ```text
-|lambda_t| le mu_f lambda_n
+abs(lambda_t) <= friction_coefficient * lambda_n
 ```
 
 
@@ -481,7 +477,7 @@ C_{EE}= dot (q_A-q_B)-d
 
 
 ```text
-c(p)=floor p/h floor
+cell(p) = floor(p / cell_width)floor
 ```
 
 
@@ -533,7 +529,7 @@ VTは頂点と三角形の最近接点、面の向き、厚みを検査する。
 
 
 ```text
-|delta x_{rel}| > eta d
+length(relative_displacement) > eta * contact_thickness
 ```
 
 
@@ -589,7 +585,7 @@ Clip切替、Teleport、Reset、時間巻き戻し時にAnimation Discontinuity�
 
 
 ```text
-x_r = sum_{i=0}^{3} eta_i x_i
+x_r = sum_{i=0}^{3} betaeta_i x_i
 ```
 
 
