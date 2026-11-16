@@ -1,0 +1,35 @@
+name: Windows Build
+
+on:
+  push:
+    branches:
+      - main
+      - feature/phase1-importer
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build solution
+        run: msbuild SkinPhysics.sln /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          $testExe = Join-Path $PWD "bin/x64/Release/SkinPhysicsTests.exe"
+          if (-not (Test-Path $testExe)) {
+            throw "Test executable not found: $testExe"
+          }
+          & $testExe
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
