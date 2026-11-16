@@ -1,0 +1,6 @@
+{
+  "success": false,
+  "diagnostic": "RenderBindingError",
+  "reason": "No boundary embedding within configured distance",
+  "binding_committed": false
+}

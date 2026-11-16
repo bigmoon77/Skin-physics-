@@ -1,0 +1,63 @@
+{
+  "bindings": [
+    {
+      "render_vertex": "interior_0",
+      "kind": "tetrahedron",
+      "tet_id": 0,
+      "physics_vertex_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "barycentric": [
+        0.4,
+        0.1,
+        0.2,
+        0.3
+      ],
+      "rest_reconstruction": [
+        0.1,
+        0.2,
+        0.3
+      ],
+      "rest_error": 0
+    },
+    {
+      "render_vertex": "outside_0",
+      "kind": "boundary_triangle",
+      "triangle_physics_vertex_ids": [
+        0,
+        1,
+        2
+      ],
+      "barycentric": [
+        0.6,
+        0.2,
+        0.2
+      ],
+      "rest_offset": [
+        0,
+        0,
+        -0.1
+      ],
+      "rest_reconstruction": [
+        0.2,
+        0.2,
+        -0.1
+      ],
+      "rest_error": 0
+    }
+  ],
+  "feedback": {
+    "uv_unchanged": true,
+    "color_unchanged": true,
+    "material_id_unchanged": true,
+    "index_buffer_unchanged": true
+  },
+  "tolerances": {
+    "barycentric_absolute": 0.000001,
+    "position_absolute": 0.000001,
+    "maximum_rest_error_relative_to_bbox_diagonal": 0.001
+  }
+}

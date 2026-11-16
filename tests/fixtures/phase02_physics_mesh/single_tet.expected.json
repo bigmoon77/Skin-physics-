@@ -1,0 +1,64 @@
+{
+  "input": {
+    "vertices": 4,
+    "tetrahedra": 1,
+    "density": 6
+  },
+  "output": {
+    "oriented_tetrahedron": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "rest_volume": 0.16666666666666666,
+    "total_mass": 1,
+    "per_vertex_mass": 0.25,
+    "per_vertex_inverse_mass": 4,
+    "boundary_triangle_count": 4,
+    "vertex_tet_csr_offsets": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "vertex_tet_csr_ids": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "rest_shape_gradients": [
+      [
+        -1,
+        -1,
+        -1
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
+    "quality": 0.8399473666,
+    "minimum_dihedral_degrees": 54.7356103
+  },
+  "tolerances": {
+    "volume_absolute": 0.000001,
+    "mass_absolute": 0.000001,
+    "gradient_absolute": 0.000001,
+    "quality_absolute": 0.00001,
+    "angle_degrees": 0.001
+  }
+}

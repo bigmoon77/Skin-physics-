@@ -1,0 +1,28 @@
+{
+  "rest_edge_lengths": [
+    1,
+    1,
+    1,
+    1,
+    1.4142135623730951
+  ],
+  "rest_triangle_areas": [
+    0.5,
+    0.5
+  ],
+  "rest_dihedral_radians": 0,
+  "gradient_test": {
+    "method": "central finite difference",
+    "relative_error_max": 0.001
+  },
+  "compliance_sweep": {
+    "lower_compliance_produces_equal_or_smaller_stretch": true,
+    "lower_compliance_produces_equal_or_smaller_shear": true,
+    "lower_compliance_produces_equal_or_smaller_bend": true
+  },
+  "tolerances": {
+    "length_absolute": 0.000001,
+    "area_absolute": 0.000001,
+    "angle_absolute": 0.000001
+  }
+}

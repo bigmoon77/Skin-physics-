@@ -1,0 +1,70 @@
+{
+  "input": {
+    "physics_vertices": 5,
+    "physics_tetrahedra": 4,
+    "boundary_vertices": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "interior_vertices": [
+      4
+    ],
+    "boundary_skin_weights": [
+      [
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "edge_weight_formula": "1 / edge_length_squared"
+  },
+  "output": {
+    "interior_weights": [
+      [
+        0,
+        0.55
+      ],
+      [
+        1,
+        0.15
+      ],
+      [
+        2,
+        0.15
+      ],
+      [
+        3,
+        0.15
+      ]
+    ],
+    "weight_sum": 1,
+    "minimum_weight": 0,
+    "residual_relative_max": 0.000001,
+    "all_vertices_influence_count": 4
+  },
+  "tolerances": {
+    "weight_absolute": 0.0001,
+    "residual_relative": 0.000001
+  }
+}

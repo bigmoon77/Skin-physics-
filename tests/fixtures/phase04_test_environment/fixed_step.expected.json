@@ -1,0 +1,31 @@
+{
+  "after_frame_0": {
+    "completed_steps": 0,
+    "accumulator": 0.01,
+    "simulation_time": 0
+  },
+  "after_frame_1": {
+    "completed_steps": 1,
+    "accumulator": 0,
+    "simulation_time": 0.02
+  },
+  "after_frame_2_pause": {
+    "completed_steps": 2,
+    "accumulator": 0.015,
+    "simulation_time": 0.04
+  },
+  "after_single_step": {
+    "completed_steps": 3,
+    "accumulator": 0.015,
+    "simulation_time": 0.06
+  },
+  "after_reset": {
+    "completed_steps": 0,
+    "accumulator": 0,
+    "simulation_time": 0
+  },
+  "no_dropped_time": true,
+  "tolerances": {
+    "time_absolute": 1e-9
+  }
+}

@@ -1,4 +1,5 @@
 #include "skin_physics/asset/importer.hpp"
+#include "test_support.hpp"
 
 #include <array>
 #include <cmath>
@@ -8,6 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 int run_physics_mesh_tests();
 
@@ -232,6 +234,133 @@ namespace
             "Skin weights should be normalized.");
     }
 
+
+    void test_persistent_obj_golden_fixture()
+    {
+        const std::filesystem::path fixture_path =
+            test_support::fixture_path("phase01_importer/quad.obj");
+
+        import_options options;
+        options.has_obj_unit_scale = true;
+        options.obj_unit_scale = 0.01f;
+
+        const import_result result = import_model(fixture_path, options);
+        require(result.success, "Persistent OBJ golden fixture should import successfully.");
+        require(result.asset.meshes.size() == 1, "Golden OBJ should create one mesh.");
+        require(result.asset.meshes[0].vertices.size() == 4, "Golden OBJ should create four deduplicated vertices.");
+        require(result.asset.meshes[0].indices.size() == 6, "Golden OBJ should triangulate into two triangles.");
+        require(result.asset.meshes[0].submeshes.size() == 1, "Golden OBJ should create one submesh.");
+        require(result.asset.materials.size() == 1, "Golden OBJ should load its sibling MTL file.");
+        require(std::abs(result.asset.meshes[0].vertices[1].position.x - 1.0f) < 1.0e-6f,
+            "Golden OBJ centimeter coordinates should convert to meters.");
+        require(std::abs(result.asset.materials[0].base_color_factor.x - 0.2f) < 1.0e-6f &&
+                std::abs(result.asset.materials[0].base_color_factor.y - 0.4f) < 1.0e-6f &&
+                std::abs(result.asset.materials[0].base_color_factor.z - 0.8f) < 1.0e-6f,
+            "Golden OBJ MTL base color should match its reference values.");
+        require(std::abs(result.asset.materials[0].roughness_factor - 0.7f) < 1.0e-6f &&
+                std::abs(result.asset.materials[0].metallic_factor - 0.1f) < 1.0e-6f,
+            "Golden OBJ MTL material factors should match the reference.");
+        require(std::filesystem::exists(test_support::fixture_path("phase01_importer/obj_quad.expected.json")),
+            "Golden OBJ expected-result file must exist.");
+    }
+
+    void test_persistent_gltf_golden_fixture()
+    {
+        const std::filesystem::path fixture_path =
+            test_support::fixture_path("phase01_importer/skinned_triangle.gltf");
+        const import_result result = import_model(fixture_path);
+
+        require(result.success, "Persistent glTF golden fixture should import successfully.");
+        require(result.asset.meshes.size() == 1, "Golden glTF should create one mesh.");
+        require(result.asset.meshes[0].vertices.size() == 3, "Golden glTF should contain three vertices.");
+        require(result.asset.meshes[0].indices == std::vector<uint32_t>({ 0, 1, 2 }),
+            "Golden glTF triangle indices should remain unchanged.");
+        require(result.asset.meshes[0].vertex_groups.size() == 1,
+            "Golden glTF should import the named custom vertex group.");
+        require(result.asset.meshes[0].vertex_groups[0].name == "_PIN_WEIGHT",
+            "Golden glTF should preserve the custom vertex group name.");
+        require(std::abs(result.asset.meshes[0].vertex_groups[0].weights[0] - 0.0f) < 1.0e-6f &&
+                std::abs(result.asset.meshes[0].vertex_groups[0].weights[1] - 0.5f) < 1.0e-6f &&
+                std::abs(result.asset.meshes[0].vertex_groups[0].weights[2] - 1.0f) < 1.0e-6f,
+            "Golden glTF custom vertex group weights should match the reference.");
+        require(result.asset.skins.size() == 1 && result.asset.skins[0].joints.size() == 1,
+            "Golden glTF skin and joint count should match the reference.");
+        require(result.asset.skins[0].inverse_bind_matrices.size() == 1,
+            "Golden glTF should import its inverse bind matrix.");
+        require(result.asset.animations.size() == 1 && result.asset.animations[0].tracks.size() == 1,
+            "Golden glTF should import exactly one animation track.");
+        require(result.asset.animations[0].tracks[0].keys.size() == 2,
+            "Golden glTF animation should contain two reference keys.");
+        require(std::abs(result.asset.animations[0].tracks[0].keys[1].time - 1.0f) < 1.0e-6f &&
+                std::abs(result.asset.animations[0].tracks[0].keys[1].value[1] - 1.0f) < 1.0e-6f,
+            "Golden glTF final animation key should translate the joint by one meter.");
+        require(std::filesystem::exists(test_support::fixture_path("phase01_importer/gltf_skin.expected.json")),
+            "Golden glTF expected-result file must exist.");
+    }
+
+    template<typename TestFunction>
+    void run_test_case(const char* test_id, TestFunction test_function)
+    {
+        test_function();
+        std::cout << "[PASS] " << test_id << "\n";
+    }
+
+    void test_fixture_catalog_files_exist()
+    {
+        const std::vector<const char*> fixture_files = {
+            "README.md", "manifest.json",
+            "phase01_importer/quad.obj",
+            "phase01_importer/basic.mtl",
+            "phase01_importer/skinned_triangle.gltf",
+            "phase01_importer/obj_quad.expected.json",
+            "phase01_importer/gltf_skin.expected.json",
+            "phase02_physics_mesh/single_tet.msh",
+            "phase02_physics_mesh/two_tet_shared_face.msh",
+            "phase02_physics_mesh/center_star.msh",
+            "phase02_physics_mesh/single_tet.expected.json",
+            "phase02_physics_mesh/two_tet.expected.json",
+            "phase02_physics_mesh/center_star_skin_weights.expected.json",
+            "phase03_render_binding/tet_binding.input.json",
+            "phase03_render_binding/tet_binding.expected.json",
+            "phase03_render_binding/tet_binding.invalid.json",
+            "phase03_render_binding/tet_binding.invalid.expected.json",
+            "phase04_test_environment/fixed_step.input.json",
+            "phase04_test_environment/fixed_step.expected.json",
+            "phase04_test_environment/scenario.input.json",
+            "phase04_test_environment/scenario.expected.json",
+            "phase04_test_environment/run_result.input.json",
+            "phase04_test_environment/run_result.expected.json",
+            "phase05_cloth/cloth_patch.input.json",
+            "phase05_cloth/cloth_patch.expected.json",
+            "phase06_soft_body/tet_deformation.input.json",
+            "phase06_soft_body/tet_deformation.expected.json",
+            "phase07_collision/vt_contact.input.json",
+            "phase07_collision/vt_contact.expected.json",
+            "phase07_collision/ee_contact.input.json",
+            "phase07_collision/ee_contact.expected.json",
+            "phase07_collision/broadphase.input.json",
+            "phase07_collision/broadphase.expected.json",
+            "phase07_collision/overflow.input.json",
+            "phase07_collision/overflow.expected.json",
+            "phase08_ccd/point_triangle.input.json",
+            "phase08_ccd/point_triangle.expected.json",
+            "phase08_ccd/initial_repair.input.json",
+            "phase08_ccd/initial_repair.expected.json",
+            "phase09_animation/target_motion.input.json",
+            "phase09_animation/target_motion.expected.json",
+            "phase10_paint/paint.input.json",
+            "phase10_paint/paint.expected.json",
+            "phase11_performance/scale_profiles.input.json",
+            "phase11_performance/scale_profiles.expected.json"
+        };
+
+        for (const char* relative_path : fixture_files)
+        {
+            const std::filesystem::path path = test_support::fixture_path(relative_path);
+            require(std::filesystem::file_size(path) > 0,
+                std::string("Golden fixture file is empty: ") + relative_path);
+        }
+    }
     void test_model_validation_rejects_bad_indices()
     {
         model invalid_model;
@@ -262,10 +391,13 @@ int main()
 {
     try
     {
-        test_obj_negative_indices_and_polygon();
-        test_obj_requires_explicit_unit_scale();
-        test_gltf_skin_and_animation();
-        test_model_validation_rejects_bad_indices();
+        run_test_case("P01_OBJ_TEMP_EDGE_CASES", test_obj_negative_indices_and_polygon);
+        run_test_case("P01_OBJ_UNIT_ERROR", test_obj_requires_explicit_unit_scale);
+        run_test_case("P01_GLTF_TEMP_SKIN_ANIMATION", test_gltf_skin_and_animation);
+        run_test_case("P01_OBJ_GOLDEN", test_persistent_obj_golden_fixture);
+        run_test_case("P01_GLTF_GOLDEN", test_persistent_gltf_golden_fixture);
+        run_test_case("FIXTURE_CATALOG", test_fixture_catalog_files_exist);
+        run_test_case("P01_MODEL_VALIDATION", test_model_validation_rejects_bad_indices);
         require(run_physics_mesh_tests() == 0, "Physics Mesh tests failed.");
     }
     catch (const std::exception& exception)

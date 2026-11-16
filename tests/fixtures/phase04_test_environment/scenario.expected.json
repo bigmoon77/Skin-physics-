@@ -1,0 +1,8 @@
+{
+  "load_success": true,
+  "semantic_round_trip_equal": true,
+  "unknown_extension_preserved": true,
+  "applied_defaults": [],
+  "unknown_required_schema_version_rejected": true,
+  "nan_parameter_rejected": true
+}

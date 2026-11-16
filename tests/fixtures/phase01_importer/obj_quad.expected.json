@@ -1,0 +1,46 @@
+{
+  "mesh_count": 1,
+  "vertex_count": 4,
+  "index_count": 6,
+  "triangle_count": 2,
+  "submesh_count": 1,
+  "material_count": 1,
+  "positions_meters": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ]
+  ],
+  "mtl": {
+    "base_color_factor": [
+      0.2,
+      0.4,
+      0.8,
+      1
+    ],
+    "roughness_factor": 0.7,
+    "metallic_factor": 0.1
+  },
+  "all_vertices_have_generated_normal": true,
+  "all_vertices_have_generated_tangent": true,
+  "tolerances": {
+    "position_absolute": 0.000001,
+    "material_absolute": 0.000001
+  }
+}

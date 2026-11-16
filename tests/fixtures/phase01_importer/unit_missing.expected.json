@@ -1,0 +1,5 @@
+{
+  "success": false,
+  "diagnostic_code": "invalid_unit_scale",
+  "reason": "OBJ input does not include unit metadata and no explicit meter scale was provided"
+}

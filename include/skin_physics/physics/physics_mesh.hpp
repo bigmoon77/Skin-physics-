@@ -25,12 +25,6 @@ namespace skin_physics::physics
         uint32_t source_tetrahedron = asset::invalid_index;
     };
 
-    struct physics_skin_weight
-    {
-        std::array<uint16_t, asset::max_skin_influences> joints = {};
-        std::array<float, asset::max_skin_influences> weights = {};
-    };
-
     struct raw_tet_mesh
     {
         std::vector<asset::vec3> positions;
@@ -49,10 +43,6 @@ namespace skin_physics::physics
 
         std::vector<float> mass;
         std::vector<float> inverse_mass;
-
-        // Optional skinning data aligned with rest_positions.
-        bool has_skin_weights = false;
-        std::vector<physics_skin_weight> skin_weights;
     };
 
     enum class physics_mesh_error : uint8_t

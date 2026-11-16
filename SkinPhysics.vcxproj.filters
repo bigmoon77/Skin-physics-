@@ -48,12 +48,6 @@
     <ClCompile Include="src\physics\ftetwild_runner.cpp">
       <Filter>Source Files\Physics</Filter>
     </ClCompile>
-    <ClCompile Include="src\physics\skin_weights.cpp">
-      <Filter>Source Files\Physics</Filter>
-    </ClCompile>
-    <ClCompile Include="src\physics\asset_cache.cpp">
-      <Filter>Source Files\Physics</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\skin_physics\asset\types.hpp">
@@ -75,12 +69,6 @@
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
     <ClInclude Include="include\skin_physics\physics\ftetwild_runner.hpp">
-      <Filter>Header Files\Physics</Filter>
-    </ClInclude>
-    <ClInclude Include="include\skin_physics\physics\skin_weights.hpp">
-      <Filter>Header Files\Physics</Filter>
-    </ClInclude>
-    <ClInclude Include="include\skin_physics\physics\asset_cache.hpp">
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
     <ClInclude Include="third_party\cgltf\cgltf.h">

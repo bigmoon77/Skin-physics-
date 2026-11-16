@@ -1,0 +1,71 @@
+{
+  "cell_size": 1,
+  "mesh_pairs": [
+    {
+      "a": 0,
+      "b": 1,
+      "enabled": true
+    },
+    {
+      "a": 0,
+      "b": 2,
+      "enabled": false
+    },
+    {
+      "a": 1,
+      "b": 2,
+      "enabled": false
+    }
+  ],
+  "primitives": [
+    {
+      "mesh": 0,
+      "type": "triangle",
+      "bounds_min": [
+        0,
+        0,
+        0
+      ],
+      "bounds_max": [
+        1,
+        1,
+        0
+      ]
+    },
+    {
+      "mesh": 1,
+      "type": "vertex",
+      "bounds_min": [
+        0.5,
+        0.5,
+        -0.1
+      ],
+      "bounds_max": [
+        0.5,
+        0.5,
+        0.1
+      ]
+    },
+    {
+      "mesh": 2,
+      "type": "vertex",
+      "bounds_min": [
+        0.5,
+        0.5,
+        0
+      ],
+      "bounds_max": [
+        0.5,
+        0.5,
+        0
+      ]
+    }
+  ],
+  "reference_candidates": [
+    [
+      0,
+      1
+    ]
+  ],
+  "self_collision_enabled": true
+}

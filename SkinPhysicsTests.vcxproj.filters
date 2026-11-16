@@ -15,5 +15,8 @@
     <ClCompile Include="tests\physics_mesh_tests.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
+    <ClInclude Include="tests\test_support.hpp">
+      <Filter>Tests</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

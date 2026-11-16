@@ -1,0 +1,65 @@
+{
+  "mesh_count": 1,
+  "vertex_count": 3,
+  "index_count": 3,
+  "indices": [
+    0,
+    1,
+    2
+  ],
+  "scene_roots": [
+    0
+  ],
+  "node_names": [
+    "Body",
+    "RootJoint"
+  ],
+  "skin_joint_nodes": [
+    1
+  ],
+  "skin_inverse_bind_matrix_count": 1,
+  "animation": {
+    "name": "Raise",
+    "duration": 1,
+    "track_count": 1,
+    "node_index": 1,
+    "path": "translation",
+    "interpolation": "linear",
+    "keys": [
+      {
+        "time": 0,
+        "value": [
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "time": 1,
+        "value": [
+          0,
+          1,
+          0
+        ]
+      }
+    ]
+  },
+  "custom_vertex_group": {
+    "name": "_PIN_WEIGHT",
+    "weights": [
+      0,
+      0.5,
+      1
+    ]
+  },
+  "skin_influences": {
+    "joint_index": 0,
+    "weight": 1,
+    "all_vertices_normalized": true
+  },
+  "tolerances": {
+    "position_absolute": 0.000001,
+    "time_absolute": 0.000001,
+    "weight_absolute": 0.000001
+  }
+}

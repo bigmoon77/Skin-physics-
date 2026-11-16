@@ -2,6 +2,7 @@
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 #include "skin_physics/physics/skin_weights.hpp"
 #include "skin_physics/physics/asset_cache.hpp"
+#include "test_support.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -126,6 +127,63 @@ namespace
             "Shape function gradients should sum to zero.");
     }
 
+
+    void test_persistent_physics_mesh_golden_fixtures()
+    {
+        const std::filesystem::path single_path =
+            test_support::fixture_path("phase02_physics_mesh/single_tet.msh");
+        const msh_read_result single_read = read_gmsh_2_2_ascii(single_path);
+        require(single_read.success, "Persistent single-tetrahedron MSH fixture should load.");
+        require(single_read.mesh.positions.size() == 4 && single_read.mesh.tetrahedra.size() == 1,
+            "Single-tetrahedron fixture topology should match its golden.");
+
+        physics_mesh_build_settings settings;
+        settings.density = 6.0f;
+        const physics_mesh_build_result single = build_physics_mesh(single_read.mesh, settings);
+        require(single.success, "Single-tetrahedron golden should build.");
+        require(single.value.tetrahedra.size() == 1 && single.value.boundary_triangles.size() == 4,
+            "Single-tetrahedron golden should have one element and four boundary faces.");
+        require(std::abs(single.value.tetrahedra[0].rest_volume - (1.0f / 6.0f)) < 1.0e-6f,
+            "Single-tetrahedron golden rest volume should be 1/6.");
+        require(std::abs(single.value.mass[0] - 0.25f) < 1.0e-6f &&
+                std::abs(single.value.inverse_mass[0] - 4.0f) < 1.0e-5f,
+            "Single-tetrahedron golden mass and inverse mass should match their references.");
+        require(std::filesystem::exists(test_support::fixture_path(
+            "phase02_physics_mesh/single_tet.expected.json")),
+            "Single-tetrahedron golden expected-result file must exist.");
+
+        const msh_read_result two_read = read_gmsh_2_2_ascii(
+            test_support::fixture_path("phase02_physics_mesh/two_tet_shared_face.msh"));
+        require(two_read.success, "Persistent two-tetrahedron MSH fixture should load.");
+        require(two_read.mesh.positions.size() == 5 && two_read.mesh.tetrahedra.size() == 2,
+            "Two-tetrahedron fixture topology should match its golden.");
+
+        const physics_mesh_build_result two = build_physics_mesh(two_read.mesh, settings);
+        require(two.success, "Two tetrahedra sharing one face should build.");
+        require(two.value.tetrahedra.size() == 2 && two.value.boundary_triangles.size() == 6,
+            "Shared internal face must be removed from the boundary.");
+        float two_tet_total_mass = 0.0f;
+        for (float mass : two.value.mass) two_tet_total_mass += mass;
+        require(std::abs(two_tet_total_mass - 2.0f) < 1.0e-5f,
+            "Two-tetrahedron golden mass must equal density multiplied by total rest volume.");
+        require(std::filesystem::exists(test_support::fixture_path(
+            "phase02_physics_mesh/two_tet.expected.json")),
+            "Two-tetrahedron golden expected-result file must exist.");
+
+        const msh_read_result center_read = read_gmsh_2_2_ascii(
+            test_support::fixture_path("phase02_physics_mesh/center_star.msh"));
+        require(center_read.success, "Persistent center-star MSH fixture should load.");
+        require(center_read.mesh.positions.size() == 5 && center_read.mesh.tetrahedra.size() == 4,
+            "Center-star fixture topology should match its golden.");
+        const physics_mesh_build_result center = build_physics_mesh(center_read.mesh);
+        require(center.success, "Center-star fixture should build successfully.");
+        require(center.value.boundary_triangles.size() == 4,
+            "Center-star fixture should retain only the four outer boundary triangles.");
+        require(std::filesystem::exists(test_support::fixture_path(
+            "phase02_physics_mesh/center_star_skin_weights.expected.json")),
+            "Center-star skin weight expected-result file must exist.");
+    }
+
     void test_negative_tetrahedron_orientation_is_repaired()
     {
         raw_tet_mesh input = make_single_tetrahedron();
@@ -230,8 +288,11 @@ namespace
         render_skin.joints = { 0, 1, 2, 3 };
         render_skin.inverse_bind_matrices.resize(4);
 
-        const physics_mesh_build_result built = build_physics_mesh(make_center_tetrahedral_mesh());
-        require(built.success, "Center tetrahedral mesh should build successfully.");
+        const msh_read_result center_star = read_gmsh_2_2_ascii(
+            test_support::fixture_path("phase02_physics_mesh/center_star.msh"));
+        require(center_star.success, "Persistent center-star fixture should load for skin transfer.");
+        const physics_mesh_build_result built = build_physics_mesh(center_star.mesh);
+        require(built.success, "Center tetrahedral golden fixture should build successfully.");
 
         physics_mesh physics_value = built.value;
         skin_weight_transfer_settings settings;
@@ -346,13 +407,23 @@ namespace
 int run_physics_mesh_tests()
 {
     test_msh_reader_maps_external_node_ids();
+    std::cout << "[PASS] P02_MSH_NODE_ID_MAPPING\n";
     test_physics_mesh_builder_creates_rest_data_and_adjacency();
+    std::cout << "[PASS] P02_TET_REST_DATA\n";
+    test_persistent_physics_mesh_golden_fixtures();
+    std::cout << "[PASS] P02_MESH_GOLDEN_FIXTURES\n";
     test_negative_tetrahedron_orientation_is_repaired();
+    std::cout << "[PASS] P02_NEGATIVE_ORIENTATION\n";
     test_invalid_tetrahedron_index_is_rejected();
+    std::cout << "[PASS] P02_INVALID_INDEX\n";
     test_quality_threshold_is_enforced();
+    std::cout << "[PASS] P02_QUALITY_REJECTION\n";
     test_non_manifold_tetrahedron_faces_are_rejected();
+    std::cout << "[PASS] P02_NON_MANIFOLD_REJECTION\n";
     test_skin_weight_harmonic_extension();
+    std::cout << "[PASS] P02_SKIN_WEIGHT_HARMONIC\n";
     test_physics_asset_cache_round_trip_and_invalidation();
+    std::cout << "[PASS] P02_ASSET_CACHE\n";
 
     std::cout << "PhysicsMeshTests passed.\n";
     return 0;

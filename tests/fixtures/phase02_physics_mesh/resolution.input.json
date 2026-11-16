@@ -1,0 +1,21 @@
+{
+  "source_surface": "phase01_importer/quad.obj",
+  "settings": {
+    "target_tet_edge_length": 0.25,
+    "target_tet_count": null,
+    "max_tet_count": 256,
+    "density": 1000
+  },
+  "alternate_settings": {
+    "target_tet_edge_length": null,
+    "target_tet_count": 64,
+    "max_tet_count": 256,
+    "density": 1000
+  },
+  "over_capacity_settings": {
+    "target_tet_edge_length": 0.01,
+    "target_tet_count": 1000,
+    "max_tet_count": 32,
+    "density": 1000
+  }
+}

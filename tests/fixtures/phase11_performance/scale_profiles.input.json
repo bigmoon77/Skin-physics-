@@ -1,0 +1,24 @@
+{
+  "soft_body_tetrahedra": [
+    2000,
+    8000,
+    32000
+  ],
+  "cloth_triangles": [
+    2000,
+    8000,
+    32000
+  ],
+  "contact_density_cases": [
+    "sparse",
+    "moderate",
+    "dense"
+  ],
+  "substeps": [
+    1,
+    2,
+    4
+  ],
+  "repeated_runs": 5,
+  "device_target": "GTX 1660 SUPER 6GB"
+}

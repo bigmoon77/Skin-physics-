@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "asset_id": "golden_tetra_character",
+  "asset_cache_version": 1,
+  "asset_generation_settings": {
+    "target_tet_count": 1,
+    "max_tet_count": 8
+  },
+  "solver_settings": {
+    "fixed_delta_time": 0.02,
+    "time_scale": 1,
+    "substeps": 1,
+    "iterations": 4
+  },
+  "initial_state": {
+    "positions": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ]
+  },
+  "animation": {
+    "clip": "idle",
+    "time": 0,
+    "playback_speed": 1,
+    "discontinuity_policy": "preserve_velocity"
+  },
+  "gravity": [
+    0,
+    -9.81,
+    0
+  ],
+  "forces": [
+    {
+      "kind": "impulse",
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "direction": [
+        0,
+        1,
+        0
+      ],
+      "strength": 1,
+      "radius": 0.1,
+      "duration": 0,
+      "start_step": 2
+    }
+  ],
+  "collisions": {
+    "thickness": 0.01,
+    "friction": 0.5,
+    "restitution": 0,
+    "excluded_mesh_pairs": []
+  },
+  "materials": {
+    "density": 1000,
+    "mu": 100000,
+    "K": 250000,
+    "shape_recovery_scale": 1,
+    "volume_retention_scale": 1
+  },
+  "vertex_weights": [],
+  "test_sequence": {
+    "start_step": 0,
+    "end_step": 10
+  },
+  "random_seed": 12345,
+  "extensions": {
+    "test_note": "unknown optional fields must survive a load-save cycle"
+  }
+}

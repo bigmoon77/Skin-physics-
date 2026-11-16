@@ -1,0 +1,12 @@
+{
+  "required_behavior": [
+    "one resolution selector active",
+    "actual generated vertex/tet count recorded",
+    "actual edge length distribution recorded",
+    "max_tet_count exceeded must fail",
+    "generator settings/version included in cache identity"
+  ],
+  "cache_identity_change_required": true,
+  "absolute_tetrahedron_count": null,
+  "note": "Exact counts are fTetWild-version dependent; verify configured constraints and record actual generated counts instead of hardcoding a version-specific mesh."
+}

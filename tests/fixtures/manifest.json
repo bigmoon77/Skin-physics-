@@ -1,0 +1,431 @@
+{
+  "schema_version": 1,
+  "golden_policy": {
+    "inputs_immutable": true,
+    "expected_outputs_reviewed": true,
+    "exact_fields": [
+      "topology",
+      "indices",
+      "IDs",
+      "counts",
+      "state_transitions",
+      "schema_version"
+    ],
+    "numeric_tolerance_from_expected_file": true,
+    "automatic_golden_update": false
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "id": "importer",
+      "status": "automated",
+      "acceptance_tests": [
+        "importer OBJ/glTF",
+        "unit and coordinate conversion",
+        "skinning and animation import",
+        "topology validation"
+      ],
+      "cases": [
+        {
+          "id": "P01_OBJ_QUAD",
+          "input": "phase01_importer/quad.obj",
+          "expected": "phase01_importer/obj_quad.expected.json",
+          "checks": [
+            "negative OBJ indices",
+            "quad triangulates to 2 triangles",
+            "explicit centimeter-to-meter scale",
+            "MTL PBR factors",
+            "generated normals and tangents"
+          ]
+        },
+        {
+          "id": "P01_GLTF_SKIN_ANIMATION",
+          "input": "phase01_importer/skinned_triangle.gltf",
+          "expected": "phase01_importer/gltf_skin.expected.json",
+          "checks": [
+            "3 positions and indices",
+            "skin joints and normalized weights",
+            "inverse bind matrix",
+            "custom vertex group",
+            "LINEAR animation keys"
+          ]
+        },
+        {
+          "id": "P01_OBJ_UNIT_ERROR",
+          "input": "phase01_importer/unit_missing.obj",
+          "expected": "phase01_importer/unit_missing.expected.json",
+          "checks": [
+            "missing explicit OBJ unit scale rejected"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "id": "physics_mesh_skin_weights_cache",
+      "status": "partial",
+      "acceptance_tests": [
+        "T13",
+        "T26"
+      ],
+      "cases": [
+        {
+          "id": "P02_SINGLE_TET",
+          "input": "phase02_physics_mesh/single_tet.msh",
+          "expected": "phase02_physics_mesh/single_tet.expected.json",
+          "checks": [
+            "signed orientation repair",
+            "rest volume and gradients",
+            "quality and dihedral",
+            "boundary count",
+            "mass conservation",
+            "CSR"
+          ]
+        },
+        {
+          "id": "P02_TWO_TET",
+          "input": "phase02_physics_mesh/two_tet_shared_face.msh",
+          "expected": "phase02_physics_mesh/two_tet.expected.json",
+          "checks": [
+            "shared face removed from boundary",
+            "two element mass conservation",
+            "boundary topology"
+          ]
+        },
+        {
+          "id": "P02_CENTER_STAR",
+          "input": "phase02_physics_mesh/center_star.msh",
+          "expected": "phase02_physics_mesh/center_star_skin_weights.expected.json",
+          "checks": [
+            "closest-surface barycentric transfer",
+            "positive graph Laplacian",
+            "PCG convergence and analytical interior weights"
+          ]
+        },
+        {
+          "id": "P02_CACHE",
+          "input": "single_tet PhysicsMesh",
+          "expected": "round-trip identity/checksum assertions",
+          "checks": [
+            "save/load equality",
+            "stale identity needs rebuild",
+            "checksum corruption needs rebuild",
+            "invalid payload rejected"
+          ]
+        },
+        {
+          "id": "P02_RESOLUTION_SETTINGS",
+          "input": "phase02_physics_mesh/resolution.input.json",
+          "expected": "phase02_physics_mesh/resolution.expected.json",
+          "checks": [
+            "target tetrahedron edge length/count recorded",
+            "max_tet_count blocks overflow",
+            "generator options participate in cache identity"
+          ]
+        }
+      ],
+      "fixture_ready_acceptance_tests": [
+        "T25"
+      ]
+    },
+    {
+      "phase": 3,
+      "id": "render_binding_feedback",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T12",
+        "T27"
+      ],
+      "cases": [
+        {
+          "id": "P03_TET_INTERIOR",
+          "input": "phase03_render_binding/tet_binding.input.json",
+          "expected": "phase03_render_binding/tet_binding.expected.json",
+          "checks": [
+            "four-vertex barycentric binding",
+            "rest pose error",
+            "GPU feedback restores unchanged attributes"
+          ]
+        },
+        {
+          "id": "P03_BOUNDARY_OFFSET",
+          "input": "phase03_render_binding/tet_binding.input.json",
+          "expected": "phase03_render_binding/tet_binding.expected.json",
+          "checks": [
+            "closest boundary triangle",
+            "Rest Pose offset mapped through local basis"
+          ]
+        },
+        {
+          "id": "P03_INVALID_BINDING",
+          "input": "phase03_render_binding/tet_binding.invalid.json",
+          "expected": "phase03_render_binding/tet_binding.invalid.expected.json",
+          "checks": [
+            "degenerate/too-distant binding is diagnosed"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "id": "test_environment_json_gpu_timing",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T24",
+        "T28"
+      ],
+      "cases": [
+        {
+          "id": "P04_FIXED_STEP",
+          "input": "phase04_test_environment/fixed_step.input.json",
+          "expected": "phase04_test_environment/fixed_step.expected.json",
+          "checks": [
+            "fixed dt accumulator",
+            "Pause/Step/Reset/Time Scale",
+            "no dropped simulation time"
+          ]
+        },
+        {
+          "id": "P04_JSON_ROUNDTRIP",
+          "input": "phase04_test_environment/scenario.input.json",
+          "expected": "phase04_test_environment/scenario.expected.json",
+          "checks": [
+            "schema validation",
+            "save-load-save semantic equality",
+            "unknown extension preservation"
+          ]
+        },
+        {
+          "id": "P04_RUN_RESULT",
+          "input": "phase04_test_environment/run_result.input.json",
+          "expected": "phase04_test_environment/run_result.expected.json",
+          "checks": [
+            "scenario hash and IDs",
+            "pass metrics and explicit unavailable GPU counters"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "id": "cloth_solver",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T05",
+        "T06",
+        "T18"
+      ],
+      "cases": [
+        {
+          "id": "P05_STRETCH",
+          "input": "phase05_cloth/cloth_patch.input.json",
+          "expected": "phase05_cloth/cloth_patch.expected.json",
+          "checks": [
+            "edge rest lengths",
+            "compliance monotonicity",
+            "colored and Jacobi paths"
+          ]
+        },
+        {
+          "id": "P05_SHEAR_BEND",
+          "input": "phase05_cloth/cloth_patch.input.json",
+          "expected": "phase05_cloth/cloth_patch.expected.json",
+          "checks": [
+            "shear response",
+            "signed dihedral and analytical gradient",
+            "finite-difference relative error <= 1e-3"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "id": "soft_body_fem",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T01",
+        "T02",
+        "T03",
+        "T04",
+        "T19"
+      ],
+      "cases": [
+        {
+          "id": "P06_RIGID_ROTATION",
+          "input": "phase06_soft_body/tet_deformation.input.json",
+          "expected": "phase06_soft_body/tet_deformation.expected.json",
+          "checks": [
+            "F=R",
+            "J=1",
+            "zero corotational strain and stress within tolerance"
+          ]
+        },
+        {
+          "id": "P06_COMPRESSION",
+          "input": "phase06_soft_body/tet_deformation.input.json",
+          "expected": "phase06_soft_body/tet_deformation.expected.json",
+          "checks": [
+            "known J and volume",
+            "shape/volume scale independent response"
+          ]
+        },
+        {
+          "id": "P06_INVERSION",
+          "input": "phase06_soft_body/tet_deformation.input.json",
+          "expected": "phase06_soft_body/tet_deformation.expected.json",
+          "checks": [
+            "inversion diagnostic and finite penalty path"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 7,
+      "id": "collision_broadphase",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T07",
+        "T08",
+        "T10",
+        "T11",
+        "T17",
+        "T22"
+      ],
+      "cases": [
+        {
+          "id": "P07_VT_CONTACT",
+          "input": "phase07_collision/vt_contact.input.json",
+          "expected": "phase07_collision/vt_contact.expected.json",
+          "checks": [
+            "VT contact geometry and bidirectional correction"
+          ]
+        },
+        {
+          "id": "P07_EE_CONTACT",
+          "input": "phase07_collision/ee_contact.input.json",
+          "expected": "phase07_collision/ee_contact.expected.json",
+          "checks": [
+            "closest segment parameters and EE correction"
+          ]
+        },
+        {
+          "id": "P07_BROADPHASE",
+          "input": "phase07_collision/broadphase.input.json",
+          "expected": "phase07_collision/broadphase.expected.json",
+          "checks": [
+            "candidate set contains exhaustive reference set",
+            "pair filters and self collision"
+          ]
+        },
+        {
+          "id": "P07_OVERFLOW",
+          "input": "phase07_collision/overflow.input.json",
+          "expected": "phase07_collision/overflow.expected.json",
+          "checks": [
+            "overflow blocks step; no candidates silently dropped"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 8,
+      "id": "ccd_initial_penetration",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T09",
+        "T16",
+        "T23"
+      ],
+      "cases": [
+        {
+          "id": "P08_CCD_POINT_TRIANGLE",
+          "input": "phase08_ccd/point_triangle.input.json",
+          "expected": "phase08_ccd/point_triangle.expected.json",
+          "checks": [
+            "analytical TOI",
+            "impact impulse once",
+            "remaining interval reintegration"
+          ]
+        },
+        {
+          "id": "P08_INITIAL_REPAIR_LIMIT",
+          "input": "phase08_ccd/initial_repair.input.json",
+          "expected": "phase08_ccd/initial_repair.expected.json",
+          "checks": [
+            "per-vertex cumulative repair budget",
+            "unrepairable initial state not committed"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 9,
+      "id": "animation_tracking",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T20",
+        "T21"
+      ],
+      "cases": [
+        {
+          "id": "P09_TRANSLATION",
+          "input": "phase09_animation/target_motion.input.json",
+          "expected": "phase09_animation/target_motion.expected.json",
+          "checks": [
+            "target interpolation and velocity"
+          ]
+        },
+        {
+          "id": "P09_ROTATION_TELEPORT",
+          "input": "phase09_animation/target_motion.input.json",
+          "expected": "phase09_animation/target_motion.expected.json",
+          "checks": [
+            "rotation target",
+            "clip blend and teleport velocity policy"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 10,
+      "id": "physics_attribute_paint",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "paint save/load and remap"
+      ],
+      "cases": [
+        {
+          "id": "P10_PAINT_OPERATIONS",
+          "input": "phase10_paint/paint.input.json",
+          "expected": "phase10_paint/paint.expected.json",
+          "checks": [
+            "Paint/Smooth/Average/Erase",
+            "range clamp",
+            "deterministic remapping after regeneration"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 11,
+      "id": "performance_quality",
+      "status": "fixture_ready",
+      "acceptance_tests": [
+        "T14",
+        "T15"
+      ],
+      "cases": [
+        {
+          "id": "P11_SCALE_SERIES",
+          "input": "phase11_performance/scale_profiles.input.json",
+          "expected": "phase11_performance/scale_profiles.expected.json",
+          "checks": [
+            "2k/8k/32k tet and cloth profiles",
+            "candidate/contact scaling",
+            "pass timing and memory reporting; no fixed FPS golden"
+          ]
+        }
+      ]
+    }
+  ]
+}
