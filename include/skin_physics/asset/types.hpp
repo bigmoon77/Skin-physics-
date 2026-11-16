@@ -95,17 +95,10 @@ namespace skin_physics::asset
         uint32_t material_index = invalid_index;
     };
 
-    struct vertex_group
-    {
-        std::string name;
-        std::vector<float> weights;
-    };
-
     struct mesh
     {
         std::string name;
         std::vector<vertex> vertices;
-        std::vector<vertex_group> vertex_groups;
         std::vector<uint32_t> indices;
         std::vector<submesh> submeshes;
         physics_mode mode = physics_mode::none;

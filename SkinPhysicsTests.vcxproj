@@ -78,6 +78,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="tests\asset_tests.cpp" />
+    <ClCompile Include="tests\physics_mesh_tests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="SkinPhysics.vcxproj">

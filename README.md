@@ -2,7 +2,7 @@
 
 Skin Physics is a GPU-oriented C++ library for real-time Soft Body and Cloth simulation on Direct3D 11.
 
-The repository is being implemented in stages. The current implementation milestone is **Phase 1: common asset model and importers**.
+The repository is being implemented in stages. Phase 1 (common asset model and importers) is implemented. Phase 2 (offline tetrahedralization and Physics Mesh building) is in progress.
 
 ## Current implementation
 
@@ -11,6 +11,8 @@ The repository is being implemented in stages. The current implementation milest
 - OBJ importer with polygon triangulation, negative indices, smoothing groups and basic MTL material factors.
 - glTF 2.0 / GLB importer with triangle, triangle-strip and triangle-fan primitives, PBR material factors, node hierarchy, up to eight skin influences, inverse bind matrices, and STEP / LINEAR / CUBICSPLINE TRS animation tracks.
 - Common model validation and diagnostics.
+- Physics Mesh builder: tetrahedron orientation correction, rest matrices / shape gradients, volume and element quality, boundary extraction, vertex-to-tet CSR, and lumped mass.
+- ASCII Gmsh MSH 2.2 reader and optional external fTetWild process adapter (not linked into runtime).
 - Importer-only dependency: cgltf 1.15 (MIT), pinned in third_party/cgltf.
 
 OBJ has no standard unit metadata. Callers must set has_obj_unit_scale = true and provide obj_unit_scale in meters per OBJ unit.
@@ -46,6 +48,12 @@ if (!result.success)
 \`\`\`
 
 For glTF and GLB, the importer reads the glTF meter-based coordinates and does not require an OBJ unit scale.
+
+## Offline tetrahedralization
+
+The optional fTetWild adapter launches an externally installed FloatTetwild executable on Windows. It writes a temporary OBJ, requests ASCII Gmsh MSH 2.2 output, then validates the raw tetrahedral volume mesh. The executable path is supplied through `ftetwild_settings::executable_path`; fTetWild is not bundled and is not a runtime dependency. See `third_party/OPTIONAL_TOOLS.md` for its pinned reference commit and MPL-2.0 license.
+
+The Physics Mesh builder rejects degenerate / non-manifold volume meshes, repairs negative tetrahedron orientation, computes rest shape gradients and lumped masses, and builds boundary faces and vertex-to-tetrahedron CSR adjacency.
 
 ## Importer limits in this milestone
 

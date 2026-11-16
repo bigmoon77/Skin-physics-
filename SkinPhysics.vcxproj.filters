@@ -7,11 +7,17 @@
     <Filter Include="Source Files\Asset">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E101}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\Physics">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E105}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Header Files">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E102}</UniqueIdentifier>
     </Filter>
     <Filter Include="Header Files\Asset">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E103}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Physics">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E106}</UniqueIdentifier>
     </Filter>
     <Filter Include="Third Party">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E104}</UniqueIdentifier>
@@ -33,6 +39,15 @@
     <ClCompile Include="src\asset\cgltf_impl.c">
       <Filter>Third Party</Filter>
     </ClCompile>
+    <ClCompile Include="src\physics\physics_mesh_builder.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="src\physics\msh_reader.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="src\physics\ftetwild_runner.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\skin_physics\asset\types.hpp">
@@ -43,6 +58,18 @@
     </ClInclude>
     <ClInclude Include="src\asset\importer_internal.hpp">
       <Filter>Header Files\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\physics_mesh.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\physics_mesh_builder.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\msh_reader.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\ftetwild_runner.hpp">
+      <Filter>Header Files\Physics</Filter>
     </ClInclude>
     <ClInclude Include="third_party\cgltf\cgltf.h">
       <Filter>Third Party</Filter>

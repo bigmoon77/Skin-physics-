@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <string>
 
+int run_physics_mesh_tests();
+
 namespace
 {
     using namespace skin_physics::asset;
@@ -264,6 +266,7 @@ int main()
         test_obj_requires_explicit_unit_scale();
         test_gltf_skin_and_animation();
         test_model_validation_rejects_bad_indices();
+        require(run_physics_mesh_tests() == 0, "Physics Mesh tests failed.");
     }
     catch (const std::exception& exception)
     {

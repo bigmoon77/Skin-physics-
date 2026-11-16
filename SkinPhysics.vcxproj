@@ -88,11 +88,18 @@
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
+    <ClCompile Include="src\physics\physics_mesh_builder.cpp" />
+    <ClCompile Include="src\physics\msh_reader.cpp" />
+    <ClCompile Include="src\physics\ftetwild_runner.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\skin_physics\asset\types.hpp" />
     <ClInclude Include="include\skin_physics\asset\importer.hpp" />
     <ClInclude Include="src\asset\importer_internal.hpp" />
+    <ClInclude Include="include\skin_physics\physics\physics_mesh.hpp" />
+    <ClInclude Include="include\skin_physics\physics\physics_mesh_builder.hpp" />
+    <ClInclude Include="include\skin_physics\physics\msh_reader.hpp" />
+    <ClInclude Include="include\skin_physics\physics\ftetwild_runner.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
