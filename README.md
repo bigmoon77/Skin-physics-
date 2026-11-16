@@ -23,7 +23,7 @@ The solution contains:
 - SkinPhysics: static library.
 - SkinPhysicsTests: console test executable.
 
-The CI workflow builds the Visual Studio solution and runs the test executable on Windows.
+The CI workflow builds the Visual Studio solution and runs the test executable on Windows. It runs on pushes to the implementation branch and pull requests targeting main.
 
 ## Basic usage
 
