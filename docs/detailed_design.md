@@ -108,6 +108,7 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 | rest_position | StructuredBuffer<float4> | 初期化時 | Rest Pose |
 | animation_target | StructuredBuffer<float4> | 描画フレーム・サブステップ | Skinning目標 |
 | animation_velocity | StructuredBuffer<float4> | サブステップ | 目標速度 |
+| animation_lambda | RWStructuredBuffer<float4> | サブステップ反復 | Cloth追従制約の3軸λ |
 | tet_indices | StructuredBuffer<uint4> | 初期化時 | 四面体接続 |
 | tet_rest_data | StructuredBuffer<TetRestData> | 初期化時 | Bm、V0、材料ID |
 | vertex_tet_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Tet CSR |
@@ -192,7 +193,7 @@ Iは内部頂点、Bは境界頂点。jointごとに疎行列反復解法を行�
 
 ### 5.3 GPU Skinning
 
-CPUはSimulation Timeに対応するAnimation ClipのPoseを評価してBone行列をGPUへアップロードする。描画フレーム内に複数の物理Stepがある場合も、各Step時刻のPoseを評価または時間補間する。GPUはPhysics MeshのRest Positionとweightから各Stepの目標位置を計算する。前回Step目標位置との差分をそのStepの固定時間刻みで除してAnimation Velocityを得る。
+各JointのSkin Matrixはcurrent_global_matrix * inverse_bind_matrixとする。CPUはSimulation Timeに対応するAnimation ClipのPoseを評価してBone行列をGPUへアップロードする。描画フレーム内に複数の物理Stepがある場合も、各Step時刻のPoseを評価または時間補間する。GPUはPhysics MeshのRest Positionとweightから各Stepの目標位置を計算する。前回Step目標位置との差分をそのStepの固定時間刻みで除してAnimation Velocityを得る。
 
 ## 6. Soft Body Solver詳細
 
@@ -215,7 +216,7 @@ EとPoisson比nuで入力する場合は以下に変換する。
 
 ### 6.3 Corotational応力
 
-変形勾配Fの右極分解をF = R * Sとする。Rはdet(R)=+1を満たす回転、Sは対称ストレッチである。Corotational Linear Elasticityのひずみエネルギーと第一Piola応力は次を基準とする。
+変形勾配Fの右極分解をF = R * Sとする。Rはdet(R)=+1を満たす回転、Sは対称ストレッチである。Corotational Linear Elasticityのひずみエネルギーと第一Piola応力は次を基準とする。norm(A)^2はFrobenius norm squared、すなわちtrace(transpose(A)*A)とする。
 
     epsilon_corot = transpose(R) * F - I
     Psi = mu * norm(F - R)^2
@@ -298,7 +299,7 @@ tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1。
     delta_t_limit = cfl_factor * min_t(h_t / c_p_t)
     cfl_factor = 0.2  // 初期評価値。実測で検証する
 
-これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。Animation Tracking stiffnessも別途固有振動数の制約を加える。上限超過時は警告し、設定に応じてサブステップを増やす。最大サブステップ数を超えたら明示的にエラーとし、時間刻みを黙って無視しない。
+これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。上限超過時は警告し、設定に応じてサブステップを増やす。最大サブステップ数を超えたら明示的にエラーとし、時間刻みを黙って無視しない。
 
 ### 6.9 体積・せん断評価
 
@@ -389,7 +390,7 @@ Rest LengthはRest Poseから算出する。StretchはGraph Coloringを基本方
     dc = dot(dn1,n2) + dot(n1,dn2)
     dtheta = (c * ds - s * dc) / (s*s + c*c)
 
-各頂点座標を単位方向に摂動したときのdthetaを解析的に評価し、4頂点のgradientを構築する。共有辺長・両面積が閾値以下の場合は制約を無効化し診断する。BendはGather Jacobiで解く。
+各頂点座標を単位方向に摂動したときのdthetaを解析的に評価し、4頂点のgradientを構築する。実装時は有限差分近似勾配と比較し、相対誤差1e-3以下を目標に検証する。共有辺長・両面積が閾値以下の場合は制約を無効化し診断する。BendはGather Jacobiで解く。
 
 ### 7.5 Graph Coloring
 
@@ -446,7 +447,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     delta_lambda_applied = omega_contact * delta_lambda_projected
     lambda_next = lambda_old + delta_lambda_applied
 
-接触位置補正はdelta_lambda_appliedを使う。contact Complianceは初期版で0を既定値とするが、完全剛体接触が振動する場合に限り小さいComplianceを比較する。
+接触位置補正はdelta_lambda_appliedを使う。0 < omega_contact <= 1とし、初期比較値は0.5 / 0.75 / 1.0。contact Complianceは初期版で0を既定値とするが、完全剛体接触が振動する場合に限り小さいComplianceを比較する。
 
 ### 8.3 Vertex-Triangle
 
@@ -503,7 +504,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
     cell_width(level) = base_cell_width * 2^level
 
-各Primitiveは、接触厚みを膨張させたAABBが設定上限max_cells_per_primitive以下のセル数になる最も細かいlevelへ登録する。最大levelでも上限を超える場合はBroadphase Errorとする。全Primitive総当たりへフォールバックしない。
+base_cell_widthは代表PrimitiveのAABB寸法の中央値と最大接触半径の2倍の大きい方を初期候補とし、候補生成数・登録セル数の計測で調整する。各Primitiveは、接触厚みを膨張させたAABBが設定上限max_cells_per_primitive以下のセル数になる最も細かいlevelへ登録する。最大levelでも上限を超える場合はBroadphase Errorとする。全Primitive総当たりへフォールバックしない。
 
 各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。
 
@@ -541,6 +542,10 @@ Simulation Managerは対象インスタンスをBlockedByCapacity状態へ移し
 
 VTとEEの最近接距離を正確に計算し、接触厚み以下だけを接触として生成する。候補段階の接触と確定接触数を別々に計測する。
 
+### 10.1 初期貫通修正
+
+初期化時に一度Broadphase / Narrowphaseを実行し、初期接触を抽出する。位置XPBD接触を設定上限回数まで解き、頂点ごとの総修正量と残存貫通を計測する。1反復あたりの最大変位は近傍最小辺長の一定割合でClampする。初期値は0.1とし、過大変位でメッシュを一度に押し出さない。最大反復後も許容貫通を超える場合は警告またはAsset Load Errorとし、修正結果を自動確定しない。
+
 自己衝突除外:
 
 - 同一三角形・同一辺
@@ -570,13 +575,13 @@ etaの初期値は0.5。これは候補の選別値であり、CCD自体の正�
 
 VT:
 
-    v_bound = length(v_vertex)
-             + max(length(v_tri0), length(v_tri1), length(v_tri2))
+    v_bound = length(path_velocity_vertex)
+             + max(length(path_velocity_tri0), length(path_velocity_tri1), length(path_velocity_tri2))
 
 EE:
 
-    v_bound = max(length(v_edgeA0), length(v_edgeA1))
-             + max(length(v_edgeB0), length(v_edgeB1))
+    v_bound = max(length(path_velocity_edgeA0), length(path_velocity_edgeA1))
+             + max(length(path_velocity_edgeB0), length(path_velocity_edgeB1))
 
 保守的な進行量:
 
@@ -588,7 +593,7 @@ d(t)<=r+toi_toleranceでTOIを確定する。t>1なら当該サブステップ�
 
 ### 11.4 TOI処理
 
-同一サブステップ内の最小TOIをGPU Reductionで求める。TOI時刻は秒単位のtauで扱い、0 <= tau <= delta_t_substepとする。衝突判定用の軌道はサブステップ開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/delta_t_substep、x(tau)=x_start+tau*path_velocityと定義する。Conservative Advancementの進行量は次とする。
+同一サブステップ内の最小TOIをGPU Reductionで求める。TOI時刻は秒単位のtauで扱い、0 <= tau <= delta_t_substepとする。衝突判定用の軌道はサブステップ開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/delta_t_substep、x(tau)=x_start+tau*path_velocityと定義する。v_boundはこのpath_velocityの速度上限から求める。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
