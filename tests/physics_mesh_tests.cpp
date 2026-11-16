@@ -250,7 +250,7 @@ namespace
 
         const physics_skin_weight& center = physics_value.skin_weights[4];
         float center_sum = 0.0f;
-        for (std::size_t influence = 0; influence < max_skin_influences; ++influence)
+        for (std::size_t influence = 0; influence < skin_physics::asset::max_skin_influences; ++influence)
         {
             center_sum += center.weights[influence];
         }
