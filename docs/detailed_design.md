@@ -322,7 +322,7 @@ Clip Blendはブレンド比率を連続更新し、通常はvelocity resetを�
 
 材料の縦波速度を
 
-    c_p = sqrt((K + 4 * mu / 3) / density)
+    c_p = sqrt((K_effective + 4 * mu_effective / 3) / density)
 
 各四面体の最小高度を
 
@@ -687,7 +687,7 @@ Render Mesh三角形ごとに変形後の面法線を求め、Render Vertex単�
 
 Render MeshからPhysics Meshへ属性を転送する場合、Render Vertex Bindingを逆方向に単純平均しない。Soft Body境界Physics VertexはRender Mesh表面三角形から重心座標で補間する。Soft Body内部頂点は境界Physics Vertexのチャンネル値をDirichlet境界条件とするグラフLaplacian調和拡張で伝播する。Cloth頂点は直接対応または表面三角形補間を使う。転送誤差、残差、重みの分散を記録し、曖昧な転送は未確定とする。Physics Mesh再生成時は元Render Meshの安定IDを優先し、トポロジー変更で対応が一意に決まらない場合は自動適用せず警告する。
 
-Paint / Smooth / Average / Eraseを提供する。Paintはtarget_valueへstrengthに応じて補間する。各操作はブラシ半径、strength、target_value、channel、対象Physics Meshを入力とする。Heatmapでチャンネル値を可視化する。初期版のチャンネルは次の通り。
+Paint / Smooth / Average / Eraseを提供する。Paintはtarget_valueへstrengthに応じて補間する。各操作はブラシ半径、strength、target_value、channel、対象Physics Meshを入力とする。Heatmapでチャンネル値を可視化する。各頂点チャンネル値は0～1とし、0は当該チャンネルの効果なし、1はMesh基準値そのままとする。初期版のチャンネルは次の通り。
 
 | チャンネル | Soft Body | Cloth |
 |---|---|---|
@@ -698,6 +698,15 @@ Paint / Smooth / Average / Eraseを提供する。Paintはtarget_valueへstrengt
 | Shape Recovery | 有効（shape_recovery_scale） | 無効 |
 | Damping | 有効 | 有効 |
 | Animation Tracking | 有効 | 有効 |
+
+頂点ウェイトのソルバー反映規則は次の通りとする。
+
+- Cloth Stretch: 辺両端ウェイトの平均をw_stretchとし、`alpha_effective = alpha_base / max(w_stretch, epsilon)`。w_stretchがepsilon以下ならその制約を無効化する。
+- Cloth Shear: 三角形3頂点ウェイトの平均をw_shearとして同様にComplianceへ反映する。
+- Cloth Bend: Hingeを構成する4頂点ウェイトの平均をw_bendとして同様に反映する。
+- Soft Body Shape Recovery / Volume: 四面体4頂点の平均ウェイトをそれぞれshape_recovery_scale / volume_retention_scaleへ乗算する。
+- Damping: 各頂点の減衰率を`damping_rate_i = base_damping_rate * damping_weight_i`とする。
+- Animation Tracking: 頂点のtracking_weightを`base_tracking_weight * animation_tracking_weight_i`とする。
 
 物理方式で無効なチャンネルは非表示または編集不可とする。ブラシ半径はモデル空間長さで扱い、画面ピクセル入力はカメラからモデル空間へ変換する。ペイントデータはJSONまたはアセットサイドカーファイルで保存する。
 
@@ -787,6 +796,7 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 - Ready
 - Running
 - Paused
+- Stopped
 - BlockedByCapacity
 - BlockedByCCD
 - Failed
@@ -896,6 +906,6 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
-- 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ項目、ペイントチャンネルを明文化。
+- 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ項目、ペイントチャンネルと頂点ウェイト反映規則を明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
