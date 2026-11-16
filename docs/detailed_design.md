@@ -44,7 +44,7 @@ Soft Bodyは力ベースFEMとして独立させ、Clothと接触はXPBDとす�
 
 glTFのメートル基準を内部単位へ変換する。OBJは単位情報を保証できないため、インポート時に単位倍率の明示入力を要求する。単位不明のまま物理値を自動推定しない。
 
-内部座標系は右手系Y-upとし、Importerで座標軸・三角形表裏・法線を一度だけ変換する。描画、物理、アニメーションでは同じ内部座標系を用いる。
+内部座標系は右手系Y-upとし、Importerで座標軸・三角形表裏・法線を一度だけ変換する。描画、物理、アニメーションでは同じ内部座標系を用いる。ビルドはVisual Studio .sln / .vcxprojを正規手段とし、CMakeは必須としない。ランタイムの物理計算に外部物理ライブラリをリンクしない。Importer依存は入力変換層に限定し、四面体化器はオフラインAsset Buildでのみ使用する。
 
 ## 2. 初期対応アセット仕様
 
@@ -64,6 +64,7 @@ glTFアニメーションはSTEP / LINEAR / CUBICSPLINEを読み込み、補間�
 共通モデルはMesh単位に以下を保持する。
 
 - 頂点位置、法線、接線、UV、カラー
+- 名前付きVertex Groupと物理Attribute Channel
 - 三角形インデックス、サブメッシュ、Material slot
 - Bone hierarchy、inverse bind matrix、bone weights
 - Animation clip、keyframe、補間方式
@@ -763,7 +764,7 @@ Debug ViewはGPU上のPhysics / Render Bufferからデバッグ用線分・点�
 - Physics Attribute Heatmap（全チャンネル）
 - CCD対象候補、TOI、overflow、初期貫通修正量
 
-各テストRunの結果はRun Result JSONとして保存する。Run Resultはscenario_id、scenario_hash、asset_id / cache_version、build_id、GPU / driver情報、実行時間、Pass別GPU時間、Buffer割当Byte数、候補数、確定接触数、overflow / CCD回数、体積誤差、最大変位、各受け入れ試験結果を含む。同一scenario_hashのRunを並べて指標差と許容誤差を比較できる。D3D11で直接取得できない実VRAM全体量を推定値として断定せず、ライブラリが確保したGPU Buffer / Textureの合計Byte数を必須記録値とする。
+各テストRunの結果はRun Result JSONとして保存する。Run Resultはscenario_id、scenario_hash、asset_id / cache_version、build_id、GPU / driver情報、実行時間、Pass別GPU時間、Buffer割当Byte数、候補数、確定接触数、overflow / CCD回数、体積誤差、最大変位、各受け入れ試験結果を含む。同一scenario_hashのRunを並べて指標差と許容誤差を比較できる。GPUメモリはライブラリ所有のBuffer / Texture割当Byte数に加え、IDXGIAdapter3::QueryVideoMemoryInfoが利用可能な場合はDXGI_MEMORY_SEGMENT_GROUP_LOCALのCurrentUsage / Budgetを記録する。後者はプロセス全体の使用量とOS予算であり、Soft Body専用の使用量として誤認しない。IDXGIAdapter3が利用できない環境ではライブラリ所有リソース合計を必須記録値とし、使用量・予算の未取得を明示する。
 
 ## 15. GPU Pass・同期・Dispatch
 
@@ -871,7 +872,7 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 | T27 | Render Attribute Preservation | 物理変形後もUV / Color / Material / Indexが元Render Meshと一致する |
 | T28 | Visualizer / Run Result | GPU Readbackなしで全Debug Viewを表示し、同一scenario_hashのRunを比較できる |
 
-性能はSoft Body tet数、Cloth三角形数、接触密度、サブステップ数を変えたスケーリング曲線で評価する。代表規模は2k / 8k / 32k四面体、2k / 8k / 32k Cloth三角形を目安にし、組み合わせ衝突試験も記録する。3～40 FPSは測定対象であり全規模の保証値ではない。
+性能は1体の描画キャラクター（複数のBody / Clothing / Hair Mesh）と、別途配置したStatic / Kinematic Collision-only Colliderを基本シーンとし、Soft Body tet数、Cloth三角形数、接触密度、サブステップ数を変えたスケーリング曲線で評価する。代表規模は2k / 8k / 32k四面体、2k / 8k / 32k Cloth三角形を目安にし、組み合わせ衝突試験も記録する。3～40 FPSは測定対象であり全規模の保証値ではない。
 
 ## 18. 実装順序と段階完了条件
 
@@ -927,6 +928,6 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
-- 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
+- 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
