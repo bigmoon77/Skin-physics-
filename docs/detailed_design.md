@@ -243,10 +243,10 @@ EとPoisson比nuで入力する場合は以下に変換する。
 さらに反転領域には以下の体積ペナルティを加える。これは有限の二次ペナルティであり、数学的な非反転ペナルティとして反転を絶対に禁止するものではない。k_inversionの単位は応力と同じPaとする。
 
     J = det(F)
-    Psi_barrier = 0.5 * k_inversion * min(J - J_min, 0)^2
-    P_barrier = k_inversion * min(J - J_min, 0) * cofactor(F)
+    Psi_inversion = 0.5 * k_inversion * min(J - J_min, 0)^2
+    P_inversion = k_inversion * min(J - J_min, 0) * cofactor(F)
 
-総応力はP_total = P + P_barrier。ペナルティはJ >= J_minで0となる。Jが閾値を下回る要素には診断フラグを付ける。反転が一定数・時間以上続く場合はSimulation Warning/Errorとし、単に要素を無効化して力を消さない。
+総応力はP_total = P + P_inversion。ペナルティはJ >= J_minで0となる。Jが閾値を下回る要素には診断フラグを付ける。反転が一定数・時間以上続く場合はSimulation Warning/Errorとし、単に要素を無効化して力を消さない。
 
 ### 6.5 四面体内部力
 
@@ -577,7 +577,7 @@ etaの初期値は0.5。これは候補の選別値であり、CCD自体の正�
 
 ### 11.3 Conservative Advancement
 
-各候補の軌道をサブステップ内の線形補間とする。時刻tにおける距離をd(t)、接触厚みをr、相対速度上限をv_boundとする。
+各候補の軌道をサブステップ内の線形補間とする。秒単位の時刻tauにおける距離をd(tau)、接触厚みをr、相対速度上限をv_boundとする。
 
 VT:
 
