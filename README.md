@@ -65,3 +65,12 @@ The Physics Mesh builder rejects degenerate / non-manifold volume meshes, repair
 - OBJ assumes the caller's coordinates are already right-handed Y-up and only applies the explicit unit scale.
 
 These limits are diagnosed instead of silently producing incomplete geometry.
+
+
+## Golden test corpus and phase verification
+
+Persistent inputs and reviewed expected results are stored in `tests/fixtures/`. The phase/test mapping is maintained in `tests/fixtures/manifest.json`, while the verification rules and phase exit gates are described in `docs/testing_strategy.md`.
+
+Phases 1 and 2 currently load their OBJ, glTF and Gmsh fixtures in the automated test executable and compare topology and numerical results. Phase 2's target-resolution scenario is prepared as a fixture but awaits the resolution builder API. Phases 3–11 have canonical input and expected-result data prepared; their runtime tests will be added with the corresponding implementation. The manifest distinguishes these fixture-ready phases from automated tests.
+
+Run `SkinPhysicsTests.exe` from Visual Studio or the command line. Each implemented test prints a `[PASS]` entry with its phase/test ID. Fixture paths are resolved relative to the test source, independent of the process working directory.
