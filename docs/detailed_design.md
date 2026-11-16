@@ -222,16 +222,14 @@ inverseBindMatricesが省略されている場合は全Jointで単位行列を�
 
 ### 6.2 材料パラメータ
 
-UIで独立調整可能な基準材料値は、せん断弾性率mu、体積弾性率K、密度rhoとする。加えて、要件で求める元形状への復元と体積保持の個別調整用に、shape_recovery_scaleとvolume_retention_scaleを設ける。両Scaleは0以上の無次元値で、初期値1.0。muとKはいずれも正値。Lameの第一定数は次で求める。
-
-    lambda_lame = K - 2 * mu / 3
+UIで独立調整可能な基準材料値は、せん断弾性率mu、体積弾性率K、密度rhoとする。加えて、要件で求める元形状への復元と体積保持の個別調整用に、shape_recovery_scaleとvolume_retention_scaleを設ける。両Scaleは0以上の無次元値で、初期値1.0。muとKはいずれも正値。muとKは6.3節のCorotational応力へ直接使う。shape_recovery_scaleとvolume_retention_scaleがともに1の場合、従来のLame定数はlambda_lame = K - 2 * mu / 3に相当する。
 
 EとPoisson比nuで入力する場合は以下に変換する。
 
     mu = E / (2 * (1 + nu))
     K = E / (3 * (1 - 2 * nu))
 
-初期UIではnuを0.0～0.45に制限する。E/nuモードとmu/Kモードを混在させず、内部保存値はmu/K/rhoへ統一する。体積とせん断の応答を別々に調整できる。
+初期UIではnuを0.0～0.45に制限する。E/nuモードとmu/Kモードを混在させず、内部保存値はmu/K/rhoへ統一する。体積とせん断の応答を別々に調整できる。Soft Bodyの各四面体に使うscale値は、その4頂点のPaint値の算術平均とする。Paint未設定頂点はMesh基準値1.0を使う。
 
 ### 6.3 Corotational応力
 
@@ -471,11 +469,17 @@ Jacobi反復では全制約が同一のposition_readを参照し、制約別λ�
 
 ### 8.1 接触対象と生成方向
 
-全ての物理Meshと有効Colliderのペアはデフォルトで衝突対象とする。Meshごとのcollision_enabled、self_collision_enabledと、Mesh Pair単位の明示的な除外リストを用意する。除外設定はBroadphase前に適用する。Soft Body / Cloth / Static Collider / Kinematic Colliderの有効な組み合わせをCollision Matrixで管理する。
+全ての物理Meshと有効Colliderのペアはデフォルトで衝突対象とする。Soft Body / Clothのself_collision_enabledは初期値trueとし、Mesh単位で無効化できる。Meshごとのcollision_enabled、self_collision_enabledと、Mesh Pair単位の明示的な除外リストを用意する。除外設定はBroadphase前に適用する。Soft Body / Cloth / Static Collider / Kinematic Colliderの有効な組み合わせをCollision Matrixで管理する。
 
 接触対象はSoft Body境界面とCloth表面である。Soft Bodyの内部四面体面は外部接触プリミティブに登録しない。
 
 VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の双方を候補化する。EEは辺ペアを一度だけ正規化キーで生成する。自己衝突では同一・近接トポロジー要素を除外する。候補キーはMesh ID、Primitive ID、接触種別を含み、重複をNarrowphase前に排除する。
+
+### 8.1.1 Collision-only Collider
+
+初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、静的形状または固定時間刻みごとに与えられるTransformで移動する形状として扱う。Kinematic Colliderの頂点速度は前Stepと現在Stepの変換後位置から算出し、CCDと接触の相対速度へ含める。接触位置補正・ImpulseによってCollider自体は変形させない。
+
+変形オブジェクトの衝突面は初期版ではSoft Body境界面とCloth Physics Mesh表面を使う。低解像度Collision Proxyを変形メッシュへ割り当て、そのProxy接触を高解像度Physics Meshへ戻す埋め込み応答は初期版の対象外とする。将来追加時はProxy頂点からPhysics MeshへのEmbeddingと、接触勾配のPhysics Vertexへの合成を定義する。
 
 ### 8.2 接触不等式XPBD
 
@@ -539,12 +543,6 @@ Discrete contactでは位置解決後にvelocity = (position_after - previous_po
     j_t = clamp_magnitude(j_t_candidate, friction * j_n)
 
 接触の4頂点へ、接触勾配係数と逆質量でImpulseを配分する。摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。接触前の相対速度を保存し、同一接触で複数反復するたびに反発を重複適用しない。TOI contactはimpact_resolvedフラグにより同じImpulseをStep終端で二重適用しない。
-
-### 8.1.1 Collision-only Collider
-
-初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、静的形状または固定時間刻みごとに与えられるTransformで移動する形状として扱う。Kinematic Colliderの頂点速度は前Stepと現在Stepの変換後位置から算出し、CCDと接触の相対速度へ含める。接触位置補正・ImpulseによってCollider自体は変形させない。
-
-変形オブジェクトの衝突面は初期版ではSoft Body境界面とCloth Physics Mesh表面を使う。低解像度Collision Proxyを変形メッシュへ割り当て、そのProxy接触を高解像度Physics Meshへ戻す埋め込み応答は初期版の対象外とする。将来追加時はProxy頂点からPhysics MeshへのEmbeddingと、接触勾配のPhysics Vertexへの合成を定義する。
 
 ## 9. Broadphase Spatial Hash
 
@@ -725,14 +723,14 @@ Test Environmentは次の操作を提供する。
 - Time Scale: 実時間DeltaをAccumulatorへ加える倍率。固定物理時間刻み自体は変更しない。
 - Fixed Delta Time: シミュレーションの基本時間刻み。
 - Gravity: 重力ベクトルを変更する。
-- Impulse / Force: 位置、方向、強度、半径、継続時間、開始時刻を指定する。
+- Impulse / Force: kind（instant impulse / sustained force）、位置、方向、強度、半径、継続時間、開始時刻または開始Stepを指定する。Impulseは瞬間的な運動量変化、Forceは指定時間だけ作用する力として扱う。
 - Animation: Clip、再生時刻、速度、Blend、Discontinuity Policyを指定する。
 
 Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。
 
 ### 14.4 JSON
 
-トップレベルにschema_version、asset_id、asset_cache_version、asset_generation_settings、solver_settings、initial_state、animation、gravity、forces、collisions、materials、vertex_weights、test_sequence、random_seedを持つ。test_sequenceは開始条件、終了条件、再生・停止・Reset条件、測定区間を保持する。forcesは位置、方向、強度、半径、継続時間、開始Stepを持つ。collisionsは接触厚み、摩擦、反発、collision_enabled、self_collision_enabled、Mesh Pair除外リストを保持する。solver_settingsはfixed_delta_time、time_scale、substeps、iterationsを保持する。
+トップレベルにschema_version、asset_id、asset_cache_version、asset_generation_settings、solver_settings、initial_state、animation、gravity、forces、collisions、materials、vertex_weights、test_sequence、random_seedを持つ。test_sequenceは開始条件、終了条件、再生・停止・Reset条件、測定区間を保持する。forcesはkind、位置、方向、強度、半径、継続時間、開始Stepを持つ。Impulseでは継続時間を0とし、Forceでは正の継続時間を指定する。collisionsは接触厚み、摩擦、反発、collision_enabled、self_collision_enabled、Mesh Pair除外リストを保持する。solver_settingsはfixed_delta_time、time_scale、substeps、iterationsを保持する。
 
 未知のschema_version、必須項目欠落、NaN/Infinity、負の時間刻み、範囲外パラメータはロードエラー。未知の任意拡張項目は保持して再保存できる。省略可能項目への既定値適用はログへ記録する。
 
@@ -819,7 +817,7 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 | T01 | Rest Pose無負荷10秒 | 最大ドリフトがBBox対角の0.1%未満 |
 | T02 | Soft Body圧縮・解放 | 体積10%圧縮後の回復誤差5%以内。J分布も保存 |
 | T03 | Soft Body剛体回転 | 内部弾性ひずみ誤差0.5%未満 |
-| T04 | μ/K独立調整 | μ変更はせん断応答、K変更は体積応答に主に影響 |
+| T04 | Soft Body Material Controls | Shape RecoveryとVolume Retentionが個別に作用し、μ/Kの基準値とも独立して調整できる |
 | T05 | Cloth Stretch | Compliance増加で伸びが単調増加 |
 | T06 | Cloth Shear / Bend | 各Compliance変更で該当変形が単調変化 |
 | T07 | VT / EE | 双方の補正、接触後貫通が厚みの25%以下 |
