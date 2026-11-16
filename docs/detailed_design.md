@@ -1,7 +1,7 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.1
-- 状態: 初版レビュー対応・レビュー合格（数値パラメータは段階試験で確定）
+- 文書バージョン: 1.2
+- 状態: 要件定義との整合性レビュー対応・再レビュー合格
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.1
 - 前版: 1.0
@@ -67,10 +67,10 @@ glTFアニメーションはSTEP / LINEAR / CUBICSPLINEを読み込み、補間�
 - 三角形インデックス、サブメッシュ、Material slot
 - Bone hierarchy、inverse bind matrix、bone weights
 - Animation clip、keyframe、補間方式
-- 物理方式、物理属性、衝突設定
+- 物理方式（none / soft_body / cloth）、物理属性、衝突設定
 - 単位・座標系・軸変換情報
 
-Skinning influenceは初期版で最大8本とする。インポート時に上位ウェイトを選択して正規化する。ウェイト合計が0、joint index不正、NaN等は入力エラーとして報告する。
+Skinning influenceは初期版で最大8本とする。インポート時に上位ウェイトを選択して正規化する。ウェイト合計が0、joint index不正、NaN等は入力エラーとして報告する。各Meshのphysics_modeはnone / soft_body / clothのいずれかとし、noneは物理計算対象外とする。collision設定はphysics_modeと独立し、物理を適用しないMeshもColliderとして登録できる。
 
 ## 3. CPU / GPU責務
 
@@ -171,6 +171,19 @@ Body全体をハード固定しない。骨に直接固定する頂点群と、A
 
 Clothは三角形ごとにm_face = areal_density * areaを計算し、3頂点へm_face / 3ずつ配分する。体積密度を用いる場合はareal_density = density * thicknessをImporterまたは材料設定で明示する。
 
+### 4.4 物理メッシュ解像度
+
+Soft Body生成設定は次を保持する。
+
+- target_tet_edge_length: 目標四面体辺長（model space meter）
+- target_tet_count: 目標四面体数（任意。edge lengthと同時に強制しない）
+- max_tet_count: 上限
+- surface_approximation_tolerance: 元表面に対する許容誤差
+- tetra_quality_threshold: 最小品質閾値
+- generator_id / generator_version / generator_options
+
+ユーザーは目標辺長または目標要素数を選択して解像度を調整する。Physics Model Builderは選択された値をオフライン四面体化器の対応パラメータへ変換する。生成器が目標値を厳密に満たせない場合は実際の頂点数・四面体数・辺長分布を記録し、設定との差を警告する。max_tet_count超過は生成失敗とする。キャッシュキーには入力アセット識別子、生成器バージョン、全生成設定を含める。
+
 ## 5. SkinningウェイトのPhysics Meshへの転送
 
 四面体の内部頂点は元のRender Mesh頂点に存在しないため、単純な頂点番号対応はできない。
@@ -209,7 +222,7 @@ inverseBindMatricesが省略されている場合は全Jointで単位行列を�
 
 ### 6.2 材料パラメータ
 
-UIで独立調整可能な材料値は、せん断弾性率mu、体積弾性率K、密度rhoとする。muとKはいずれも正値。Lameの第一定数は次で求める。
+UIで独立調整可能な基準材料値は、せん断弾性率mu、体積弾性率K、密度rhoとする。加えて、要件で求める元形状への復元と体積保持の個別調整用に、shape_recovery_scaleとvolume_retention_scaleを設ける。両Scaleは0以上の無次元値で、初期値1.0。muとKはいずれも正値。Lameの第一定数は次で求める。
 
     lambda_lame = K - 2 * mu / 3
 
@@ -225,11 +238,19 @@ EとPoisson比nuで入力する場合は以下に変換する。
 変形勾配Fの右極分解をF = R * Sとする。Rはdet(R)=+1を満たす回転、Sは対称ストレッチである。Corotational Linear Elasticityのひずみエネルギーと第一Piola応力は次を基準とする。norm(A)^2はFrobenius norm squared、すなわちtrace(transpose(A)*A)とする。
 
     epsilon_corot = transpose(R) * F - I
-    Psi = mu * norm(F - R)^2
-         + 0.5 * lambda_lame * trace(epsilon_corot)^2
+    trace_epsilon = trace(epsilon_corot)
+    epsilon_dev = epsilon_corot - (trace_epsilon / 3) * I
 
-    P = 2 * mu * (F - R)
-      + lambda_lame * trace(epsilon_corot) * R
+    mu_effective = mu * shape_recovery_scale
+    K_effective = K * volume_retention_scale
+
+    Psi = mu_effective * norm(epsilon_dev)^2
+         + 0.5 * K_effective * trace_epsilon^2
+
+    P = R * (2 * mu_effective * epsilon_dev
+           + K_effective * trace_epsilon * I)
+
+shape_recovery_scaleは主にせん断・偏差ひずみへの復元抵抗を、volume_retention_scaleは体積ひずみへの抵抗を独立に調整する。両方を1にしたとき、従来のCorotational Linear Elasticityと一致する。
 
 初版の応力をlambda_lame * (det(F)-1) * cofactor(F)と置き換えない。この項は上記Corotational Linear Elasticityの体積応力と同じ式ではない。
 
@@ -279,7 +300,7 @@ Rest Shape Function勾配を用い、頂点iの内部力を次で求める。
 
 ### 6.7 Animation Tracking力
 
-柔軟頂点の追従は材料弾性と分離したKelvin-Voigt型追従力とする。
+柔軟頂点の追従は材料弾性と分離したKelvin-Voigt型追従力とする。物理頂点はワールド空間で積分し、アニメーション目標位置は各Stepのスキニング結果から生成する。骨格の並進・回転で目標位置と目標速度が変化し、動的頂点の慣性と追従力の差によって遅れ・揺れが生じる。シミュレーション中に動的頂点をBone Localへ毎フレーム再配置しない。
 
     force_animation =
         tracking_weight * (
@@ -287,6 +308,15 @@ Rest Shape Function勾配を用い、頂点iの内部力を次で求める。
           + tracking_damping * (animation_velocity - velocity))
 
 tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1。材料のmu/Kと独立して調整できる。過大な値は時間刻み安定条件に影響するため、後述の安定性推定に含める。
+
+### 6.7.1 アニメーション不連続イベント
+
+Animation Interfaceは通常再生、Clip Blend、Teleport、Reset、Time Rewindを区別する。通常再生と連続Blendではprevious targetとtargetの履歴を維持し、Animation Velocityを連続計算する。Teleport / Reset / Time Rewindはdiscontinuity eventとして明示し、次のどちらかを選ぶ。
+
+- preserve_velocity: 物理速度を維持し、目標位置履歴だけを新しい姿勢へ合わせる。
+- reset_velocity: 物理速度と位置履歴を新しい目標状態へ再初期化する。
+
+Clip Blendはブレンド比率を連続更新し、通常はvelocity resetを行わない。速度差分の上限を超えた場合はイベント未指定の不連続として警告し、ユーザー指定ポリシーに従う。
 
 ### 6.8 明示積分の安定時間刻み
 
@@ -309,7 +339,7 @@ tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1。
 
 ### 6.9 体積・せん断評価
 
-muは主にせん断応答、Kは体積応答を制御する。局所圧縮・膨張試験では要素ごとのJと全体体積を別々に記録する。Corotational Linear Elasticityは大変形時に線形化誤差が増えるため、体積10～30%変化、局所押込み、反転直前の試験を行い、適用範囲を数値で示す。
+muとshape_recovery_scaleは主に元形状への復元・せん断応答、Kとvolume_retention_scaleは体積応答を制御する。局所圧縮・膨張試験では要素ごとのJと全体体積を別々に記録する。Corotational Linear Elasticityは大変形時に線形化誤差が増えるため、体積10～30%変化、局所押込み、反転直前の試験を行い、適用範囲を数値で示す。
 
 ## 7. Cloth Solver詳細
 
@@ -441,6 +471,8 @@ Jacobi反復では全制約が同一のposition_readを参照し、制約別λ�
 
 ### 8.1 接触対象と生成方向
 
+全ての物理Meshと有効Colliderのペアはデフォルトで衝突対象とする。Meshごとのcollision_enabled、self_collision_enabledと、Mesh Pair単位の明示的な除外リストを用意する。除外設定はBroadphase前に適用する。Soft Body / Cloth / Static Collider / Kinematic Colliderの有効な組み合わせをCollision Matrixで管理する。
+
 接触対象はSoft Body境界面とCloth表面である。Soft Bodyの内部四面体面は外部接触プリミティブに登録しない。
 
 VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の双方を候補化する。EEは辺ペアを一度だけ正規化キーで生成する。自己衝突では同一・近接トポロジー要素を除外する。候補キーはMesh ID、Primitive ID、接触種別を含み、重複をNarrowphase前に排除する。
@@ -562,7 +594,9 @@ VTとEEの最近接距離を正確に計算し、接触厚み以下だけを接�
 
 ### 10.1 初期貫通修正
 
-初期化時に一度Broadphase / Narrowphaseを実行し、初期接触を抽出する。位置XPBD接触を設定上限回数まで解き、頂点ごとの総修正量と残存貫通を計測する。各初期接触の制約評価値は、1反復あたり`C_effective = max(C, -0.1 * local_min_edge_length)`として過大な一括補正要求を制限する。この有効制約値をλ更新にも用い、位置だけを後からClampしてλと状態が乖離しないようにする。最大反復後も許容貫通を超える場合は警告またはAsset Load Errorとし、修正結果を自動確定しない。
+初期化時に一度Broadphase / Narrowphaseを実行し、初期接触を抽出する。位置XPBD接触を設定上限回数まで解き、頂点ごとの総修正量と残存貫通を計測する。各初期接触の制約評価値は、1反復あたり`C_effective = max(C, -0.1 * local_min_edge_length)`として過大な一括補正要求を制限する。この有効制約値をλ更新にも用い、位置だけを後からClampしてλと状態が乖離しないようにする。
+
+Meshごとに`max_initial_repair_distance`を設定し、各Physics Vertexについて初期化開始位置からの修正移動量累積をこの値以下に制限する。Gatherで得た仮の頂点補正から各頂点の残り修正予算に基づくscaleを計算し、各接触Constraintの全参加頂点scaleの最小値をそのConstraintの共通scaleとする。その共通scaleをdelta_lambdaと全頂点補正に適用してからλと位置を確定する。これにより双方の補正とλを整合させたまま最大修正量を守る。修正予算を使い切っても残存貫通が許容値を超える場合は警告またはAsset Load Errorとし、初期化状態をCommitしない。
 
 自己衝突除外:
 
@@ -655,7 +689,19 @@ Render Mesh三角形ごとに変形後の面法線を求め、Render Vertex単�
 
 Render MeshからPhysics Meshへ属性を転送する場合、Render Vertex Bindingを逆方向に単純平均しない。Soft Body境界Physics VertexはRender Mesh表面三角形から重心座標で補間する。Soft Body内部頂点は境界Physics Vertexのチャンネル値をDirichlet境界条件とするグラフLaplacian調和拡張で伝播する。Cloth頂点は直接対応または表面三角形補間を使う。転送誤差、残差、重みの分散を記録し、曖昧な転送は未確定とする。Physics Mesh再生成時は元Render Meshの安定IDを優先し、トポロジー変更で対応が一意に決まらない場合は自動適用せず警告する。
 
-Paint / Smooth / Average / Eraseを提供する。ブラシ半径はモデル空間長さで扱い、画面ピクセル入力はカメラからモデル空間へ変換する。ペイントデータはJSONまたはアセットサイドカーファイルで保存する。
+Paint / Smooth / Average / Eraseを提供する。Paintはtarget_valueへstrengthに応じて補間する。各操作はブラシ半径、strength、target_value、channel、対象Physics Meshを入力とする。Heatmapでチャンネル値を可視化する。初期版のチャンネルは次の通り。
+
+| チャンネル | Soft Body | Cloth |
+|---|---|---|
+| Stretch | 無効 | 有効 |
+| Shear | 無効 | 有効 |
+| Bend | 無効 | 有効 |
+| Volume | 有効（volume_retention_scale） | 無効 |
+| Shape Recovery | 有効（shape_recovery_scale） | 無効 |
+| Damping | 有効 | 有効 |
+| Animation Tracking | 有効 | 有効 |
+
+物理方式で無効なチャンネルは非表示または編集不可とする。ブラシ半径はモデル空間長さで扱い、画面ピクセル入力はカメラからモデル空間へ変換する。ペイントデータはJSONまたはアセットサイドカーファイルで保存する。
 
 ## 14. 時間管理・JSON・再現性
 
@@ -667,13 +713,30 @@ Paint / Smooth / Average / Eraseを提供する。ブラシ半径はモデル空
 
 Pause中のStep要求は固定時間刻みを1回だけ実行する。描画フレーム更新とは独立させる。複数Step要求は要求数分をキューイングする。GPU容量エラー中はStepを保留する。
 
-### 14.3 JSON
+### 14.3 Test Environment操作
 
-トップレベルにschema_version、asset_id、asset_cache_version、solver_settings、initial_state、animation、forces、collisions、materials、vertex_weights、test_sequenceを持つ。
+Test Environmentは次の操作を提供する。
+
+- Play: 現在状態から時間進行を再開する。
+- Pause: 時間進行を停止し、状態を保持する。
+- Stop: 時間進行と未実行Step要求を停止し、現在状態を保持する。
+- Reset: 保存済みInitial Stateへ復帰し、Accumulatorと診断カウンタを初期化する。
+- Step: Pause / Stop中に固定時間刻みを正確に1回実行する。
+- Time Scale: 実時間DeltaをAccumulatorへ加える倍率。固定物理時間刻み自体は変更しない。
+- Fixed Delta Time: シミュレーションの基本時間刻み。
+- Gravity: 重力ベクトルを変更する。
+- Impulse / Force: 位置、方向、強度、半径、継続時間、開始時刻を指定する。
+- Animation: Clip、再生時刻、速度、Blend、Discontinuity Policyを指定する。
+
+Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。
+
+### 14.4 JSON
+
+トップレベルにschema_version、asset_id、asset_cache_version、asset_generation_settings、solver_settings、initial_state、animation、gravity、forces、collisions、materials、vertex_weights、test_sequence、random_seedを持つ。test_sequenceは開始条件、終了条件、再生・停止・Reset条件、測定区間を保持する。forcesは位置、方向、強度、半径、継続時間、開始Stepを持つ。collisionsは接触厚み、摩擦、反発、collision_enabled、self_collision_enabled、Mesh Pair除外リストを保持する。solver_settingsはfixed_delta_time、time_scale、substeps、iterationsを保持する。
 
 未知のschema_version、必須項目欠落、NaN/Infinity、負の時間刻み、範囲外パラメータはロードエラー。未知の任意拡張項目は保持して再保存できる。省略可能項目への既定値適用はログへ記録する。
 
-### 14.4 再現性
+### 14.5 再現性
 
 Gatherの隣接IDを固定順序にし、同一GPU上で浮動小数点加算順序が変わらないようにする。整数Interlockedは容量カウント等に限定し、物理値の加算に使用しない。同一GPU・同一ドライバ・同一Buildで再現性を評価する。GPU間は許容誤差評価とする。
 
@@ -771,6 +834,13 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 | T16 | CCD impact response | TOI後に衝突方向速度が更新され、残時間で再貫通せずImpulseが一度だけ適用される |
 | T17 | Contact Patch | 重複接触の統合前後で過拘束が減り、最大貫通が設定閾値内 |
 | T18 | Bend Gradient | 解析勾配と有限差分勾配の相対誤差が1e-3以下 |
+| T19 | Recovery Controls | Shape RecoveryとVolume Retentionを個別に変更し、各応答への影響を計測 |
+| T20 | Animation Inertia | Bone並進・回転で目標速度と物理遅れが発生し、通常再生中に速度が不意にリセットされない |
+| T21 | Discontinuity | Teleport / Clip Blend / Resetで指定した速度引継ぎポリシーが適用される |
+| T22 | Collision Filtering | デフォルト全ペア有効、個別Mesh Pair除外、Self Collision切替を検証 |
+| T23 | Initial Repair Budget | 各頂点の累積修正量が上限を超えず、修正不能時に初期状態がCommitされない |
+| T24 | Test Controls / JSON | Play / Stop / Pause / Reset / Step / Time Scale / Gravity / Impulseを保存・再読込後も再現できる |
+| T25 | Physics Resolution | target edge length / target tet countの変更が生成規模へ反映され、実測値・キャッシュ識別が保存される |
 
 性能はSoft Body tet数、Cloth三角形数、接触密度、サブステップ数を変えたスケーリング曲線で評価する。代表規模は2k / 8k / 32k四面体、2k / 8k / 32k Cloth三角形を目安にし、組み合わせ衝突試験も記録する。3～40 FPSは測定対象であり全規模の保証値ではない。
 
@@ -828,5 +898,6 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ項目、ペイントチャンネルを明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
