@@ -598,7 +598,7 @@ VTとEEの最近接距離を正確に計算し、接触厚み以下だけを接�
 
 初期化時に一度Broadphase / Narrowphaseを実行し、初期接触を抽出する。位置XPBD接触を設定上限回数まで解き、頂点ごとの総修正量と残存貫通を計測する。各初期接触の制約評価値は、1反復あたり`C_effective = max(C, -0.1 * local_min_edge_length)`として過大な一括補正要求を制限する。この有効制約値をλ更新にも用い、位置だけを後からClampしてλと状態が乖離しないようにする。
 
-Meshごとに`max_initial_repair_distance`を設定し、各Physics Vertexについて初期化開始位置からの修正移動量累積をこの値以下に制限する。Gatherで得た仮の頂点補正から各頂点の残り修正予算に基づくscaleを計算し、各接触Constraintの全参加頂点scaleの最小値をそのConstraintの共通scaleとする。その共通scaleをdelta_lambdaと全頂点補正に適用してからλと位置を確定する。これにより双方の補正とλを整合させたまま最大修正量を守る。修正予算を使い切っても残存貫通が許容値を超える場合は警告またはAsset Load Errorとし、初期化状態をCommitしない。
+Meshごとに`max_initial_repair_distance`を設定し、各Physics Vertexについて初期化開始位置からの修正移動量累積をこの値以下に制限する。Gatherで得た仮の頂点補正について、各頂点ごとに接触Constraint寄与の絶対変位量を総和し、その値と残り修正予算からscaleを計算する。各接触Constraintの全参加頂点scaleの最小値をそのConstraintの共通scaleとする。修正量累積は反復ごとの寄与絶対値の総和とし、異なる反復間で符号相殺させない。その共通scaleをdelta_lambdaと全頂点補正に適用してからλと位置を確定する。これにより双方の補正とλを整合させたまま最大修正量を守る。修正予算を使い切っても残存貫通が許容値を超える場合は警告またはAsset Load Errorとし、初期化状態をCommitしない。
 
 自己衝突除外:
 
@@ -785,8 +785,8 @@ Debug ViewはGPU上のPhysics / Render Bufferからデバッグ用線分・点�
     - Cloth Shear Constraint Output / Gather / Apply
     - Cloth Bend Constraint Output / Gather / Apply
     - Contact Narrowphase Refresh
-    - Contact XPBD Output / Gather / Apply
     - Contact Patch Reduction / Merge
+    - Contact XPBD Output / Gather / Apply
     - Broadphase Envelope Exceeded Check; 必要時Rebuild
 12. TOI検出・TOI分割処理（CCD対象のみ）
 13. Velocity Reconstruction
