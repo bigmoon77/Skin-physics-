@@ -189,7 +189,7 @@ Physics Mesh境界頂点について、元Render Mesh表面の最近接三角形
 
     L_II * weight_interior = -L_IB * weight_boundary
 
-Iは内部頂点、Bは境界頂点。jointごとに疎行列反復解法を行う。解の残差、各頂点のweight sum、負値を検査し、最後に0以上へ射影・正規化する。Bone influenceが多いアセットでは必要jointごとに解くための計算量を記録する。
+Iは内部頂点、Bは境界頂点。内部頂点を含む各連結成分が少なくとも1つの境界頂点へ接続していることを事前検査し、境界へ接続しない成分は解を定義できないためアセットエラーとする。jointごとに疎行列反復解法を行う。解の残差、各頂点のweight sum、負値を検査し、最後に0以上へ射影・正規化する。Bone influenceが多いアセットでは必要jointごとに解くための計算量を記録する。
 
 ### 5.3 GPU Skinning
 
@@ -476,7 +476,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     effective_inverse_mass =
         wp + beta0^2 * wb0 + beta1^2 * wb1 + beta2^2 * wb2
 
-各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一メッシュペア・同一近傍面パッチ内で接触点距離と法線角度を用いてContact Patchを形成する。ほぼ同位置・同方向の接触は最深接触を代表として残すか、接触点を重み付き統合する。接触点間距離と法線角度の閾値は接触厚み・メッシュ解像度に応じた設定値とし、統合前後の最大貫通を計測する。λは同一サブステップの同一接触キーで保持し、接触キーが変わった場合は初期化する。
+各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一メッシュペア・隣接面パッチ内でContact Patchを形成する。初期重複判定は、接触点距離が`cluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)`以下、かつ法線内積がcos(10度)以上の場合とする。同一Cluster内では最も深い接触を1つ残し、深さ同値の場合はContact Key順で決定する。離れた接触点は別Constraintとして保持する。閾値は試験設定として変更可能にし、統合前後の最大貫通を計測する。λは同一サブステップの同一接触キーで保持し、接触キーが変わった場合は初期化する。
 
 ### 8.4 Edge-Edge
 
@@ -589,7 +589,7 @@ etaの初期値は0.5。これは候補の選別値であり、CCD自体の正�
 
 ### 11.3 Conservative Advancement
 
-各候補の軌道をサブステップ内の線形補間とする。秒単位の時刻tauにおける距離をd(tau)、接触厚みをr、相対速度上限をv_boundとする。
+各候補の軌道をサブステップ内の線形補間とする。これは前Step位置と予測位置を結ぶ離散軌道モデルであり、サブステップ中の曲線軌道を厳密に表すものではない。大きな加速度・高剛性時はCFL制約に従いサブステップを細かくし、近似誤差を抑える。秒単位の時刻tauにおける距離をd(tau)、接触厚みをr、相対速度上限をv_boundとする。
 
 VT:
 
@@ -806,10 +806,10 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 - Corotational Linear Elasticityの適用可能ひずみ範囲と、Neo-Hookean比較が必要となる境界
 - SVD異常要素Passの精度とコスト
 - μ/K/ρの代表材料プリセットと安定時間刻み
-- Cloth ComplianceのUI値からsolver値への変換と単位
+- Soft Body / Cloth材料プリセットの初期値とUI許容範囲の実測調整
 - Bend微分の数値検証・finite difference test
 - Spatial Hashのbase cell width、level数、max_cells_per_primitive
-- CCDのsafety、TOI tolerance、最大分割数
+- Contact Patchの初期閾値と、Conservative Advancementのsafety / tolerance / 最大分割数の実測調整
 - GPUバッファの容量初期値・上限・GTX 1660 SUPER実メモリ予算
 - glTF skin influence・AnimationClipのImporterテストセット
 - 数値受け入れ基準の実測妥当性
