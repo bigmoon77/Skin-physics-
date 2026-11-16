@@ -189,14 +189,8 @@ namespace
 
     void test_obj_requires_explicit_unit_scale()
     {
-        const std::filesystem::path directory = test_directory();
-        const std::filesystem::path obj_path = directory / "unit_required.obj";
-        write_text(obj_path,
-            "v 0 0 0\n"
-            "v 1 0 0\n"
-            "v 0 1 0\n"
-            "f 1 2 3\n");
-
+        const std::filesystem::path obj_path =
+            test_support::fixture_path("phase01_importer/unit_missing.obj");
         const import_result result = import_model(obj_path);
         require(!result.success, "OBJ import without an explicit unit scale must fail.");
         require(!result.diagnostics.empty(), "Missing OBJ unit scale should be diagnosed.");
@@ -314,12 +308,16 @@ namespace
             "phase01_importer/skinned_triangle.gltf",
             "phase01_importer/obj_quad.expected.json",
             "phase01_importer/gltf_skin.expected.json",
+            "phase01_importer/unit_missing.obj",
+            "phase01_importer/unit_missing.expected.json",
             "phase02_physics_mesh/single_tet.msh",
             "phase02_physics_mesh/two_tet_shared_face.msh",
             "phase02_physics_mesh/center_star.msh",
             "phase02_physics_mesh/single_tet.expected.json",
             "phase02_physics_mesh/two_tet.expected.json",
             "phase02_physics_mesh/center_star_skin_weights.expected.json",
+            "phase02_physics_mesh/resolution.input.json",
+            "phase02_physics_mesh/resolution.expected.json",
             "phase03_render_binding/tet_binding.input.json",
             "phase03_render_binding/tet_binding.expected.json",
             "phase03_render_binding/tet_binding.invalid.json",
