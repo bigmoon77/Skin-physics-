@@ -1,5 +1,7 @@
 #include "skin_physics/physics/msh_reader.hpp"
 #include "skin_physics/physics/physics_mesh_builder.hpp"
+#include "skin_physics/physics/skin_weights.hpp"
+#include "skin_physics/physics/asset_cache.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -180,6 +182,161 @@ namespace
         const physics_mesh_build_result result = build_physics_mesh(input);
         require(!result.success, "A face shared by three tetrahedra must be rejected.");
     }
+
+    raw_tet_mesh make_center_tetrahedral_mesh()
+    {
+        raw_tet_mesh input;
+        input.positions = {
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f },
+            { 0.0f, 0.0f, 1.0f },
+            { 0.25f, 0.25f, 0.25f }
+        };
+        input.tetrahedra = {
+            { 0, 1, 2, 4 },
+            { 0, 3, 1, 4 },
+            { 1, 3, 2, 4 },
+            { 2, 3, 0, 4 }
+        };
+        return input;
+    }
+
+    void test_skin_weight_harmonic_extension()
+    {
+        skin_physics::asset::mesh render_mesh;
+        render_mesh.vertices.resize(4);
+        render_mesh.indices = {
+            0, 2, 1,
+            0, 1, 3,
+            1, 2, 3,
+            2, 0, 3
+        };
+
+        for (uint16_t vertex_index = 0; vertex_index < 4; ++vertex_index)
+        {
+            skin_physics::asset::vertex& current_vertex = render_mesh.vertices[vertex_index];
+            current_vertex.position = {
+                vertex_index == 1 ? 1.0f : 0.0f,
+                vertex_index == 2 ? 1.0f : 0.0f,
+                vertex_index == 3 ? 1.0f : 0.0f
+            };
+            current_vertex.attributes |= skin_physics::asset::attribute_skinning;
+            current_vertex.joints[0] = vertex_index;
+            current_vertex.weights[0] = 1.0f;
+        }
+
+        skin_physics::asset::skin render_skin;
+        render_skin.joints = { 0, 1, 2, 3 };
+        render_skin.inverse_bind_matrices.resize(4);
+
+        const physics_mesh_build_result built = build_physics_mesh(make_center_tetrahedral_mesh());
+        require(built.success, "Center tetrahedral mesh should build successfully.");
+
+        physics_mesh physics_value = built.value;
+        skin_weight_transfer_settings settings;
+        settings.maximum_surface_distance = 1.0e-4f;
+        settings.maximum_iterations = 32;
+        settings.relative_residual_tolerance = 1.0e-6f;
+
+        const skin_weight_transfer_result transferred =
+            transfer_skin_weights(render_mesh, render_skin, physics_value, settings);
+        require(transferred.success, "Skin weight harmonic extension should succeed.");
+        require(physics_value.has_skin_weights, "Physics Mesh should flag transferred skin weights.");
+        require(physics_value.skin_weights.size() == physics_value.rest_positions.size(),
+            "Skin weight count should match Physics Mesh vertex count.");
+        require(transferred.maximum_relative_residual <= settings.relative_residual_tolerance,
+            "Harmonic extension residual should satisfy the configured tolerance.");
+
+        const physics_skin_weight& center = physics_value.skin_weights[4];
+        float center_sum = 0.0f;
+        for (std::size_t influence = 0; influence < max_skin_influences; ++influence)
+        {
+            center_sum += center.weights[influence];
+        }
+        require(std::abs(center_sum - 1.0f) < 1.0e-5f,
+            "Interior skin weights should sum to one.");
+        require(center.weights[0] > 0.0f && center.weights[1] > 0.0f &&
+                center.weights[2] > 0.0f && center.weights[3] > 0.0f,
+            "Interior vertex should receive all four boundary joint influences.");
+
+        for (std::size_t influence = 0; influence < 4; ++influence)
+        {
+            require(std::abs(center.weights[influence] - 0.25f) < 1.0e-4f,
+                "Symmetric center vertex should receive equal harmonic weights.");
+        }
+    }
+
+    physics_asset_cache_identity make_test_cache_identity()
+    {
+        physics_asset_cache_identity identity;
+        identity.schema_version = 1;
+        identity.source_asset_id = "unit_test_asset";
+        identity.source_asset_hash = "sha256:unit_test_hash";
+        identity.generator_id = "test_tetrahedralizer";
+        identity.generator_version = "1.0.0";
+        identity.generator_options = "target_edge_length=1";
+        identity.coordinate_system_version = 1;
+        identity.material_layout_version = 1;
+        return identity;
+    }
+
+    void test_physics_asset_cache_round_trip_and_invalidation()
+    {
+        const std::filesystem::path cache_path = test_directory() / "single_tet.sphys";
+        const physics_mesh_build_result built = build_physics_mesh(make_single_tetrahedron());
+        require(built.success, "Physics Mesh for cache test should build.");
+
+        const physics_asset_cache_identity identity = make_test_cache_identity();
+        const physics_asset_cache_write_result saved =
+            save_physics_asset_cache(cache_path, built.value, identity);
+        require(saved.success, "Physics Asset Cache save should succeed.");
+
+        const physics_asset_cache_read_result loaded =
+            load_physics_asset_cache(cache_path, identity);
+        require(loaded.success && !loaded.needs_rebuild,
+            "Matching Physics Asset Cache identity should load without rebuilding.");
+        require(loaded.value.rest_positions.size() == built.value.rest_positions.size(),
+            "Loaded Physics Mesh vertex count should match the source.");
+        require(loaded.value.tetrahedra.size() == built.value.tetrahedra.size(),
+            "Loaded Physics Mesh tetrahedron count should match the source.");
+        require(loaded.value.boundary_triangles.size() == built.value.boundary_triangles.size(),
+            "Loaded Physics Mesh boundary count should match the source.");
+        require(std::abs(loaded.value.tetrahedra[0].rest_volume - built.value.tetrahedra[0].rest_volume) < 1.0e-7f,
+            "Loaded rest volume should match the source.");
+
+        physics_asset_cache_identity changed_identity = identity;
+        changed_identity.source_asset_hash = "sha256:changed";
+        const physics_asset_cache_read_result stale =
+            load_physics_asset_cache(cache_path, changed_identity);
+        require(!stale.success && stale.needs_rebuild,
+            "Stale source asset identity should require explicit cache regeneration.");
+        require(!stale.diagnostics.empty() &&
+                stale.diagnostics[0].code == physics_asset_cache_error::incompatible_identity,
+            "Stale cache should report an identity mismatch.");
+
+        {
+            std::fstream stream(cache_path, std::ios::binary | std::ios::in | std::ios::out);
+            require(static_cast<bool>(stream), "Could not reopen cache to corrupt checksum.");
+            stream.seekg(-1, std::ios::end);
+            char last_byte = 0;
+            stream.read(&last_byte, 1);
+            require(static_cast<bool>(stream), "Could not read cache checksum byte.");
+            last_byte = static_cast<char>(last_byte ^ 0x5a);
+            stream.seekp(-1, std::ios::end);
+            stream.write(&last_byte, 1);
+            require(static_cast<bool>(stream), "Could not corrupt cache checksum.");
+        }
+
+        const physics_asset_cache_read_result corrupted =
+            load_physics_asset_cache(cache_path, identity);
+        require(!corrupted.success && corrupted.needs_rebuild,
+            "Corrupted cache checksum should require regeneration.");
+        require(!corrupted.diagnostics.empty() &&
+                corrupted.diagnostics[0].code == physics_asset_cache_error::corrupt_data,
+            "Corrupted cache should report corrupt_data.");
+    }
+
 }
 
 int run_physics_mesh_tests()
@@ -190,6 +347,8 @@ int run_physics_mesh_tests()
     test_invalid_tetrahedron_index_is_rejected();
     test_quality_threshold_is_enforced();
     test_non_manifold_tetrahedron_faces_are_rejected();
+    test_skin_weight_harmonic_extension();
+    test_physics_asset_cache_round_trip_and_invalidation();
 
     std::cout << "PhysicsMeshTests passed.\n";
     return 0;
