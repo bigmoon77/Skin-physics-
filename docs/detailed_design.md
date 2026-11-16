@@ -193,7 +193,13 @@ Iは内部頂点、Bは境界頂点。jointごとに疎行列反復解法を行�
 
 ### 5.3 GPU Skinning
 
-各JointのSkin Matrixはcurrent_global_matrix * inverse_bind_matrixとする。CPUはSimulation Timeに対応するAnimation ClipのPoseを評価してBone行列をGPUへアップロードする。描画フレーム内に複数の物理Stepがある場合も、各Step時刻のPoseを評価または時間補間する。GPUはPhysics MeshのRest Positionとweightから各Stepの目標位置を計算する。前回Step目標位置との差分をそのStepの固定時間刻みで除してAnimation Velocityを得る。
+glTFのSkin Matrixは次で定義する。
+
+    skin_matrix[j] = inverse(mesh_node_global_matrix)
+                   * joint_global_matrix[j]
+                   * inverse_bind_matrix[j]
+
+inverseBindMatricesが省略されている場合は全Jointで単位行列を使う。CPUはSimulation Timeに対応するAnimation ClipのPoseを評価してBone行列をGPUへアップロードする。描画フレーム内に複数の物理Stepがある場合も、各Step時刻のPoseを評価または時間補間する。GPUはPhysics MeshのRest Positionとweightから各Stepの目標位置を計算する。前回Step目標位置との差分をそのStepの固定時間刻みで除してAnimation Velocityを得る。
 
 ## 6. Soft Body Solver詳細
 
@@ -502,6 +508,12 @@ Discrete contactでは位置解決後にvelocity = (position_after - previous_po
 
 接触の4頂点へ、接触勾配係数と逆質量でImpulseを配分する。摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。接触前の相対速度を保存し、同一接触で複数反復するたびに反発を重複適用しない。TOI contactはimpact_resolvedフラグにより同じImpulseをStep終端で二重適用しない。
 
+### 8.1.1 Collision-only Collider
+
+初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、静的形状または固定時間刻みごとに与えられるTransformで移動する形状として扱う。Kinematic Colliderの頂点速度は前Stepと現在Stepの変換後位置から算出し、CCDと接触の相対速度へ含める。接触位置補正・ImpulseによってCollider自体は変形させない。
+
+変形オブジェクトの衝突面は初期版ではSoft Body境界面とCloth Physics Mesh表面を使う。低解像度Collision Proxyを変形メッシュへ割り当て、そのProxy接触を高解像度Physics Meshへ戻す埋め込み応答は初期版の対象外とする。将来追加時はProxy頂点からPhysics MeshへのEmbeddingと、接触勾配のPhysics Vertexへの合成を定義する。
+
 ## 9. Broadphase Spatial Hash
 
 ### 9.1 多段階セル
@@ -641,7 +653,7 @@ Render Mesh三角形ごとに変形後の面法線を求め、Render Vertex単�
 
 材料はMesh単位の基準値、頂点ウェイトは0～1のチャンネル値として保持する。Soft Bodyはmu/K/rho、減衰、Animation Tracking stiffness/dampingを管理する。ClothはStretch/Shear/Bend compliance、面密度、減衰、Animation Trackingを管理する。
 
-Render MeshからPhysics Meshへ属性を転送する場合、Render Vertex Bindingを逆方向に単純平均しない。Physics VertexのRest Pose位置からRender Mesh近傍面を検索し、距離・面積重みで補間する。転送誤差と重みの分散を記録し、曖昧な転送は未確定とする。
+Render MeshからPhysics Meshへ属性を転送する場合、Render Vertex Bindingを逆方向に単純平均しない。Soft Body境界Physics VertexはRender Mesh表面三角形から重心座標で補間する。Soft Body内部頂点は境界Physics Vertexのチャンネル値をDirichlet境界条件とするグラフLaplacian調和拡張で伝播する。Cloth頂点は直接対応または表面三角形補間を使う。転送誤差、残差、重みの分散を記録し、曖昧な転送は未確定とする。Physics Mesh再生成時は元Render Meshの安定IDを優先し、トポロジー変更で対応が一意に決まらない場合は自動適用せず警告する。
 
 Paint / Smooth / Average / Eraseを提供する。ブラシ半径はモデル空間長さで扱い、画面ピクセル入力はカメラからモデル空間へ変換する。ペイントデータはJSONまたはアセットサイドカーファイルで保存する。
 
@@ -817,4 +829,4 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 ## 21. バージョン履歴
 
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
-- 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、Skin Weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Conservative Advancement、overflow時の同一Step再試行を修正・具体化。
+- 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
