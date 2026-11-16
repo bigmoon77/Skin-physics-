@@ -737,7 +737,7 @@ Test Environmentは次の操作を提供する。
 - Time Scale: 実時間DeltaをAccumulatorへ加える倍率。固定物理時間刻み自体は変更しない。
 - Fixed Delta Time: シミュレーションの基本時間刻み。
 - Gravity: 重力ベクトルを変更する。
-- Impulse / Force: kind（instant impulse / sustained force）、位置、方向、強度、半径、継続時間、開始時刻または開始Stepを指定する。Impulseは瞬間的な運動量変化、Forceは指定時間だけ作用する力として扱う。
+- Impulse / Force: kind（instant impulse / sustained force）、位置（m）、方向（正規化ベクトル）、強度、半径（m）、継続時間（s）、開始時刻または開始Stepを指定する。Impulseの強度単位はN*s、ForceはNとし、Impulseは瞬間的な運動量変化、Forceは指定時間だけ作用する力として扱う。
 - Animation: Clip、再生時刻、速度、Blend、Discontinuity Policyを指定する。
 
 Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。
@@ -923,6 +923,8 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 - Zhang & Kim, Simple Culling Methods for Continuous Collision Detection of Deforming Triangles: https://graphics.ewha.ac.kr/projects/details/SCCD/
 - Microsoft, HLSL InterlockedAdd: https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/interlockedadd
 - Microsoft, Shader Model 5 Intrinsic Functions: https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/d3d11-graphics-reference-sm5-intrinsics
+- Microsoft, IDXGIAdapter3::QueryVideoMemoryInfo: https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_4/nf-dxgi1_4-idxgiadapter3-queryvideomemoryinfo
+- Microsoft, DXGI_QUERY_VIDEO_MEMORY_INFO: https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_4/ns-dxgi1_4-dxgi_query_video_memory_info
 
 HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小数点物理値のAtomic Addに依存せず、Gather方式を用いる。参考実装は式・境界条件の出典として扱い、実装をそのまま移植しない。
 
