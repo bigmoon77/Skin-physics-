@@ -1,0 +1,268 @@
+#include "skin_physics/asset/importer.hpp"
+
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+namespace
+{
+    using namespace skin_physics::asset;
+
+    void require(bool condition, const std::string& message)
+    {
+        if (!condition)
+        {
+            throw std::runtime_error(message);
+        }
+    }
+
+    std::filesystem::path test_directory()
+    {
+        const std::filesystem::path directory =
+            std::filesystem::temp_directory_path() / "skin_physics_asset_tests";
+        std::filesystem::create_directories(directory);
+        return directory;
+    }
+
+    void write_text(const std::filesystem::path& path, const std::string& content)
+    {
+        std::ofstream file(path, std::ios::binary);
+        require(static_cast<bool>(file), "Could not create test file: " + path.string());
+        file.write(content.data(), static_cast<std::streamsize>(content.size()));
+        require(static_cast<bool>(file), "Could not write test file: " + path.string());
+    }
+
+    void write_skin_animation_gltf_fixture(
+        const std::filesystem::path& gltf_path,
+        const std::filesystem::path& buffer_path)
+    {
+        const std::array<float, 9> positions = {
+            0.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f
+        };
+        const std::array<uint16_t, 3> indices = { 0, 1, 2 };
+        const std::array<uint8_t, 12> joints = {
+            0, 0, 0, 0,
+            0, 0, 0, 0,
+            0, 0, 0, 0
+        };
+        const std::array<float, 12> weights = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f, 0.0f
+        };
+        const std::array<float, 2> times = { 0.0f, 1.0f };
+        const std::array<float, 6> translations = {
+            0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f
+        };
+        const std::array<float, 16> inverse_bind = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+
+        std::ofstream binary(buffer_path, std::ios::binary);
+        require(static_cast<bool>(binary), "Could not create glTF test buffer.");
+
+        binary.write(reinterpret_cast<const char*>(positions.data()), sizeof(positions));
+        binary.write(reinterpret_cast<const char*>(indices.data()), sizeof(indices));
+        const uint16_t alignment_padding = 0;
+        binary.write(reinterpret_cast<const char*>(&alignment_padding), sizeof(alignment_padding));
+        binary.write(reinterpret_cast<const char*>(joints.data()), sizeof(joints));
+        binary.write(reinterpret_cast<const char*>(weights.data()), sizeof(weights));
+        binary.write(reinterpret_cast<const char*>(times.data()), sizeof(times));
+        binary.write(reinterpret_cast<const char*>(translations.data()), sizeof(translations));
+        binary.write(reinterpret_cast<const char*>(inverse_bind.data()), sizeof(inverse_bind));
+        require(static_cast<bool>(binary), "Could not write glTF test buffer.");
+
+        const std::string json = R"({
+            "asset": { "version": "2.0", "generator": "SkinPhysicsTests" },
+            "buffers": [{ "uri": "skin_animation.bin", "byteLength": 200 }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962 },
+                { "buffer": 0, "byteOffset": 36, "byteLength": 6, "target": 34963 },
+                { "buffer": 0, "byteOffset": 44, "byteLength": 12, "target": 34962 },
+                { "buffer": 0, "byteOffset": 56, "byteLength": 48, "target": 34962 },
+                { "buffer": 0, "byteOffset": 104, "byteLength": 8 },
+                { "buffer": 0, "byteOffset": 112, "byteLength": 24 },
+                { "buffer": 0, "byteOffset": 136, "byteLength": 64 }
+            ],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3" },
+                { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" },
+                { "bufferView": 2, "componentType": 5121, "count": 3, "type": "VEC4" },
+                { "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4" },
+                { "bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR" },
+                { "bufferView": 6, "componentType": 5126, "count": 1, "type": "MAT4" },
+                { "bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC3" }
+            ],
+            "meshes": [{
+                "name": "Triangle",
+                "primitives": [{
+                    "attributes": { "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 },
+                    "indices": 1,
+                    "mode": 4
+                }]
+            }],
+            "nodes": [
+                { "name": "Body", "mesh": 0, "skin": 0, "children": [1] },
+                { "name": "RootJoint" }
+            ],
+            "skins": [{
+                "name": "BodySkin",
+                "skeleton": 1,
+                "joints": [1],
+                "inverseBindMatrices": 5
+            }],
+            "animations": [{
+                "name": "Raise",
+                "samplers": [{ "input": 4, "output": 6, "interpolation": "LINEAR" }],
+                "channels": [{ "sampler": 0, "target": { "node": 1, "path": "translation" } }]
+            }],
+            "scenes": [{ "nodes": [0] }],
+            "scene": 0
+        })";
+        write_text(gltf_path, json);
+    }
+
+    void test_obj_negative_indices_and_polygon()
+    {
+        const std::filesystem::path directory = test_directory();
+        const std::filesystem::path material_path = directory / "basic.mtl";
+        const std::filesystem::path obj_path = directory / "quad.obj";
+
+        write_text(material_path,
+            "newmtl cloth\n"
+            "Kd 0.2 0.4 0.8\n"
+            "Pr 0.7\n"
+            "Pm 0.1\n");
+
+        write_text(obj_path,
+            "mtllib basic.mtl\n"
+            "o quad\n"
+            "v 0 0 0\n"
+            "v 100 0 0\n"
+            "v 100 100 0\n"
+            "v 0 100 0\n"
+            "vt 0 0\n"
+            "vt 1 0\n"
+            "vt 1 1\n"
+            "vt 0 1\n"
+            "s 1\n"
+            "usemtl cloth\n"
+            "f -4/-4 -3/-3 -2/-2 -1/-1\n");
+
+        import_options options;
+        options.has_obj_unit_scale = true;
+        options.obj_unit_scale = 0.01f;
+        const import_result result = import_model(obj_path, options);
+
+        require(result.success, "OBJ import should succeed.");
+        require(result.asset.meshes.size() == 1, "OBJ should create one mesh.");
+        require(result.asset.meshes[0].vertices.size() == 4, "Quad should create four deduplicated vertices.");
+        require(result.asset.meshes[0].indices.size() == 6, "Quad should be triangulated into two triangles.");
+        require(result.asset.materials.size() == 1, "MTL material should be imported.");
+        require(result.asset.meshes[0].submeshes.size() == 1, "OBJ should create one submesh.");
+        require(std::abs(result.asset.meshes[0].vertices[1].position.x - 1.0f) < 1.0e-5f,
+            "OBJ unit scale should convert centimeters to meters.");
+        require((result.asset.meshes[0].vertices[0].attributes & attribute_normal) != 0,
+            "Missing normals should be generated.");
+        require((result.asset.meshes[0].vertices[0].attributes & attribute_tangent) != 0,
+            "Tangents should be generated when UVs are present.");
+    }
+
+    void test_obj_requires_explicit_unit_scale()
+    {
+        const std::filesystem::path directory = test_directory();
+        const std::filesystem::path obj_path = directory / "unit_required.obj";
+        write_text(obj_path,
+            "v 0 0 0\n"
+            "v 1 0 0\n"
+            "v 0 1 0\n"
+            "f 1 2 3\n");
+
+        const import_result result = import_model(obj_path);
+        require(!result.success, "OBJ import without an explicit unit scale must fail.");
+        require(!result.diagnostics.empty(), "Missing OBJ unit scale should be diagnosed.");
+        require(result.diagnostics[0].code == diagnostic_code::invalid_unit_scale,
+            "Missing OBJ unit scale should report invalid_unit_scale.");
+    }
+
+    void test_gltf_skin_and_animation()
+    {
+        const std::filesystem::path directory = test_directory();
+        const std::filesystem::path gltf_path = directory / "skin_animation.gltf";
+        const std::filesystem::path buffer_path = directory / "skin_animation.bin";
+        write_skin_animation_gltf_fixture(gltf_path, buffer_path);
+
+        const import_result result = import_model(gltf_path);
+        require(result.success, "glTF Skin / Animation fixture should import.");
+        require(result.asset.meshes.size() == 1, "glTF should import one mesh.");
+        require(result.asset.meshes[0].vertices.size() == 3, "glTF should import three vertices.");
+        require(result.asset.meshes[0].indices.size() == 3, "glTF should import one triangle.");
+        require(result.asset.nodes.size() == 2, "glTF should import its node hierarchy.");
+        require(result.asset.skins.size() == 1, "glTF should import one skin.");
+        require(result.asset.skins[0].joints.size() == 1, "glTF skin should contain one joint.");
+        require(result.asset.animations.size() == 1, "glTF should import one animation clip.");
+        require(result.asset.animations[0].tracks.size() == 1, "glTF should import one animation track.");
+        require(result.asset.animations[0].tracks[0].keys.size() == 2, "glTF animation should import two keys.");
+
+        const vertex& first_vertex = result.asset.meshes[0].vertices[0];
+        require((first_vertex.attributes & attribute_skinning) != 0, "Skin attributes should be present.");
+        require(first_vertex.joints[0] == 0, "Skin joint index should be preserved.");
+        require(std::abs(first_vertex.weights[0] - 1.0f) < 1.0e-6f,
+            "Skin weights should be normalized.");
+    }
+
+    void test_model_validation_rejects_bad_indices()
+    {
+        model invalid_model;
+        mesh invalid_mesh;
+        invalid_mesh.vertices.resize(3);
+        invalid_mesh.indices = { 0, 1, 3 };
+        submesh section;
+        section.first_index = 0;
+        section.index_count = 3;
+        invalid_mesh.submeshes.push_back(section);
+        invalid_model.meshes.push_back(invalid_mesh);
+
+        const std::vector<diagnostic> diagnostics = validate_model(invalid_model);
+        bool found_invalid_index = false;
+        for (const diagnostic& item : diagnostics)
+        {
+            if (item.code == diagnostic_code::invalid_index)
+            {
+                found_invalid_index = true;
+                break;
+            }
+        }
+        require(found_invalid_index, "Model validation should reject out-of-range indices.");
+    }
+}
+
+int main()
+{
+    try
+    {
+        test_obj_negative_indices_and_polygon();
+        test_obj_requires_explicit_unit_scale();
+        test_gltf_skin_and_animation();
+        test_model_validation_rejects_bad_indices();
+    }
+    catch (const std::exception& exception)
+    {
+        std::cerr << "SkinPhysicsTests failed: " << exception.what() << "\n";
+        return 1;
+    }
+
+    std::cout << "SkinPhysicsTests passed.\n";
+    return 0;
+}

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E100}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Asset">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E101}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E102}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Asset">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E103}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Third Party">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E104}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\asset\import.cpp">
+      <Filter>Source Files\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\asset\obj_importer.cpp">
+      <Filter>Source Files\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\asset\gltf_importer.cpp">
+      <Filter>Source Files\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\asset\validation.cpp">
+      <Filter>Source Files\Asset</Filter>
+    </ClCompile>
+    <ClCompile Include="src\asset\cgltf_impl.c">
+      <Filter>Third Party</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\skin_physics\asset\types.hpp">
+      <Filter>Header Files\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\asset\importer.hpp">
+      <Filter>Header Files\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="src\asset\importer_internal.hpp">
+      <Filter>Header Files\Asset</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\cgltf\cgltf.h">
+      <Filter>Third Party</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
