@@ -192,7 +192,7 @@ Iは内部頂点、Bは境界頂点。jointごとに疎行列反復解法を行�
 
 ### 5.3 GPU Skinning
 
-CPUはAnimation Clipを評価して現在のBone行列をGPUへアップロードする。GPUはPhysics MeshのRest Positionとweightから現在の目標位置を計算する。前回目標位置との差分を固定時間刻みで除してAnimation Velocityを得る。
+CPUはSimulation Timeに対応するAnimation ClipのPoseを評価してBone行列をGPUへアップロードする。描画フレーム内に複数の物理Stepがある場合も、各Step時刻のPoseを評価または時間補間する。GPUはPhysics MeshのRest Positionとweightから各Stepの目標位置を計算する。前回Step目標位置との差分をそのStepの固定時間刻みで除してAnimation Velocityを得る。
 
 ## 6. Soft Body Solver詳細
 
@@ -293,7 +293,7 @@ tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1。
 
     h_t = 3 * V0 / max_face_area
 
-として、初期サブステップ上限の推定値を次とする。
+として、初期サブステップ上限の推定値を次とする。Animation Tracking stiffnessがある場合は、頂点質量m_iと追従剛性k_iからomega_i=sqrt(k_i/m_i)を求め、delta_t_tracking_limit=c_tracking/omega_maxも評価する。c_trackingは初期値0.2として実測検証する。最終上限はFEMとTrackingの小さい方を採用する。
 
     delta_t_limit = cfl_factor * min_t(h_t / c_p_t)
     cfl_factor = 0.2  // 初期評価値。実測で検証する
@@ -322,7 +322,7 @@ Compliance alphaは制約関数の単位に依存する。エディタで扱う�
 - Shearひずみ制約: Cは無次元、kはJ、alphaは1/J。
 - Bend角度制約: Cはrad、kはN*m、alphaは1/(N*m)。
 
-初期版のCloth材料入力は面内引張剛性E_2D (N/m)、面内せん断剛性G_2D (N/m)、曲げ剛性D (N*m)とする。Stretch辺のdual widthをw、Rest LengthをL0とすると、k_stretch=E_2D*w/L0。Shear三角形はk_shear=G_2D*area。Bend hingeは共有辺長lとdual width wを使いk_bend=D*w/lとする。これらは離散化の初期モデルであり、解像度変更時のエネルギー一致を試験する。
+初期版のCloth材料入力は面内引張剛性E_2D (N/m)、面内せん断剛性G_2D (N/m)、曲げ剛性D (N*m)とする。Stretch辺のdual width wは内部辺では隣接2三角形の辺直交高度の平均、境界辺では隣接三角形の高度の半分とし、Rest LengthをL0とするとk_stretch=E_2D*w/L0。Shear三角形はk_shear=G_2D*area。Bend hingeのdual width wは隣接2三角形の辺直交高度の平均とし、共有辺長lを使いk_bend=D*w/lとする。これらは離散化の初期モデルであり、解像度変更時のエネルギー一致を試験する。
 
 分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。λは各サブステップ開始時に0へ初期化し、同一サブステップの反復中は保持する。初期版ではサブステップ間Warm Startを行わない。
 
@@ -588,12 +588,12 @@ d(t)<=r+toi_toleranceでTOIを確定する。t>1なら当該サブステップ�
 
 ### 11.4 TOI処理
 
-同一サブステップ内の最小TOIをGPU Reductionで求める。TOI時刻は秒単位のtauで扱い、0 <= tau <= delta_t_substepとする。各頂点軌道はx(tau)=x_start+tau*velocityとして評価する。Conservative Advancementの進行量は次とする。
+同一サブステップ内の最小TOIをGPU Reductionで求める。TOI時刻は秒単位のtauで扱い、0 <= tau <= delta_t_substepとする。衝突判定用の軌道はサブステップ開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/delta_t_substep、x(tau)=x_start+tau*path_velocityと定義する。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
 
-接触が確定したら全対象をtauまで進め、最小TOI近傍の接触をまとめて解決する。その後、残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力は残時間区間で再評価する。
+接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分して最小TOI近傍の接触をまとめて解決する。その後、残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。
 
 1サブステップ内のTOI分割上限は初期値2回。上限を超えた場合は残時間を進めずCCDIterationLimitとしてステップを未確定にし、時間刻みを細分化して再試行する。CCDの解決不能を貫通許容として扱わない。
 
@@ -706,7 +706,7 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 - BlockedByCCD
 - Failed
 
-予測位置と確定位置を分離する。Broadphase/Contact/Contributionのoverflowや非有限状態が検出されたStepはCommitしない。容量を増やして同じStepを再実行するか、Failureとしてユーザーへ通知する。
+予測位置と確定位置を分離する。Broadphase/Contact/Contributionのoverflowや非有限状態が検出されたStepはCommitしない。Broadphase envelopeはサブステップ開始位置から予測位置までのSwept AABBを基本とし、設定した最大拘束補正余裕を加える。位置反復後に頂点がこのenvelope外へ移動した場合は、次の反復前にBroadphaseを再構築する。再構築時に容量超過が起きた場合も同じStepをBlock / Retryする。容量を増やして同じStepを再実行するか、Failureとしてユーザーへ通知する。
 
 診断コード:
 
