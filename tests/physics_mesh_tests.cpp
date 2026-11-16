@@ -260,10 +260,14 @@ namespace
                 center.weights[2] > 0.0f && center.weights[3] > 0.0f,
             "Interior vertex should receive all four boundary joint influences.");
 
-        for (std::size_t influence = 0; influence < 4; ++influence)
+        require(center.joints[0] == 0,
+            "The nearest boundary influence should remain the largest interior influence.");
+        require(std::abs(center.weights[0] - 0.55f) < 1.0e-4f,
+            "Interior harmonic weight for the origin joint should match the analytical solution.");
+        for (std::size_t influence = 1; influence < 4; ++influence)
         {
-            require(std::abs(center.weights[influence] - 0.25f) < 1.0e-4f,
-                "Symmetric center vertex should receive equal harmonic weights.");
+            require(std::abs(center.weights[influence] - 0.15f) < 1.0e-4f,
+                "Interior harmonic weights should match the analytical edge-weighted solution.");
         }
     }
 
