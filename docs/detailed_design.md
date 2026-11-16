@@ -336,7 +336,7 @@ dは接触厚み。勾配は
 
 
 ```text
-w_p + betaeta_0^2w_a+betaeta_1^2w_b+betaeta_2^2w_c+tilde_ilde{alpha}
+wp + beta0^2 * wa + beta1^2 * wb + beta2^2 * wc + alpha_tilde
 ```
 
 
