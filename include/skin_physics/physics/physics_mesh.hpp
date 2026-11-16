@@ -51,6 +51,7 @@ namespace skin_physics::physics
         empty_mesh,
         invalid_density,
         invalid_index,
+        invalid_topology,
         degenerate_tetrahedron,
         non_manifold_volume,
         capacity_exceeded,
