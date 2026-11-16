@@ -18,5 +18,8 @@
     <ClInclude Include="tests\test_support.hpp">
       <Filter>Tests</Filter>
     </ClInclude>
+    <ClInclude Include="tests\test_support.hpp">
+      <Filter>Tests</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
