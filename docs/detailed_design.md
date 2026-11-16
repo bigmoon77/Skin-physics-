@@ -1,7 +1,7 @@
 # Skin Physics 詳細設計書
 
 - 文書バージョン: 1.1
-- 状態: 初版レビュー対応・再レビュー待ち
+- 状態: 初版レビュー対応・レビュー合格（数値パラメータは段階試験で確定）
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.1
 - 前版: 1.0
@@ -101,7 +101,7 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 
 | バッファ | 形式例 | 更新頻度 | 主な用途 |
 |---|---|---|---|
-| position_read / position_write | StructuredBuffer<float4> | 反復ごと | 位置Ping-Pong |
+| position_read / position_write | SRV/UAV StructuredBuffer<float4> | 反復ごと | 位置Ping-Pong |
 | previous_position | StructuredBuffer<float4> | サブステップごと | 速度再構築 |
 | velocity | RWStructuredBuffer<float4> | サブステップごと | 速度 |
 | inverse_mass | StructuredBuffer<float> | 初期化時 | 逆質量 |
@@ -112,13 +112,13 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 | tet_indices | StructuredBuffer<uint4> | 初期化時 | 四面体接続 |
 | tet_rest_data | StructuredBuffer<TetRestData> | 初期化時 | Bm、V0、材料ID |
 | vertex_tet_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Tet CSR |
-| tet_force_contrib | StructuredBuffer<float4> | サブステップ | 四面体ごとの4頂点力 |
+| tet_force_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 四面体ごとの4頂点力 |
 | cloth_constraints | StructuredBuffer<ConstraintData> | 初期化時 | Stretch / Shear / Bend |
 | constraint_lambda | RWStructuredBuffer<float> | 反復ごと | XPBD λ |
 | vertex_constraint_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Constraint CSR |
 | cell_records | StructuredBuffer<CellRecord> | サブステップ | Spatial Hash登録 |
-| contact_candidates | StructuredBuffer<ContactCandidate> | サブステップ | VT / EE候補 |
-| contact_data | StructuredBuffer<ContactData> | 反復ごと | 接触法線・係数・λ |
+| contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | サブステップ | VT / EE候補 |
+| contact_data | SRV/UAV StructuredBuffer<ContactData> | 反復ごと | 接触法線・係数・λ |
 | vertex_contact_offsets / ids | StructuredBuffer<uint> | サブステップ | Vertex→Contact CSR |
 | contact_contrib | StructuredBuffer<float4> | 反復ごと | 接触補正寄与 |
 | render_binding | StructuredBuffer<RenderBinding> | 初期化時 | Render Vertex対応 |
@@ -126,7 +126,7 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 
 float4のw成分の意味はバッファ単位で固定し、CPU/HLSL間で共有する構造体にはサイズ・オフセット検証を入れる。構造体にC++標準のfloat3とDirectXMath型を混在させない。GPU用データはPODの明示レイアウトとする。
 
-可変長配列はCount → Prefix Sum → Capacity Check → Fillで構築する。固定上限へ直接書き込むAppend方式で候補を切り捨てない。
+GPU ResourceはSRV/UAV両方のViewを必要に応じて作成し、同じBufferを同時にSRVとUAVへBindしない。生成PassはUAV、後続読取PassはUAV unbind後にSRVとして使用する。可変長配列はCount → Prefix Sum → Capacity Check → Fillで構築する。固定上限へ直接書き込むAppend方式で候補を切り捨てない。
 
 ## 4. Physics Mesh・隣接データ
 
@@ -240,13 +240,13 @@ EとPoisson比nuで入力する場合は以下に変換する。
 
 異常要素は別Passで3x3 Jacobi SVDを行う。F = U * Sigma * transpose(V)とし、特異値を降順に並べる。必要な場合は最小特異値の軸を反転し、D=diag(1,1,det(U*transpose(V)))としてR=U*D*transpose(V)を構成する。特異値が閾値以下の場合は下限へクランプし、非有限値を出さない。SVD補助Passの対象数とGPU時間を計測する。
 
-さらに反転領域には以下の体積Barrierを加える。
+さらに反転領域には以下の体積ペナルティを加える。これは有限の二次ペナルティであり、数学的な非反転Barrierとして反転を絶対に禁止するものではない。k_inversionの単位は応力と同じPaとする。
 
     J = det(F)
     Psi_barrier = 0.5 * k_inversion * min(J - J_min, 0)^2
     P_barrier = k_inversion * min(J - J_min, 0) * cofactor(F)
 
-総応力はP_total = P + P_barrier。Barrierは通常変形で0となる。Jが閾値を下回る要素には診断フラグを付ける。反転が一定数・時間以上続く場合はSimulation Warning/Errorとし、単に要素を無効化して力を消さない。
+総応力はP_total = P + P_barrier。ペナルティはJ >= J_minで0となる。Jが閾値を下回る要素には診断フラグを付ける。反転が一定数・時間以上続く場合はSimulation Warning/Errorとし、単に要素を無効化して力を消さない。
 
 ### 6.5 四面体内部力
 
@@ -335,7 +335,13 @@ Compliance alphaは制約関数の単位に依存する。エディタで扱う�
     gradient_i = normalize(x_i - x_j)
     gradient_j = -gradient_i
 
-Rest LengthはRest Poseから算出する。StretchはGraph Coloringを基本方式とする。同色内の制約は頂点を共有せず、色ごとに順次Dispatchする。色ごとにin-place更新し、次色は前色の結果を読む。
+Rest LengthはRest Poseから算出する。Graph Coloringの各制約更新は次の逐次XPBDとする。
+
+    delta_lambda = delta_lambda_raw
+    lambda_next = lambda_old + delta_lambda
+    position_i += inverse_mass_i * gradient_i * delta_lambda
+
+StretchはGraph Coloringを基本方式とする。同色内の制約は頂点を共有せず、色ごとに順次Dispatchする。色ごとにin-place更新し、次色は前色の結果を読む。
 
 ### 7.3 Shear
 
@@ -464,7 +470,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     effective_inverse_mass =
         wp + beta0^2 * wb0 + beta1^2 * wb1 + beta2^2 * wb2
 
-各反復で最近接点と重心座標を再計算する。λは同一サブステップの同一接触キーで保持し、接触キーが変わった場合は初期化する。
+各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一メッシュペア・同一近傍面パッチ内で接触点距離と法線角度を用いてContact Patchを形成する。ほぼ同位置・同方向の接触は最深接触を代表として残すか、接触点を重み付き統合する。接触点間距離と法線角度の閾値は接触厚み・メッシュ解像度に応じた設定値とし、統合前後の最大貫通を計測する。λは同一サブステップの同一接触キーで保持し、接触キーが変わった場合は初期化する。
 
 ### 8.4 Edge-Edge
 
@@ -526,7 +532,7 @@ GPU処理順:
 8. Candidate Pairを正規化し、重複排除。
 9. AABB再検査後にNarrowphaseへ渡す。
 
-Hash値一致だけで同一セルと判定しない。Hash、level、元の整数セル座標を比較する。
+Hash値一致だけで同一セルと判定しない。Hash、level、元の整数セル座標を比較する。Prefix Sumと登録数の加算はuint上限を超えないよう各段でoverflow検査を行う。上限超過時はCountOverflowとしてFillを停止する。1回のバッファへ収まらない場合は、上限以下のBatchへ分割する。D3D11 BufferのByteWidthおよびDispatch group countのAPI上限もCPU側で事前検査する。
 
 ### 9.4 接触候補の完全性
 
@@ -536,7 +542,7 @@ VTは頂点AABBと三角形AABB、EEは辺AABB同士のセル重複から候補�
 
 CellRecord、Candidate、Contact、Contributionの全可変長バッファにcapacity、required_count、overflow flagを持たせる。Count/Scan段階でcapacity超過を検出した場合、Fill以降とシミュレーション状態のCommitを行わない。
 
-Simulation Managerは対象インスタンスをBlockedByCapacity状態へ移し、GPUイベント完了後に診断情報を非同期回収する。必要容量へ拡張し、同じlogical stepを初期状態から再実行する。Blocked中に当該インスタンスの時間を進めない。他インスタンスは継続可能とする。再試行上限を超えた場合はSimulation Errorにし、候補を切り捨てない。
+Simulation Managerは対象インスタンスをBlockedByCapacity状態へ移し、GPUイベント完了後に診断情報を非同期回収する。各GPU Passはsimulation_statusを先に確認し、異常フラグが立ったStepの後続PassとState Commitを実行しない。必要容量へ拡張し、確定済み状態のスナップショットから同じlogical stepを初期状態として再実行する。Blocked中に当該インスタンスの時間を進めない。他インスタンスは継続可能とする。再試行上限を超えた場合はSimulation Errorにし、候補を切り捨てない。
 
 ## 10. Narrowphase・自己衝突
 
@@ -680,6 +686,7 @@ Gatherの隣接IDを固定順序にし、同一GPU上で浮動小数点加算順
     - Cloth Bend Constraint Output / Gather / Apply
     - Contact Narrowphase Refresh
     - Contact XPBD Output / Gather / Apply
+    - Contact Patch Reduction / Merge
     - Broadphase Envelope Exceeded Check; 必要時Rebuild
 12. TOI検出・TOI分割処理（CCD対象のみ）
 13. Velocity Reconstruction
