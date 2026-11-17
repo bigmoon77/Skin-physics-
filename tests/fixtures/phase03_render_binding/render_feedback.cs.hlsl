@@ -22,7 +22,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID)
 
     RenderBinding binding = render_bindings[dispatch_id.x];
     float4 position;
-    if (binding.indices.w == 1)
+    if ((uint)binding.rest_offset.w == 1)
     {
         position = physics_positions[binding.indices.x];
     }
