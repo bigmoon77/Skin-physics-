@@ -10,7 +10,7 @@ cbuffer CcdParameters : register(b0)
 };
 
 float3 closest_point_triangle(
-    float3 point,
+    float3 position_value,
     float3 a,
     float3 b,
     float3 c,
@@ -18,7 +18,7 @@ float3 closest_point_triangle(
 {
     float3 ab = b - a;
     float3 ac = c - a;
-    float3 ap = point - a;
+    float3 ap = position_value - a;
     float d1 = dot(ab, ap);
     float d2 = dot(ac, ap);
     if (d1 <= 0.0f && d2 <= 0.0f)
@@ -26,7 +26,7 @@ float3 closest_point_triangle(
         barycentric = float3(1.0f, 0.0f, 0.0f);
         return a;
     }
-    float3 bp = point - b;
+    float3 bp = position_value - b;
     float d3 = dot(ab, bp);
     float d4 = dot(ac, bp);
     if (d3 >= 0.0f && d4 <= d3)
@@ -41,7 +41,7 @@ float3 closest_point_triangle(
         barycentric = float3(1.0f - v, v, 0.0f);
         return a + v * ab;
     }
-    float3 cp = point - c;
+    float3 cp = position_value - c;
     float d5 = dot(ab, cp);
     float d6 = dot(ac, cp);
     if (d6 >= 0.0f && d5 <= d6)
@@ -91,10 +91,10 @@ void point_triangle_ccd(uint3 dispatch_id : SV_DispatchThreadID)
     for (uint iteration = 0; iteration < maximum_iterations; ++iteration)
     {
         iterations = iteration + 1;
-        float3 point = start_position + velocity * time;
+        float3 position_value = start_position + velocity * time;
         float3 closest = closest_point_triangle(
-            point, triangle0, triangle1, triangle2, barycentric);
-        float3 separation = point - closest;
+            position_value, triangle0, triangle1, triangle2, barycentric);
+        float3 separation = position_value - closest;
         distance_value = length(separation);
         float gap = distance_value - combined_thickness;
         if (gap <= distance_tolerance)
