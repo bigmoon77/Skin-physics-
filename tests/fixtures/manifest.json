@@ -66,6 +66,7 @@
       "status": "partial",
       "acceptance_tests": [
         "T13",
+        "T25",
         "T26"
       ],
       "cases": [
@@ -124,8 +125,17 @@
           ]
         }
       ],
-      "fixture_ready_acceptance_tests": [
-        "T25"
+      "automated_cases": [
+        "P02_SINGLE_TET",
+        "P02_TWO_TET",
+        "P02_CENTER_STAR",
+        "P02_CACHE",
+        "P02_TETRAHEDRALIZATION_RESOLUTION"
+      ],
+      "unimplemented": [
+        "Running a version-pinned fTetWild executable against representative production surfaces in CI",
+        "Target count is converted into a deterministic characteristic edge length; actual generated count remains fTetWild-version dependent and is recorded",
+        "Final element-quality threshold is enforced by Physics Mesh build/validation after tetrahedralization"
       ]
     },
     {

@@ -1,8 +1,11 @@
+#include "skin_physics/asset/importer.hpp"
 #include "skin_physics/physics/msh_reader.hpp"
+#include "skin_physics/physics/ftetwild_runner.hpp"
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 #include "skin_physics/physics/skin_weights.hpp"
 #include "skin_physics/physics/asset_cache.hpp"
 #include "test_support.hpp"
+#include "json_test_support.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -346,6 +349,129 @@ namespace
         return identity;
     }
 
+    void test_ftetwild_resolution_settings_report_and_cache_identity()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase02_physics_mesh/resolution.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase02_physics_mesh/resolution.expected.json"));
+
+        skin_physics::asset::import_options import_options;
+        import_options.has_obj_unit_scale = true;
+        import_options.obj_unit_scale = 0.01f;
+        const skin_physics::asset::import_result imported =
+            skin_physics::asset::import_model(
+                test_support::fixture_path("phase01_importer/quad.obj"), import_options);
+        require(imported.success && imported.asset.meshes.size() == 1,
+            "Phase 2 resolution source surface should import from the persistent OBJ fixture.");
+        const skin_physics::asset::mesh& surface_mesh = imported.asset.meshes[0];
+
+        ftetwild_settings edge_settings;
+        edge_settings.target_edge_length = static_cast<float>(
+            input.at("settings").at("target_tet_edge_length").as_number());
+        edge_settings.maximum_tetrahedra = static_cast<uint32_t>(
+            input.at("settings").at("max_tet_count").as_number());
+        edge_settings.surface_approximation_tolerance = 1.0e-3f;
+        edge_settings.tetra_quality_threshold = 1.0e-5f;
+        edge_settings.generator_id = "fTetWild";
+        edge_settings.generator_version = "fixture-version";
+
+        const ftetwild_resolution_result edge_resolution =
+            resolve_ftetwild_settings(surface_mesh, edge_settings);
+        require(edge_resolution.success &&
+            edge_resolution.value.resolution_mode == ftetwild_resolution_mode::target_edge_length &&
+            !edge_resolution.value.edge_length_is_estimated &&
+            std::abs(edge_resolution.value.target_edge_length -
+                input.at("settings").at("target_tet_edge_length").as_number()) <= 1.0e-6,
+            "Explicit target edge length should pass through unchanged.");
+
+        ftetwild_settings count_settings = edge_settings;
+        count_settings.target_edge_length = 0.0f;
+        count_settings.target_tetrahedron_count = static_cast<uint32_t>(
+            input.at("alternate_settings").at("target_tet_count").as_number());
+        const ftetwild_resolution_result count_resolution =
+            resolve_ftetwild_settings(surface_mesh, count_settings);
+        require(count_resolution.success &&
+            count_resolution.value.resolution_mode == ftetwild_resolution_mode::target_tetrahedron_count &&
+            count_resolution.value.edge_length_is_estimated &&
+            count_resolution.value.requested_tetrahedron_count == 64,
+            "Target tetrahedron count should resolve into a deterministic target edge length.");
+
+        const double expected_diagonal = std::sqrt(2.0);
+        const double expected_edge_length = expected_diagonal / 4.0;
+        require(std::abs(count_resolution.value.surface_bbox_diagonal - expected_diagonal) <= 1.0e-6 &&
+            std::abs(count_resolution.value.target_edge_length - expected_edge_length) <= 1.0e-6,
+            "Count mode edge length should match bbox diagonal divided by cube-root count.");
+
+        physics_asset_cache_identity identity;
+        identity.source_asset_id = "resolution_fixture";
+        identity.source_asset_hash = "sha256:quad_fixture";
+        require(apply_ftetwild_cache_identity(count_settings, count_resolution.value, identity),
+            "fTetWild generator settings should populate the physics cache identity.");
+        require(identity.generator_id == "fTetWild" &&
+            identity.generator_version == "fixture-version" &&
+            identity.generator_options.find("target_tetrahedron_count") != std::string::npos,
+            "Generator id, version and resolved settings must participate in the cache identity.");
+
+        ftetwild_settings changed_count_settings = count_settings;
+        changed_count_settings.surface_approximation_tolerance *= 2.0f;
+        physics_asset_cache_identity changed_identity = identity;
+        require(apply_ftetwild_cache_identity(
+            changed_count_settings, count_resolution.value, changed_identity),
+            "Changed fTetWild settings should still produce a cache identity.");
+        require(changed_identity.generator_options != identity.generator_options,
+            "Changing a generation option must invalidate cache identity.");
+
+        raw_tet_mesh generated_mesh = make_single_tetrahedron();
+        tetrahedralization_report report;
+        std::string report_error;
+        require(measure_tetrahedralization_output(
+            generated_mesh, count_resolution.value, report, report_error),
+            "Reviewed tetrahedralization output should produce a generation report.");
+        require(report.actual_vertex_count == 4 &&
+            report.actual_tetrahedron_count == 1 &&
+            report.has_edge_statistics,
+            "Generation report should record actual vertex/tetrahedron counts and edge statistics.");
+
+        const double expected_minimum_edge = 1.0;
+        const double expected_average_edge = (1.0 + std::sqrt(2.0)) * 0.5;
+        const double expected_maximum_edge = std::sqrt(2.0);
+        require(std::abs(report.minimum_edge_length - expected_minimum_edge) <= 1.0e-6 &&
+            std::abs(report.average_edge_length - expected_average_edge) <= 1.0e-6 &&
+            std::abs(report.maximum_edge_length - expected_maximum_edge) <= 1.0e-6,
+            "Generation report edge-length distribution should match a right unit tetrahedron.");
+
+        require(std::holds_alternative<std::nullptr_t>(
+            expected.at("absolute_tetrahedron_count").data),
+            "Resolution fixture must not hardcode fTetWild-version-specific tetrahedron counts.");
+
+        ftetwild_settings ambiguous_settings = edge_settings;
+        ambiguous_settings.target_tetrahedron_count = 64;
+        const ftetwild_resolution_result ambiguous =
+            resolve_ftetwild_settings(surface_mesh, ambiguous_settings);
+        require(!ambiguous.success &&
+            ambiguous.diagnostics[0].code == tetrahedralizer_error::invalid_settings,
+            "Resolution API must reject simultaneous edge-length and target-count selectors.");
+
+        ftetwild_settings over_capacity_settings = count_settings;
+        over_capacity_settings.target_tetrahedron_count = static_cast<uint32_t>(
+            input.at("over_capacity_settings").at("target_tet_count").as_number());
+        over_capacity_settings.maximum_tetrahedra = static_cast<uint32_t>(
+            input.at("over_capacity_settings").at("max_tet_count").as_number());
+        const ftetwild_resolution_result over_capacity =
+            resolve_ftetwild_settings(surface_mesh, over_capacity_settings);
+        require(!over_capacity.success &&
+            over_capacity.diagnostics[0].code == tetrahedralizer_error::invalid_settings,
+            "Requested target count greater than maximum_tetrahedra must be rejected before launch.");
+
+        raw_tet_mesh invalid_output = generated_mesh;
+        invalid_output.tetrahedra[0][3] = 999;
+        tetrahedralization_report invalid_report;
+        require(!measure_tetrahedralization_output(
+            invalid_output, count_resolution.value, invalid_report, report_error),
+            "Generation report must reject output with invalid element indices.");
+    }
+
     void test_physics_asset_cache_round_trip_and_invalidation()
     {
         const std::filesystem::path cache_path = test_directory() / "single_tet.sphys";
@@ -424,6 +550,8 @@ int run_physics_mesh_tests()
     std::cout << "[PASS] P02_SKIN_WEIGHT_HARMONIC\n";
     test_physics_asset_cache_round_trip_and_invalidation();
     std::cout << "[PASS] P02_ASSET_CACHE\n";
+    test_ftetwild_resolution_settings_report_and_cache_identity();
+    std::cout << "[PASS] P02_TETRAHEDRALIZATION_RESOLUTION\n";
 
     std::cout << "PhysicsMeshTests passed.\n";
     return 0;
