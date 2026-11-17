@@ -66,7 +66,7 @@ bool finite3(float3 value)
 }
 
 float3 closest_point_triangle(
-    float3 point,
+    float3 position_value,
     float3 a,
     float3 b,
     float3 c,
@@ -74,7 +74,7 @@ float3 closest_point_triangle(
 {
     float3 ab = b - a;
     float3 ac = c - a;
-    float3 ap = point - a;
+    float3 ap = position_value - a;
     float d1 = dot(ab, ap);
     float d2 = dot(ac, ap);
     if (d1 <= 0.0f && d2 <= 0.0f)
@@ -83,7 +83,7 @@ float3 closest_point_triangle(
         return a;
     }
 
-    float3 bp = point - b;
+    float3 bp = position_value - b;
     float d3 = dot(ab, bp);
     float d4 = dot(ac, bp);
     if (d3 >= 0.0f && d4 <= d3)
@@ -100,7 +100,7 @@ float3 closest_point_triangle(
         return a + v * ab;
     }
 
-    float3 cp = point - c;
+    float3 cp = position_value - c;
     float d5 = dot(ab, cp);
     float d6 = dot(ac, cp);
     if (d6 >= 0.0f && d5 <= d6)
@@ -135,15 +135,15 @@ float3 closest_point_triangle(
 [numthreads(1, 1, 1)]
 void vertex_triangle_contact(uint3 dispatch_id : SV_DispatchThreadID)
 {
-    float3 point = contact_positions[0].xyz;
+    float3 position_value = contact_positions[0].xyz;
     float3 triangle0 = contact_positions[1].xyz;
     float3 triangle1 = contact_positions[2].xyz;
     float3 triangle2 = contact_positions[3].xyz;
 
     float3 barycentric;
     float3 closest = closest_point_triangle(
-        point, triangle0, triangle1, triangle2, barycentric);
-    float3 separation = point - closest;
+        position_value, triangle0, triangle1, triangle2, barycentric);
+    float3 separation = position_value - closest;
     float distance_value = length(separation);
     float3 normal = distance_value > 1.0e-10f
         ? separation / distance_value
@@ -151,11 +151,11 @@ void vertex_triangle_contact(uint3 dispatch_id : SV_DispatchThreadID)
     float penetration = max(0.0f, contact_radius - distance_value);
     float lambda = 0.0f;
 
-    float3 corrected0 = point;
+    float3 corrected0 = position_value;
     float3 corrected1 = triangle0;
     float3 corrected2 = triangle1;
     float3 corrected3 = triangle2;
-    bool valid = finite3(point) && finite3(closest) &&
+    bool valid = finite3(position_value) && finite3(closest) &&
         finite3(normal) && isfinite(distance_value);
 
     if (valid && penetration > 0.0f)
