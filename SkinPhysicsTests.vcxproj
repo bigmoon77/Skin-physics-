@@ -97,6 +97,7 @@
     <ClCompile Include="tests\gpu_solver_tests.cpp" />
     <None Include="tests\fixtures\phase03_render_binding\render_feedback.cs.hlsl" />
     <None Include="tests\fixtures\phase05_07_gpu\cloth_constraints.cs.hlsl" />
+    <None Include="tests\fixtures\phase06_soft_body\corotational_fem.cs.hlsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

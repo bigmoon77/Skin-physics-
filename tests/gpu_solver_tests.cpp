@@ -1,4 +1,6 @@
 #include "skin_physics/physics/cloth_solver.hpp"
+#include "skin_physics/physics/physics_mesh_builder.hpp"
+#include "skin_physics/physics/soft_body_fem.hpp"
 #include "test_support.hpp"
 #include "json_test_support.hpp"
 
@@ -505,11 +507,215 @@ namespace
             device.Get(), context.Get(), shader.Get(), input, mesh, 2, "Bend");
         std::cout << "[PASS] P05_WARP_BEND\n";
     }
+
+    struct gpu_tet_input
+    {
+        uint32_t vertex_ids[4] = {};
+        gpu_float4 rest_inverse[3] = {};
+        gpu_float4 rest_gradients[4] = {};
+        gpu_float4 material0;
+        gpu_float4 material1;
+    };
+
+    struct gpu_tet_output
+    {
+        gpu_float4 deformation[3];
+        gpu_float4 rotation[3];
+        gpu_float4 stress[3];
+        gpu_float4 forces[4];
+        gpu_float4 metrics;
+    };
+
+    struct alignas(16) gpu_tet_dispatch_parameters
+    {
+        uint32_t tetrahedron_count = 1;
+        uint32_t reserved[3] = {};
+    };
+
+    static_assert(sizeof(gpu_tet_input) == 160, "Tet input layout must match HLSL.");
+    static_assert(sizeof(gpu_tet_output) == 224, "Tet output layout must match HLSL.");
+
+    void test_phase06_warp_corotational_fem()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase06_soft_body/tet_deformation.input.json"));
+
+        skin_physics::physics::raw_tet_mesh raw_mesh;
+        for (const test_json::value& point : input.at("rest_positions").as_array())
+        {
+            raw_mesh.positions.push_back(read_vec3(point));
+        }
+        const auto& tet_indices = input.at("tetrahedron").as_array();
+        raw_mesh.tetrahedra.push_back({
+            static_cast<uint32_t>(tet_indices[0].as_number()),
+            static_cast<uint32_t>(tet_indices[1].as_number()),
+            static_cast<uint32_t>(tet_indices[2].as_number()),
+            static_cast<uint32_t>(tet_indices[3].as_number())
+        });
+        skin_physics::physics::physics_mesh_build_settings build_settings;
+        build_settings.density = static_cast<float>(input.at("density").as_number());
+        const auto built = skin_physics::physics::build_physics_mesh(raw_mesh, build_settings);
+        require(built.success && built.value.tetrahedra.size() == 1,
+            "Phase 6 FEM GPU fixture must build one valid tetrahedron.");
+
+        skin_physics::physics::soft_body_material material;
+        material.shear_modulus = static_cast<float>(input.at("mu").as_number());
+        material.bulk_modulus = static_cast<float>(input.at("K").as_number());
+        material.density = static_cast<float>(input.at("density").as_number());
+        material.inversion_stiffness = 10000.0f;
+        material.minimum_jacobian = 0.1f;
+
+        const skin_physics::physics::tetrahedron& source_tet =
+            built.value.tetrahedra[0];
+        gpu_tet_input gpu_parameters;
+        for (std::size_t index = 0; index < 4; ++index)
+        {
+            gpu_parameters.vertex_ids[index] = source_tet.vertices[index];
+            const vec3& gradient = source_tet.rest_shape_gradients[index];
+            gpu_parameters.rest_gradients[index] = {
+                gradient.x, gradient.y, gradient.z, 0.0f
+            };
+        }
+        for (std::size_t row = 0; row < 3; ++row)
+        {
+            gpu_parameters.rest_inverse[row] = {
+                source_tet.rest_inverse[row * 3],
+                source_tet.rest_inverse[row * 3 + 1],
+                source_tet.rest_inverse[row * 3 + 2],
+                0.0f
+            };
+        }
+        gpu_parameters.material0 = {
+            source_tet.rest_volume,
+            material.shear_modulus,
+            material.bulk_modulus,
+            material.shape_recovery_scale
+        };
+        gpu_parameters.material1 = {
+            material.volume_retention_scale,
+            material.inversion_stiffness,
+            material.minimum_jacobian,
+            0.0f
+        };
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result), "D3D11 WARP device creation must succeed.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_path("phase06_soft_body/corotational_fem.cs.hlsl"),
+            "main");
+
+        const auto& cases = input.at("deformation_cases").as_array();
+        for (const test_json::value& deformation_case : cases)
+        {
+            std::vector<vec3> current_positions;
+            std::vector<gpu_float4> gpu_positions;
+            for (const test_json::value& point :
+                deformation_case.at("current_positions").as_array())
+            {
+                const vec3 value = read_vec3(point);
+                current_positions.push_back(value);
+                gpu_positions.push_back({ value.x, value.y, value.z, 0.0f });
+            }
+
+            const auto cpu = skin_physics::physics::evaluate_corotational_tetrahedron(
+                built.value, 0, current_positions, material);
+            require(cpu.success && cpu.state_committable,
+                "Positive-Jacobian FEM fixture must be accepted by the CPU reference.");
+
+            const std::vector<gpu_tet_input> tet_inputs = { gpu_parameters };
+            const std::vector<gpu_tet_output> initial_output(1);
+            const ComPtr<ID3D11Buffer> positions_buffer =
+                create_structured_buffer(device.Get(), gpu_positions, D3D11_BIND_SHADER_RESOURCE);
+            const ComPtr<ID3D11Buffer> tet_buffer =
+                create_structured_buffer(device.Get(), tet_inputs, D3D11_BIND_SHADER_RESOURCE);
+            const ComPtr<ID3D11Buffer> output_buffer =
+                create_structured_buffer(device.Get(), initial_output, D3D11_BIND_UNORDERED_ACCESS);
+
+            const ComPtr<ID3D11ShaderResourceView> positions_view =
+                create_structured_srv<gpu_float4>(device.Get(), positions_buffer.Get(), 4);
+            const ComPtr<ID3D11ShaderResourceView> tet_view =
+                create_structured_srv<gpu_tet_input>(device.Get(), tet_buffer.Get(), 1);
+            const ComPtr<ID3D11UnorderedAccessView> output_view =
+                create_structured_uav<gpu_tet_output>(device.Get(), output_buffer.Get(), 1);
+
+            gpu_tet_dispatch_parameters dispatch_parameters;
+            const ComPtr<ID3D11Buffer> constants =
+                create_constant_buffer(device.Get(), &dispatch_parameters, sizeof(dispatch_parameters));
+            dispatch_compute(
+                context.Get(), shader.Get(),
+                { positions_view.Get(), tet_view.Get() },
+                { output_view.Get() },
+                constants.Get(), 1);
+
+            const std::vector<gpu_tet_output> gpu_results =
+                readback_structured_buffer<gpu_tet_output>(
+                    device.Get(), context.Get(), output_buffer.Get(), 1);
+            const gpu_tet_output& gpu = gpu_results[0];
+
+            const float tolerance = 2.0e-3f;
+            for (std::size_t row = 0; row < 3; ++row)
+            {
+                const float gpu_deformation[3] = {
+                    gpu.deformation[row].x, gpu.deformation[row].y,
+                    gpu.deformation[row].z
+                };
+                const float gpu_rotation[3] = {
+                    gpu.rotation[row].x, gpu.rotation[row].y,
+                    gpu.rotation[row].z
+                };
+                const float gpu_stress[3] = {
+                    gpu.stress[row].x, gpu.stress[row].y,
+                    gpu.stress[row].z
+                };
+                for (std::size_t column = 0; column < 3; ++column)
+                {
+                    const std::size_t matrix_index = row * 3 + column;
+                    require(std::abs(gpu_deformation[column] -
+                        cpu.deformation_gradient.value[matrix_index]) <= 1.0e-4f,
+                        "WARP deformation gradient must match CPU FEM.");
+                    require(std::abs(gpu_rotation[column] -
+                        cpu.rotation.value[matrix_index]) <= 1.0e-4f,
+                        "WARP polar rotation must match CPU FEM.");
+                    require(std::abs(gpu_stress[column] -
+                        cpu.first_piola_stress.value[matrix_index]) <= tolerance,
+                        "WARP first Piola stress must match CPU FEM.");
+                }
+            }
+
+            for (std::size_t vertex = 0; vertex < 4; ++vertex)
+            {
+                const float actual[3] = {
+                    gpu.forces[vertex].x,
+                    gpu.forces[vertex].y,
+                    gpu.forces[vertex].z
+                };
+                const vec3& expected = cpu.internal_forces[vertex];
+                require(std::abs(actual[0] - expected.x) <= tolerance &&
+                    std::abs(actual[1] - expected.y) <= tolerance &&
+                    std::abs(actual[2] - expected.z) <= tolerance,
+                    "WARP tetrahedral force contributions must match CPU FEM.");
+            }
+
+            require(std::abs(gpu.metrics.x - cpu.jacobian) <= 1.0e-5f &&
+                std::abs(gpu.metrics.y - cpu.current_volume) <= 1.0e-5f &&
+                std::abs(gpu.metrics.z - cpu.elastic_energy) <= tolerance &&
+                gpu.metrics.w == 1.0f,
+                "WARP FEM Jacobian, volume, energy and commit flag must match the CPU reference.");
+        }
+        std::cout << "[PASS] P06_WARP_COROTATIONAL_FEM\n";
+    }
+
 }
 
 int run_gpu_solver_tests()
 {
     test_phase05_warp_cloth_all_constraint_types();
+    test_phase06_warp_corotational_fem();
     std::cout << "GpuSolverTests passed.\n";
     return 0;
 }
