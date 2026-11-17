@@ -3,6 +3,8 @@
 #include "skin_physics/physics/render_binding.hpp"
 #include "skin_physics/physics/cloth_solver.hpp"
 #include "skin_physics/physics/soft_body_fem.hpp"
+#include "skin_physics/physics/collision.hpp"
+#include "skin_physics/physics/ccd.hpp"
 #include "skin_physics/simulation/fixed_step.hpp"
 #include "json_test_support.hpp"
 #include "test_support.hpp"
@@ -671,6 +673,262 @@ namespace
         }
     }
 
+    void test_phase07_vertex_triangle_and_edge_edge_contacts()
+    {
+        const test_json::value vt_input = test_json::load(
+            test_support::fixture_path("phase07_collision/vt_contact.input.json"));
+        const test_json::value vt_expected = test_json::load(
+            test_support::fixture_path("phase07_collision/vt_contact.expected.json"));
+
+        std::array<skin_physics::asset::vec3, 3> triangle = {};
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            triangle[index] = read_vec3(vt_input.at("triangle").at(index));
+        }
+        const skin_physics::asset::vec3 point = read_vec3(vt_input.at("vertex_position"));
+        const auto vt_contact = skin_physics::physics::find_vertex_triangle_contact(
+            point, triangle, static_cast<float>(vt_input.at("vertex_radius").as_number()));
+        require(vt_contact.valid && vt_contact.hit,
+            "Phase 7 VT fixture should produce a valid penetrating contact.");
+
+        const double position_tolerance =
+            vt_expected.at("tolerances").at("position_absolute").as_number();
+        const double penetration_tolerance =
+            vt_expected.at("tolerances").at("penetration_absolute").as_number();
+        const skin_physics::asset::vec3 expected_closest =
+            read_vec3(vt_expected.at("closest_point"));
+        const skin_physics::asset::vec3 expected_normal =
+            read_vec3(vt_expected.at("normal"));
+        require(std::abs(vt_contact.closest_point.x - expected_closest.x) <= position_tolerance &&
+            std::abs(vt_contact.closest_point.y - expected_closest.y) <= position_tolerance &&
+            std::abs(vt_contact.closest_point.z - expected_closest.z) <= position_tolerance,
+            "VT closest point must match the analytical fixture.");
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            require(std::abs(vt_contact.barycentric[index] -
+                vt_expected.at("barycentric").at(index).as_number()) <= position_tolerance,
+                "VT barycentric coordinates must match the analytical fixture.");
+        }
+        require(std::abs(vt_contact.normal.x - expected_normal.x) <= position_tolerance &&
+            std::abs(vt_contact.normal.y - expected_normal.y) <= position_tolerance &&
+            std::abs(vt_contact.normal.z - expected_normal.z) <= position_tolerance,
+            "VT contact normal must match the analytical fixture.");
+        require(std::abs(vt_contact.penetration_depth -
+            vt_expected.at("penetration_depth").as_number()) <= penetration_tolerance,
+            "VT penetration depth must match the analytical fixture.");
+
+        std::array<skin_physics::asset::vec3, 4> positions = {
+            point, triangle[0], triangle[1], triangle[2]
+        };
+        std::array<float, 4> inverse_masses = {
+            static_cast<float>(vt_input.at("inverse_masses").at("vertex").as_number()),
+            static_cast<float>(vt_input.at("inverse_masses").at("triangle_vertices").at(0).as_number()),
+            static_cast<float>(vt_input.at("inverse_masses").at("triangle_vertices").at(1).as_number()),
+            static_cast<float>(vt_input.at("inverse_masses").at("triangle_vertices").at(2).as_number())
+        };
+        const auto solved = skin_physics::physics::solve_vertex_triangle_contact(
+            vt_contact, positions, inverse_masses,
+            static_cast<float>(vt_input.at("vertex_radius").as_number()));
+        require(solved.success && solved.momentum_conserved,
+            "VT correction should solve without violating weighted momentum conservation.");
+        require(std::abs(solved.post_solve_penetration -
+            vt_expected.at("post_solve_penetration_max").as_number()) <= penetration_tolerance,
+            "VT Jacobi relaxation should leave the expected half-step penetration.");
+
+        const test_json::value ee_input = test_json::load(
+            test_support::fixture_path("phase07_collision/ee_contact.input.json"));
+        const test_json::value ee_expected = test_json::load(
+            test_support::fixture_path("phase07_collision/ee_contact.expected.json"));
+        std::array<skin_physics::asset::vec3, 2> edge_a = {
+            read_vec3(ee_input.at("edge_a").at(0)),
+            read_vec3(ee_input.at("edge_a").at(1))
+        };
+        std::array<skin_physics::asset::vec3, 2> edge_b = {
+            read_vec3(ee_input.at("edge_b").at(0)),
+            read_vec3(ee_input.at("edge_b").at(1))
+        };
+        const auto ee_contact = skin_physics::physics::find_edge_edge_contact(
+            edge_a, edge_b, static_cast<float>(ee_input.at("thickness").as_number()));
+        require(ee_contact.valid && ee_contact.hit,
+            "Phase 7 EE fixture should produce a valid contact.");
+        const double ee_tolerance =
+            ee_expected.at("tolerances").at("distance_absolute").as_number();
+        require(std::abs(ee_contact.parameter_a -
+            ee_expected.at("closest_parameters").at(0).as_number()) <=
+            ee_expected.at("tolerances").at("parameter_absolute").as_number(),
+            "EE first closest-segment parameter must match the fixture.");
+        require(std::abs(ee_contact.parameter_b -
+            ee_expected.at("closest_parameters").at(1).as_number()) <=
+            ee_expected.at("tolerances").at("parameter_absolute").as_number(),
+            "EE second closest-segment parameter must match the fixture.");
+        require(std::abs(ee_contact.distance - ee_expected.at("distance").as_number()) <= ee_tolerance &&
+            std::abs(ee_contact.penetration_depth -
+                ee_expected.at("penetration_depth").as_number()) <= ee_tolerance,
+            "EE distance and penetration must match the fixture.");
+    }
+
+    void test_phase07_broadphase_filters_and_capacity_overflow()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase07_collision/broadphase.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase07_collision/broadphase.expected.json"));
+
+        std::vector<skin_physics::physics::broadphase_primitive> primitives;
+        for (const test_json::value& primitive_value : input.at("primitives").as_array())
+        {
+            skin_physics::physics::broadphase_primitive primitive;
+            primitive.mesh_id = static_cast<uint32_t>(primitive_value.at("mesh").as_number());
+            primitive.bounds.minimum = read_vec3(primitive_value.at("bounds_min"));
+            primitive.bounds.maximum = read_vec3(primitive_value.at("bounds_max"));
+            primitives.push_back(primitive);
+        }
+
+        std::vector<skin_physics::physics::broadphase_mesh_pair> mesh_pairs;
+        for (const test_json::value& pair_value : input.at("mesh_pairs").as_array())
+        {
+            skin_physics::physics::broadphase_mesh_pair pair;
+            pair.mesh_a = static_cast<uint32_t>(pair_value.at("a").as_number());
+            pair.mesh_b = static_cast<uint32_t>(pair_value.at("b").as_number());
+            pair.enabled = pair_value.at("enabled").as_bool();
+            mesh_pairs.push_back(pair);
+        }
+
+        skin_physics::physics::broadphase_settings settings;
+        settings.cell_size = static_cast<float>(input.at("cell_size").as_number());
+        settings.self_collision_enabled = input.at("self_collision_enabled").as_bool();
+        const auto result = skin_physics::physics::generate_broadphase_candidates(
+            primitives, mesh_pairs, settings);
+        require(result.success && !result.overflow,
+            "Phase 7 broadphase fixture should generate candidates.");
+        const auto& reference = expected.at("exact_reference_candidate_set").as_array();
+        for (const test_json::value& pair_value : reference)
+        {
+            const skin_physics::physics::collision_candidate target = {
+                static_cast<uint32_t>(pair_value.at(0).as_number()),
+                static_cast<uint32_t>(pair_value.at(1).as_number())
+            };
+            require(std::find(result.candidates.begin(), result.candidates.end(), target) !=
+                result.candidates.end(),
+                "Broadphase candidate set must contain the exhaustive reference pair.");
+        }
+        require(result.candidates.size() == 1 &&
+            result.candidates[0].primitive_a == 0 &&
+            result.candidates[0].primitive_b == 1,
+            "Disabled mesh pairs must be excluded and candidate IDs must not be duplicated.");
+
+        const test_json::value overflow_input = test_json::load(
+            test_support::fixture_path("phase07_collision/overflow.input.json"));
+        const test_json::value overflow_expected = test_json::load(
+            test_support::fixture_path("phase07_collision/overflow.expected.json"));
+        const auto blocked = skin_physics::physics::check_candidate_capacity(
+            static_cast<std::size_t>(overflow_input.at("generated_candidate_count").as_number()),
+            static_cast<std::size_t>(overflow_input.at("candidate_capacity").as_number()));
+        require(blocked.overflow && !blocked.state_committable &&
+            blocked.required_count == 2,
+            "Broadphase candidate overflow must block the simulation step without dropping candidates.");
+        require(overflow_expected.at("first_attempt").at("dropped_candidates").as_number() == 0 &&
+            !overflow_expected.at("first_attempt").at("committed").as_bool(),
+            "Overflow golden must specify zero dropped candidates and no commit.");
+
+        const auto retry = skin_physics::physics::check_candidate_capacity(
+            static_cast<std::size_t>(overflow_input.at("generated_candidate_count").as_number()),
+            static_cast<std::size_t>(overflow_input.at("retry_capacity").as_number()));
+        require(!retry.overflow && retry.state_committable &&
+            overflow_expected.at("retry").at("candidate_count").as_number() == retry.required_count,
+            "Retry with sufficient candidate capacity must be allowed to commit.");
+    }
+
+    void test_phase08_ccd_and_initial_penetration_repair()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase08_ccd/point_triangle.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase08_ccd/point_triangle.expected.json"));
+        const skin_physics::asset::vec3 point_start = read_vec3(input.at("point_start"));
+        const skin_physics::asset::vec3 point_end = read_vec3(input.at("point_end"));
+        std::array<skin_physics::asset::vec3, 3> triangle = {};
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            triangle[index] = read_vec3(input.at("triangle").at(index));
+        }
+
+        const float point_radius = static_cast<float>(input.at("point_radius").as_number());
+        const float triangle_thickness =
+            static_cast<float>(input.at("triangle_thickness").as_number());
+        const float interval = static_cast<float>(input.at("interval_seconds").as_number());
+        const auto ccd = skin_physics::physics::conservative_advance_point_triangle(
+            point_start, point_end, triangle,
+            point_radius + triangle_thickness, interval);
+        require(ccd.status == skin_physics::physics::ccd_status::hit && ccd.hit,
+            "Phase 8 swept point-triangle fixture should report a time of impact.");
+        require(std::abs(ccd.toi_seconds -
+            expected.at("first_contact_toi_seconds").as_number()) <=
+            expected.at("tolerances").at("toi_seconds").as_number(),
+            "Conservative Advancement TOI must match the analytical fixture.");
+        const skin_physics::asset::vec3 expected_center =
+            read_vec3(expected.at("first_contact_center"));
+        const skin_physics::asset::vec3 expected_normal =
+            read_vec3(expected.at("contact_normal"));
+        require(std::abs(ccd.contact_center.z - expected_center.z) <=
+            expected.at("tolerances").at("position_absolute").as_number() &&
+            std::abs(ccd.contact_normal.z - expected_normal.z) <= 1.0e-5,
+            "CCD first contact center and normal must match the fixture.");
+        require(std::abs(ccd.remaining_interval_seconds -
+            expected.at("remaining_interval_seconds").as_number()) <= 1.0e-5,
+            "CCD must preserve the remaining simulation interval.");
+
+        const float signed_endpoint_distance =
+            point_end.z - triangle[0].z;
+        require(signed_endpoint_distance < point_radius + triangle_thickness,
+            "Discrete endpoint should be on the penetrating side of the one-sided surface.");
+
+        const float normal_velocity =
+            static_cast<float>(input.at("normal_velocity").as_number());
+        const skin_physics::asset::vec3 point_velocity = {
+            0.0f, 0.0f, normal_velocity
+        };
+        const auto impulse = skin_physics::physics::resolve_toi_normal_impulse(
+            point_velocity, {}, expected_normal,
+            1.0f, 0.0f, 0.0f, false);
+        require(impulse.success && impulse.application_count ==
+            expected.at("impact_impulse_application_count").as_number() &&
+            std::abs(impulse.velocity_point_after.z) <= 1.0e-6f,
+            "TOI impact impulse must be applied exactly once.");
+        const auto duplicate_impulse = skin_physics::physics::resolve_toi_normal_impulse(
+            impulse.velocity_point_after, impulse.velocity_triangle_after,
+            expected_normal, 1.0f, 0.0f, 0.0f, true);
+        require(duplicate_impulse.success && duplicate_impulse.application_count == 0,
+            "An already-resolved TOI must not apply the impact impulse twice.");
+
+        const test_json::value repair_input = test_json::load(
+            test_support::fixture_path("phase08_ccd/initial_repair.input.json"));
+        const test_json::value repair_expected = test_json::load(
+            test_support::fixture_path("phase08_ccd/initial_repair.expected.json"));
+        std::vector<skin_physics::asset::vec3> initial_positions(3);
+        initial_positions[1] = { 1.0f, 0.0f, 0.0f };
+        initial_positions[2] = { 0.0f, 1.0f, 0.0f };
+        std::vector<uint32_t> participants;
+        for (const test_json::value& participant : repair_input.at("participant_vertex_ids").as_array())
+        {
+            participants.push_back(static_cast<uint32_t>(participant.as_number()));
+        }
+        const auto repaired = skin_physics::physics::repair_initial_penetration(
+            initial_positions, participants, { 0.0f, 0.0f, 1.0f },
+            static_cast<float>(repair_input.at("initial_penetration_depth").as_number()),
+            static_cast<float>(repair_input.at("max_initial_repair_distance_per_vertex").as_number()));
+        require(repaired.status == skin_physics::physics::initial_repair_status::over_budget &&
+            !repaired.state_committed &&
+            !repair_expected.at("state_committed").as_bool() &&
+            !repair_expected.at("partial_correction_committed").as_bool(),
+            "Initial penetration repair over budget must be rejected atomically.");
+        require(repaired.positions.size() == initial_positions.size() &&
+            repaired.positions[1].x == initial_positions[1].x &&
+            repaired.positions[1].y == initial_positions[1].y &&
+            repaired.positions[1].z == initial_positions[1].z,
+            "Rejected initial repair must preserve all input positions.");
+    }
+
     void test_phase04_overload_and_callback_failure()
     {
         skin_physics::simulation::fixed_step_settings settings;
@@ -716,6 +974,12 @@ int run_simulation_tests()
     std::cout << "[PASS] P06_COROTATIONAL_FEM_GOLDEN\n";
     test_phase06_inversion_penalty_is_finite_and_not_committed();
     std::cout << "[PASS] P06_INVERSION_ROLLBACK\n";
+    test_phase07_vertex_triangle_and_edge_edge_contacts();
+    std::cout << "[PASS] P07_VT_EE_CONTACTS\n";
+    test_phase07_broadphase_filters_and_capacity_overflow();
+    std::cout << "[PASS] P07_BROADPHASE_OVERFLOW\n";
+    test_phase08_ccd_and_initial_penetration_repair();
+    std::cout << "[PASS] P08_CCD_INITIAL_REPAIR\n";
     std::cout << "SimulationCoreTests passed.\n";
     return 0;
 }

@@ -69,6 +69,12 @@
     <ClCompile Include="src\physics\soft_body_fem.cpp">
       <Filter>Source Files\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="src\physics\collision.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="src\physics\ccd.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="src\simulation\fixed_step.cpp">
       <Filter>Source Files\Simulation</Filter>
     </ClCompile>
@@ -108,6 +114,12 @@
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
     <ClInclude Include="include\skin_physics\physics\soft_body_fem.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\collision.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\ccd.hpp">
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp">

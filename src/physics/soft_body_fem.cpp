@@ -78,6 +78,11 @@ namespace skin_physics::physics
             return result;
         }
 
+        vec3 scale_vector(const vec3& value, float factor)
+        {
+            return { value.x * factor, value.y * factor, value.z * factor };
+        }
+
         float frobenius_squared(const matrix3& value)
         {
             float result = 0.0f;
@@ -329,7 +334,7 @@ namespace skin_physics::physics
                 };
                 if (singular_values[column] > minimum_singular_value)
                 {
-                    candidate = multiply(candidate, 1.0f / singular_values[column]);
+                    candidate = scale_vector(candidate, 1.0f / singular_values[column]);
                 }
 
                 for (uint32_t previous = 0; previous < column; ++previous)
@@ -394,7 +399,7 @@ namespace skin_physics::physics
                 {
                     return false;
                 }
-                candidate = multiply(candidate, 1.0f / candidate_length);
+                candidate = scale_vector(candidate, 1.0f / candidate_length);
                 at(left_vectors, 0, column) = candidate.x;
                 at(left_vectors, 1, column) = candidate.y;
                 at(left_vectors, 2, column) = candidate.z;

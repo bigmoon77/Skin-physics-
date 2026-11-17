@@ -318,7 +318,7 @@
     {
       "phase": 7,
       "id": "collision_broadphase",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T07",
         "T08",
@@ -361,12 +361,21 @@
             "overflow blocks step; no candidates silently dropped"
           ]
         }
+      ],
+      "automated_cases": [
+        "P07_VT_EE_CONTACTS",
+        "P07_BROADPHASE_OVERFLOW"
+      ],
+      "unimplemented": [
+        "Hierarchical GPU broadphase, persistent GPU contact buffers and solver integration",
+        "Friction/restitution velocity solve and contact warm start",
+        "Collision filtering for self-collision adjacency and exclusion rings"
       ]
     },
     {
       "phase": 8,
       "id": "ccd_initial_penetration",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T09",
         "T16",
@@ -392,6 +401,14 @@
             "unrepairable initial state not committed"
           ]
         }
+      ],
+      "automated_cases": [
+        "P08_CCD_INITIAL_REPAIR"
+      ],
+      "unimplemented": [
+        "Full primitive/primitive and triangle/triangle CCD",
+        "Simultaneous TOI grouping and global substep scheduler",
+        "Initial contact repair coupled to broadphase and iterative constraint solve"
       ]
     },
     {
