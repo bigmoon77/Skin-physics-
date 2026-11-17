@@ -87,14 +87,14 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="SkinPhysics.vcxproj">
-      <Project>{D9CEB01D-6D5A-4E5A-9C71-83D0C58B45E1}
-  <ItemGroup>
-    <None Include="tests\fixtures\phase03_render_binding\render_feedback.cs.hlsl" />
-  </ItemGroup>
-</Project>
+      <Project>{D9CEB01D-6D5A-4E5A-9C71-83D0C58B45E1}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <LinkLibraryDependencies>true</LinkLibraryDependencies>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="tests\environment_tests.cpp" />
+    <None Include="tests\fixtures\phase03_render_binding\render_feedback.cs.hlsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

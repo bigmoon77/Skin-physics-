@@ -102,6 +102,9 @@
     <ClCompile Include="src\physics\attribute_paint.cpp" />
     <ClCompile Include="src\physics\performance_metrics.cpp" />
     <ClCompile Include="src\simulation\fixed_step.cpp" />
+    <ClCompile Include="src\simulation\scenario.cpp" />
+    <ClCompile Include="src\simulation\step_pipeline.cpp" />
+    <ClCompile Include="src\serialization\json.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\skin_physics\asset\types.hpp" />
@@ -122,6 +125,9 @@
     <ClInclude Include="include\skin_physics\physics\attribute_paint.hpp" />
     <ClInclude Include="include\skin_physics\physics\performance_metrics.hpp" />
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp" />
+    <ClInclude Include="include\skin_physics\simulation\scenario.hpp" />
+    <ClInclude Include="include\skin_physics\simulation\step_pipeline.hpp" />
+    <ClInclude Include="include\skin_physics\serialization\json.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

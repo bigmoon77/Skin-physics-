@@ -25,6 +25,8 @@
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 
+int run_environment_tests();
+
 namespace
 {
     using skin_physics::asset::mesh;
@@ -1458,6 +1460,7 @@ int run_simulation_tests()
     std::cout << "[PASS] P10_ATTRIBUTE_PAINT\n";
     test_phase11_performance_profile_and_invariant_collector();
     std::cout << "[PASS] P11_PERFORMANCE_PROFILE\n";
+    require(run_environment_tests() == 0, "Environment tests failed.");
     std::cout << "SimulationCoreTests passed.\n";
     return 0;
 }
