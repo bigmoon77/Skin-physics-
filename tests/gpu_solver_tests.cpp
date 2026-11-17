@@ -6,6 +6,7 @@
 #include "skin_physics/physics/attribute_paint.hpp"
 #include "skin_physics/physics/ccd.hpp"
 #include "skin_physics/simulation/d3d11_timestamp_profiler.hpp"
+#include "skin_physics/simulation/d3d11_compute_graph.hpp"
 #include "test_support.hpp"
 #include "json_test_support.hpp"
 
@@ -1540,6 +1541,193 @@ namespace
         std::cout << "[PASS] P11_WARP_TIMESTAMP_AND_DXGI_MEMORY\n";
     }
 
+
+    void test_phase11_warp_compute_pass_graph()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result), "D3D11 WARP device creation must succeed.");
+
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase10_paint/paint.input.json"));
+        std::vector<float> weights;
+        std::vector<std::vector<uint32_t>> adjacency;
+        std::vector<uint32_t> selected_vertices;
+        std::vector<uint32_t> selected_mask;
+        for (const test_json::value& weight : input.at("initial_weights").as_array())
+        {
+            weights.push_back(static_cast<float>(weight.as_number()));
+        }
+        for (const test_json::value& neighbors : input.at("adjacency").as_array())
+        {
+            std::vector<uint32_t> values;
+            for (const test_json::value& neighbor : neighbors.as_array())
+            {
+                values.push_back(static_cast<uint32_t>(neighbor.as_number()));
+            }
+            adjacency.push_back(std::move(values));
+        }
+        for (const test_json::value& vertex : input.at("operations").at(0).at("vertices").as_array())
+        {
+            const uint32_t index = static_cast<uint32_t>(vertex.as_number());
+            selected_vertices.push_back(index);
+        }
+        selected_mask.resize(weights.size(), 0u);
+        for (uint32_t vertex : selected_vertices)
+        {
+            selected_mask[vertex] = 1u;
+        }
+
+        const float minimum_weight =
+            static_cast<float>(input.at("clamp_range").at(0).as_number());
+        const float maximum_weight =
+            static_cast<float>(input.at("clamp_range").at(1).as_number());
+
+        const auto cpu_paint = skin_physics::physics::apply_attribute_paint(
+            weights, adjacency, selected_vertices,
+            skin_physics::physics::attribute_paint_mode::paint,
+            static_cast<float>(input.at("operations").at(0).at("target").as_number()),
+            static_cast<float>(input.at("operations").at(0).at("strength").as_number()),
+            minimum_weight, maximum_weight);
+        require(cpu_paint.success, "Compute graph Paint CPU reference must succeed.");
+        const auto cpu_erase = skin_physics::physics::apply_attribute_paint(
+            cpu_paint.weights, adjacency, selected_vertices,
+            skin_physics::physics::attribute_paint_mode::erase, 0.0f, 0.5f,
+            minimum_weight, maximum_weight);
+        require(cpu_erase.success, "Compute graph Erase CPU reference must succeed.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_path("phase09_10_gpu/animation_paint.cs.hlsl"),
+            "attribute_paint");
+
+        const ComPtr<ID3D11Buffer> source_buffer =
+            create_structured_buffer(device.Get(), weights, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> selected_buffer =
+            create_structured_buffer(device.Get(), selected_mask, D3D11_BIND_SHADER_RESOURCE);
+        const std::vector<float> empty_values(weights.size(), 0.0f);
+        const ComPtr<ID3D11Buffer> intermediate_buffer =
+            create_structured_buffer(device.Get(), empty_values,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> output_buffer =
+            create_structured_buffer(device.Get(), empty_values,
+                D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11ShaderResourceView> source_view =
+            create_structured_srv<float>(device.Get(), source_buffer.Get(),
+                static_cast<UINT>(weights.size()));
+        const ComPtr<ID3D11ShaderResourceView> selected_view =
+            create_structured_srv<uint32_t>(device.Get(), selected_buffer.Get(),
+                static_cast<UINT>(selected_mask.size()));
+        const ComPtr<ID3D11ShaderResourceView> intermediate_read_view =
+            create_structured_srv<float>(device.Get(), intermediate_buffer.Get(),
+                static_cast<UINT>(weights.size()));
+        const ComPtr<ID3D11UnorderedAccessView> intermediate_write_view =
+            create_structured_uav<float>(device.Get(), intermediate_buffer.Get(),
+                static_cast<UINT>(weights.size()));
+        const ComPtr<ID3D11UnorderedAccessView> output_write_view =
+            create_structured_uav<float>(device.Get(), output_buffer.Get(),
+                static_cast<UINT>(weights.size()));
+
+        gpu_paint_parameters first_parameters;
+        first_parameters.vertex_count = static_cast<uint32_t>(weights.size());
+        first_parameters.paint_mode = 0;
+        first_parameters.target =
+            static_cast<float>(input.at("operations").at(0).at("target").as_number());
+        first_parameters.strength =
+            static_cast<float>(input.at("operations").at(0).at("strength").as_number());
+        first_parameters.minimum_weight = minimum_weight;
+        first_parameters.maximum_weight = maximum_weight;
+        const ComPtr<ID3D11Buffer> first_constants =
+            create_constant_buffer(device.Get(), &first_parameters, sizeof(first_parameters));
+
+        gpu_paint_parameters second_parameters = first_parameters;
+        second_parameters.paint_mode = 3;
+        second_parameters.target = 0.0f;
+        second_parameters.strength = 0.5f;
+        const ComPtr<ID3D11Buffer> second_constants =
+            create_constant_buffer(device.Get(), &second_parameters, sizeof(second_parameters));
+
+        skin_physics::simulation::d3d11_compute_graph graph;
+        skin_physics::simulation::compute_pass_desc first_pass;
+        first_pass.name = "Paint";
+        first_pass.shader = shader.Get();
+        first_pass.shader_resources = {
+            { 0, source_view.Get() },
+            { 1, selected_view.Get() }
+        };
+        first_pass.unordered_access_views = {
+            { 0, intermediate_write_view.Get(), 0xffffffffu }
+        };
+        first_pass.constant_buffers = {
+            { 1, first_constants.Get() }
+        };
+        first_pass.group_count_x = 1;
+
+        skin_physics::simulation::compute_pass_desc second_pass;
+        second_pass.name = "Erase";
+        second_pass.shader = shader.Get();
+        second_pass.shader_resources = {
+            { 0, intermediate_read_view.Get() },
+            { 1, selected_view.Get() }
+        };
+        second_pass.unordered_access_views = {
+            { 0, output_write_view.Get(), 0xffffffffu }
+        };
+        second_pass.constant_buffers = {
+            { 1, second_constants.Get() }
+        };
+        second_pass.group_count_x = 1;
+
+        std::string diagnostic;
+        require(graph.add_pass(first_pass, diagnostic),
+            "Compute graph must accept a valid Paint pass: " + diagnostic);
+        require(graph.add_pass(second_pass, diagnostic),
+            "Compute graph must accept a sequential Erase pass: " + diagnostic);
+        require(graph.pass_count() == 2, "Compute graph must preserve explicit pass order.");
+        require(!graph.add_pass(first_pass, diagnostic) &&
+            !diagnostic.empty(),
+            "Compute graph must reject duplicate pass names.");
+
+        const ComPtr<ID3D11Buffer> alias_buffer =
+            create_structured_buffer(device.Get(), empty_values,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11ShaderResourceView> alias_read_view =
+            create_structured_srv<float>(device.Get(), alias_buffer.Get(),
+                static_cast<UINT>(weights.size()));
+        const ComPtr<ID3D11UnorderedAccessView> alias_write_view =
+            create_structured_uav<float>(device.Get(), alias_buffer.Get(),
+                static_cast<UINT>(weights.size()));
+        skin_physics::simulation::compute_pass_desc invalid_alias;
+        invalid_alias.name = "InvalidAlias";
+        invalid_alias.shader = shader.Get();
+        invalid_alias.shader_resources = { { 0, alias_read_view.Get() } };
+        invalid_alias.unordered_access_views = {
+            { 0, alias_write_view.Get(), 0xffffffffu }
+        };
+        require(!graph.add_pass(invalid_alias, diagnostic) &&
+            diagnostic.find("same resource") != std::string::npos,
+            "Compute graph must reject SRV/UAV aliasing within a pass.");
+
+        const auto graph_result = graph.execute(context.Get());
+        require(graph_result.success && graph_result.executed_pass_count == 2,
+            "Compute graph must dispatch both passes in insertion order.");
+        const std::vector<float> gpu = readback_structured_buffer<float>(
+            device.Get(), context.Get(), output_buffer.Get(), weights.size());
+        for (std::size_t index = 0; index < gpu.size(); ++index)
+        {
+            require(std::abs(gpu[index] - cpu_erase.weights[index]) <= 1.0e-6f,
+                "Compute graph SRV-to-UAV pass transition must match the CPU reference.");
+        }
+        const auto invalid_context = graph.execute(nullptr);
+        require(!invalid_context.success && !invalid_context.diagnostic.empty(),
+            "Compute graph must reject a null immediate context.");
+
+        std::cout << "[PASS] P11_WARP_COMPUTE_PASS_GRAPH\n";
+    }
+
 }
 
 int run_gpu_solver_tests()
@@ -1569,6 +1757,7 @@ int run_gpu_solver_tests()
     test_phase09_warp_animation_target();
     test_phase10_warp_attribute_paint();
     test_phase11_warp_timestamp_profiler_and_dxgi_memory();
+    test_phase11_warp_compute_pass_graph();
     std::cout << "GpuSolverTests passed.\n";
     return 0;
 }
