@@ -94,7 +94,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="tests\environment_tests.cpp" />
+    <ClCompile Include="tests\gpu_solver_tests.cpp" />
     <None Include="tests\fixtures\phase03_render_binding\render_feedback.cs.hlsl" />
+    <None Include="tests\fixtures\phase05_07_gpu\cloth_constraints.cs.hlsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

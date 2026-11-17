@@ -26,6 +26,7 @@
 #include <wrl/client.h>
 
 int run_environment_tests();
+int run_gpu_solver_tests();
 
 namespace
 {
@@ -1461,6 +1462,7 @@ int run_simulation_tests()
     test_phase11_performance_profile_and_invariant_collector();
     std::cout << "[PASS] P11_PERFORMANCE_PROFILE\n";
     require(run_environment_tests() == 0, "Environment tests failed.");
+    require(run_gpu_solver_tests() == 0, "GPU solver tests failed.");
     std::cout << "SimulationCoreTests passed.\n";
     return 0;
 }
