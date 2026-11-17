@@ -21,6 +21,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <d3d11.h>
+#include <d3dcompiler.h>
+#include <wrl/client.h>
 
 namespace
 {
@@ -1194,6 +1197,208 @@ namespace
             "Performance collector Reset must clear all previous samples.");
     }
 
+    void test_phase03_warp_compute_render_feedback()
+    {
+        using Microsoft::WRL::ComPtr;
+        struct gpu_float4
+        {
+            float x;
+            float y;
+            float z;
+            float w;
+        };
+        struct gpu_render_binding
+        {
+            uint32_t indices[4];
+            float weights[4];
+            float rest_offset[4];
+        };
+        static_assert(sizeof(gpu_float4) == 16, "GPU float4 must match HLSL float4.");
+        static_assert(sizeof(gpu_render_binding) == 48, "GPU binding stride must match HLSL layout.");
+
+        UINT creation_flags = 0;
+#if defined(_DEBUG)
+        creation_flags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+        const D3D_FEATURE_LEVEL requested_levels[] = {
+            D3D_FEATURE_LEVEL_11_0
+        };
+        D3D_FEATURE_LEVEL feature_level = D3D_FEATURE_LEVEL_11_0;
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        HRESULT hr = D3D11CreateDevice(
+            nullptr,
+            D3D_DRIVER_TYPE_WARP,
+            nullptr,
+            creation_flags,
+            requested_levels,
+            1,
+            D3D11_SDK_VERSION,
+            device.GetAddressOf(),
+            &feature_level,
+            context.GetAddressOf());
+        require(SUCCEEDED(hr) && device != nullptr && context != nullptr,
+            "D3D11 WARP device creation must succeed for GPU reference tests.");
+
+        const std::filesystem::path shader_path =
+            test_support::fixture_path("phase03_render_binding/render_feedback.cs.hlsl");
+        ComPtr<ID3DBlob> shader_bytecode;
+        ComPtr<ID3DBlob> shader_errors;
+        hr = D3DCompileFromFile(
+            shader_path.c_str(),
+            nullptr,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE,
+            "main",
+            "cs_5_0",
+            D3DCOMPILE_ENABLE_STRICTNESS,
+            0,
+            shader_bytecode.GetAddressOf(),
+            shader_errors.GetAddressOf());
+        if (FAILED(hr))
+        {
+            std::string detail;
+            if (shader_errors != nullptr)
+            {
+                const char* bytes = static_cast<const char*>(shader_errors->GetBufferPointer());
+                detail.assign(bytes, bytes + shader_errors->GetBufferSize());
+            }
+            throw std::runtime_error("Phase 3 HLSL compile failed: " + detail);
+        }
+
+        ComPtr<ID3D11ComputeShader> shader;
+        hr = device->CreateComputeShader(
+            shader_bytecode->GetBufferPointer(),
+            shader_bytecode->GetBufferSize(),
+            nullptr,
+            shader.GetAddressOf());
+        require(SUCCEEDED(hr), "Phase 3 compute shader creation must succeed.");
+
+        const std::vector<gpu_float4> physics_positions = {
+            { 0.0f, 0.0f, 0.0f, 1.0f },
+            { 1.0f, 0.0f, 0.0f, 1.0f },
+            { 0.0f, 1.0f, 0.0f, 1.0f },
+            { 0.0f, 0.0f, 1.0f, 1.0f }
+        };
+        const std::vector<gpu_render_binding> bindings = {
+            { { 0, 1, 2, 0 }, { 0.4f, 0.1f, 0.2f, 0.3f }, { 0.0f, 0.0f, 0.0f, 0.0f } },
+            { { 2, 0, 0, 1 }, { 1.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f } },
+            { { 0, 1, 2, 0 }, { 0.6f, 0.2f, 0.2f, 0.0f }, { 0.0f, 0.0f, -0.1f, 0.0f } }
+        };
+        std::vector<gpu_float4> initial_output(bindings.size(), { -99.0f, -99.0f, -99.0f, -99.0f });
+
+        const auto create_structured_buffer =
+            [&device](const void* data, UINT element_count, UINT stride,
+                UINT bind_flags, ID3D11Buffer** output) -> HRESULT
+        {
+            D3D11_BUFFER_DESC description = {};
+            description.ByteWidth = element_count * stride;
+            description.Usage = D3D11_USAGE_DEFAULT;
+            description.BindFlags = bind_flags;
+            description.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+            description.StructureByteStride = stride;
+            D3D11_SUBRESOURCE_DATA initial_data = {};
+            initial_data.pSysMem = data;
+            return device->CreateBuffer(&description, &initial_data, output);
+        };
+
+        ComPtr<ID3D11Buffer> physics_buffer;
+        ComPtr<ID3D11Buffer> binding_buffer;
+        ComPtr<ID3D11Buffer> output_buffer;
+        hr = create_structured_buffer(
+            physics_positions.data(),
+            static_cast<UINT>(physics_positions.size()),
+            sizeof(gpu_float4),
+            D3D11_BIND_SHADER_RESOURCE,
+            physics_buffer.GetAddressOf());
+        require(SUCCEEDED(hr), "Physics position buffer creation must succeed.");
+        hr = create_structured_buffer(
+            bindings.data(),
+            static_cast<UINT>(bindings.size()),
+            sizeof(gpu_render_binding),
+            D3D11_BIND_SHADER_RESOURCE,
+            binding_buffer.GetAddressOf());
+        require(SUCCEEDED(hr), "Render binding buffer creation must succeed.");
+        hr = create_structured_buffer(
+            initial_output.data(),
+            static_cast<UINT>(initial_output.size()),
+            sizeof(gpu_float4),
+            D3D11_BIND_UNORDERED_ACCESS,
+            output_buffer.GetAddressOf());
+        require(SUCCEEDED(hr), "Render output buffer creation must succeed.");
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC physics_view_description = {};
+        physics_view_description.Format = DXGI_FORMAT_UNKNOWN;
+        physics_view_description.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        physics_view_description.Buffer.NumElements =
+            static_cast<UINT>(physics_positions.size());
+        ComPtr<ID3D11ShaderResourceView> physics_view;
+        hr = device->CreateShaderResourceView(
+            physics_buffer.Get(), &physics_view_description, physics_view.GetAddressOf());
+        require(SUCCEEDED(hr), "Physics position SRV creation must succeed.");
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC binding_view_description = {};
+        binding_view_description.Format = DXGI_FORMAT_UNKNOWN;
+        binding_view_description.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        binding_view_description.Buffer.NumElements = static_cast<UINT>(bindings.size());
+        ComPtr<ID3D11ShaderResourceView> binding_view;
+        hr = device->CreateShaderResourceView(
+            binding_buffer.Get(), &binding_view_description, binding_view.GetAddressOf());
+        require(SUCCEEDED(hr), "Render binding SRV creation must succeed.");
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC output_view_description = {};
+        output_view_description.Format = DXGI_FORMAT_UNKNOWN;
+        output_view_description.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        output_view_description.Buffer.NumElements = static_cast<UINT>(bindings.size());
+        ComPtr<ID3D11UnorderedAccessView> output_view;
+        hr = device->CreateUnorderedAccessView(
+            output_buffer.Get(), &output_view_description, output_view.GetAddressOf());
+        require(SUCCEEDED(hr), "Render output UAV creation must succeed.");
+
+        ID3D11ShaderResourceView* resource_views[] = {
+            physics_view.Get(), binding_view.Get()
+        };
+        ID3D11UnorderedAccessView* unordered_views[] = { output_view.Get() };
+        context->CSSetShader(shader.Get(), nullptr, 0);
+        context->CSSetShaderResources(0, 2, resource_views);
+        context->CSSetUnorderedAccessViews(0, 1, unordered_views, nullptr);
+        context->Dispatch(1, 1, 1);
+
+        ID3D11ShaderResourceView* null_resources[] = { nullptr, nullptr };
+        ID3D11UnorderedAccessView* null_unordered[] = { nullptr };
+        context->CSSetShaderResources(0, 2, null_resources);
+        context->CSSetUnorderedAccessViews(0, 1, null_unordered, nullptr);
+        context->CSSetShader(nullptr, nullptr, 0);
+
+        D3D11_BUFFER_DESC staging_description = {};
+        staging_description.ByteWidth =
+            static_cast<UINT>(initial_output.size() * sizeof(gpu_float4));
+        staging_description.Usage = D3D11_USAGE_STAGING;
+        staging_description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Buffer> staging_buffer;
+        hr = device->CreateBuffer(&staging_description, nullptr, staging_buffer.GetAddressOf());
+        require(SUCCEEDED(hr), "GPU staging buffer creation must succeed.");
+        context->CopyResource(staging_buffer.Get(), output_buffer.Get());
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        hr = context->Map(staging_buffer.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+        require(SUCCEEDED(hr), "GPU output Readback Map must succeed.");
+        const gpu_float4* gpu_output = static_cast<const gpu_float4*>(mapped.pData);
+        const double tolerance = 1.0e-5;
+        require(std::abs(gpu_output[0].x - 0.1) <= tolerance &&
+            std::abs(gpu_output[0].y - 0.2) <= tolerance &&
+            std::abs(gpu_output[0].z - 0.3) <= tolerance,
+            "WARP tetrahedral barycentric feedback must match the analytical reference.");
+        require(std::abs(gpu_output[1].x) <= tolerance &&
+            std::abs(gpu_output[1].y - 1.0) <= tolerance &&
+            std::abs(gpu_output[1].z) <= tolerance,
+            "WARP direct-vertex feedback must match the source physics vertex.");
+        require(std::abs(gpu_output[2].x - 0.2) <= tolerance &&
+            std::abs(gpu_output[2].y - 0.2) <= tolerance &&
+            std::abs(gpu_output[2].z + 0.1) <= tolerance,
+            "WARP boundary feedback must preserve the stored rest offset.");
+        context->Unmap(staging_buffer.Get(), 0);
+    }
+
     void test_phase04_overload_and_callback_failure()
     {
         skin_physics::simulation::fixed_step_settings settings;
@@ -1229,6 +1434,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P03_INVALID_BINDING\n";
     test_phase04_fixed_step_golden();
     std::cout << "[PASS] P04_FIXED_STEP_GOLDEN\n";
+    test_phase03_warp_compute_render_feedback();
+    std::cout << "[PASS] P03_WARP_RENDER_FEEDBACK\n";
     test_phase04_overload_and_callback_failure();
     std::cout << "[PASS] P04_FIXED_STEP_OVERLOAD\n";
     test_phase05_cloth_fixture_and_bend_gradient();
