@@ -10,6 +10,9 @@
     <Filter Include="Source Files\Physics">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E105}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\Simulation">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E107}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Header Files">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E102}</UniqueIdentifier>
     </Filter>
@@ -18,6 +21,9 @@
     </Filter>
     <Filter Include="Header Files\Physics">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E106}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Simulation">
+      <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E108}</UniqueIdentifier>
     </Filter>
     <Filter Include="Third Party">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E104}</UniqueIdentifier>
@@ -54,6 +60,12 @@
     <ClCompile Include="src\physics\asset_cache.cpp">
       <Filter>Source Files\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="src\physics\render_binding.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="src\simulation\fixed_step.cpp">
+      <Filter>Source Files\Simulation</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\skin_physics\asset\types.hpp">
@@ -82,6 +94,12 @@
     </ClInclude>
     <ClInclude Include="include\skin_physics\physics\asset_cache.hpp">
       <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\render_binding.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp">
+      <Filter>Header Files\Simulation</Filter>
     </ClInclude>
     <ClInclude Include="third_party\cgltf\cgltf.h">
       <Filter>Third Party</Filter>

@@ -25,8 +25,8 @@ The authoritative index is `tests/fixtures/manifest.json`. Input files are immut
 |---|---|---|---|---|
 | 01 Importer | OBJ quad + MTL, glTF skin/animation, OBJ missing unit | Converted coordinates, triangle count, material factors, joint weights, animation keys | Importer, units, skinning and topology checks | Automated |
 | 02 Physics Mesh | Single tet, two tets sharing a face, center-star tet mesh | Rest volume, quality, dihedral, boundary faces, lumped mass, CSR, harmonic weights, cache behavior | T13, T26; T25 resolution fixture prepared | Partial: mesh/skin/cache automated; resolution scenario awaits builder API |
-| 03 Render Binding | Interior tet point, exterior boundary-offset point, invalid distant point | Barycentric coordinates, Rest offset, reconstructed Rest position, attribute preservation | T12, T27 | Fixtures prepared |
-| 04 Test Environment | Fixed-step timeline, scenario JSON, Run Result | Step count, accumulator, simulation time, semantic round trip, explicit unavailable metrics | T24, T28 | Fixtures prepared |
+| 03 Render Binding | Interior tet point, exterior boundary-offset point, invalid distant point | Barycentric coordinates, Rest offset, reconstructed Rest position, attribute preservation | T12, T27 | Partial: CPU binding/feedback golden tests; D3D11 GPU path pending |
+| 04 Test Environment | Fixed-step timeline, scenario JSON, Run Result | Step count, accumulator, simulation time, semantic round trip, explicit unavailable metrics | T24, T28 | Partial: fixed-step/overload tests; JSON and GPU telemetry pending |
 | 05 Cloth | Two-triangle square patch | Rest lengths, areas, dihedral, finite-difference gradient reference, compliance monotonicity | T05, T06, T18 | Fixtures prepared |
 | 06 Soft Body FEM | Unit right tetrahedron under rigid rotation, compression and inversion | Deformation gradient, determinant, volume, strain/energy and inversion diagnostic | T01–T04, T19 | Fixtures prepared |
 | 07 Collision | VT, EE, broadphase pair set, capacity overflow | Closest points, barycentrics, penetration, exhaustive candidate superset, retry/no-drop behavior | T07, T08, T10, T11, T17, T22 | Fixtures prepared |

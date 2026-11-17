@@ -79,7 +79,9 @@
   <ItemGroup>
     <ClCompile Include="tests\asset_tests.cpp" />
     <ClCompile Include="tests\physics_mesh_tests.cpp" />
+    <ClCompile Include="tests\simulation_tests.cpp" />
     <ClInclude Include="tests\test_support.hpp" />
+    <ClInclude Include="tests\json_test_support.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="SkinPhysics.vcxproj">

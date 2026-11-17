@@ -93,6 +93,8 @@
     <ClCompile Include="src\physics\ftetwild_runner.cpp" />
     <ClCompile Include="src\physics\skin_weights.cpp" />
     <ClCompile Include="src\physics\asset_cache.cpp" />
+    <ClCompile Include="src\physics\render_binding.cpp" />
+    <ClCompile Include="src\simulation\fixed_step.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\skin_physics\asset\types.hpp" />
@@ -104,6 +106,8 @@
     <ClInclude Include="include\skin_physics\physics\ftetwild_runner.hpp" />
     <ClInclude Include="include\skin_physics\physics\skin_weights.hpp" />
     <ClInclude Include="include\skin_physics\physics\asset_cache.hpp" />
+    <ClInclude Include="include\skin_physics\physics\render_binding.hpp" />
+    <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

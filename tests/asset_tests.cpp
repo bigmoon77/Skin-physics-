@@ -12,6 +12,7 @@
 #include <vector>
 
 int run_physics_mesh_tests();
+int run_simulation_tests();
 
 namespace
 {
@@ -397,6 +398,7 @@ int main()
         run_test_case("FIXTURE_CATALOG", test_fixture_catalog_files_exist);
         run_test_case("P01_MODEL_VALIDATION", test_model_validation_rejects_bad_indices);
         require(run_physics_mesh_tests() == 0, "Physics Mesh tests failed.");
+        require(run_simulation_tests() == 0, "Simulation core tests failed.");
     }
     catch (const std::exception& exception)
     {

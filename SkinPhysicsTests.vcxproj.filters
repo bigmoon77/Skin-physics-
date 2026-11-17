@@ -15,10 +15,13 @@
     <ClCompile Include="tests\physics_mesh_tests.cpp">
       <Filter>Tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\simulation_tests.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
     <ClInclude Include="tests\test_support.hpp">
       <Filter>Tests</Filter>
     </ClInclude>
-    <ClInclude Include="tests\test_support.hpp">
+    <ClInclude Include="tests\json_test_support.hpp">
       <Filter>Tests</Filter>
     </ClInclude>
   </ItemGroup>

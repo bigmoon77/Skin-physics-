@@ -131,7 +131,7 @@
     {
       "phase": 3,
       "id": "render_binding_feedback",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T12",
         "T27"
@@ -144,7 +144,7 @@
           "checks": [
             "four-vertex barycentric binding",
             "rest pose error",
-            "GPU feedback restores unchanged attributes"
+            "CPU feedback updates positions while preserving UV/color/material/index attributes"
           ]
         },
         {
@@ -164,12 +164,21 @@
             "degenerate/too-distant binding is diagnosed"
           ]
         }
+      ],
+      "automated_cases": [
+        "P03_TET_INTERIOR",
+        "P03_BOUNDARY_OFFSET",
+        "P03_INVALID_BINDING"
+      ],
+      "unimplemented": [
+        "D3D11 GPU feedback dispatch and GPU readback comparison",
+        "Cloth surface binding"
       ]
     },
     {
       "phase": 4,
       "id": "test_environment_json_gpu_timing",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T24",
         "T28"
@@ -204,6 +213,15 @@
             "pass metrics and explicit unavailable GPU counters"
           ]
         }
+      ],
+      "automated_cases": [
+        "P04_FIXED_STEP",
+        "P04_FIXED_STEP_OVERLOAD"
+      ],
+      "unimplemented": [
+        "Scenario JSON schema and unknown-field round trip",
+        "Run Result serialization",
+        "D3D11 GPU timestamp and DXGI memory telemetry"
       ]
     },
     {
