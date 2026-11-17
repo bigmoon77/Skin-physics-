@@ -2,6 +2,7 @@
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 #include "skin_physics/physics/render_binding.hpp"
 #include "skin_physics/physics/cloth_solver.hpp"
+#include "skin_physics/physics/soft_body_fem.hpp"
 #include "skin_physics/simulation/fixed_step.hpp"
 #include "json_test_support.hpp"
 #include "test_support.hpp"
@@ -526,6 +527,150 @@ namespace
         }
     }
 
+    void test_phase06_corotational_fem_golden()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase06_soft_body/tet_deformation.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase06_soft_body/tet_deformation.expected.json"));
+        const physics_mesh mesh_value = load_single_tetrahedron();
+
+        skin_physics::physics::soft_body_material material;
+        material.shear_modulus = static_cast<float>(input.at("mu").as_number());
+        material.bulk_modulus = static_cast<float>(input.at("K").as_number());
+        material.density = static_cast<float>(input.at("density").as_number());
+        material.inversion_stiffness = 10000.0f;
+        material.minimum_jacobian = 0.1f;
+
+        const auto& cases = input.at("deformation_cases").as_array();
+        std::vector<skin_physics::asset::vec3> rotated_positions;
+        std::vector<skin_physics::asset::vec3> compressed_positions;
+        for (const test_json::value& current_case : cases)
+        {
+            std::vector<skin_physics::asset::vec3> positions;
+            for (const test_json::value& position : current_case.at("current_positions").as_array())
+            {
+                positions.push_back(read_vec3(position));
+            }
+            const auto evaluated =
+                skin_physics::physics::evaluate_corotational_tetrahedron(
+                    mesh_value, 0, positions, material);
+            require(evaluated.success, "Phase 6 Corotational FEM fixture evaluation should succeed.");
+
+            const std::string& case_name = current_case.at("name").as_string();
+            if (case_name == "rigid_rotation_z_90")
+            {
+                rotated_positions = positions;
+                const auto& expected_f = expected.at("rigid_rotation_z_90").at("F");
+                for (std::size_t row = 0; row < 3; ++row)
+                {
+                    for (std::size_t column = 0; column < 3; ++column)
+                    {
+                        require(std::abs(evaluated.deformation_gradient.value[row * 3 + column] -
+                            expected_f.at(row).at(column).as_number()) <= 1.0e-6,
+                            "Rigid rotation deformation gradient must match the golden.");
+                        require(std::abs(evaluated.rotation.value[row * 3 + column] -
+                            expected_f.at(row).at(column).as_number()) <= 1.0e-5,
+                            "Corotational rotation must preserve a rigid 90-degree rotation.");
+                    }
+                }
+                require(std::abs(evaluated.jacobian -
+                    expected.at("rigid_rotation_z_90").at("determinant").as_number()) <= 1.0e-6,
+                    "Rigid rotation Jacobian must equal one.");
+                require(evaluated.strain_energy_density <=
+                    expected.at("rigid_rotation_z_90").at("elastic_energy").as_number() + 1.0e-5,
+                    "Rigid rotation must have near-zero Corotational strain energy.");
+                require(evaluated.state_committable,
+                    "A valid rigid rotation must be committable.");
+            }
+            else if (case_name == "compress_x_10_percent")
+            {
+                compressed_positions = positions;
+                const auto& compression = expected.at("compress_x_10_percent");
+                require(std::abs(evaluated.jacobian -
+                    compression.at("determinant").as_number()) <= 1.0e-6,
+                    "Ten percent X compression must produce J=0.9.");
+                require(std::abs(evaluated.current_volume -
+                    compression.at("current_volume").as_number()) <= 1.0e-6,
+                    "Compressed tetrahedron volume must match the golden.");
+                require(evaluated.state_committable,
+                    "A positive-Jacobian compression should remain committable.");
+
+                float force_sum_x = 0.0f;
+                float force_sum_y = 0.0f;
+                float force_sum_z = 0.0f;
+                for (const skin_physics::asset::vec3& force : evaluated.internal_forces)
+                {
+                    force_sum_x += force.x;
+                    force_sum_y += force.y;
+                    force_sum_z += force.z;
+                }
+                require(std::abs(force_sum_x) <= 1.0e-4f &&
+                    std::abs(force_sum_y) <= 1.0e-4f &&
+                    std::abs(force_sum_z) <= 1.0e-4f,
+                    "Internal FEM forces must conserve linear momentum within one element.");
+
+                skin_physics::physics::soft_body_material no_shape_recovery = material;
+                no_shape_recovery.shape_recovery_scale = 0.0f;
+                const auto volume_only =
+                    skin_physics::physics::evaluate_corotational_tetrahedron(
+                        mesh_value, 0, positions, no_shape_recovery);
+                skin_physics::physics::soft_body_material no_volume_retention = material;
+                no_volume_retention.volume_retention_scale = 0.0f;
+                const auto shape_only =
+                    skin_physics::physics::evaluate_corotational_tetrahedron(
+                        mesh_value, 0, positions, no_volume_retention);
+                require(volume_only.success && shape_only.success,
+                    "Independent FEM material scales must evaluate successfully.");
+                require(volume_only.elastic_energy < evaluated.elastic_energy &&
+                    shape_only.elastic_energy < evaluated.elastic_energy,
+                    "Shape recovery and volume retention scales must control independent energy terms.");
+            }
+        }
+        require(!rotated_positions.empty() && !compressed_positions.empty(),
+            "Both reviewed Phase 6 deformation scenarios must be tested.");
+    }
+
+    void test_phase06_inversion_penalty_is_finite_and_not_committed()
+    {
+        const physics_mesh mesh_value = load_single_tetrahedron();
+        std::vector<skin_physics::asset::vec3> inverted_positions = mesh_value.rest_positions;
+        inverted_positions[1].x = -0.1f;
+
+        skin_physics::physics::soft_body_material material;
+        material.shear_modulus = 1000.0f;
+        material.bulk_modulus = 5000.0f;
+        material.density = 1000.0f;
+        material.inversion_stiffness = 10000.0f;
+        material.minimum_jacobian = 0.1f;
+
+        const auto evaluated =
+            skin_physics::physics::evaluate_corotational_tetrahedron(
+                mesh_value, 0, inverted_positions, material);
+        require(evaluated.success, "Inverted tetrahedron should produce a finite diagnostic evaluation.");
+        require(evaluated.jacobian < 0.0f && evaluated.inverted,
+            "Negative deformation determinant must be diagnosed as an inverted tetrahedron.");
+        require(!evaluated.state_committable,
+            "Inverted tetrahedron state must not be committed.");
+        require(evaluated.used_svd_fallback,
+            "Inverted deformation must use the proper-rotation SVD fallback.");
+        require(skin_physics::physics::determinant_matrix3(evaluated.rotation) > 0.999f,
+            "SVD fallback must return a proper rotation with positive determinant.");
+        require(std::isfinite(evaluated.inversion_energy_density) &&
+            evaluated.inversion_energy_density > 0.0f &&
+            std::isfinite(evaluated.elastic_energy),
+            "Inversion penalty and total energy must remain finite.");
+        require(!evaluated.diagnostics.empty() &&
+            evaluated.diagnostics[0].code ==
+                skin_physics::physics::soft_body_error::inverted_tetrahedron,
+            "Inverted element must report InvertedTetrahedron.");
+        for (const skin_physics::asset::vec3& force : evaluated.internal_forces)
+        {
+            require(std::isfinite(force.x) && std::isfinite(force.y) && std::isfinite(force.z),
+                "Inversion penalty forces must remain finite.");
+        }
+    }
+
     void test_phase04_overload_and_callback_failure()
     {
         skin_physics::simulation::fixed_step_settings settings;
@@ -567,6 +712,10 @@ int run_simulation_tests()
     std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
     test_phase05_cloth_compliance_monotonicity();
     std::cout << "[PASS] P05_CLOTH_COMPLIANCE\n";
+    test_phase06_corotational_fem_golden();
+    std::cout << "[PASS] P06_COROTATIONAL_FEM_GOLDEN\n";
+    test_phase06_inversion_penalty_is_finite_and_not_committed();
+    std::cout << "[PASS] P06_INVERSION_ROLLBACK\n";
     std::cout << "SimulationCoreTests passed.\n";
     return 0;
 }

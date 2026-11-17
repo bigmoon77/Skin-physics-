@@ -268,7 +268,7 @@
     {
       "phase": 6,
       "id": "soft_body_fem",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T01",
         "T02",
@@ -304,6 +304,15 @@
             "inversion diagnostic and finite penalty path"
           ]
         }
+      ],
+      "automated_cases": [
+        "P06_COROTATIONAL_FEM_GOLDEN",
+        "P06_INVERSION_ROLLBACK"
+      ],
+      "unimplemented": [
+        "Soft Body global force gather and time integration",
+        "GPU FEM element kernels and accumulation",
+        "CFL/substep controller and animation-tracking coupling"
       ]
     },
     {
