@@ -98,6 +98,9 @@
     <ClCompile Include="src\physics\soft_body_fem.cpp" />
     <ClCompile Include="src\physics\collision.cpp" />
     <ClCompile Include="src\physics\ccd.cpp" />
+    <ClCompile Include="src\physics\animation_track.cpp" />
+    <ClCompile Include="src\physics\attribute_paint.cpp" />
+    <ClCompile Include="src\physics\performance_metrics.cpp" />
     <ClCompile Include="src\simulation\fixed_step.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -115,6 +118,9 @@
     <ClInclude Include="include\skin_physics\physics\soft_body_fem.hpp" />
     <ClInclude Include="include\skin_physics\physics\collision.hpp" />
     <ClInclude Include="include\skin_physics\physics\ccd.hpp" />
+    <ClInclude Include="include\skin_physics\physics\animation_track.hpp" />
+    <ClInclude Include="include\skin_physics\physics\attribute_paint.hpp" />
+    <ClInclude Include="include\skin_physics\physics\performance_metrics.hpp" />
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />
   </ItemGroup>

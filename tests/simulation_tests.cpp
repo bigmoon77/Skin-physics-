@@ -5,6 +5,9 @@
 #include "skin_physics/physics/soft_body_fem.hpp"
 #include "skin_physics/physics/collision.hpp"
 #include "skin_physics/physics/ccd.hpp"
+#include "skin_physics/physics/animation_track.hpp"
+#include "skin_physics/physics/attribute_paint.hpp"
+#include "skin_physics/physics/performance_metrics.hpp"
 #include "skin_physics/simulation/fixed_step.hpp"
 #include "json_test_support.hpp"
 #include "test_support.hpp"
@@ -16,6 +19,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -929,6 +933,267 @@ namespace
             "Rejected initial repair must preserve all input positions.");
     }
 
+    void test_phase09_animation_target_sampling()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase09_animation/target_motion.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase09_animation/target_motion.expected.json"));
+
+        skin_physics::physics::animation_track track;
+        const auto& times = input.at("translation_track").at("times").as_array();
+        const auto& translations = input.at("translation_track").at("values").as_array();
+        const auto& rotations = input.at("rotation_track").at("values").as_array();
+        for (std::size_t index = 0; index < times.size(); ++index)
+        {
+            skin_physics::physics::animation_keyframe keyframe;
+            keyframe.time = times[index].as_number();
+            keyframe.translation = read_vec3(translations[index]);
+            keyframe.rotation = {
+                static_cast<float>(rotations[index].at(0).as_number()),
+                static_cast<float>(rotations[index].at(1).as_number()),
+                static_cast<float>(rotations[index].at(2).as_number()),
+                static_cast<float>(rotations[index].at(3).as_number())
+            };
+            track.keyframes.push_back(keyframe);
+        }
+
+        const double sample_time = input.at("sample_time").as_number();
+        const auto sample =
+            skin_physics::physics::sample_animation_track(track, sample_time);
+        require(sample.success, "Phase 9 animation track sample should succeed.");
+        const skin_physics::asset::vec3 expected_position =
+            read_vec3(expected.at("translation_at_sample"));
+        const skin_physics::asset::vec3 expected_velocity =
+            read_vec3(expected.at("target_velocity"));
+        const double position_tolerance =
+            expected.at("tolerances").at("position_absolute").as_number();
+        const double velocity_tolerance =
+            expected.at("tolerances").at("velocity_absolute").as_number();
+        require(std::abs(sample.value.translation.x - expected_position.x) <= position_tolerance &&
+            std::abs(sample.value.translation.y - expected_position.y) <= position_tolerance &&
+            std::abs(sample.value.translation.z - expected_position.z) <= position_tolerance,
+            "Animation translation sample must match the golden.");
+        require(std::abs(sample.value.translation_velocity.x - expected_velocity.x) <= velocity_tolerance &&
+            std::abs(sample.value.translation_velocity.y - expected_velocity.y) <= velocity_tolerance &&
+            std::abs(sample.value.translation_velocity.z - expected_velocity.z) <= velocity_tolerance,
+            "Animation target velocity must match the keyframe segment derivative.");
+
+        const float expected_sine = std::sin(11.25f * 3.14159265358979323846f / 180.0f);
+        const float expected_cosine = std::cos(11.25f * 3.14159265358979323846f / 180.0f);
+        require(std::abs(sample.value.rotation.y - expected_sine) <=
+            expected.at("tolerances").at("quaternion_absolute").as_number() &&
+            std::abs(sample.value.rotation.w - expected_cosine) <=
+            expected.at("tolerances").at("quaternion_absolute").as_number(),
+            "Animation rotation must use shortest-path quaternion Slerp.");
+
+        skin_physics::physics::animation_sample_options teleport;
+        teleport.teleport = true;
+        teleport.zero_velocity_on_teleport = true;
+        teleport.teleport_translation = read_vec3(input.at("teleport").at("to"));
+        const auto teleported =
+            skin_physics::physics::sample_animation_track(track, sample_time, teleport);
+        const skin_physics::asset::vec3 expected_teleport =
+            read_vec3(expected.at("teleport_target"));
+        const skin_physics::asset::vec3 expected_zero_velocity =
+            read_vec3(expected.at("teleport_velocity"));
+        require(teleported.success &&
+            std::abs(teleported.value.translation.x - expected_teleport.x) <= position_tolerance &&
+            std::abs(teleported.value.translation_velocity.x - expected_zero_velocity.x) <= velocity_tolerance &&
+            std::abs(teleported.value.translation_velocity.y - expected_zero_velocity.y) <= velocity_tolerance &&
+            std::abs(teleported.value.translation_velocity.z - expected_zero_velocity.z) <= velocity_tolerance,
+            "Teleport zero-velocity policy must not generate an artificial velocity spike.");
+    }
+
+    void test_phase10_attribute_paint_and_serialization()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase10_paint/paint.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase10_paint/paint.expected.json"));
+
+        std::vector<float> weights;
+        for (const test_json::value& weight : input.at("initial_weights").as_array())
+        {
+            weights.push_back(static_cast<float>(weight.as_number()));
+        }
+        std::vector<std::vector<uint32_t>> adjacency;
+        for (const test_json::value& neighbors : input.at("adjacency").as_array())
+        {
+            std::vector<uint32_t> vertex_neighbors;
+            for (const test_json::value& neighbor : neighbors.as_array())
+            {
+                vertex_neighbors.push_back(static_cast<uint32_t>(neighbor.as_number()));
+            }
+            adjacency.push_back(std::move(vertex_neighbors));
+        }
+        std::vector<uint32_t> selection = { 0, 1, 2 };
+        const float minimum_value = static_cast<float>(input.at("clamp_range").at(0).as_number());
+        const float maximum_value = static_cast<float>(input.at("clamp_range").at(1).as_number());
+
+        const auto painted = skin_physics::physics::apply_attribute_paint(
+            weights, adjacency, selection,
+            skin_physics::physics::attribute_paint_mode::paint,
+            static_cast<float>(input.at("operations").at(0).at("target").as_number()),
+            static_cast<float>(input.at("operations").at(0).at("strength").as_number()),
+            minimum_value, maximum_value);
+        require(painted.success, "Phase 10 Paint operation should succeed.");
+        weights = painted.weights;
+        for (std::size_t index = 0; index < weights.size(); ++index)
+        {
+            require(std::abs(weights[index] -
+                expected.at("after_paint").at(index).as_number()) <= 1.0e-6,
+                "Paint output must match the golden weight.");
+        }
+
+        const auto smoothed = skin_physics::physics::apply_attribute_paint(
+            weights, adjacency, selection,
+            skin_physics::physics::attribute_paint_mode::smooth,
+            0.0f, 1.0f, minimum_value, maximum_value);
+        require(smoothed.success, "Phase 10 Smooth operation should succeed.");
+        weights = smoothed.weights;
+        for (std::size_t index = 0; index < weights.size(); ++index)
+        {
+            require(std::abs(weights[index] -
+                expected.at("after_smooth").at(index).as_number()) <= 1.0e-6,
+                "Smooth operation should converge the selected region to its mean.");
+        }
+
+        const auto averaged = skin_physics::physics::apply_attribute_paint(
+            weights, adjacency, selection,
+            skin_physics::physics::attribute_paint_mode::average,
+            0.0f, 1.0f, minimum_value, maximum_value);
+        require(averaged.success, "Phase 10 Average operation should succeed.");
+        weights = averaged.weights;
+        for (std::size_t index = 0; index < weights.size(); ++index)
+        {
+            require(std::abs(weights[index] -
+                expected.at("after_average").at(index).as_number()) <= 1.0e-6,
+                "Average result must match the reviewed golden.");
+        }
+
+        const auto erased = skin_physics::physics::apply_attribute_paint(
+            weights, adjacency, selection,
+            skin_physics::physics::attribute_paint_mode::erase,
+            0.0f,
+            static_cast<float>(input.at("operations").at(3).at("strength").as_number()),
+            minimum_value, maximum_value);
+        require(erased.success, "Phase 10 Erase operation should succeed.");
+        weights = erased.weights;
+        for (std::size_t index = 0; index < weights.size(); ++index)
+        {
+            require(std::abs(weights[index] -
+                expected.at("after_erase").at(index).as_number()) <= 1.0e-6,
+                "Erase output must match the golden weight.");
+            require(weights[index] >= minimum_value && weights[index] <= maximum_value,
+                "Paint output must remain inside the configured clamp range.");
+        }
+
+        std::vector<uint8_t> serialized;
+        require(skin_physics::physics::serialize_attribute_weights(weights, serialized),
+            "Attribute weight serialization should succeed.");
+        std::vector<float> loaded;
+        require(skin_physics::physics::deserialize_attribute_weights(serialized, loaded),
+            "Attribute weight deserialization should succeed.");
+        require(loaded == weights && expected.at("save_load_exact").as_bool(),
+            "Attribute weights must round-trip exactly.");
+
+        std::vector<float> preserved = loaded;
+        serialized.back() ^= 0x01u;
+        require(!skin_physics::physics::deserialize_attribute_weights(serialized, loaded) &&
+            loaded == preserved,
+            "Checksum failure must reject the payload without partially replacing loaded weights.");
+    }
+
+    void test_phase11_performance_profile_and_invariant_collector()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase11_performance/scale_profiles.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase11_performance/scale_profiles.expected.json"));
+
+        const auto& tet_sizes = input.at("soft_body_tetrahedra").as_array();
+        const auto& cloth_sizes = input.at("cloth_triangles").as_array();
+        const auto& expected_tet_sizes =
+            expected.at("profile_sizes").at("soft_body_tetrahedra").as_array();
+        const auto& expected_cloth_sizes =
+            expected.at("profile_sizes").at("cloth_triangles").as_array();
+        require(tet_sizes.size() == 3 && cloth_sizes.size() == 3,
+            "Phase 11 fixture should define three workload sizes per solver.");
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            require(tet_sizes[index].as_number() == expected_tet_sizes[index].as_number() &&
+                cloth_sizes[index].as_number() == expected_cloth_sizes[index].as_number(),
+                "Phase 11 workload sizes must match the reviewed profile.");
+        }
+        require(input.at("repeated_runs").as_number() == 5,
+            "Phase 11 profile must use five repeated runs.");
+        require(std::holds_alternative<std::nullptr_t>(
+            expected.at("absolute_fps_threshold").data),
+            "Performance validation must not enforce a hardware-independent FPS golden.");
+
+        skin_physics::physics::performance_collector collector;
+        for (uint32_t run_index = 0; run_index < 5; ++run_index)
+        {
+            skin_physics::physics::performance_sample sample;
+            sample.scenario_hash = "phase11_fixture_scenario";
+            sample.cpu_time_ms = static_cast<double>(run_index + 1);
+            sample.counters.tetrahedron_count = 32000;
+            sample.counters.cloth_triangle_count = 32000;
+            sample.counters.candidate_count = 256 + run_index;
+            sample.counters.contact_count = 128 + run_index;
+            sample.counters.ccd_iteration_count = 8 + run_index;
+            sample.counters.library_allocated_bytes = 64u * 1024u * 1024u;
+            sample.counters.dxgi_memory_available = false;
+            sample.all_values_finite = true;
+            sample.all_capacity_overflows_reported = true;
+            sample.candidate_set_contains_reference = true;
+            sample.state_committed_only_after_complete_step = true;
+
+            skin_physics::physics::performance_error error;
+            require(collector.add_sample(sample, error) &&
+                error == skin_physics::physics::performance_error::none,
+                "Valid deterministic performance sample should be accepted.");
+        }
+
+        const auto summary = collector.summarize(
+            "phase11_fixture_scenario",
+            static_cast<std::size_t>(input.at("repeated_runs").as_number()));
+        require(summary.success && summary.sample_count == 5,
+            "Performance summary should accept five samples with the same scenario hash.");
+        require(std::abs(summary.cpu_time_ms.median - 3.0) <= 1.0e-12 &&
+            std::abs(summary.cpu_time_ms.percentile_95 - 5.0) <= 1.0e-12 &&
+            std::abs(summary.cpu_time_ms.maximum - 5.0) <= 1.0e-12,
+            "CPU median, p95 and maximum must match the deterministic sample set.");
+        require(summary.maximum_counters.tetrahedron_count == 32000 &&
+            summary.maximum_counters.cloth_triangle_count == 32000 &&
+            summary.maximum_counters.candidate_count == 260 &&
+            summary.maximum_counters.contact_count == 132,
+            "Workload and contact counters must retain the maximum observed values.");
+        require(!summary.gpu_timing_available && !summary.dxgi_memory_available,
+            "Unavailable physical GPU and DXGI readings must remain explicitly unavailable.");
+
+        const auto mismatch = collector.summarize("different_scenario", 1);
+        require(!mismatch.success &&
+            mismatch.diagnostic.find("scenario hashes") != std::string::npos,
+            "Performance runs with different scenario hashes must not be compared.");
+
+        skin_physics::physics::performance_sample invalid_sample;
+        invalid_sample.scenario_hash = "phase11_fixture_scenario";
+        invalid_sample.cpu_time_ms = 1.0;
+        invalid_sample.candidate_set_contains_reference = false;
+        skin_physics::physics::performance_error error;
+        require(!collector.add_sample(invalid_sample, error) &&
+            error == skin_physics::physics::performance_error::correctness_invariant_failed,
+            "A sample that violates a correctness invariant must be rejected.");
+        require(collector.sample_count() == 5,
+            "Rejected performance samples must not mutate collector state.");
+
+        collector.reset();
+        require(collector.sample_count() == 0,
+            "Performance collector Reset must clear all previous samples.");
+    }
+
     void test_phase04_overload_and_callback_failure()
     {
         skin_physics::simulation::fixed_step_settings settings;
@@ -980,6 +1245,12 @@ int run_simulation_tests()
     std::cout << "[PASS] P07_BROADPHASE_OVERFLOW\n";
     test_phase08_ccd_and_initial_penetration_repair();
     std::cout << "[PASS] P08_CCD_INITIAL_REPAIR\n";
+    test_phase09_animation_target_sampling();
+    std::cout << "[PASS] P09_ANIMATION_TARGET\n";
+    test_phase10_attribute_paint_and_serialization();
+    std::cout << "[PASS] P10_ATTRIBUTE_PAINT\n";
+    test_phase11_performance_profile_and_invariant_collector();
+    std::cout << "[PASS] P11_PERFORMANCE_PROFILE\n";
     std::cout << "SimulationCoreTests passed.\n";
     return 0;
 }

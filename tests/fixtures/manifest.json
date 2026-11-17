@@ -414,7 +414,7 @@
     {
       "phase": 9,
       "id": "animation_tracking",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T20",
         "T21"
@@ -437,12 +437,20 @@
             "clip blend and teleport velocity policy"
           ]
         }
+      ],
+      "automated_cases": [
+        "P09_ANIMATION_TARGET"
+      ],
+      "unimplemented": [
+        "Animation clip import through runtime node hierarchy and D3D11 target-buffer dispatch",
+        "Quaternion/angular target velocity interface",
+        "Substepped animation-physics coupling"
       ]
     },
     {
       "phase": 10,
       "id": "physics_attribute_paint",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "paint save/load and remap"
       ],
@@ -457,12 +465,20 @@
             "deterministic remapping after regeneration"
           ]
         }
+      ],
+      "automated_cases": [
+        "P10_ATTRIBUTE_PAINT"
+      ],
+      "unimplemented": [
+        "GPU paint kernels and editor brush falloff/selection UI",
+        "Topology-neighbor Laplacian smoothing and multi-channel skin-weight normalization",
+        "Asset editor persistence integration"
       ]
     },
     {
       "phase": 11,
       "id": "performance_quality",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T14",
         "T15"
@@ -478,6 +494,14 @@
             "pass timing and memory reporting; no fixed FPS golden"
           ]
         }
+      ],
+      "automated_cases": [
+        "P11_PERFORMANCE_PROFILE"
+      ],
+      "unimplemented": [
+        "D3D11 timestamp query rings and per-pass GPU timings",
+        "DXGI video-memory budget query and device telemetry",
+        "Automated 2k/8k/32k solver workload execution on target GPU"
       ]
     }
   ]

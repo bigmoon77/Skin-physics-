@@ -18,6 +18,9 @@ The repository is being implemented in stages. Phase 1 importers and the Phase 2
 - CPU reference Cloth solver with XPBD Stretch, Shear and signed Bend constraints; Bend uses an analytical chain-rule gradient validated against central finite differences.
 - CPU single-tetrahedron Corotational FEM evaluation with proper polar rotation / Jacobi-SVD fallback, deformation gradient, first Piola stress, internal forces and finite inversion penalty diagnostics.
 - CPU collision reference routines for vertex-triangle and edge-edge closest features, weighted VT position correction, spatial-cell broadphase with pair filters / capacity overflow handling, point-triangle Conservative Advancement CCD and atomic initial-penetration repair.
+- CPU animation target sampling with translation velocity, quaternion shortest-path Slerp and teleport velocity reset.
+- CPU attribute Paint / selected-region Smooth / Average / Erase, with versioned checksum-validated binary weight serialization.
+- Hardware-independent performance sample collector with CPU distributions, optional externally supplied GPU pass timings, scenario-hash matching and correctness-invariant gates.
 - Importer-only dependency: cgltf 1.15 (MIT), pinned in third_party/cgltf.
 
 OBJ has no standard unit metadata. Callers must set has_obj_unit_scale = true and provide obj_unit_scale in meters per OBJ unit.

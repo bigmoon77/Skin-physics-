@@ -31,8 +31,8 @@ The authoritative index is `tests/fixtures/manifest.json`. Input files are immut
 | 06 Soft Body FEM | Unit right tetrahedron under rigid rotation, compression and inversion | Deformation gradient, determinant, volume, strain/energy and inversion diagnostic | T01–T04, T19 | Partial: CPU Corotational FEM evaluation, polar/SVD rotation, forces and inversion penalty; global integration/GPU pending |
 | 07 Collision | VT, EE, broadphase pair set, capacity overflow | Closest points, barycentrics, penetration, exhaustive candidate superset, retry/no-drop behavior | T07, T08, T10, T11, T17, T22 | Partial: CPU VT/EE geometry, VT correction, spatial-cell broadphase and capacity test; GPU hierarchy/integration pending |
 | 08 CCD / Initial Repair | Swept point-triangle and over-budget initial penetration | Analytical TOI, one impact impulse, remaining time, blocked state | T09, T16, T23 | Partial: CPU point-triangle Conservative Advancement, single-impact impulse guard and atomic repair-budget check; general CCD/scheduler pending |
-| 09 Animation Tracking | Linear translation, quaternion rotation and teleport | Target position/velocity and discontinuity policy | T20, T21 | Fixtures prepared |
-| 10 Attribute Paint | Three-vertex weight line and Paint/Smooth/Average/Erase operations | Per-operation scalar arrays, range and save/load | Paint/remap requirements | Fixtures prepared |
+| 09 Animation Tracking | Linear translation, quaternion rotation and teleport | Target position/velocity and discontinuity policy | T20, T21 | Partial: CPU translation/velocity sampling, shortest-path quaternion Slerp and teleport policy; runtime/GPU binding pending |
+| 10 Attribute Paint | Three-vertex weight line and Paint/Smooth/Average/Erase operations | Per-operation scalar arrays, range and save/load | Paint/remap requirements | Partial: CPU selected-region Paint/Smooth/Average/Erase and versioned checksummed serialization; editor/GPU integration pending |
 | 11 Quality / Performance | 2k/8k/32k tet and cloth workload profiles | Correctness invariants, candidates, contacts, timings, memory | T14, T15 | Fixtures prepared |
 
 ## Phase exit gate
