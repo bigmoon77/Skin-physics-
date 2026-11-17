@@ -104,6 +104,7 @@
     <ClCompile Include="src\simulation\fixed_step.cpp" />
     <ClCompile Include="src\simulation\scenario.cpp" />
     <ClCompile Include="src\simulation\step_pipeline.cpp" />
+    <ClCompile Include="src\simulation\d3d11_timestamp_profiler.cpp" />
     <ClCompile Include="src\serialization\json.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -127,6 +128,7 @@
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp" />
     <ClInclude Include="include\skin_physics\simulation\scenario.hpp" />
     <ClInclude Include="include\skin_physics\simulation\step_pipeline.hpp" />
+    <ClInclude Include="include\skin_physics\simulation\d3d11_timestamp_profiler.hpp" />
     <ClInclude Include="include\skin_physics\serialization\json.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />
   </ItemGroup>

@@ -4,6 +4,8 @@
 #include "skin_physics/physics/collision.hpp"
 #include "skin_physics/physics/animation_track.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
+#include "skin_physics/physics/ccd.hpp"
+#include "skin_physics/simulation/d3d11_timestamp_profiler.hpp"
 #include "test_support.hpp"
 #include "json_test_support.hpp"
 
@@ -1389,10 +1391,12 @@ namespace
                 gpu_mode = 3;
             }
 
-            const float target = operation.find("target") != nullptr
-                ? static_cast<float>(operation.at("target").as_number()) : 0.0f;
-            const float strength = operation.find("strength") != nullptr
-                ? static_cast<float>(operation.at("strength").as_number()) : 1.0f;
+            const auto target_field = operation.as_object().find("target");
+            const auto strength_field = operation.as_object().find("strength");
+            const float target = target_field != operation.as_object().end()
+                ? static_cast<float>(target_field->second.as_number()) : 0.0f;
+            const float strength = strength_field != operation.as_object().end()
+                ? static_cast<float>(strength_field->second.as_number()) : 1.0f;
             float selected_average = 0.0f;
             for (uint32_t selected : selected_vertices)
             {
@@ -1463,6 +1467,79 @@ namespace
         std::cout << "[PASS] P10_WARP_ATTRIBUTE_PAINT\n";
     }
 
+
+    void test_phase11_warp_timestamp_profiler_and_dxgi_memory()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result), "D3D11 WARP device creation must succeed.");
+
+        skin_physics::simulation::d3d11_timestamp_profiler profiler(
+            device.Get(), context.Get(), 3);
+        require(profiler.valid(),
+            "D3D11 timestamp profiler must initialize with a WARP device.");
+        require(profiler.register_pass("FixtureClear"),
+            "Timestamp pass registration must succeed.");
+
+        const std::vector<gpu_float4> initial_values(4);
+        const ComPtr<ID3D11Buffer> output_buffer =
+            create_structured_buffer(device.Get(), initial_values,
+                D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> output_view =
+            create_structured_uav<gpu_float4>(
+                device.Get(), output_buffer.Get(), 4);
+
+        require(profiler.begin_frame(), "Timestamp frame begin must succeed.");
+        require(profiler.begin_pass("FixtureClear"), "Timestamp pass begin must succeed.");
+        const float clear_value[4] = { 1.0f, 2.0f, 3.0f, 4.0f };
+        context->ClearUnorderedAccessViewFloat(output_view.Get(), clear_value);
+        require(profiler.end_pass("FixtureClear"), "Timestamp pass end must succeed.");
+        require(profiler.end_frame(), "Timestamp frame end must succeed.");
+
+        context->Flush();
+        skin_physics::simulation::timestamp_collection_result collected;
+        for (uint32_t attempt = 0; attempt < 128; ++attempt)
+        {
+            collected = profiler.try_collect();
+            if (collected.status !=
+                skin_physics::simulation::timestamp_collection_status::not_ready)
+            {
+                break;
+            }
+            context->Flush();
+        }
+        require(collected.status ==
+            skin_physics::simulation::timestamp_collection_status::collected,
+            "Completed WARP timestamp queries must become available through non-blocking collection.");
+        require(collected.pass_timings.size() == 1 &&
+            collected.pass_timings[0].pass_name == "FixtureClear" &&
+            std::isfinite(collected.pass_timings[0].milliseconds) &&
+            collected.pass_timings[0].milliseconds >= 0.0,
+            "Timestamp collector must return the named GPU pass duration.");
+        const auto empty = profiler.try_collect();
+        require(empty.status ==
+            skin_physics::simulation::timestamp_collection_status::not_ready,
+            "Collected timestamp slots must be released and not returned twice.");
+
+        ComPtr<IDXGIDevice> dxgi_device;
+        const HRESULT dxgi_result = device.As(&dxgi_device);
+        require(SUCCEEDED(dxgi_result),
+            "WARP D3D11 device must expose IDXGIDevice for adapter discovery.");
+        ComPtr<IDXGIAdapter> adapter;
+        require(SUCCEEDED(dxgi_device->GetAdapter(adapter.GetAddressOf())),
+            "WARP adapter discovery must succeed.");
+        const auto memory =
+            skin_physics::simulation::query_local_video_memory(adapter.Get());
+        if (!memory.available)
+        {
+            require(!memory.diagnostic.empty(),
+                "Unavailable DXGI memory information must include an explicit reason.");
+        }
+        std::cout << "[PASS] P11_WARP_TIMESTAMP_AND_DXGI_MEMORY\n";
+    }
+
 }
 
 int run_gpu_solver_tests()
@@ -1491,6 +1568,7 @@ int run_gpu_solver_tests()
     test_phase08_warp_point_triangle_ccd();
     test_phase09_warp_animation_target();
     test_phase10_warp_attribute_paint();
+    test_phase11_warp_timestamp_profiler_and_dxgi_memory();
     std::cout << "GpuSolverTests passed.\n";
     return 0;
 }
