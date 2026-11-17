@@ -85,7 +85,7 @@ namespace skin_physics::physics
 
             file << std::setprecision(std::numeric_limits<float>::max_digits10);
             file << "o SkinPhysicsSurface\n";
-            for (const asset::vertex& vertex : surface_mesh.vertices)
+            for (const auto& vertex : surface_mesh.vertices)
             {
                 if (!std::isfinite(vertex.position.x) ||
                     !std::isfinite(vertex.position.y) ||
@@ -285,6 +285,7 @@ namespace skin_physics::physics
 
         result.value.surface_bbox_diagonal = static_cast<float>(diagonal);
         result.value.maximum_tetrahedra = settings.maximum_tetrahedra;
+        result.value.minimum_tetra_quality = settings.tetra_quality_threshold;
         if (count_selected)
         {
             result.value.resolution_mode = ftetwild_resolution_mode::target_tetrahedron_count;
@@ -363,7 +364,9 @@ namespace skin_physics::physics
         if (mesh.positions.empty() || mesh.tetrahedra.empty() ||
             resolved.maximum_tetrahedra == 0 ||
             !std::isfinite(resolved.target_edge_length) ||
-            resolved.target_edge_length <= 0.0f)
+            resolved.target_edge_length <= 0.0f ||
+            !std::isfinite(resolved.minimum_tetra_quality) ||
+            resolved.minimum_tetra_quality < 0.0f)
         {
             error_message = "Tetrahedralization output or resolved generation settings are empty.";
             return false;
@@ -379,9 +382,18 @@ namespace skin_physics::physics
             }
         }
 
+        if (mesh.tetrahedra.size() > resolved.maximum_tetrahedra)
+        {
+            error_message = "Tetrahedralization output exceeds maximum_tetrahedra.";
+            return false;
+        }
+
         double edge_length_sum = 0.0;
         double minimum_edge = std::numeric_limits<double>::max();
         double maximum_edge = 0.0;
+        double quality_sum = 0.0;
+        double minimum_quality = std::numeric_limits<double>::max();
+        double maximum_quality = 0.0;
         uint64_t edge_count = 0;
         static constexpr std::array<std::array<uint32_t, 2>, 6> edge_indices = {{
             {{ 0, 1 }}, {{ 0, 2 }}, {{ 0, 3 }},
@@ -430,6 +442,7 @@ namespace skin_physics::physics
                 return false;
             }
 
+            double tetrahedron_edge_length_squared_sum = 0.0;
             for (const auto& edge : edge_indices)
             {
                 const asset::vec3& a = mesh.positions[tetrahedron[edge[0]]];
@@ -444,10 +457,24 @@ namespace skin_physics::physics
                     return false;
                 }
                 edge_length_sum += edge_length;
+                tetrahedron_edge_length_squared_sum += edge_length * edge_length;
                 minimum_edge = std::min(minimum_edge, edge_length);
                 maximum_edge = std::max(maximum_edge, edge_length);
                 ++edge_count;
             }
+
+            const double volume = std::abs(volume_six) / 6.0;
+            const double quality = 12.0 *
+                std::pow(3.0 * volume, 2.0 / 3.0) /
+                tetrahedron_edge_length_squared_sum;
+            if (!std::isfinite(quality) || quality < resolved.minimum_tetra_quality)
+            {
+                error_message = "Tetrahedralization output contains an element below the configured quality threshold.";
+                return false;
+            }
+            quality_sum += quality;
+            minimum_quality = std::min(minimum_quality, quality);
+            maximum_quality = std::max(maximum_quality, quality);
         }
 
         report.resolution = resolved;
@@ -457,6 +484,10 @@ namespace skin_physics::physics
         report.average_edge_length = static_cast<float>(edge_length_sum /
             static_cast<double>(edge_count));
         report.maximum_edge_length = static_cast<float>(maximum_edge);
+        report.minimum_tetra_quality = static_cast<float>(minimum_quality);
+        report.average_tetra_quality = static_cast<float>(
+            quality_sum / static_cast<double>(mesh.tetrahedra.size()));
+        report.maximum_tetra_quality = static_cast<float>(maximum_quality);
         report.has_edge_statistics = edge_count > 0;
         if (resolved.resolution_mode == ftetwild_resolution_mode::target_tetrahedron_count &&
             resolved.requested_tetrahedron_count > 0)

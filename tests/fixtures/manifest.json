@@ -135,7 +135,12 @@
       "unimplemented": [
         "Running a version-pinned fTetWild executable against representative production surfaces in CI",
         "Target count is converted into a deterministic characteristic edge length; actual generated count remains fTetWild-version dependent and is recorded",
-        "Final element-quality threshold is enforced by Physics Mesh build/validation after tetrahedralization"
+        "External binary version detection and production-scale generator calibration"
+      ],
+      "automated_acceptance_tests": [
+        "T13",
+        "T25",
+        "T26"
       ]
     },
     {

@@ -440,6 +440,18 @@ namespace
             std::abs(report.average_edge_length - expected_average_edge) <= 1.0e-6 &&
             std::abs(report.maximum_edge_length - expected_maximum_edge) <= 1.0e-6,
             "Generation report edge-length distribution should match a right unit tetrahedron.");
+        const double expected_tetra_quality = 0.8399473666;
+        require(std::abs(report.minimum_tetra_quality - expected_tetra_quality) <= 1.0e-5 &&
+            std::abs(report.average_tetra_quality - expected_tetra_quality) <= 1.0e-5 &&
+            std::abs(report.maximum_tetra_quality - expected_tetra_quality) <= 1.0e-5,
+            "Generation report tetrahedron quality should match the analytical right-tet reference.");
+
+        resolved_ftetwild_settings strict_quality_resolution = count_resolution.value;
+        strict_quality_resolution.minimum_tetra_quality = 0.9f;
+        tetrahedralization_report rejected_quality_report;
+        require(!measure_tetrahedralization_output(
+            generated_mesh, strict_quality_resolution, rejected_quality_report, report_error),
+            "Generated tetrahedra below the configured quality threshold must be rejected.");
 
         require(std::holds_alternative<std::nullptr_t>(
             expected.at("absolute_tetrahedron_count").data),

@@ -45,6 +45,7 @@ namespace skin_physics::physics
         float surface_bbox_diagonal = 0.0f;
         uint32_t requested_tetrahedron_count = 0;
         uint32_t maximum_tetrahedra = 0;
+        float minimum_tetra_quality = 0.0f;
         bool edge_length_is_estimated = false;
     };
 
@@ -80,6 +81,9 @@ namespace skin_physics::physics
         float minimum_edge_length = 0.0f;
         float average_edge_length = 0.0f;
         float maximum_edge_length = 0.0f;
+        float minimum_tetra_quality = 0.0f;
+        float average_tetra_quality = 0.0f;
+        float maximum_tetra_quality = 0.0f;
         float target_tetrahedron_count_relative_error = 0.0f;
         bool has_edge_statistics = false;
     };

@@ -12,7 +12,7 @@ The repository is being implemented in stages. Phase 1 importers and the Phase 2
 - glTF 2.0 / GLB importer with triangle, triangle-strip and triangle-fan primitives, PBR material factors, node hierarchy, up to eight skin influences, inverse bind matrices, and STEP / LINEAR / CUBICSPLINE TRS animation tracks.
 - Common model validation and diagnostics.
 - Physics Mesh builder: tetrahedron orientation correction, rest matrices / shape gradients, volume and element quality, boundary extraction, vertex-to-tet CSR, and lumped mass.
-- ASCII Gmsh MSH 2.2 reader and optional external fTetWild process adapter (not linked into runtime).
+- ASCII Gmsh MSH 2.2 reader and optional external fTetWild process adapter (not linked into runtime). The adapter supports mutually exclusive target-edge-length and target-tetrahedron-count modes, records actual element/edge/quality statistics and rejects output above configured count/quality limits.
 - Closest-tetrahedron / boundary-triangle Render Vertex Binding and CPU feedback with local-basis Rest offsets; UV, color, material and index data are preserved.
 - Fixed-step simulation clock with Play / Pause / Stop / Reset / single-step, backlog preservation and callback-failure rollback.
 - CPU reference Cloth solver with XPBD Stretch, Shear and signed Bend constraints; Bend uses an analytical chain-rule gradient validated against central finite differences.
