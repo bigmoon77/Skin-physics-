@@ -12,10 +12,24 @@ This directory contains version-controlled input fixtures and expected reference
 6. Golden changes require a reason, a numerical derivation or independent reference, and a test review in the same commit.
 7. Performance fixtures define workload size and correctness invariants; they do not define machine-independent FPS thresholds.
 
-## Phase status
+## Verified test coverage
 
-- Phase 01 Importer: persistent OBJ and glTF fixtures are exercised by automated tests.
-- Phase 02 Physics Mesh / Skin Weight / Cache: persistent MSH fixtures are exercised by automated tests. Additional reference JSON documents derived values.
-- Phase 03–11: canonical input and expected-result fixtures are prepared. The corresponding runtime tests are added alongside each implementation phase. Their presence is marked `fixture_ready`, not `implemented`.
+- **Phase 01 Importer:** persistent OBJ and glTF fixtures, unit conversion, skinning, material and animation import.
+- **Phase 02 Physics Mesh / Skin Weight / Cache:** persistent MSH fixtures, topology, mass, harmonic weights, cache and resolution settings. Actual fTetWild execution against a pinned binary remains environment-dependent.
+- **Phase 03 Render Binding:** CPU interior/exterior embedding and attribute preservation plus D3D11 WARP Render Feedback readback.
+- **Phase 04 Test Environment:** fixed-step overload behavior, Scenario JSON round-trip, unknown extension preservation, Run Result validation/comparison and transactional stage rollback.
+- **Phase 05 Cloth:** CPU XPBD tests and WARP Stretch, Shear and Bend kernel readback against the CPU reference.
+- **Phase 06 Soft Body FEM:** CPU rigid-rotation/compression/inversion tests and WARP per-tetrahedron FEM evaluation for positive-J cases. The inverted-element GPU SVD fallback remains pending.
+- **Phase 07 Collision:** CPU references plus WARP VT/EE narrowphase, host-built BVH traversal, pair filtering and bounded-output overflow checks.
+- **Phase 08 CCD:** CPU initial-penetration repair plus WARP point-versus-static-triangle Conservative Advancement TOI/barycentric readback.
+- **Phase 09 Animation:** CPU target sampling plus WARP translation/velocity, quaternion Slerp and teleport policy.
+- **Phase 10 Attribute Paint:** CPU operations and WARP Paint/Smooth/Average/Erase comparisons.
+- **Phase 11 Performance / GPU orchestration:** WARP Timestamp Query collection, DXGI local-memory query capability handling and two-pass Compute Pass Graph execution with SRV/UAV hazard validation.
+
+## GPU test interpretation
+
+Windows CI uses **D3D11 WARP**, a software device. It verifies shader compilation, dispatch, buffer layout and readback against reference data. It does not establish physical-GPU throughput, driver portability or performance at the 2k/8k/32k workload profiles.
+
+The complete runtime solver connection remains partial. GPU BVH construction, FEM force accumulation/integration, cloth multi-iteration scheduling, moving-primitive CCD, editor integration and physical-GPU profiling remain open. The per-phase mapping and exact limitations are maintained in \`manifest.json\`.
 
 The mapping from phase/test ID to input and expected result is in `manifest.json`.

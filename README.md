@@ -2,7 +2,7 @@
 
 Skin Physics is a GPU-oriented C++ library for real-time Soft Body and Cloth simulation on Direct3D 11.
 
-The repository is being implemented in stages. Phase 1 importers and the Phase 2 Physics Mesh, skin-weight transfer, cache and resolution-settings foundations are implemented. Target tetrahedron count is converted to a characteristic target edge length, and generated meshes report actual counts and edge-length statistics. Phase 3 currently provides a CPU reference for Render Vertex Binding/feedback, and Phase 4 provides fixed-step time control. D3D11 runtime dispatch and later solvers remain in progress.
+The repository is being implemented in stages. Asset import, Physics Mesh construction, CPU reference solvers and fixture-based GPU verification kernels are present. A complete production simulation runtime that connects every stage is still in progress; phase status and known gaps are tracked in `tests/fixtures/manifest.json`.
 
 ## Current implementation
 
@@ -21,6 +21,10 @@ The repository is being implemented in stages. Phase 1 importers and the Phase 2
 - CPU animation target sampling with translation velocity, quaternion shortest-path Slerp and teleport velocity reset.
 - CPU attribute Paint / selected-region Smooth / Average / Erase, with versioned checksum-validated binary weight serialization.
 - Hardware-independent performance sample collector with CPU distributions, optional externally supplied GPU pass timings, scenario-hash matching and correctness-invariant gates.
+- Scenario JSON and Run Result validation/persistence, semantic round-trip, unknown extension preservation and comparability by scenario hash / asset identity.
+- Transactional simulation-stage callback pipeline: callbacks run in design order against a working copy; failed or non-finite output does not commit.
+- WARP-tested HLSL XPBD Stretch / Shear / Bend constraints, positive-Jacobian Corotational FEM element evaluation, VT/EE narrowphase, host-built BVH traversal, point/static-triangle CCD, animation targets and attribute painting.
+- D3D11 Timestamp Query ring with non-blocking collection, DXGI local-memory usage/budget query, and an ordered Compute Pass Graph with SRV/UAV alias validation and explicit CS resource unbinding.
 - Importer-only dependency: cgltf 1.15 (MIT), pinned in third_party/cgltf.
 
 OBJ has no standard unit metadata. Callers must set has_obj_unit_scale = true and provide obj_unit_scale in meters per OBJ unit.
@@ -77,8 +81,8 @@ These limits are diagnosed instead of silently producing incomplete geometry.
 
 ## Golden test corpus and phase verification
 
-Persistent inputs and reviewed expected results are stored in `tests/fixtures/`. The phase/test mapping is maintained in `tests/fixtures/manifest.json`, while the verification rules and phase exit gates are described in `docs/testing_strategy.md`.
+Persistent inputs and reviewed expected results are in \`tests/fixtures/\`. The phase/test mapping is in \`tests/fixtures/manifest.json\`, and the verification methodology is in \`docs/testing_strategy.md\`.
 
-Phases 1 and the mesh/skin/cache portion of Phase 2 load persistent fixtures in the automated test executable. Phase 2 target-resolution conversion, max-count validation, generation report and cache-option identity are covered by tests; launching a pinned fTetWild binary remains environment-dependent. Phase 3 runs CPU reference tests for interior/exterior embeddings, Rest Pose reconstruction, invalid-distance rejection and attribute preservation; the D3D11 GPU feedback path remains pending. Phase 4 runs fixed-step, Pause/Step/Reset, overload-backlog and callback-failure tests; scenario JSON and GPU telemetry remain pending. Phase 5 runs CPU XPBD Cloth topology, Rest geometry, Stretch/Shear/Bend compliance and Bend-gradient reference tests; D3D11 kernels remain pending. Phase 6 runs CPU Corotational FEM tests for rigid rotation, compression, material scales and inverted-element rollback; global force integration and GPU kernels remain pending. Phases 7–11 still have fixture data only. The manifest records partial versus automated coverage explicitly.
+Windows CI runs the CPU test suite and D3D11 WARP readback tests. Current WARP coverage includes Render Feedback, all three Cloth XPBD constraint types, positive-J Corotational FEM, VT/EE contacts, host-built BVH traversal and overflow, point/static-triangle CCD, animation/teleport, Paint/Smooth/Average/Erase, Timestamp Query/DXGI telemetry, and a two-pass Compute Pass Graph. Scenario JSON round-trip, Run Result validation/comparison and transactional pipeline behavior are also tested.
 
-Run `SkinPhysicsTests.exe` from Visual Studio or the command line. Each implemented test prints a `[PASS]` entry with its phase/test ID. Fixture paths are resolved relative to the test source, independent of the process working directory.
+WARP is a software D3D11 device. These tests establish shader compilation, dispatch, buffer layout and numerical agreement with references; they are not physical-GPU performance measurements. Phase 2 fTetWild execution, full solver runtime connection, GPU BVH construction, global FEM integration, complete cloth iterations, moving-primitive CCD, editor workflows and physical-GPU performance profiles remain open.

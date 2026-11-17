@@ -183,11 +183,12 @@
       "automated_cases": [
         "P03_TET_INTERIOR",
         "P03_BOUNDARY_OFFSET",
-        "P03_INVALID_BINDING"
+        "P03_INVALID_BINDING",
+        "P03_WARP_RENDER_FEEDBACK"
       ],
       "unimplemented": [
-        "D3D11 GPU feedback dispatch and GPU readback comparison",
-        "Cloth surface binding"
+        "Cloth surface binding and feedback path",
+        "Full production render/physics resource lifecycle integration"
       ]
     },
     {
@@ -231,12 +232,15 @@
       ],
       "automated_cases": [
         "P04_FIXED_STEP",
-        "P04_FIXED_STEP_OVERLOAD"
+        "P04_FIXED_STEP_OVERLOAD",
+        "P04_SCENARIO_JSON_ROUND_TRIP",
+        "P04_RUN_RESULT_JSON",
+        "SIM_PIPELINE_ORDER_AND_COMMIT",
+        "SIM_PIPELINE_ATOMIC_ROLLBACK"
       ],
       "unimplemented": [
-        "Scenario JSON schema and unknown-field round trip",
-        "Run Result serialization",
-        "D3D11 GPU timestamp and DXGI memory telemetry"
+        "End-to-end runtime application of scenario data to every concrete solver component",
+        "Interactive scenario editing and run-result comparison UI"
       ]
     },
     {
@@ -272,12 +276,14 @@
       ],
       "automated_cases": [
         "P05_CLOTH_GOLDEN_AND_BEND_GRADIENT",
-        "P05_CLOTH_COMPLIANCE"
+        "P05_CLOTH_COMPLIANCE",
+        "P05_WARP_STRETCH",
+        "P05_WARP_SHEAR",
+        "P05_WARP_BEND"
       ],
       "unimplemented": [
-        "D3D11 XPBD dispatch",
-        "Graph-colored in-place stretch path and GPU Gather Jacobi path",
-        "Animation attachment and collision XPBD integration"
+        "Full GPU multi-iteration scheduling with graph coloring or Jacobi Gather",
+        "Animation attachment and collision XPBD integration in the same runtime solve"
       ]
     },
     {
@@ -322,11 +328,12 @@
       ],
       "automated_cases": [
         "P06_COROTATIONAL_FEM_GOLDEN",
-        "P06_INVERSION_ROLLBACK"
+        "P06_INVERSION_ROLLBACK",
+        "P06_WARP_COROTATIONAL_FEM"
       ],
       "unimplemented": [
-        "Soft Body global force gather and time integration",
-        "GPU FEM element kernels and accumulation",
+        "GPU nodal force accumulation, mass integration and substep scheduling",
+        "GPU inverted-element proper-rotation/SVD fallback; inversion remains CPU-reference validated",
         "CFL/substep controller and animation-tracking coupling"
       ]
     },
@@ -379,12 +386,15 @@
       ],
       "automated_cases": [
         "P07_VT_EE_CONTACTS",
-        "P07_BROADPHASE_OVERFLOW"
+        "P07_BROADPHASE_OVERFLOW",
+        "P07_WARP_VT_NARROWPHASE",
+        "P07_WARP_EE_NARROWPHASE",
+        "P07_WARP_BVH_BROADPHASE_AND_OVERFLOW"
       ],
       "unimplemented": [
-        "Hierarchical GPU broadphase, persistent GPU contact buffers and solver integration",
-        "Friction/restitution velocity solve and contact warm start",
-        "Collision filtering for self-collision adjacency and exclusion rings"
+        "GPU BVH construction/refit; WARP traversal currently consumes a host-built hierarchy",
+        "Automatic connection of GPU broadphase pairs to VT/EE generation and persistent contact buffers",
+        "Friction/restitution velocity solve, warm start and self-collision adjacency exclusion"
       ]
     },
     {
@@ -418,10 +428,11 @@
         }
       ],
       "automated_cases": [
-        "P08_CCD_INITIAL_REPAIR"
+        "P08_CCD_INITIAL_REPAIR",
+        "P08_WARP_POINT_TRIANGLE_CCD"
       ],
       "unimplemented": [
-        "Full primitive/primitive and triangle/triangle CCD",
+        "Moving-triangle, edge-edge and triangle-triangle continuous collision",
         "Simultaneous TOI grouping and global substep scheduler",
         "Initial contact repair coupled to broadphase and iterative constraint solve"
       ]
@@ -454,10 +465,11 @@
         }
       ],
       "automated_cases": [
-        "P09_ANIMATION_TARGET"
+        "P09_ANIMATION_TARGET",
+        "P09_WARP_ANIMATION_AND_TELEPORT"
       ],
       "unimplemented": [
-        "Animation clip import through runtime node hierarchy and D3D11 target-buffer dispatch",
+        "Multi-key runtime clip sampling, cubic curves and node-hierarchy binding in the GPU path",
         "Quaternion/angular target velocity interface",
         "Substepped animation-physics coupling"
       ]
@@ -482,12 +494,12 @@
         }
       ],
       "automated_cases": [
-        "P10_ATTRIBUTE_PAINT"
+        "P10_ATTRIBUTE_PAINT",
+        "P10_WARP_ATTRIBUTE_PAINT"
       ],
       "unimplemented": [
-        "GPU paint kernels and editor brush falloff/selection UI",
-        "Topology-neighbor Laplacian smoothing and multi-channel skin-weight normalization",
-        "Asset editor persistence integration"
+        "Editor brush falloff/selection UI and asset-editor persistence integration",
+        "Topology-neighbor Laplacian smoothing and multi-channel skin-weight normalization"
       ]
     },
     {
@@ -511,13 +523,21 @@
         }
       ],
       "automated_cases": [
-        "P11_PERFORMANCE_PROFILE"
+        "P11_PERFORMANCE_PROFILE",
+        "P11_WARP_TIMESTAMP_AND_DXGI_MEMORY",
+        "P11_WARP_COMPUTE_PASS_GRAPH"
       ],
       "unimplemented": [
-        "D3D11 timestamp query rings and per-pass GPU timings",
-        "DXGI video-memory budget query and device telemetry",
-        "Automated 2k/8k/32k solver workload execution on target GPU"
+        "Automated 2k/8k/32k solver workloads and performance capture on physical target GPUs",
+        "Cross-vendor hardware/driver performance baselines and memory-budget regression thresholds"
       ]
     }
-  ]
+  ],
+  "gpu_validation_environment": "Windows x64 CI uses D3D11 WARP for shader compilation, dispatch and readback correctness. WARP timings are not physical-GPU performance measurements.",
+  "last_verified_ci": {
+    "commit": "706f9a06983efca052fa972901f814ccb5f972c4",
+    "workflow_run_id": 44011601086,
+    "configuration": "Release x64",
+    "result": "success"
+  }
 }

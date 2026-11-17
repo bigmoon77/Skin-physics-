@@ -21,19 +21,27 @@ The authoritative index is `tests/fixtures/manifest.json`. Input files are immut
 
 ## Phase matrix
 
-| Phase | Fixture families | Reference results | Acceptance mapping | Current test status |
-|---|---|---|---|---|
-| 01 Importer | OBJ quad + MTL, glTF skin/animation, OBJ missing unit | Converted coordinates, triangle count, material factors, joint weights, animation keys | Importer, units, skinning and topology checks | Automated |
-| 02 Physics Mesh | Single tet, two tets sharing a face, center-star tet mesh, target-count resolution | Rest volume, quality, dihedral, boundary faces, lumped mass, CSR, harmonic weights, cache behavior, target-count conversion, output edge statistics, cache identity | T13, T25, T26 | Partial: resolution conversion/report/cache identity automated; actual version-pinned fTetWild invocation remains environment-dependent |
-| 03 Render Binding | Interior tet point, exterior boundary-offset point, invalid distant point | Barycentric coordinates, Rest offset, reconstructed Rest position, attribute preservation | T12, T27 | Partial: CPU binding/feedback golden tests; D3D11 GPU path pending |
-| 04 Test Environment | Fixed-step timeline, scenario JSON, Run Result | Step count, accumulator, simulation time, semantic round trip, explicit unavailable metrics | T24, T28 | Partial: fixed-step/overload tests; JSON and GPU telemetry pending |
-| 05 Cloth | Two-triangle square patch | Rest lengths, areas, dihedral, finite-difference gradient reference, compliance monotonicity | T05, T06, T18 | Partial: CPU XPBD Stretch/Shear/Bend and finite-difference verification; GPU dispatch pending |
-| 06 Soft Body FEM | Unit right tetrahedron under rigid rotation, compression and inversion | Deformation gradient, determinant, volume, strain/energy and inversion diagnostic | T01–T04, T19 | Partial: CPU Corotational FEM evaluation, polar/SVD rotation, forces and inversion penalty; global integration/GPU pending |
-| 07 Collision | VT, EE, broadphase pair set, capacity overflow | Closest points, barycentrics, penetration, exhaustive candidate superset, retry/no-drop behavior | T07, T08, T10, T11, T17, T22 | Partial: CPU VT/EE geometry, VT correction, spatial-cell broadphase and capacity test; GPU hierarchy/integration pending |
-| 08 CCD / Initial Repair | Swept point-triangle and over-budget initial penetration | Analytical TOI, one impact impulse, remaining time, blocked state | T09, T16, T23 | Partial: CPU point-triangle Conservative Advancement, single-impact impulse guard and atomic repair-budget check; general CCD/scheduler pending |
-| 09 Animation Tracking | Linear translation, quaternion rotation and teleport | Target position/velocity and discontinuity policy | T20, T21 | Partial: CPU translation/velocity sampling, shortest-path quaternion Slerp and teleport policy; runtime/GPU binding pending |
-| 10 Attribute Paint | Three-vertex weight line and Paint/Smooth/Average/Erase operations | Per-operation scalar arrays, range and save/load | Paint/remap requirements | Partial: CPU selected-region Paint/Smooth/Average/Erase and versioned checksummed serialization; editor/GPU integration pending |
-| 11 Quality / Performance | 2k/8k/32k tet and cloth workload profiles | Correctness invariants, candidates, contacts, timings, memory | T14, T15 | Fixtures prepared |
+| Phase | Fixture families | Executable verification | Current status / limitations |
+|---|---|---|---|
+| 01 Importer | OBJ quad + MTL, glTF skin/animation, missing unit | Persistent import fixtures, units, skinning and topology | Automated |
+| 02 Physics Mesh | Single/two/center-star tets, resolution settings | Rest volume, quality, boundary, mass, CSR, harmonic weights, cache and resolution assertions | Partial: external fTetWild execution and production calibration remain environment-dependent |
+| 03 Render Binding | Interior tet, exterior boundary offset, invalid point | CPU binding/feedback and D3D11 WARP render-feedback readback | Partial: cloth surface binding and full resource lifecycle remain |
+| 04 Test Environment | Fixed-step, Scenario JSON, Run Result | Overload/backlog, semantic JSON round-trip, unknown fields, Run Result validation, stage order and atomic rollback | Partial: scenario editor and automatic application of scenario data to concrete solvers remain |
+| 05 Cloth | Two-triangle square patch | CPU XPBD plus WARP Stretch/Shear/Bend kernels compared to CPU reference | Partial: full GPU multi-iteration scheduling, graph coloring/Gather and coupled animation/contact solve remain |
+| 06 Soft Body FEM | Unit tet rotation, compression and inversion | CPU FEM plus WARP positive-J per-element deformation, polar rotation, stress, forces and energy | Partial: GPU nodal force accumulation/integration and inverted-element GPU SVD fallback remain |
+| 07 Collision | VT, EE, pair set, bounded output | CPU reference plus WARP VT/EE narrowphase and host-built BVH traversal/overflow | Partial: GPU BVH build/refit, broadphase-to-contact pipeline, friction/restitution and persistent contacts remain |
+| 08 CCD / Initial Repair | Swept point-triangle, over-budget repair | CPU repair plus WARP point-vs-static-triangle Conservative Advancement TOI/barycentrics | Partial: moving triangles, EE/TT CCD and global TOI scheduler remain |
+| 09 Animation | Linear translation, quaternion and teleport | CPU sampling plus WARP target/velocity, Slerp and teleport policy | Partial: general clip sampling, hierarchy binding and substepped solver coupling remain |
+| 10 Attribute Paint | Three-vertex line and four operations | CPU plus WARP Paint/Smooth/Average/Erase readback | Partial: editor brush UI, neighbor Laplacian and persistence integration remain |
+| 11 Quality / Performance | 2k/8k/32k workload profiles | CPU invariants, WARP timestamp query, DXGI memory-query capability and Compute Pass Graph hazards | Partial: physical-GPU performance runs and regression baselines remain |
+
+## GPU validation environment
+
+Windows CI creates a D3D11 WARP software device, compiles Shader Model 5 kernels, dispatches them and reads structured buffers back. WARP verifies correctness; **WARP timing is not physical-GPU performance data**.
+
+The Timestamp Query profiler uses a ring of frame slots and \`D3D11_ASYNC_GETDATA_DONOTFLUSH\`. Pending slots are not overwritten. Local memory usage/budget comes from \`IDXGIAdapter3::QueryVideoMemoryInfo\`; unsupported adapters return an explicit unavailable reason.
+
+The Compute Pass Graph preserves insertion order, validates slots and SRV/UAV aliasing, and unbinds CS SRV/UAV/constant-buffer state at pass boundaries. It does not infer dependencies or wire solver stages automatically. Callers define pass order and own intermediate resources.
 
 ## Phase exit gate
 
