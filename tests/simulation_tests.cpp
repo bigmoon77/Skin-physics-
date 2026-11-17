@@ -1,13 +1,16 @@
 #include "skin_physics/physics/msh_reader.hpp"
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 #include "skin_physics/physics/render_binding.hpp"
+#include "skin_physics/physics/cloth_solver.hpp"
 #include "skin_physics/simulation/fixed_step.hpp"
 #include "json_test_support.hpp"
 #include "test_support.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -255,6 +258,274 @@ namespace
         require(callback_count == 3, "Phase 4 expected exactly three successful solver callbacks.");
     }
 
+    skin_physics::physics::cloth_build_result load_cloth_fixture()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase05_cloth/cloth_patch.input.json"));
+        skin_physics::physics::raw_cloth_mesh raw;
+        for (const test_json::value& position : input.at("positions").as_array())
+        {
+            raw.rest_positions.push_back(read_vec3(position));
+        }
+        for (const test_json::value& triangle_value : input.at("triangles").as_array())
+        {
+            raw.triangles.push_back({
+                static_cast<uint32_t>(triangle_value.at(0).as_number()),
+                static_cast<uint32_t>(triangle_value.at(1).as_number()),
+                static_cast<uint32_t>(triangle_value.at(2).as_number())
+            });
+        }
+        return skin_physics::physics::build_cloth_mesh(raw);
+    }
+
+    void test_phase05_cloth_fixture_and_bend_gradient()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase05_cloth/cloth_patch.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path("phase05_cloth/cloth_patch.expected.json"));
+        const auto built = load_cloth_fixture();
+
+        require(built.success, "Phase 5 cloth fixture should build.");
+        require(built.value.stretch_constraints.size() == 5,
+            "Cloth patch should contain five unique stretch edges.");
+        require(built.value.shear_constraints.size() == 2,
+            "Cloth patch should contain one shear constraint per triangle.");
+        require(built.value.bend_constraints.size() == 1,
+            "Cloth patch should contain one bend hinge.");
+
+        const auto& input_edges = input.at("stretch_edges").as_array();
+        const auto& expected_lengths = expected.at("rest_edge_lengths").as_array();
+        for (std::size_t edge_index = 0; edge_index < input_edges.size(); ++edge_index)
+        {
+            const uint32_t a = static_cast<uint32_t>(input_edges[edge_index].at(0).as_number());
+            const uint32_t b = static_cast<uint32_t>(input_edges[edge_index].at(1).as_number());
+            bool found = false;
+            for (const auto& constraint : built.value.stretch_constraints)
+            {
+                if (constraint.vertices[0] == std::min(a, b) &&
+                    constraint.vertices[1] == std::max(a, b))
+                {
+                    found = true;
+                    require(std::abs(constraint.rest_length -
+                        expected_lengths[edge_index].as_number()) <= 1.0e-6f,
+                        "Cloth Rest edge length must match the golden.");
+                    break;
+                }
+            }
+            require(found, "Each fixture stretch edge must exist in the built topology.");
+        }
+
+        const auto& expected_areas = expected.at("rest_triangle_areas").as_array();
+        for (std::size_t triangle_index = 0;
+            triangle_index < built.value.triangles.size(); ++triangle_index)
+        {
+            const auto& triangle = built.value.triangles[triangle_index];
+            const auto& p0 = built.value.rest_positions[triangle[0]];
+            const auto& p1 = built.value.rest_positions[triangle[1]];
+            const auto& p2 = built.value.rest_positions[triangle[2]];
+            const skin_physics::asset::vec3 edge1 = {
+                p1.x - p0.x, p1.y - p0.y, p1.z - p0.z };
+            const skin_physics::asset::vec3 edge2 = {
+                p2.x - p0.x, p2.y - p0.y, p2.z - p0.z };
+            const skin_physics::asset::vec3 normal = {
+                edge1.y * edge2.z - edge1.z * edge2.y,
+                edge1.z * edge2.x - edge1.x * edge2.z,
+                edge1.x * edge2.y - edge1.y * edge2.x
+            };
+            const float area = 0.5f * std::sqrt(
+                normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+            require(std::abs(area - expected_areas[triangle_index].as_number()) <= 1.0e-6f,
+                "Cloth Rest triangle area must match the golden.");
+        }
+
+        const auto& bend = built.value.bend_constraints[0];
+        std::array<skin_physics::asset::vec3, 4> rest_hinge = {};
+        for (std::size_t index = 0; index < 4; ++index)
+        {
+            rest_hinge[index] = built.value.rest_positions[bend.vertices[index]];
+        }
+        const auto rest_evaluation =
+            skin_physics::physics::evaluate_cloth_bend(rest_hinge, bend.rest_angle);
+        require(rest_evaluation.valid &&
+            std::abs(rest_evaluation.constraint -
+                expected.at("rest_dihedral_radians").as_number()) <= 1.0e-6,
+            "Cloth Rest dihedral angle must match the golden.");
+
+        std::array<skin_physics::asset::vec3, 4> distorted = rest_hinge;
+        distorted[3].z += 0.23f;
+        const auto analytic =
+            skin_physics::physics::evaluate_cloth_bend(distorted, bend.rest_angle);
+        require(analytic.valid, "Analytic Bend gradient should be valid.");
+
+        const float epsilon = 1.0e-3f;
+        double squared_error = 0.0;
+        double squared_reference = 0.0;
+        for (std::size_t vertex_index = 0; vertex_index < 4; ++vertex_index)
+        {
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                std::array<skin_physics::asset::vec3, 4> plus = distorted;
+                std::array<skin_physics::asset::vec3, 4> minus = distorted;
+                if (axis == 0)
+                {
+                    plus[vertex_index].x += epsilon;
+                    minus[vertex_index].x -= epsilon;
+                }
+                else if (axis == 1)
+                {
+                    plus[vertex_index].y += epsilon;
+                    minus[vertex_index].y -= epsilon;
+                }
+                else
+                {
+                    plus[vertex_index].z += epsilon;
+                    minus[vertex_index].z -= epsilon;
+                }
+
+                const auto plus_value =
+                    skin_physics::physics::evaluate_cloth_bend(plus, bend.rest_angle);
+                const auto minus_value =
+                    skin_physics::physics::evaluate_cloth_bend(minus, bend.rest_angle);
+                require(plus_value.valid && minus_value.valid,
+                    "Finite-difference Bend samples must remain valid.");
+                const double numeric_gradient =
+                    (plus_value.constraint - minus_value.constraint) / (2.0 * epsilon);
+                double analytic_gradient = 0.0;
+                if (axis == 0) analytic_gradient = analytic.gradients[vertex_index].x;
+                if (axis == 1) analytic_gradient = analytic.gradients[vertex_index].y;
+                if (axis == 2) analytic_gradient = analytic.gradients[vertex_index].z;
+
+                const double difference = analytic_gradient - numeric_gradient;
+                squared_error += difference * difference;
+                squared_reference += numeric_gradient * numeric_gradient;
+            }
+        }
+        const double relative_error =
+            std::sqrt(squared_error) / std::max(1.0e-8, std::sqrt(squared_reference));
+        require(relative_error <=
+            expected.at("gradient_test").at("relative_error_max").as_number(),
+            "Analytic Bend gradient must agree with central finite differences.");
+    }
+
+    float cloth_stretch_error(
+        const skin_physics::physics::cloth_mesh& mesh,
+        const std::vector<skin_physics::asset::vec3>& positions)
+    {
+        float error = 0.0f;
+        for (const auto& constraint : mesh.stretch_constraints)
+        {
+            const auto& a = positions[constraint.vertices[0]];
+            const auto& b = positions[constraint.vertices[1]];
+            const float dx = a.x - b.x;
+            const float dy = a.y - b.y;
+            const float dz = a.z - b.z;
+            error += std::abs(std::sqrt(dx * dx + dy * dy + dz * dz) -
+                constraint.rest_length);
+        }
+        return error;
+    }
+
+    float cloth_shear_error(
+        const skin_physics::physics::cloth_mesh& mesh,
+        const std::vector<skin_physics::asset::vec3>& positions)
+    {
+        float error = 0.0f;
+        for (const auto& constraint : mesh.shear_constraints)
+        {
+            const auto& p0 = positions[constraint.vertices[0]];
+            const auto& p1 = positions[constraint.vertices[1]];
+            const auto& p2 = positions[constraint.vertices[2]];
+            const float ux = p1.x - p0.x;
+            const float uy = p1.y - p0.y;
+            const float uz = p1.z - p0.z;
+            const float vx = p2.x - p0.x;
+            const float vy = p2.y - p0.y;
+            const float vz = p2.z - p0.z;
+            const float current_dot = ux * vx + uy * vy + uz * vz;
+            error += std::abs((current_dot - constraint.rest_dot) /
+                constraint.normalization_length);
+        }
+        return error;
+    }
+
+    float cloth_bend_error(
+        const skin_physics::physics::cloth_mesh& mesh,
+        const std::vector<skin_physics::asset::vec3>& positions)
+    {
+        float error = 0.0f;
+        for (const auto& constraint : mesh.bend_constraints)
+        {
+            std::array<skin_physics::asset::vec3, 4> points = {};
+            for (std::size_t index = 0; index < 4; ++index)
+            {
+                points[index] = positions[constraint.vertices[index]];
+            }
+            const auto evaluation =
+                skin_physics::physics::evaluate_cloth_bend(points, constraint.rest_angle);
+            if (!evaluation.valid) return std::numeric_limits<float>::max();
+            error += std::abs(evaluation.constraint);
+        }
+        return error;
+    }
+
+    void test_phase05_cloth_compliance_monotonicity()
+    {
+        const auto built = load_cloth_fixture();
+        require(built.success, "Cloth fixture should build for compliance tests.");
+        const std::vector<float> inverse_mass(built.value.rest_positions.size(), 1.0f);
+
+        for (uint32_t family = 0; family < 3; ++family)
+        {
+            std::vector<skin_physics::asset::vec3> deformed = built.value.rest_positions;
+            if (family < 2) deformed[3].x += 0.25f;
+            else deformed[3].z += 0.35f;
+
+            skin_physics::physics::cloth_solver_settings soft_settings;
+            soft_settings.fixed_delta_time = 0.02f;
+            soft_settings.iterations = 24;
+            soft_settings.relaxation = 0.7f;
+            soft_settings.stretch_compliance = 0.1f;
+            soft_settings.shear_compliance = 0.1f;
+            soft_settings.bend_compliance = 0.1f;
+            soft_settings.solve_stretch = family == 0;
+            soft_settings.solve_shear = family == 1;
+            soft_settings.solve_bend = family == 2;
+
+            const auto soft_result = skin_physics::physics::solve_cloth(
+                built.value, deformed, inverse_mass, soft_settings);
+            require(soft_result.success, "High-compliance Cloth solve should succeed.");
+
+            skin_physics::physics::cloth_solver_settings stiff_settings = soft_settings;
+            stiff_settings.stretch_compliance = 1.0e-5f;
+            stiff_settings.shear_compliance = 1.0e-5f;
+            stiff_settings.bend_compliance = 1.0e-5f;
+            const auto stiff_result = skin_physics::physics::solve_cloth(
+                built.value, deformed, inverse_mass, stiff_settings);
+            require(stiff_result.success, "Low-compliance Cloth solve should succeed.");
+
+            float soft_error = 0.0f;
+            float stiff_error = 0.0f;
+            if (family == 0)
+            {
+                soft_error = cloth_stretch_error(built.value, soft_result.positions);
+                stiff_error = cloth_stretch_error(built.value, stiff_result.positions);
+            }
+            else if (family == 1)
+            {
+                soft_error = cloth_shear_error(built.value, soft_result.positions);
+                stiff_error = cloth_shear_error(built.value, stiff_result.positions);
+            }
+            else
+            {
+                soft_error = cloth_bend_error(built.value, soft_result.positions);
+                stiff_error = cloth_bend_error(built.value, stiff_result.positions);
+            }
+            require(stiff_error <= soft_error + 1.0e-5f,
+                "Reducing Cloth compliance must not increase the corresponding constraint residual.");
+        }
+    }
+
     void test_phase04_overload_and_callback_failure()
     {
         skin_physics::simulation::fixed_step_settings settings;
@@ -292,6 +563,10 @@ int run_simulation_tests()
     std::cout << "[PASS] P04_FIXED_STEP_GOLDEN\n";
     test_phase04_overload_and_callback_failure();
     std::cout << "[PASS] P04_FIXED_STEP_OVERLOAD\n";
+    test_phase05_cloth_fixture_and_bend_gradient();
+    std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
+    test_phase05_cloth_compliance_monotonicity();
+    std::cout << "[PASS] P05_CLOTH_COMPLIANCE\n";
     std::cout << "SimulationCoreTests passed.\n";
     return 0;
 }

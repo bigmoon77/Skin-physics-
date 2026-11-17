@@ -94,6 +94,7 @@
     <ClCompile Include="src\physics\skin_weights.cpp" />
     <ClCompile Include="src\physics\asset_cache.cpp" />
     <ClCompile Include="src\physics\render_binding.cpp" />
+    <ClCompile Include="src\physics\cloth_solver.cpp" />
     <ClCompile Include="src\simulation\fixed_step.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -107,6 +108,7 @@
     <ClInclude Include="include\skin_physics\physics\skin_weights.hpp" />
     <ClInclude Include="include\skin_physics\physics\asset_cache.hpp" />
     <ClInclude Include="include\skin_physics\physics\render_binding.hpp" />
+    <ClInclude Include="include\skin_physics\physics\cloth_solver.hpp" />
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />
   </ItemGroup>

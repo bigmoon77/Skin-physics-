@@ -15,6 +15,7 @@ The repository is being implemented in stages. Phase 1 importers and the Phase 2
 - ASCII Gmsh MSH 2.2 reader and optional external fTetWild process adapter (not linked into runtime).
 - Closest-tetrahedron / boundary-triangle Render Vertex Binding and CPU feedback with local-basis Rest offsets; UV, color, material and index data are preserved.
 - Fixed-step simulation clock with Play / Pause / Stop / Reset / single-step, backlog preservation and callback-failure rollback.
+- CPU reference Cloth solver with XPBD Stretch, Shear and signed Bend constraints; Bend uses an analytical chain-rule gradient validated against central finite differences.
 - Importer-only dependency: cgltf 1.15 (MIT), pinned in third_party/cgltf.
 
 OBJ has no standard unit metadata. Callers must set has_obj_unit_scale = true and provide obj_unit_scale in meters per OBJ unit.
@@ -73,6 +74,6 @@ These limits are diagnosed instead of silently producing incomplete geometry.
 
 Persistent inputs and reviewed expected results are stored in `tests/fixtures/`. The phase/test mapping is maintained in `tests/fixtures/manifest.json`, while the verification rules and phase exit gates are described in `docs/testing_strategy.md`.
 
-Phases 1 and the mesh/skin/cache portion of Phase 2 load persistent fixtures in the automated test executable. Phase 2 target-resolution tests remain pending. Phase 3 runs CPU reference tests for interior/exterior embeddings, Rest Pose reconstruction, invalid-distance rejection and attribute preservation; the D3D11 GPU feedback path remains pending. Phase 4 runs fixed-step, Pause/Step/Reset, overload-backlog and callback-failure tests; scenario JSON and GPU telemetry remain pending. Phases 5–11 still have fixture data only. The manifest records partial versus automated coverage explicitly.
+Phases 1 and the mesh/skin/cache portion of Phase 2 load persistent fixtures in the automated test executable. Phase 2 target-resolution tests remain pending. Phase 3 runs CPU reference tests for interior/exterior embeddings, Rest Pose reconstruction, invalid-distance rejection and attribute preservation; the D3D11 GPU feedback path remains pending. Phase 4 runs fixed-step, Pause/Step/Reset, overload-backlog and callback-failure tests; scenario JSON and GPU telemetry remain pending. Phase 5 runs CPU XPBD Cloth topology, Rest geometry, Stretch/Shear/Bend compliance and Bend-gradient reference tests; D3D11 kernels remain pending. Phases 6–11 still have fixture data only. The manifest records partial versus automated coverage explicitly.
 
 Run `SkinPhysicsTests.exe` from Visual Studio or the command line. Each implemented test prints a `[PASS]` entry with its phase/test ID. Fixture paths are resolved relative to the test source, independent of the process working directory.

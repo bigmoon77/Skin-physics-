@@ -231,9 +231,9 @@ namespace test_json
         {
             throw std::runtime_error("Could not open JSON fixture: " + path.string());
         }
-        const std::string source(
-            std::istreambuf_iterator<char>(file),
-            std::istreambuf_iterator<char>());
+        const std::istreambuf_iterator<char> begin(file);
+        const std::istreambuf_iterator<char> end;
+        const std::string source(begin, end);
         return parser(source).parse();
     }
 

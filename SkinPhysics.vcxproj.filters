@@ -63,6 +63,9 @@
     <ClCompile Include="src\physics\render_binding.cpp">
       <Filter>Source Files\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="src\physics\cloth_solver.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="src\simulation\fixed_step.cpp">
       <Filter>Source Files\Simulation</Filter>
     </ClCompile>
@@ -96,6 +99,9 @@
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
     <ClInclude Include="include\skin_physics\physics\render_binding.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\cloth_solver.hpp">
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp">

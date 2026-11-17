@@ -227,7 +227,7 @@
     {
       "phase": 5,
       "id": "cloth_solver",
-      "status": "fixture_ready",
+      "status": "partial",
       "acceptance_tests": [
         "T05",
         "T06",
@@ -254,6 +254,15 @@
             "finite-difference relative error <= 1e-3"
           ]
         }
+      ],
+      "automated_cases": [
+        "P05_CLOTH_GOLDEN_AND_BEND_GRADIENT",
+        "P05_CLOTH_COMPLIANCE"
+      ],
+      "unimplemented": [
+        "D3D11 XPBD dispatch",
+        "Graph-colored in-place stretch path and GPU Gather Jacobi path",
+        "Animation attachment and collision XPBD integration"
       ]
     },
     {
