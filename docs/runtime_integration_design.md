@@ -6,10 +6,10 @@
     #include "skin_physics/asset/types.hpp"
 
 - 文書バージョン: 1.0
-- 状態: DESIGN REVISION / READY FOR INDEPENDENT REVIEW（承認前）
+- 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.2
-- 対応詳細設計: detailed_design.md 1.3
+- 対応基本設計: basic_design.md 1.3
+- 対応詳細設計: detailed_design.md 1.4
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -418,16 +418,17 @@ Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境
 
 少なくとも次を分ける。
 
-- committed_state_set: 最後にCommit済みのPosition / Velocity / Solver Persistent Stateと、そのstate_generation / active_state_set。
-- working_state_set: 現在解いているLogical Tick / Substepの作業状態。Commit前にCommitted Stateを上書きしない。
-- tick_start_snapshot: Capacity / CCD / NonFinite failureから再実行するLogical Tick開始状態。Position / Velocityだけでなく、そのTickのRetryに必要なPersistent Lambda / Contact / Animation Historyも対象とする。
+- state_bank[2]: Worldごとに2つの完全なPersistent State Bankを持つ。各BankはPosition / Velocity / Soft Body dynamic state / Cloth・Contact・Animation Persistent Lambda / Contact Cache Generationを保持する。
+- active_state_bank: GPU Commit済みのSource Bank。Tick全体を通してRead-onlyであり、Retry / Reject時の完全なLogical Tick開始状態を兼ねる。
+- inactive_state_bank: 次のTickがWriteするDestination / Working Bank。Physics Stateの変更はこのBank内だけで行う。
+- substep_start_snapshot: Internal Substep / CCD Segmentの開始状態を保存するWorldごとの再利用Scratch。TOI retime / Segment Retry時にinactive_state_bankを復元する。1本のWorld Command Stream内で順序実行するため、同一Worldで同時使用するSnapshotは1つ。
 - tick_dispatch_plan: expected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_id / tokenを持ち、ReservationからExecution / Commitまでimmutableとする。
-- solver_lambda / contact_lambda / impact_state: 各Solverの更新規則に従うWorking / Persistent State。Rollback時はtick_start_snapshotと対応するLambda / Contact Cacheを復元する。
+- solver_lambda / contact_lambda / impact_state: Persistent Lambda / Contact CacheはState Bank内、Substep Lambda / TOI EventはSubstep Scratch内に保持する。
 - render_candidate_slots: Tickごとに確保するPosition / Normal / Tangent candidateとslot_generation。GPU Commit ControlだけがPhysics committed stateとRender slot referenceを同時に切り替える。
 - host_render_lease: CPU-observed committed Render slotをHostへ貸し出したlease_generation。lease解放までslotを再利用しない。
 - simulation_status / tick_sequence / state_generation / diagnostic_counters: GPU Commit / Reject / Error Control。
 
-GPU Solver ScratchをHost Render Bindingへ直接公開しない。Render Candidate SlotはTickごとに予約し、Committed StateのResource SetとともにGPU Commit ControlがSlot ID / Generationを切り替える。Retry / Rejectではactive_state_set、state_generation、committed_render_slotを維持する。後続Tickは前TickのCommit結果とGenerationを検証してから実行する。
+GPU Solver ScratchをHost Render Bindingへ直接公開しない。WorldのPersistent Physics State Bankは2つに固定する。Tick Beginでactive_state_bankをImmutable Sourceとし、inactive_state_bankへ予測・Solver結果を書き込む。すべてのSubstep、CCD、Contact、Render Candidate Validationが成功した場合だけGPU Commit Controlがactive_state_bankとstate_generationを切り替える。Reject / Blockではactive_state_bankとstate_generationを維持し、inactive_state_bankをRetry / 次Tick用に再利用する。Substep / CCD Segment用snapshotは同一Command Stream内で順序利用する再利用Scratchであり、3つ目のPersistent State Bankではない。Render Candidate SlotはPhysics State Bankと独立したRing Resourceとする。後続Tickは前TickのCommit結果とGenerationを検証してから実行する。
 
 ### 6.2 GPU Commit Control
 
@@ -472,7 +473,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 - どのBudgeted Physics Passもtick plan gateを迂回できない。Scheduler Control / Diagnostic PassだけがGate対象外である。
 - Query RingはStatus CopyとEvent Queryの両方をTick IDで対応付け、遅延・順序逆転・Slot再利用を検出する。
 
-これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。WorldをまたいだTickは同じImmediate Context Command Streamへ順序付けるが、異なるWorldのCommitted Stateは相互参照しない。実際のState Set数、GPU Copy / Ping-Pong構成、Shader Binding TableはPhase 12実装前にResource ABI Reviewで確定し、Rollback SnapshotとRender Candidate Ringを含むVRAM / GPU時間を測定する。
+これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。各Worldは2つのPersistent State Bankと1つの再利用Substep Snapshotを持ち、GPU Commit ControlだけがBankを切り替える。WorldをまたぐTickは同じImmediate Context Command Streamへ順序付けるが、異なるWorldのCommitted Stateは相互参照しない。Resource ABI ReviewではState Bank / SnapshotのBuffer Stride、SRV / UAV Binding、Lifetime、Render Candidate Ringを含むVRAM / GPU時間を検証する。
 
 ## 7. GPU Pass / Dataflow Integration
 
