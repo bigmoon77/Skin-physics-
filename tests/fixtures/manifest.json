@@ -597,11 +597,15 @@
     ]
   },
   "latest_ci_attempt": {
-    "commit": "d9ab9dd480398d25839b50e5e6c6394e4a5378ba",
-    "workflow_run_id": 44327798378,
-    "configuration": "Release x64",
-    "build": "success",
-    "tests": "failure",
-    "failing_test": "Completed WARP timestamp queries must become available through non-blocking collection."
+    "commit": "8ec96f947c7d34f05da742686cb03753a7588c56",
+    "workflow_run_id": 44347685834,
+    "configuration": "Windows Build / workflow job build-and-test",
+    "workflow_conclusion": "failure",
+    "job_conclusion": "failure",
+    "runner_name": "",
+    "steps_reported": 0,
+    "build": "not_started_or_unreported",
+    "tests": "not_started_or_unreported",
+    "note": "The job ended before runner assignment (runner_name is empty and no steps were reported). This is not evidence of a compiler or test failure. The last successful verified CI remains commit 36dab21 / run 44327398017; all later design revisions remain unverified by CI."
   }
 }
