@@ -156,7 +156,33 @@ sequenceDiagram
 
 Every budgeted Physics Pass verifies the immutable Tick Plan / scheduler gate before touching Physics State. Commit failure must leave the committed State Set and its generation unchanged. Later submitted ticks are replayed only after their predecessor commits.
 
-## 5. Key implementation invariants
+## 5. Persistent Physics State Bank transaction
+
+```mermaid
+sequenceDiagram
+    participant CPU as Runtime Scheduler
+    participant GPU as D3D11 Command Stream
+    participant A as Active State Bank
+    participant B as Inactive State Bank
+    participant S as Substep Snapshot
+    CPU->>GPU: Submit Tick N (Plan source=A, destination=B)
+    GPU->>A: Read-only source state
+    GPU->>B: FEM / Cloth / Contact updates
+    GPU->>S: Save current substep segment before TOI retime
+    alt All physics and render gates pass
+        GPU->>GPU: Commit Control
+        GPU->>GPU: active bank A -> B, generation++
+    else Reject / Block
+        GPU->>GPU: Keep active bank A and generation unchanged
+        GPU->>B: Discard / overwrite destination on retry
+    end
+    CPU->>GPU: Retry Tick N with same source A / immutable input
+    GPU->>B: Rebuild destination from A
+```
+
+The active bank is the complete Logical Tick rollback source. The inactive bank is disposable destination state. The substep snapshot is reusable TOI / segment scratch, not a third persistent bank.
+
+## 6. Key implementation invariants
 
 1. A Logical Tick is the smallest GPU Commit transaction.
 2. All GPU passes are issued on one ordered D3D11 Immediate Context.
