@@ -1,10 +1,10 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.6
+- 文書バージョン: 1.7
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.5
+- 前版: 1.6
 - Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md)
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 
@@ -210,7 +210,7 @@ VT接触では、接触点の補正を三角形側3頂点へ重心座標で配�
 
 EE接触では、最近接点を構成する各辺の2頂点へ線分パラメータに基づいて補正を配分し、双方の辺へ作用させる。
 
-接触ごとのλ、法線方向、摩擦接線、接触の重複、接触寿命、サブステップ間のλ保持条件を管理する。摩擦はCoulomb摩擦を第一候補とし、反発は速度処理として扱うか位置制約に含めるかを詳細設計で比較する。
+接触ごとのλ、法線方向、摩擦接線、接触の重複、接触寿命、サブステップ間のλ保持条件を管理する。接触参加頂点の有効逆質量が閾値以下なら非応答ContactとしてPosition / ImpulseをSkipする。複数Contactが頂点を共有するVelocity ImpulseはGlobal Projected JacobiでCoupleし、Residual未収束時はTickをCommitしない。摩擦 / 反発は詳細設計§8.5のCoupled Contact Solverを正とする。
 
 ### 7.5 CCD
 
@@ -224,11 +224,11 @@ NarrowphaseではVT / EEの連続判定を候補とし、Time of Impactまたは
 
 ## 8. アニメーション連携
 
-Animation Interfaceは各物理頂点へ、World Integration Segment境界時刻のAnimation TargetとAnimation Target Velocityを同一Trajectory Evaluatorから供給する。Velocityは最終Skinning Target PositionのSimulation Time微分を正本とし、STEP / LINEAR / CUBICSPLINE / Clip Blendの補間微分とPlayback Speedを反映する。Render Frameや前StepのPosition差分から速度を推定しない。
+CPU Animation EvaluatorはClip Key / Loop / Blend Weight / Root Transform境界ごとにSpan Packetを作り、GPU Trajectory Evaluatorが任意tauのBone / Skinning Target PositionとVelocityを評価する。v1は最大2 Trackの非Additive Blendとし、Blend Weight時間微分を含める。Animation Target Velocityは最終Skinning Target PositionのSimulation Time微分を正本とし、STEP / LINEAR / CUBICSPLINE / Clip Blendの補間微分とPlayback Speedを反映する。Render Frameや前StepのPosition差分から速度を推定しない。
 
 Fixed / Kinematic VertexはSegment終端TargetとTrajectory Velocityを維持する。Dynamic Vertexは非接触内部Constraintを解いた後、Contact Position Constraintを解く前にContact前Velocityを再構築して保存する。Contact位置補正後のPosition差分からVelocityを再構築しない。Teleport / Reset / Clip Discontinuity / Time Rewindでは明示Discontinuity Policyが決めたTarget / Velocityを渡し、不連続を跨ぐ有限差分で速度を生成しない。詳細規則はdetailed_design.md §5.3 / §6.6 / §8.5 / §11.4を正とする。
 
-Kinematic Animation / ColliderのSwept AABBはSegment端点を結ぶChordを基準とし、Chord偏差の保守的Boundで膨張させる。Conservative Advancement / TOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、区間Speed Boundを使う。Deviation / Speed Boundを得られない場合はSegment細分化またはCCDUnresolvedとする。Kinematic接触相対VelocityにはTrajectory微分を使う。
+Kinematic Animation / ColliderのSwept AABBはSegment端点を結ぶChordを基準とし、Chord偏差の保守的Boundで膨張させる。Conservative Advancement / TOI位置はGPU Animation Trajectory Packetをtau時刻で評価し、区間Speed Boundを使う。Deviation / Speed Boundを得られない場合はSegment細分化またはCCDUnresolvedとする。Kinematic接触相対Velocityには同じTrajectoryの解析微分を使う。
 
 Hair Cards / Hair BundlesはClothとして扱う。Strand Hairの伸縮・曲げ・ねじりを表す専用モデルは将来拡張とする。
 
@@ -328,9 +328,10 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
+- 1.7: GPU Animation Trajectory Packet / Spanによる任意tau評価、最大2 Track Blend、非応答Contactの退化処理、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limitを追加。
 - 1.6: Animation Target Velocityを最終Skinning Trajectoryの時間微分へ統一し、Kinematic CCDの保守的Path Bound、Contact Position correctionとContact前Velocityの分離を追加。
 - 1.5: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / Cloth共通のSegment予測、線形粘性減衰の積分、Fixed / Kinematic Velocityの所有規則を追加。
-- 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加。
+- 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加.
 
 
 ## 17. GPU Runtime / Library統合方針（v1.6）
