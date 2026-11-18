@@ -462,7 +462,7 @@ Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境
 - state_bank[2]: Worldごとに2つの完全なPersistent State Bankを持つ。各BankはPosition / Velocity / Soft Body dynamic state / Animation target history / Persistent Contact Cache（Contact Key / Normal / Patch Generation）を保持する。XPBD Lambda / Impact EventはPersistent State Bankへ含めない。
 - active_state_bank: GPU Commit済みのSource Bank。Tick全体を通してRead-onlyであり、Retry / Reject時の完全なLogical Tick開始状態を兼ねる。
 - inactive_state_bank: 次のTickがWriteするDestination / Working Bank。Physics Stateの変更はこのBank内だけで行う。
-- substep_start_snapshot: 現在処理中のIntegration Segment開始状態を保存するWorldごとの再利用Scratch。TOI retime / Event Segment Retry時にinactive_state_bankを復元する。1本のWorld Command Stream内で順序実行するため、同一Worldで同時使用するSnapshotは1つ。
+- segment_start_snapshot: 現在処理中のIntegration Segment開始状態を保存するWorldごとの再利用Scratch。TOI retime / Event Segment Retry時にinactive_state_bankを復元する。1本のWorld Command Stream内で順序実行するため、同一Worldで同時使用するSnapshotは1つ。
 - tick_dispatch_plan: expected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_id / tokenを持ち、ReservationからExecution / Commitまでimmutableとする。
 - segment_solver_scratch: Cloth Stretch / Shear / Bend / Animation Tracking / ContactのXPBD Lambda、projected correction、Impact Resolved Eventを保持する。各World共通Integration Segment開始時にLambdaを0へ初期化し、同Segment内のSolver反復中だけ保持する。Segment間 / Logical Tick間のLambda Warm Startはv1で行わない。Persistent Contact Key / Normal / Patch GenerationだけをState Bankへ保持する。
 - render_candidate_slots: Tickごとに確保するPosition / Normal / Tangent candidateとslot_generation。GPU Commit ControlだけがPhysics committed stateとRender slot referenceを同時に切り替える。
@@ -487,10 +487,10 @@ Logical Tickは次の条件を全て満たした場合だけCOMMITTEDとする�
 
 ### 6.3 Rollback / Retry
 
-Capacity Overflow、CCD Unresolved、物理品質Gate失敗時は、現在のLogical TickをREJECTED / BLOCKEDにする。GPU Commit前のactive_state_bankは変更されていないため、Retryは同じactive source bankと同じTick Inputからinactive destination bankを再構築する。NonFinite / Invalid Asset / ABI mismatchは自動Retryしない。Substep / CCD Segmentの再計算はsubstep_start_snapshotからinactive destination bankを復元する。
+Capacity Overflow、CCD Unresolved、物理品質Gate失敗時は、現在のLogical TickをREJECTED / BLOCKEDにする。GPU Commit前のactive_state_bankは変更されていないため、Retryは同じactive source bankと同じTick Inputからinactive destination bankを再構築する。NonFinite / Invalid Asset / ABI mismatchは自動Retryしない。Substep / CCD Segmentの再計算はsegment_start_snapshotからinactive destination bankを復元する。
 
 - Capacity Overflow: Count / Scan / Capacity Checkで必要数を記録し、Fill / Consumerの範囲外アクセスを禁止する。Capacity Growth後のRetryはactive source bankを不変のまま読み、inactive destination bankを先頭から再構築する。Event Query / Status Readback後にCPUがRequired Capacityを回収し、該当Resource GroupのCapacityを next_power_of_two(max(required_count, ceil(current_capacity * 1.5))) へ拡張する。0容量からの初回確保はnext_power_of_two(required_count)とする。uint32 / D3D11 ByteWidth / Dispatch上限を超える要求は成長で解決できないCapacity Errorとする。Resource Group全体を新規確保できるMemory Budgetを先に確認し、割当・Copy / Rebuildが完了してから新Resource Setへ切り替える。旧Resource Setは参照中の全Query / Tick / Render Leaseが解放されるまで退役させない。Capacity Growth中は新規Tick Submissionを停止し、影響する全in-flight TickのQuery完了と状態判定をnon-blockingで待つ。後続Tickは先行状態が確定するまでBLOCKED_BY_PREDECESSORを維持し、先行Tickを同一Snapshot / Inputで再実行してCommitした後、新Generationに基づいて再Submissionする。最大GPU Resource Budgetを超える場合はBlockedByCapacityを維持し、候補を捨てない。
-- CCD Unresolved: Internal Substep数またはCCD分割上限を上げて、同じactive source bank / Tick Inputからinactive destination bankを再構築する。TOI retime / Segment再計算は該当substep_start_snapshotから復元する。No Hitへ置き換えない。
+- CCD Unresolved: Internal Substep数またはCCD分割上限を上げて、同じactive source bank / Tick Inputからinactive destination bankを再構築する。TOI retime / Segment再計算は該当segment_start_snapshotから復元する。No Hitへ置き換えない。
 - NonFinite / Invalid Asset / ABI mismatch: 自動的な低品質再試行をしない。Failureを報告する。
 - Retry上限到達: TickをCommitせず、Simulation WorldをBlockedByCCD / BlockedByCapacity / Failedへ遷移する。
 
@@ -514,7 +514,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 - どのBudgeted Physics Passもtick plan gateを迂回できない。Scheduler Control / Diagnostic PassだけがGate対象外である。
 - Query RingはStatus CopyとEvent Queryの両方をTick IDで対応付け、遅延・順序逆転・Slot再利用を検出する。
 
-これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。各Worldは2つのPersistent State Bankと1つの再利用Substep Snapshotを持ち、GPU Commit ControlだけがBankを切り替える。WorldをまたぐTickは同じImmediate Context Command Streamへ順序付けるが、異なるWorldのCommitted Stateは相互参照しない。Resource ABI ReviewではState Bank / SnapshotのBuffer Stride、SRV / UAV Binding、Lifetime、Render Candidate Ringを含むVRAM / GPU時間を検証する。
+これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。各Worldは2つのPersistent State Bankと1つの再利用Integration Segment Snapshotを持ち、GPU Commit ControlだけがBankを切り替える。WorldをまたぐTickは同じImmediate Context Command Streamへ順序付けるが、異なるWorldのCommitted Stateは相互参照しない。Resource ABI ReviewではState Bank / SnapshotのBuffer Stride、SRV / UAV Binding、Lifetime、Render Candidate Ringを含むVRAM / GPU時間を検証する。
 
 ## 7. GPU Pass / Dataflow Integration
 
@@ -524,27 +524,26 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 2. GPU Animation Target / Velocity Skinning。
 3. Render Candidate Slotの空きを確認してReservation。空きがなければそのTickをpendingへ残し、Accumulatorの時間を保持する。
 4. Logical Tick開始SnapshotとTerminal Status初期化。
-5. 各Internal Substepについて次を処理。
-   - Previous State Snapshot。
-   - Soft Body Tet Deformation Gradient / Polar Rotation / Stress / Inversion Penalty。
-   - Tet Force Contribution。
+5. 各World Integration Segmentについて次を処理する。
+   - Segment開始Snapshot / XPBD Lambda / Contact Lambda / Impact Scratch Reset。
+   - Segment開始・終了時刻のAnimation Target / Animation Velocity / Root / Kinematic Pose Sample。
+   - Force EventのSegment内有効状態を確定し、Impulse EventをSegment開始でEvent ID単位に一度だけ適用。
+   - Soft Body Tet Deformation Gradient / Polar Rotation / Stress / Inversion Penalty / Segment開始状態のTet Force Contribution。
    - Vertex→Tet CSR Force Gather（float Atomic Add禁止）。
-   - Soft Body external / animation forceとSemi-implicit Euler Prediction。
-   - Cloth Prediction。
-   - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill。
-   - Spatial Hash Sort / Group / Pair Generation / Dedup。
-   - VT / EE Narrowphase、Contact Patch Reduction。
-   - CCD候補CA / GPU Minimum TOI Reduction / 必要なTOI分割。
-   - Cloth Stretch / Shear / Bend / Animation TrackingとContact Position XPBD。
-   - Velocity Reconstruction / Impact / Friction / Restitution。
-   - Broadphase Envelopeと残存Penetrationの再検査。Envelope外ならRebuild。
-   - Substep状態の確認。
-6. 全Substep成功後にRender Feedback Candidate Prepare（Tick Reservation済みslotへ書き込む）。
+   - Soft Body external / internal / animation forceとSegment積分によるVelocity / Position Prediction。
+   - Cloth external force / impulseとSegment積分によるVelocity / Position Prediction。
+   - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill / Sort / Pair Dedup。
+   - VT / EE Narrowphase、Contact Patch Reduction、CCD Conservative Advancement / Minimum TOI Reduction。
+   - Positive-Time TOIがない場合: Cloth Stretch / Shear / Bend / Animation TrackingとDiscrete Contact XPBDを解き、Dynamic Vertex Velocityを再構築してFriction / Restitutionを適用。
+   - Positive-Time TOIがある場合: Endpoint Contactを確定せず、segment_start_snapshotへ復元してTOI prefixを再積分し、TOI Contact / Impactを一度適用。残時間はImpact後Velocityから次Segmentとして進める。
+   - Broadphase Envelopeと残存Penetrationの再検査。Envelope外ならRebuild。Fixed / Kinematic VelocityはAnimation Interfaceの指定値を保持。
+   - Segment状態 / NonFinite / Capacity / CCD / Physical Quality Gateを確認。
+6. 全Integration Segment / World Substep成功後にRender Feedback Candidate Prepare（Tick Reservation済みslotへ書き込む）。
 7. Render Candidate Validation。
 8. GPU Logical Tick Commit ControlでPhysics State Set / GenerationとRender Candidate Slot / Generationを同時にcommit。
 9. GPU Status / Diagnostic Copy、Timestamp / Event Query。Statusはcommitted render slot ID / generationを記録する。
 
-Soft Body内部力はInternal Substepごとに再評価する。Soft BodyのFEM ForceをXPBD Contact Lambdaへ混ぜない。Contactは双方のPhysics Vertexへ質量・勾配係数に基づいて補正する。
+Soft Body内部力は各World Integration Segment開始状態で再評価する。Soft BodyのFEM ForceをXPBD Contact Lambdaへ混ぜない。Contactは双方のPhysics Vertexへ質量・勾配係数に基づいて補正する。
 
 ### 7.2 CCD / TOI
 
