@@ -492,7 +492,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 
 - Play中のadvanceはmax(frame_delta_time, 0) * time_scaleだけrequested_simulation_time / unassigned_accumulator_secondsを増やす。Paused / Stopped中はGPU QueryのPollだけを行い、Wall TimeをAccumulatorへ追加しない。
 - Tick時間はAccumulatorからTick Reservationへ移動する。各Tick Reservationは一意のSequenceと固定区間を持ち、GPU Commit / Retry / Rejectの結果を記録する。Accumulatorは未割当時間だけを保持し、reserved_tick_timeはin-flight / blocked Tickだけを集計する。
-- SchedulerはAccumulatorにfixed_delta_time以上があり、必要Pose / Kinematic Sampleが揃い、in-flight / query / render candidateのSlotが確保できる場合にTickをSubmission対象とする。これらの前提条件が揃う前はReservationを作らず、時間はAccumulatorに残す。前提条件が揃ったSubmission直前に一意のTick Sequence / Input Snapshotを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。GPU Commit時に再度差し引かない。
+- SchedulerはAccumulatorにfixed_delta_time以上があり、必要Pose / Kinematic Sample、暫定Animation Packet / Event Boundary Tableが揃い、in-flight / Query / Render Candidate Slotが確保できる場合にTickをSubmission対象とする。これらの前提条件が揃う前はReservationを作らず、時間はAccumulatorに残す。全Resource Slotが確保できたSubmission直前に一意のTick Sequence / Input Snapshot / Animation Packet Versionを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。GPU Commit時に再度差し引かない。
 - Capacity / CCD / predecessorの一時RejectはReservationを同じSequenceで保持してRetryする。Tick N+1がPredecessor Gateで停止した場合はN+1のReservationを破棄せず、NがReplay / Commitした後に新しいSource Generationで再Submissionする。
 - 回復不能なFailureでWorldがFailedになった場合、当該Reservationおよび後続Pending Reservationは診断用に保持する。ResetはAccumulator、Reservation、Step Queueを明示的に破棄してInitial Stateへ戻す。
 - single_stepはPaused / Stopped中のみ受け付ける。受理時にrequested_simulation_timeへfixed_delta_timeを加算し、wall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Pause / Stop中はStep Request Queueをwall-clock Accumulatorより優先し、Accumulatorにwhole tick / fractional remainderが残っていてもStep Requestを先に処理してAccumulatorは変更しない。Pose / Render Slot / Query Slotが揃うまではStep Requestのまま保持し、GPU Submission直前にtime_source=single_stepのTick Reservationへ移す。Commit時にGPU committed timeを1 Fixed Delta進める。
@@ -505,7 +505,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
 - 先行TickがRejectされた場合、既にSubmissionされた後続TickはBLOCKED_BY_PREDECESSORとなり、物理状態を変更しない。先行TickのRetryがGPU上でCommitされた後、CPUは後続TickのPlanを新しいCommitted State Generationに合わせて再発行する。
 - Planのsource / destination State SetはSubmission時点の予測Commit順序に基づいて固定する。GPU Commitが成立しない場合の後続Planは必ずgateで停止する。GPUが成功した場合のみ計画されたState Set遷移が有効になる。
-- in-flight / query / render lease / capacity上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。
+- in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_integration_segments_per_tick超過はReservation作成後のPreflight Blockとして扱い、同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持する。設定上限を変更して再試行する場合も新しいTickを発行しない。
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。
 - Accumulatorが長時間増加する場合はsimulation_backlogとして警告・計測する。Skin Physicsの要件にない100ms Failureや40FPS必須条件を追加しない。
@@ -604,11 +604,12 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 
 ### 7.1 World Logical Tick
 
-1. CPU Animation EvaluationでLogical Tick全体のAnimation Trajectory Span Packet / Conservative Boundsを生成し、Kinematic Transform Sampleを収集する。World Substep / Animation / Force / Impulseの既知境界を統合して予定Segment数をCountし、maximum_integration_segments_per_tickを超えた場合はGPU Physics Passへ進まずWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
-2. Render Candidate Slotの空きを確認してReservation。空きがなければGPU Packet Upload / Dispatchを行わず、そのTickをpendingへ残し、Accumulatorの時間を保持する。
-3. GPUへAnimation Trajectory PacketをUploadし、Span Coefficient / Bound / Input VersionをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
-4. Logical Tick開始SnapshotとTerminal Status初期化。
-5. 各World Integration Segmentについて次を処理する。
+1. CPU Animation EvaluationでLogical Tick候補のAnimation Trajectory Span Packet / Conservative Bounds、Kinematic Transform Sample、World Substep / Animation / Force / Impulseの暫定Boundary Tableを生成する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。この段階ではAccumulatorから時間を移動しない。
+2. Render Candidate Slot / Query Slot / in-flight枠を確保する。いずれか不足する場合はPacket / Boundary Tableを破棄可能なPending Inputとして扱い、Accumulator / Step Request Queueに時間を保持する。Slot確保成功後にTick Sequence / Input Snapshot / Animation Packet Versionを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。
+3. 確定済みBoundary TableからWorld Substep / Animation / Force / Impulse境界を統合した予定Segment数をCountする。maximum_integration_segments_per_tickを超える場合はWORK_BUDGET_EXCEEDEDとして同じTick Reservation / Sequence / Snapshot / Packet Versionを保持し、GPU Physics Upload / Dispatchを行わない。異なる時刻のBoundaryを結合・省略して上限内へ丸めない。設定更新後のRetryは同じReservationを使用する。
+4. GPUへAnimation Trajectory Packet / Collider RecordをUploadし、Span Coefficient / Bound / Input Version / ABI StrideをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
+5. Logical Tick開始SnapshotとTerminal Status初期化。
+6. 各World Integration Segmentについて次を処理する。
    - Segment開始Snapshot / XPBD Lambda / Contact Lambda / Impact Scratch Reset。
    - Animation Span Packet / Bound Versionを選択し、Segment開始・終了時刻のAnimation Target / Animation Velocity / Root / Kinematic Poseを同じGPU Trajectory Evaluatorで取得。
    - Force EventのSegment内有効状態を確定し、Impulse EventをSegment開始でEvent ID単位に一度だけ適用。
