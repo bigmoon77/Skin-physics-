@@ -239,6 +239,48 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
 
 Handleはindex + generationで識別し、Destroy後のHandle再利用を拒否する。APIからGPU内部Buffer、Solver Scratch、Writable UAVを公開しない。Statusのdiagnosticは呼び出し結果が保持するstd::stringとし、Runtime内部の一時文字列ポインタを返さない。Public APIはC++静的Library向けであり、異なるCompiler / CRT間の安定ABIは保証しない。Asset / DescriptorはVersioned Schemaを使い、ロード時に既存Asset Cacheのhash・coordinate_system_version・material_layout_version・generator identityを検証する。
 
+### 3.4 Descriptor / StatusのField Contract
+
+v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり、実装時にC++17 / 既存Asset PODへ整合させる。
+
+| Descriptor | Field | 意味・制約 |
+|---|---|---|
+| runtime_desc | shader_package_root | Shader Bytecode / manifestの絶対またはPackage-relative root。Working Directory依存は禁止 |
+| runtime_desc | maximum_gpu_resource_bytes | SkinPhysicsが使用できるGPU Resource上限。0はDXGI Budgetから安全余裕を差し引いて決定 |
+| runtime_desc | query_ring_capacity | in-flight tick数以上。未回収slotを上書きしない |
+| runtime_desc | enable_debug_layer_validation | Debug / validation buildでD3D11 hazard診断を有効化 |
+| world_desc | fixed_delta_time | 正の有限値。初期値1/60 s。Test Environmentから変更可能 |
+| world_desc | time_scale | 0以上の有限値。Frame elapsedへ適用 |
+| world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
+| world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
+| world_desc | maximum_steps_per_advance | CPU submission budget。未処理tickはAccumulatorに保持 |
+| world_desc | memory_budget_bytes | World単位の割当上限。DXGI Budgetを超えたらCapacity Block |
+| model_desc | source_model | validated asset::model。mesh physics_mode、nodes、materials、skin、animationを含む |
+| model_desc | mesh_physics_assets | Soft Body用physics_meshとmesh index / cache identityの対応。Cloth / Noneはphysics_modeに従う |
+| model_desc | render_bindings | mesh indexごとのvalidated render_vertex_binding array。Rest Pose誤差上限を満たす |
+| model_desc | world_transform | 初期World Transform。既存asset::mat4のcolumn-major規約に従う |
+| collider_desc | collision_mesh | Collision-only / Render Meshの三角形データ。static / kinematicで共通のTopology入力 |
+| collider_desc | initial_transform | 初期World Transform |
+| collider_desc | thickness / friction / restitution | SI単位・係数範囲は詳細設計のCollision Material定義に従う |
+| collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
+| animation_playback_desc | clip_index / time / speed / weight / loop | asset::model内animation_clipの選択、再生時刻、倍率、Blend重み、Loop |
+| animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocityの選択 |
+| force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。対象World / Model / Mesh範囲を明示 |
+| impulse_desc | position / direction / impulse_magnitude / radius / event_time | ImpulseはN·s。瞬間イベントとして一度だけ適用 |
+| advance_report | submitted_tick_count / pending_tick_count / in_flight_tick_count | 今回の受付・未送信・GPU未完了を分離 |
+| advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
+| world_status | submitted_sequence / gpu_committed_sequence / cpu_observed_sequence | GPU CommitとCPU確認済みprefixを別々に保持 |
+| world_status | playback_state / tick_state / terminal_error / simulation_backlog | 状態、最終エラー、遅延・未処理時間を報告 |
+| render_binding | position_srv / normal_srv / tangent_srv | Commit済みPhysics Stateから生成したRead-only SRV |
+| render_binding | format / stride / vertex_count / index_count | Host RendererがDrawを構成するためのLayout |
+| render_binding | resource_generation / device_generation / committed_tick_sequence | Stale Binding検出と描画状態の追跡 |
+
+\`model_desc\`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
+
+\`set_fixed_delta_time\`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0のときだけ成功する。条件を満たさなければBUSYを返す。変更時は古いFixed Delta Timeに属する未処理時間を新しいdtへ黙って換算しない。fractional remainderをResetするか、時間単位の余りとして保持するかをTest Environment設定へ明示する。XPBD Lambda / Tick ScratchはResetする。
+
+\`get_render_binding\`はCPU-observed committed State Generationを返す。GPU内部の最新commitがまだCPU-observed prefixに含まれない場合は、前回のCPU-observed committed Bindingを返す。
+
 ### 3.4 WorldとMesh Instanceの配置
 
 Worldは複数Model InstanceとColliderを管理する。各Model Instanceは複数Mesh Componentを持ち、各Mesh Componentにphysics_mode、Collision Filter、Material、Attribute Channelを割り当てる。
