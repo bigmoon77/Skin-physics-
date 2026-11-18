@@ -271,8 +271,8 @@ sequenceDiagram
 
 1. `advance` adds elapsed time only while Playing.
 2. A Tick Reservation is created only after pre-submission Pose / Kinematic, Render Slot and Query Slot gates pass. Exactly one fixed dt moves from Accumulator or Step Request Queue into that Reservation at submission.
-3. Each accepted `single_step` adds one fixed dt to requested time and queues a separate Step Request; it does not modify wall-clock Accumulator.
-4. Stop / Reset cancellation of an unreserved Step Request increments cancelled_requested_time. Effective requested time is requested minus cancelled.
+3. Each accepted `single_step` adds one fixed dt to requested time and queues a separate Step Request; it does not modify wall-clock Accumulator. While Paused / Stopped, Step Requests have priority over wall-clock Accumulator ticks.
+4. Stop cancels only unreserved Step Requests and increments cancelled_requested_time while preserving wall-clock Accumulator; Reset clears Accumulator and timeline counters. Effective requested time is requested minus cancelled.
 5. Commit transfers Reservation time to committed simulation time exactly once.
 6. Capacity / CCD / predecessor Block preserves the same Reservation and Tick Sequence for Retry.
 7. CPU Observation changes status only; it never changes Accumulator or committed simulation time.
