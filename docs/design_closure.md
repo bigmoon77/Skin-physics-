@@ -253,3 +253,26 @@ Render Candidate Ring:
 - [ ] 実装開始後の各GateにPersistent Fixture、Expected Result、Executable Assertion、Failure Caseがある。
 
 **次の工程は独立Senior Engineer Critical Reviewとする。** 重大矛盾0件、未接続Commit / Error path 0件を確認した後にProduction Runtime実装へ進む。本書と設計書の追加だけでレビューPASS、Build成功、GPU性能達成とは扱わない。
+
+
+## 6. 要件追跡マトリクス（requirements.md v1.1）
+
+| 要件節 | 主な要求 | 設計上の反映先 | 検証先 |
+|---|---|---|---|
+| §1 目的 | 同一キャラクターの肉体・衣服変形、研究・可視化 | basic_design §1-2、detailed_design §6-13、design_closure §1-5 | T01-T28、R0-R6 |
+| §2 環境・GPU制約 | Windows / C++17 / D3D11 / SM5 / GPU physics / no normal-frame readback / no CPU fallback | basic_design §17、detailed_design §3 / §15-16、runtime_integration §3-9 | R0 / R1-R6、No hidden CPU fallback |
+| §3 用語・対象 | Render / Physics Mesh分離、Soft Body / Cloth / None、Hair Cards、Multi-Mesh | basic_design §3-4、detailed_design §2 / §4-5、runtime_integration §2-3 | P01-P03、R0 / R3 / R5 |
+| §4 物理方式 | Tetrahedral Soft Body、Cloth Stretch / Shear / Bend、混在 | detailed_design §6-7、design_closure §2 | T01-T06、R1-R3 |
+| §5 Import / Convert | Multiple Importers、common asset、independent topology、cache、diagnostics | detailed_design §2 / §4-5、runtime_integration §3、design_closure §3.1 | P01-P03、T12 / T13 / T25 / T26 |
+| §6 Animation | Skeleton pose / velocity、inertia、tracking、discontinuity、render attribute preservation | detailed_design §5 / §6.7 / §12、runtime_integration §5.4 / §9、design_closure §3.3-4.4 | T20 / T21 / T27、R5 |
+| §7 Collision | Mixed collision, self collision, bilateral response, initial repair, CCD, material, filters, no brute-force, overflow safety | detailed_design §8-11、design_closure §2.3-2.6 | T07-T11 / T16 / T17 / T22 / T23、R3 / R4 |
+| §8 Physics attributes / Paint | per-Mesh base values, per-vertex channels, Paint / Smooth / Average / Erase / transfer / persistence | detailed_design §13、runtime_integration §3.3-3.4、design_closure §3.2 | P10, T04 / T06 / T13 / T19 / T27 |
+| §9 Test Environment | Play / Stop / Pause / Reset / Step / Time Scale / fixed dt / gravity / force / impulse / visualizer / GPU timing | detailed_design §14 / §17、runtime_integration §5 / §7 / §10 | T15 / T24 / T28、R0 / R5 / R6 |
+| §10 JSON | readable versioned Scenario / Run Result / compatibility / deterministic seed | detailed_design §14.3-14.6、runtime_integration §3.4 / §4、existing scenario schema | T24 / T28、R0 |
+| §11 Performance / Quality | GTX 1660 SUPER 6GB, 3-40 FPS evaluation range, memory budget, correctness vs performance | basic_design §12 / §17、detailed_design §17 / §19、runtime_integration §8 / §10、design_closure §5 | T15、R6 |
+| §12 Acceptance | Soft Body / Cloth / mixed / self collision / CCD / animation / render binding / overflow / reproducibility / GPU stats | detailed_design §17、testing_strategy R0-R6 | T01-T28、R0-R6 |
+| §13 Out of scope | no Runtime external physics lib, no CPU physics, no all-model import, no Strand Hair, no cross-GPU bit exact | runtime_integration §2 / §12、design_closure §1.2 | Import negative tests, No CPU fallback, R0-R6 |
+| §14 Process | requirements -> design -> independent review -> implementation; changes versioned | README, basic_design, detailed_design version history, design_closure §5.3 | Review Checklist / CI evidence |
+| §15 History | source requirement version history | requirements.md itself; design docs record corresponding version | Review metadata |
+
+**追跡上の注意:** 要件§5のImporter形式は「複数形式」という抽象要件を満たすためv1具体形式をOBJ / glTF 2.0 / GLBへ固定した。FBX / Morph / Draco / Meshoptはv1未対応として明示Errorにする。§13の未確定事項は基本・詳細設計で具体化済みであり、残る数値は設計未決定ではなく測定・校正タスクである。
