@@ -171,7 +171,7 @@
       "position_correction_count_for_non_responsive_contact": 0,
       "impulse_contribution_count_for_non_responsive_contact": 0,
       "diagnostic": "NON_RESPONSIVE_CONTACT exactly once per canonical contact event",
-      "threshold": "epsilon_inverse_mass = max(32*FLT_MIN, 1e-12 / world_median_positive_dynamic_vertex_mass)"
+      "threshold": "epsilon_inverse_mass = 1e-12 / mass_reference_world [1/kg]; mass_reference_world is the median positive dynamic Vertex mass [kg] across participating World meshes. No positive dynamic mass means all contacts are non-responsive."
     },
     "coupled_contact_impulse": {
       "iterations_default": 8,
