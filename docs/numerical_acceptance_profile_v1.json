@@ -209,7 +209,7 @@
       "expected_record_bytes": {
         "animation_span_gpu_record": 80,
         "animation_track_gpu_record": 32,
-        "animation_channel_gpu_record": 208,
+        "animation_channel_gpu_record": 224,
         "animation_blend_gpu_record": 48,
         "kinematic_collider_gpu_record": 128
       },
@@ -218,7 +218,10 @@
       "residual_segment_rule": "u_segment_start advances after every positive-duration Segment by dt_segment / span_duration; TOI uses tau / span_duration; at the next Animation Span boundary switch Record and initialize u_segment_start=0",
       "precision_failure_policy": "split deterministically up to depth 8; then ANIMATION_TIME_PRECISION_UNRESOLVED and no Commit",
       "track_range_mismatch_count": 0,
-      "blend_track_index_out_of_span_count": 0
+      "blend_track_index_out_of_span_count": 0,
+      "inverse_bind_record_out_of_range_count": 0,
+      "missing_mesh_node_record_count": 0,
+      "missing_joint_ancestor_record_count": 0
     }
   },
   "reproducibility": {
@@ -250,7 +253,7 @@
     "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
     "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
     "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
-    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries. D3D11 SM5 Animation Packet uses float / uint32 only. Absolute World Time stays CPU double; GPU uses Span-local normalized u and Segment-relative tau. Verify fixed Record strides (64 / 208 / 48 / 128 bytes) and monotonic u_segment_start across Substep / Force / Impulse / TOI Segment boundaries. Every Animation Span Record must own explicit Track / Channel / Blend / Collider Buffer Ranges; Blend Source / Target Track indices are Span-relative and range-checked."
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries. D3D11 SM5 Animation Packet uses float / uint32 only. Absolute World Time stays CPU double; GPU uses Span-local normalized u and Segment-relative tau. Verify fixed Record strides (64 / 208 / 48 / 128 bytes) and monotonic u_segment_start across Substep / Force / Impulse / TOI Segment boundaries. Every Animation Span Record must own explicit Track / Channel / Blend / Collider Buffer Ranges; Blend Source / Target Track indices are Span-relative and range-checked. Each Channel Record carries Node Role and Inverse Bind Static Record Index; invalid references, omitted Mesh Node or omitted Joint Ancestor records fail the animation packet ABI gate."
   },
   "governance": {
     "thresholds_are_initial_engineering_candidates": true,
