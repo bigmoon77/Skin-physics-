@@ -58,3 +58,49 @@ When solver code is introduced, add at least one analytical or independently com
 ## Running tests
 
 Build `SkinPhysics.sln` in Visual Studio 2022, x64. Run `bin/x64/Debug/SkinPhysicsTests.exe` or `bin/x64/Release/SkinPhysicsTests.exe`. The test helper resolves fixture paths relative to `tests/test_support.hpp`, so the current working directory is irrelevant. Implemented cases print one `[PASS]` line per case.
+
+
+## Numerical acceptance profile
+
+The proposed normalized GPU float32 / CPU double comparison and physical-invariant thresholds are recorded in `docs/numerical_acceptance_profile_v1.json`.
+
+- Compare trajectories only when CPU and GPU use the same solver equations, algorithm, operation order, iteration order, substep boundaries and input snapshots.
+- Compare different solver algorithms using analytical fixtures, physical invariants and convergence/energy behavior. Do not demand frame-by-frame trajectory equality between different algorithms.
+- The profile thresholds are initial engineering candidates. Validate them against existing Golden Fixtures, analytical cases and WARP before treating them as normative pass thresholds.
+- A threshold change requires documented evidence, a profile version increment, independent review, and rerunning all relevant numerical / physical tests.
+- WARP is a correctness environment. WARP timing is not physical-GPU performance evidence.
+
+## Phase 12 — GPU Runtime transaction and integration
+
+The Runtime design is specified in `docs/runtime_integration_design.md`; its UML is `docs/uml/phase12_gpu_runtime.md`. These gates connect the existing CPU references and WARP kernels into a production asynchronous GPU Runtime. The gates are planned; they are not claimed complete by the presence of design documents.
+
+| Gate | Fixture / test family | Required executable verification | Exit condition |
+|---|---|---|---|
+| R0 Runtime boundary / scheduler | API lifecycle, fixed-step, async status ring | Host-owned Device / Context; single submission thread; Handle generation; advance/poll separation; Pause / Stop / Step / Reset; in-flight limit 1/2/4; non-blocking Query polling; contiguous COMMITTED prefix; no full-state readback | No double-accumulator, stale-handle, query overwrite or false-completion path |
+| R1 Soft Body integration | Existing P06 analytical / WARP tests plus multi-tet fixture | GPU Tet stress / force contribution, Vertex→Tet CSR force Gather, mass integration, CFL substeps, inversion diagnostics, CPU double agreement | Multi-tet force integration and substep path pass with no float Atomic Add |
+| R2 Cloth integration | Existing P05 cloth fixtures | Multi-iteration Stretch Coloring, Shear / Bend Gather Jacobi, same-snapshot evaluation, lambda / position delta identity, substep lambda lifetime | Full cloth iteration scheduler passes and each constraint family meets analytic / FD tolerances |
+| R3 Mixed Collision Runtime | Existing P07 broadphase / VT / EE / overflow fixtures plus mixed Model World | GPU Spatial Hash build / pair generation / dedup; all default Mesh Pair combinations; self-collision adjacency filters; bidirectional correction; contact patch lifecycle; capacity rollback | GPU-produced candidate set contains exhaustive small-scene reference set; no candidate silently dropped |
+| R4 CCD / Initial Repair | Existing P08 point-triangle / initial repair plus moving VT / EE fixtures | Moving VT and EE CA; simultaneous TOI; initial contact; positive-time TOI; impact once; remaining-time reintegration; unresolved rollback | False no-hit = 0; unresolved candidates never commit |
+| R5 Animation / Render Interop | Existing P03 / P09 fixtures plus multi-key / discontinuity fixtures | Multi-key STEP / LINEAR / CUBICSPLINE pose samples; angular motion; substepped Animation Tracking; Teleport policy; Committed-only Render Binding; SRV unbind / generation; Device Loss reset | UV / Color / Material / Index preserved; no solver scratch exposed; no normal-frame Physics Vertex readback |
+| R6 Physical GPU performance / memory | Existing P11 profiles plus mixed collision profiles | GTX 1660 SUPER physical GPU pass times, CPU submission, frame time, 2k/8k/32k scaling, candidate/contact/CCD counts, rollback, library allocation and DXGI Budget | Workload results reported with all correctness gates; 3–40 FPS remains an evaluation range, not a universal guarantee |
+
+### Runtime transaction regression cases
+
+Add persistent fixture and executable tests for the following state paths before implementing the production scheduler.
+
+1. **GPU accepted, then committed:** Dispatch submission succeeds; GPU commit control writes COMMITTED; Event Query completes; status Map becomes available; CPU contiguous completed prefix advances exactly once.
+2. **GPU accepted, then rejected:** Dispatch submission succeeds; GPU status REJECTED due to NonFinite / Physical Gate; CPU must not advance completed time and Renderer must retain the prior committed state.
+3. **Capacity block and replay:** Small capacity fixture forces overflow. Fill / Consumer / Commit do not run past capacity. Required count is returned asynchronously. Capacity grows on the submission thread. The same logical tick input and tick-start snapshot are replayed.
+4. **CCD unresolved:** Iteration limit is reached. The candidate is not treated as No Hit; the tick is rejected / blocked and time is preserved.
+5. **Out-of-order observation:** A later tick's query completes before an earlier tick. CPU completed time advances only when the earlier committed prefix is complete.
+6. **Query ring pressure:** Fill the ring with delayed queries. Slots are not overwritten and normal polling does not Flush / synchronously wait.
+7. **Render binding generation:** Host retains an AddRef'd Render Binding; World reset / recreation changes generation. Stale binding use is diagnosed and the Host re-acquires the new binding.
+8. **Device loss:** Device Removed blocks new submissions. Recovery rebuilds from validated Asset / Initial State and resets the timeline; no false continuation from lost GPU state is reported.
+9. **Mixed model indexing:** Multiple Model Instances with Soft Body / Cloth / None meshes use unique World Global IDs; collision filters and Render Bindings resolve to the intended mesh ranges.
+10. **No hidden CPU fallback:** Device loss, WARP absence, capacity failure or GPU solver failure never switches the World to CPU physics.
+
+The existing `fixed_step_controller` and `simulation_step_pipeline` remain synchronous CPU utilities for reference / test environment use. Production GPU Runtime tests must exercise the asynchronous scheduler and GPU commit status separately.
+
+## Runtime phase exit evidence
+
+For every R0-R6 gate, record the exact commit, CI workflow run, test IDs, GPU adapter/driver, WARP-versus-Hardware mode, expected/observed values, tolerance profile ID/hash, capacity / retry counters and known untested paths. A passing WARP run establishes shader behavior and resource ABI correctness only. A physical-GPU run is required for measured execution time and DXGI memory behavior.
