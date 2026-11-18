@@ -1279,6 +1279,7 @@ GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはEvent Query�
 - NonFiniteState
 - ContactGeometryUnresolved
 - ContactManifoldReductionFailure
+- AnimationTimePrecisionUnresolved
 - NoForceTarget
 - GpuResourceAllocationFailure
 
