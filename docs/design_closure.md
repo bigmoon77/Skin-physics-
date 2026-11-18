@@ -49,7 +49,7 @@ Hair Cards / Hair BundlesはCloth Meshとして扱う。未対応Asset Feature�
 - 四面体Corotational Linear Elasticity、force-based FEM。
 - 右極分解 F = R S。通常要素はScaled Newton Polar Iteration、異常要素は3x3 Jacobi SVD補助Pass。
 - 応力からTet単位4頂点Contributionを生成し、Vertex→Tet CSRで総和する。浮動小数点Atomic Addは使わない。
-- Semi-implicit Euler。Soft Body内部力はInternal Substepごとに再評価する。
+- Segment開始時に評価した力を用いる半陰的Euler + 線形粘性減衰の指数積分。Soft Body内部力は各World Integration Segment開始時に再評価する。
 - Constitutive modelの主方式をNeo-Hookean FEM XPBDへ置き換えない。
 
 初期値:
@@ -66,20 +66,29 @@ Corotational Linear Elasticityの保証領域は解析Fixtureで定義する。�
 - Stretch: XPBD Graph Coloring。
 - Shear / Bend: XPBD Gather Jacobi。
 - Animation Tracking: 頂点単位Vector XPBD Attachment。
-- Cloth予測はSubstep開始位置・速度から行い、予測速度は外力Impulseと指数減衰、予測位置は同じSubstep Delta Timeで更新する。
+- Cloth予測は各World共通Integration Segment開始位置・速度から行い、Force Eventを区間内一定、ImpulseをSegment開始時の一回適用として扱う。Velocity / Positionは詳細設計§6.6の共通Segment積分式を使用する。
 - Force / Impulseは共通Mass-weighted Wendland C2 FalloffでPhysics Vertexへ分配する。ForceはN、ImpulseはN*s。Force開始・終了とImpulse event時刻でWorld共通Segmentを分割し、Impulseのみ一度適用する。
 - XPBD Complianceは各Constraint Functionの単位と整合する物理剛性から生成する。
 - Cloth Stretch / Shear / Bend / Animation Tracking / ContactのXPBD LambdaはPersistent State Bankへ保存しない。各World共通Integration Segment（通常Substep、Force / Impulse境界、TOI分割区間）開始時に0へ初期化し、そのSegment内のSolver反復だけ保持する。Complianceはalpha_tilde=alpha/(dt_segment^2)。Segment間 / Logical Tick間のWarm Startはv1で行わない。Persistent Contact CacheのContact Key / Normal / Patch GenerationだけをState Bankに保持する。
 
 Cloth / Contact Gatherの比較候補は omega={0.5, 0.75, 1.0}。初期比較値は0.5とし、収束・誤差・最大貫通・GPU時間をFixture単位で比較する。Clampや平均化でSolverの物理重みを暗黙に変えない。
 
-Cloth予測式:
+Cloth予測式（Dynamic Vertex）:
 
-    v_i_star = exp(-damping_rate_i * dt_segment)
-             * (v_i + inverse_mass_i * (F_i * dt_segment + J_i))
+    z_i = damping_rate_i * dt_segment
+    decay_i = exp(-z_i)
+
+    damping_integral_i =
+        dt_segment                                      // z_i == 0
+        dt_segment * (1 - z_i/2 + z_i^2/6 - z_i^3/24)  // 0 < z_i < 1e-3
+        (1 - decay_i) / damping_rate_i                 // z_i >= 1e-3
+
+    v_i_star = decay_i
+               * (v_i + inverse_mass_i * J_segment_i)
+               + damping_integral_i * inverse_mass_i * F_external_i
     x_i_star = x_i + dt_segment * v_i_star
 
-位置制約解決後はsegment startから速度を再構築し、Impact / Friction / Restitution Impulseを一度だけ適用する。ForceはF_i*dt_segment、ImpulseはJ_iのみに現れ、同じ入力を二重積分しない。
+この式はSegment内一定Forceと線形粘性減衰のVelocity区間解を使い、Positionは半陰的Eulerで更新する。Fixed / Kinematic Vertexは上式を使わず、Segment終端Animation Target / Animation Velocityを維持する。位置制約解決後はDynamic Vertexだけをsegment startから速度再構築し、Fixed / Kinematic Velocityは変更しない。Impact / Friction / Restitution ImpulseはDynamic Vertexへ一度だけ適用する。ForceはF_external_i*dt_segment、ImpulseはJ_segment_iのみに現れ、同じ入力を二重積分しない。
 
 ### 2.3 Contact / Impact
 
