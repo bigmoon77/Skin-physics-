@@ -272,11 +272,11 @@ Render Candidate Ring:
 
 ### 4.5 Model / World / Runtime Resource Lifecycle
 
-- destroy_model / destroy_colliderは対象Worldにin-flight Tick、対象を参照するTick Reservation、Pending Step Request、Host Render Leaseが一つもない場合だけ成功する。BLOCKED_BY_INPUT / Render Backpressure中の未Reservation要求はモデル入力を固定していないため、Destroy後に新しいWorld状態で再評価する。条件不足はBUSY。成功するまでHandle / Resourceは有効。
-- reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功する。Pending Reservation / Accumulator / Step Queue / Contact Cache / Lambda / DiagnosticをResetし、保存済みInitial Stateへ戻る。
+- destroy_model / destroy_colliderは対象Worldのin-flight Tickが0件、対象Resourceを参照するTick Reservationが存在せず、Host Render Leaseが存在しない場合だけ成功する。BLOCKED_BY_INPUT / Render Backpressure中の未Submission要求はModel / Collider Snapshotを固定していないため、Destroy後の次回Scheduler評価で現在のWorld構成を使う。条件不足はBUSY。成功するまでHandle / Resourceは有効。
+- reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功する。Pending Reservation / Accumulator / Step Queue / Contact Cache / Lambda / Diagnostic / requested / cancelled / committed / observed timeline countersをResetし、保存済みInitial Stateへ戻る。
 - destroy_worldはPaused / Stopped、in-flight Query / Tick = 0、Host Lease = 0、Pending Reservation / Pending Step Request = 0、Accumulator whole tick = 0でのみ成功する。条件不足はBUSY。未割当Accumulatorにwhole tickが残る場合はDestroy前にStop / Resetで明示的に取消し、Diagnosticへ残す。
 - GPU Command / Queryが参照したResourceはCompletion QueryまでDeferred Release Listで保持する。
-- drain()は明示的な非Frame API。新規Submissionを停止し、既にSubmission済みGPU Tick / Queryの完了とDeferred Releaseを待つ。未割当Accumulator whole tick、未Submission Reservation、Step Request、Host Leaseがある場合はBUSYを返す。Host Leaseを強制Releaseしない。
+- drain()は明示的な非Frame API。新規Submissionを停止し、既にSubmission済みGPU Tick / Queryの完了とDeferred Releaseを待つ。未割当Accumulator whole tick、未処理Step Request、Host Leaseがある場合はBUSYを返す。Host Leaseを強制Releaseしない。
 - shutdown()は全WorldがDestroy済み、Query Ring Idle、Deferred Release List空、Host Lease=0の時だけCOM Resourceを解放してOK。条件不足ならBUSYを返し、Runtime状態を壊さない。Runtime Destructor前にshutdown成功が必要。
 - 通常Frame PathにFlush / 同期Waitを入れない。明示drainのみGPU Query完了待ちを許可する。
 
