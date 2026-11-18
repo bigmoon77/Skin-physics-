@@ -519,10 +519,15 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 
 CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Weight / Root Transform Sample / Kinematic Collider Transform Sample境界を抽出し、Span単位のimmutable Animation Trajectory Packetを生成する。各Spanは1つの補間区間だけを含み、GPUが任意のtauで評価できるBone Transform係数・Blend Weight係数・Root Transform係数・解析微分を含む。set_kinematic_pose_sampleで登録された各ColliderはStable Collider ID / Span Sample Pair / Translation Linear係数 / Shortest-Arc Slerp Quaternion / Linear・Angular Velocity / Maximum Radius / Conservative Boundsを持つCollider Trajectory Recordへ変換する。入力Packet / Collider RecordはTick ReservationとともにVersion固定し、Retryで再利用する。
 
+絶対World Simulation Time、Tick Reservation時刻、Clip Local Time、Span境界はCPU上でdouble管理する。GPU Shader Model 5へ渡すPacketはdoubleを含まず、uint32 / floatのみの固定幅Recordとする。GPUは絶対World TimeをfloatへCastしない。各Spanの開始時点の正規化座標u_segment_startと相対秒tau [s]から、u_tau = clamp(u_segment_start + tau * inverse_span_duration, 0, 1)を算出する。TOIで残Segmentを始める場合はGPU上でu_segment_startをu_tauへ更新し、CPU Readback / 再Uploadを挟まない。
+
+GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 64 bytes、animation_channel_gpu_record 208 bytes、animation_blend_gpu_record 96 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
+
+
 - STEP / LINEAR / CUBICSPLINEの係数化、Quaternion Slerp / normalized Hermite微分、最大2 Track Blend、Hierarchy / Skinning微分はdetailed_design.md §5.3を正とする。
 - Kinematic Colliderは連続する時刻付きTransform SampleをTranslation Linear + Shortest-Arc Slerpで評価する。CAの任意tauでTransform / Contact Point Velocityを算出し、Speed / Sagitta Boundを同じPacket Versionで提供する。必要なSample Pairがbracketできない場合はBLOCKED_BY_INPUT。
-- CPUは係数区間から保守的なSpeed / Acceleration Boundを生成し、GPU Trajectory Packetと同一Versionで渡す。BoundsはInterval Arithmetic / 外向き丸めを使い、実軌道の上限を過小評価しない。
-- Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じPacketを使って任意tauの姿勢・速度を評価する。
+- CPUは係数区間から保守的なSpeed / Acceleration Boundを生成し、GPU Trajectory Packetと同一Versionで渡す。BoundsはInterval Arithmetic / 外向き丸めを使い、実軌道の上限を過小評価しない。CPUのdouble絶対時刻をGPU floatへ直接渡さず、GPUではSpan内uとSegment相対tauだけを使用する。
+- Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じPacketを使って任意tauの姿勢・速度を評価する。TOI後の残Segmentも同じGPU Packet Versionを使い、u_segment_startだけをGPU上で更新する。
 - Clip Blendは最大2 Track、非Additiveとする。Blend Weightの時間微分項を必ず含める。
 - Missing Pose / Key / Bound、正規化不能Quaternion、非有限微分はBLOCKED_BY_INPUTまたはInvalid Animation Inputとし、前回Poseや速度の流用・有限差分代用を行わない。
 
