@@ -224,11 +224,11 @@ Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformと
 - Tick ReservationはPose / Kinematic Input、Render Candidate Slot、Query Slotが揃ったGPU Submission直前に作成する。作成時にAccumulatorまたはStep Request Queueから固定Delta Timeを移し、Tick Sequence / Input Snapshot / time_sourceを不変化する。CPU ObservationはAccumulatorを変更しない。
 - BLOCKED_BY_INPUT / Render BackpressureがSubmission前に発生した場合はReservationを作らず、時間をAccumulatorまたはStep Request Queueに保持する。
 - Capacity / CCD / PredecessorによるBlock / Retryでは同一Reservation / Tick Sequenceを維持する。Retry時に時間をAccumulatorへ再加算したり、二重に消費したりしない。
-- Fixed Delta Timeの変更はPaused、in-flight=0、未Submission Reservation=0、Accumulatorのwhole ticks=0、pending Step request=0でのみ許可する。
+- Fixed Delta Timeの変更はPaused、in-flight=0、Accumulatorのwhole ticks=0、pending Step request=0でのみ許可する。fractional remainderは秒単位で保持し、新しいdtに対してwhole tick数を再評価する。
 - fractional remainderは秒単位の実時間として保持し、新しいdtでwhole tick数を再計算する。
 - 変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。旧dtのwhole tickを新dtで再解釈しない。
-- Step要求はPaused / Stopped中にのみ受理する。受理時にrequested_simulation_timeへ1 Fixed Delta Timeを加算するが、wall-clock Accumulatorは変更せず、独立Step Queueへ1 Fixed Tickを追加する。Pose / Render Slot / Query Slotが揃うまでStep Requestとして保持し、GPU Submission直前にTick Reservationへ移す。
-- Stop / Reset時に未Reservation Step Requestを取消す場合、その時間をcancelled_requested_timeへ計上する。Tick Reservation済みのStepは取消し・二重要求を行わず通常のCommit / Retryに従う。
+- Step要求はPaused / Stopped中にのみ受理する。受理時にrequested_simulation_timeへ1 Fixed Delta Timeを加算するが、wall-clock Accumulatorは変更せず、独立Step Queueへ1 Fixed Tickを追加する。Pause / Stop中はStep QueueをAccumulatorより優先し、Pose / Render Slot / Query Slotが揃うまでStep Requestとして保持して、GPU Submission直前にTick Reservationへ移す。Accumulatorのwhole tick / fractional remainderをStepのために消費しない。
+- Pauseはwall-clock Accumulatorを保持する。Stopは未Reservation Step Requestを取消してcancelled_requested_timeへ計上するが、wall-clock AccumulatorとPhysics Stateは保持する。ResetはAccumulator全体、Step Queue、Reservation / Sequence、Solver Cache、Timeline CountersをInitial Stateへ戻す。Tick Reservation済みのStepは取消し・二重要求を行わず通常のCommit / Retryに従う。
 - 最大Step / Substep / Iteration予算超過時に時間をdrop / clampしない。
 
 ### 4.3 Capacity Growth / Memory
