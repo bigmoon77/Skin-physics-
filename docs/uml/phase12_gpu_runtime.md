@@ -182,11 +182,11 @@ sequenceDiagram
     participant GPU as D3D11 Command Stream
     participant A as Active State Bank
     participant B as Inactive State Bank
-    participant S as Substep Snapshot
+    participant S as Integration Segment Snapshot
     CPU->>GPU: Submit Tick N (Plan source=A, destination=B)
     GPU->>A: Read-only source state
     GPU->>B: FEM / Cloth / Contact updates
-    GPU->>S: Save current substep segment before TOI retime
+    GPU->>S: Save current Integration Segment start state before TOI retime
     alt All physics and render gates pass
         GPU->>GPU: Commit Control
         GPU->>GPU: active bank A -> B, generation++
@@ -198,7 +198,7 @@ sequenceDiagram
     GPU->>B: Rebuild destination from A
 ```
 
-The active bank is the complete Logical Tick rollback source. The inactive bank is disposable destination state. The substep snapshot is reusable TOI / segment scratch, not a third persistent bank. The persistent banks contain dynamic state and Contact Cache (Contact Key / Normal / Patch Generation), but do not contain XPBD Lambdas. Cloth Stretch / Shear / Bend / Animation Tracking / Contact Lambdas live in per-World Segment Scratch, are reset to zero at each World Integration Segment boundary (normal Substep, Force / Impulse event split, or TOI split), and accumulate only during that Segment's solver iterations. XPBD Compliance is evaluated with alpha_tilde=alpha/(dt_segment^2); Segment-to-Segment and Tick-to-Tick Lambda Warm Start is disabled in v1.
+The active bank is the complete Logical Tick rollback source. The inactive bank is disposable destination state. The integration segment snapshot is reusable TOI / segment scratch, not a third persistent bank. The persistent banks contain dynamic state and Contact Cache (Contact Key / Normal / Patch Generation), but do not contain XPBD Lambdas. Cloth Stretch / Shear / Bend / Animation Tracking / Contact Lambdas live in per-World Segment Scratch, are reset to zero at each World Integration Segment boundary (normal Substep, Force / Impulse event split, or TOI split), and accumulate only during that Segment's solver iterations. XPBD Compliance is evaluated with alpha_tilde=alpha/(dt_segment^2); Segment-to-Segment and Tick-to-Tick Lambda Warm Start is disabled in v1.
 
 ## 6. Key implementation invariants
 
