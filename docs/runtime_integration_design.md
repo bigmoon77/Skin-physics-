@@ -27,6 +27,8 @@ Skin PhysicsはSoft BodyとClothを同一Simulation Worldで扱うC++静的ラ�
 
 ### 2.1 World構成
 
+Runtimeは複数の独立Simulation Worldを作成できる。World間のCollision / Physics Couplingは行わず、各Worldは独立したSimulation Time、Model / Mesh ID、Contact Key、Tick Sequenceを持つ。D3D11 Device / Immediate ContextとGPU Submission ThreadはRuntime全体で共有する。Query Ringは全Worldのin-flight上限合計以上を収容する。
+
 1つのSimulation Worldに以下を登録できる。
 
 - 1つ以上のCharacter Model Instance。
@@ -272,13 +274,13 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | runtime_desc | shader_package_root | Shader Bytecode / manifestの絶対またはPackage-relative root。Working Directory依存は禁止 |
 | runtime_desc | maximum_gpu_resource_bytes | SkinPhysicsが使用できるLibrary-owned GPU Resource上限。0はDXGI Local Memory Budgetからhost_reserved_gpu_bytesを差し引いて決定 |
 | runtime_desc | host_reserved_gpu_bytes | Renderer / OS / 他Subsystem向けにHostが確保するLocal Memory余裕。Libraryはこの領域を使用しない |
-| runtime_desc | query_ring_capacity | maximum_in_flight_ticks以上。未回収slotを上書きしない |
-| runtime_desc | maximum_render_binding_slots | RuntimeがWorld作成時にmaximum_in_flight_ticks + 1へ固定する。Hostが任意に小さくできない |
+| runtime_desc | query_ring_capacity | すべての作成済みWorldのmaximum_in_flight_ticks合計以上。World追加時に不足すればRingを拡張し、未回収slotを上書きしない |
 | runtime_desc | enable_debug_layer_validation | Debug / validation buildでD3D11 hazard診断を有効化 |
 | world_desc | fixed_delta_time | 正の有限値。初期値1/60 s。Test Environmentから変更可能 |
 | world_desc | time_scale | 0以上の有限値。Frame elapsedへ適用 |
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
+| world_desc | render_binding_slots (derived) | maximum_in_flight_ticks + 1。Runtimeが作成し、Hostは変更できない |
 | world_desc | maximum_steps_per_advance | CPU submission budget。未処理tickはAccumulatorに保持 |
 | world_desc | memory_budget_bytes | World単位の割当上限。DXGI Budgetを超えたらCapacity Block |
 | model_desc | source_model | validated asset::model。mesh physics_mode、nodes、materials、skin、animationを含む |
@@ -306,11 +308,13 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | render_binding | resource_generation / device_generation / committed_tick_sequence | Stale Binding検出と描画状態の追跡 |
 | render_binding | render_slot_id / render_slot_generation / lease_generation | Runtime-owned Render Candidate Ring内のSlot識別とHost lease検証 |
 
-\`model_desc\`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
+`model_desc`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
 
-\`set_fixed_delta_time\`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0、queued single-step request = 0のときだけ成功する。条件を満たさなければBUSYを返す。fractional remainderは秒単位の実時間として保持し、新しいFixed Delta Timeに対してAccumulatorのwhole tick数を再計算する。旧Fixed Delta Timeのwhole tickは存在しないため、時間を黙って破棄・換算しない。変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。
+Model Transform Sample、Mesh Physics Parameter変更、Attribute Editは指定Logical Tickの開始境界で適用する。既にSubmission済みのTickの入力 / Material / Vertex Weight Snapshotは変更しない。Paint編集はRender MeshのStable Vertex IDを基準にversioned editとして保持し、既存Physics Mesh Bindingを使ってPhysics Vertexへ転送する。Topology再生成後に対応が一意でない場合は適用を保留して警告する。
 
-\`get_render_binding\`はCPU-observed committed Tick Prefixに対応するRender Slotだけを返す。GPU Commit済みでもCPUがEvent Query / Status Readbackを確認していないTickのSlotは公開しない。Worldごとに同時に有効なHost Render Leaseは1つとし、各Meshのget_render_binding呼び出しは同じlease_generationに属する。HostはDraw後に公開SRVを全Graphics StageからUnbindし、release_render_bindingsを呼ぶ。
+`set_fixed_delta_time`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0、queued single-step request = 0のときだけ成功する。条件を満たさなければBUSYを返す。fractional remainderは秒単位の実時間として保持し、新しいFixed Delta Timeに対してAccumulatorのwhole tick数を再計算する。旧Fixed Delta Timeのwhole tickは存在しないため、時間を黙って破棄・換算しない。変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。
+
+`get_render_binding`はCPU-observed committed Tick Prefixに対応するRender Slotだけを返す。GPU Commit済みでもCPUがEvent Query / Status Readbackを確認していないTickのSlotは公開しない。Worldごとに同時に有効なHost Render Leaseは1つとし、各Meshのget_render_binding呼び出しは同じlease_generationに属する。HostはDraw後に公開SRVを全Graphics StageからUnbindし、release_render_bindingsを呼ぶ。
 
 ### 3.4 WorldとMesh Instanceの配置
 
@@ -385,7 +389,7 @@ CPU側のFixed Step制御はWall Clockから必要Logical Tick数を算出する
 
 - D3D11 Immediate Contextは単一の順序付きCommand Streamである。PhysicsとRenderが独立GPU Queueで同時に動く前提を置かない。
 - 1 PhysicsSubmissionBatchは1 Logical Tickを含む。
-- 初期の上限はin-flight logical tick 2件とし、Status Query Ringはその上限以上のSlotを持つ。上限は設定で変更できるが、未回収Slotを上書きしない。
+- 各Worldの初期上限はin-flight logical tick 2件、設定可能値は1 / 2 / 4件とする。Status Query RingはRuntime内の全Worldの上限合計以上のSlotを持ち、World追加時に不足すれば拡張する。未回収Slotを上書きしない。
 - 各TickのDispatch Planはexpected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_idを持つ不変Recordとする。
 - Tick NのCommit Controlは成功時だけcommitted_tick_sequenceとcommitted_state_generation / active_state_setを更新する。Reject / BlockではCommitted Stateの参照先を変更しない。
 - Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
@@ -398,7 +402,7 @@ CPU側のFixed Step制御はWall Clockから必要Logical Tick数を算出する
 - Pauseは新規Logical Tick生成を止め、in-flight GPU Tickは安全に完了させる。Pause時間をactive elapsedへ加算しない。
 - StepはPause / Stop中に固定時間刻みを正確に1回だけ要求する。GPU Capacity / CCD Block中は実行待ちとする。
 
-初期in-flight上限2は資源・Query管理を単純化する初期値であり、2件が最適性能を保証する値ではない。1 / 2 / 4件の比較とQuery Ringの遅延試験で確定する。
+初期in-flight上限2はWorldごとの資源・Query管理を単純化する初期値であり、2件が最適性能を保証する値ではない。1 / 2 / 4件と複数Worldの混在Submissionを比較し、Runtime全体のQuery Ring遅延・Memory・公平性を測定する。
 
 ### 5.4 Animation / Kinematic Inputの時間整合
 
@@ -423,7 +427,7 @@ Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境
 - host_render_lease: CPU-observed committed Render slotをHostへ貸し出したlease_generation。lease解放までslotを再利用しない。
 - simulation_status / tick_sequence / state_generation / diagnostic_counters: GPU Commit / Reject / Error Control。
 
-GPU Solver ScratchをHost Render Bindingへ直接公開しない。Commit済み状態と描画用BufferはCopyまたはPublish Passで同期する。Committed StateのResource Set切替はGPU Commit Controlだけが行う。Retry / Rejectではactive_state_setとstate_generationを維持する。後続Tickは前TickのCommit結果とGenerationを検証してから実行する。
+GPU Solver ScratchをHost Render Bindingへ直接公開しない。Render Candidate SlotはTickごとに予約し、Committed StateのResource SetとともにGPU Commit ControlがSlot ID / Generationを切り替える。Retry / Rejectではactive_state_set、state_generation、committed_render_slotを維持する。後続Tickは前TickのCommit結果とGenerationを検証してから実行する。
 
 ### 6.2 GPU Commit Control
 
@@ -468,7 +472,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 - どのBudgeted Physics Passもtick plan gateを迂回できない。Scheduler Control / Diagnostic PassだけがGate対象外である。
 - Query RingはStatus CopyとEvent Queryの両方をTick IDで対応付け、遅延・順序逆転・Slot再利用を検出する。
 
-これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。実際のState Set数、GPU Copy / Ping-Pong構成、Shader Binding TableはPhase 12実装前にResource ABI Reviewで確定し、Rollback SnapshotとRender Publishを含むVRAM / GPU時間を測定する。
+これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。WorldをまたいだTickは同じImmediate Context Command Streamへ順序付けるが、異なるWorldのCommitted Stateは相互参照しない。実際のState Set数、GPU Copy / Ping-Pong構成、Shader Binding TableはPhase 12実装前にResource ABI Reviewで確定し、Rollback SnapshotとRender Candidate Ringを含むVRAM / GPU時間を測定する。
 
 ## 7. GPU Pass / Dataflow Integration
 
