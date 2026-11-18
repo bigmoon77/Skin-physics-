@@ -487,7 +487,7 @@ Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraint
 5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
 7. TOIがない場合は、Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを規定反復数だけ解く。
-8. Positive-Time TOIがある場合は、§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexは保守的Chord Boundで検証済みのSegment端点Animation Target chord位置を使い、接触相対Velocityにはtau時刻のAnimation Target Trajectory微分を使う。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
+8. Positive-Time TOIがある場合は、§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexはtau時刻のAnimation Target Trajectory位置を直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準とし、Deviation Boundで膨張させる。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
 9. Discrete / TOIの双方で、非接触内部Constraint後・Contact Position Constraint前にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、TOI prefixではtauを使う。次にContact候補を現在の内部Constraint後Positionで再検査し、接触が成立しているものだけContact Position XPBDを解く。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
 10. 保存済みContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを一度適用する。TOI Impactはimpact_resolvedに記録し、Impact後Velocityから残時間の新Segmentを開始する。Contact位置補正後またはImpact後に同じSegmentのVelocity Reconstructionを実行しない。TOI候補がprefix再検査で成立しない場合はImpactを発生させず、tau位置から残時間を継続し、必要ならCCD候補を再構築する。
 
@@ -609,7 +609,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
 ### 8.1.1 Collision-only Collider
 
-初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、時刻付きRigid Transform Sampleで移動する形状として扱う。接触点xのKinematic Collider速度は、剛体の並進速度v_linearと角速度omegaから、v_point = v_linear + cross(omega, x - transform_origin)で求める。Slerp区間ではQuaternionの解析微分からomegaを評価し、Transformの位置差分だけで頂点速度を近似しない。CCDの幾何SweepはSegment端点Transformを結ぶChord Pathを使うが、Chord Pathの偏差は§11.4の保守的Boundで制限する。Contact Relative VelocityにはTOI時刻の剛体Transform Trajectory微分を使う。接触位置補正・ImpulseによってCollider自体は変形させない。
+初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、時刻付きRigid Transform Sampleで移動する形状として扱う。接触点xのKinematic Collider速度は、剛体の並進速度v_linearと角速度omegaから、v_point = v_linear + cross(omega, x - transform_origin)で求める。Slerp区間ではQuaternionの解析微分からomegaを評価し、Transformの位置差分だけで頂点速度を近似しない。CCDのSwept AABBはSegment端点Transformを結ぶChord Pathを基準に作成し、Chord偏差Boundで膨張させる。Narrowphase / Conservative Advancementはtau時刻の実Rigid Transformを評価する。Contact Relative VelocityにはTOI時刻の剛体Transform Trajectory微分を使う。接触位置補正・ImpulseによってCollider自体は変形させない。
 
 変形オブジェクトの衝突面は初期版ではSoft Body境界面とCloth Physics Mesh表面を使う。低解像度Collision Proxyを変形メッシュへ割り当て、そのProxy接触を高解像度Physics Meshへ戻す埋め込み応答は初期版の対象外とする。将来追加時はProxy頂点からPhysics MeshへのEmbeddingと、接触勾配のPhysics Vertexへの合成を定義する。
 
@@ -820,7 +820,7 @@ d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終
 
 ### 11.4 TOI処理
 
-現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価する。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
+現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算とTOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint ChordはSwept AABBのBroadphase基準形状としてだけ使う。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
@@ -982,7 +982,7 @@ Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_st
 7. Swept AABB / Broadphase Count / Scan / Fill / Sort / Group / Candidate Dedup / Narrowphase / Contact Patch Build。
 8. CCD Conservative Advancement / Minimum TOI Reduction。
 9. TOIがない場合: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
-10. TOIがある場合: Endpoint Contactを確定せず、§11.4のx_path(tau) / v_path(tau)およびKinematic conservative chord pathでTOI prefixを構成し、tauを使って非接触内部Constraintを解く。
+10. TOIがある場合: Endpoint Contactを確定せず、Dynamicのx_path(tau) / v_path(tau)とKinematicのtau時刻実Trajectory位置・VelocityでTOI prefixを構成し、tauを使って非接触内部Constraintを解く。Endpoint ChordはDeviation Bound付きSwept AABBにのみ使う。
 11. Dynamic VertexのContact前Velocityを再構築してv_pre_contactへ保存する。TOIではtau、通常Segmentではdt_segmentを用いる。Fixed / Kinematic VelocityはAnimation Trajectory微分を維持する。
 12. Discrete / TOI Contact Position XPBDを解く。Contact位置補正はPositionへだけ適用し、v_pre_contactを変更しない。
 13. v_pre_contactとKinematic接触点VelocityからFriction / Restitution Impulseを計算し、Contact ContributionをVertex Gatherで一度適用する。TOI Contactにはimpact_resolvedを設定する。
