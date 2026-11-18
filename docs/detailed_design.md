@@ -1,7 +1,7 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.3
-- 状態: GPU Runtime統合設計改訂・独立レビュー待ち
+- 文書バージョン: 1.4
+- 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.2
 - Runtime境界・非同期GPU Tick: runtime_integration_design.md
@@ -523,7 +523,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     effective_inverse_mass =
         wp + beta0^2 * wb0 + beta1^2 * wb1 + beta2^2 * wb2
 
-各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一メッシュペア・隣接面パッチ内でContact Patchを形成する。初期重複判定は、接触点距離が`cluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)`以下、かつ法線内積がcos(10度)以上の場合とする。同一Cluster内では最も深い接触を1つ残し、深さ同値の場合はContact Key順で決定する。離れた接触点は別Constraintとして保持する。閾値は試験設定として変更可能にし、統合前後の最大貫通を計測する。λは同一サブステップの同一接触キーで保持し、接触キーが変わった場合は初期化する。
+各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一メッシュペア・同じ連結Surface Patch内でContact Patchを形成する。初期重複判定は、接触点距離が`cluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)`以下、かつ法線内積がcos(10度)以上の場合とする。v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする決定的なManifold Reductionを行い、(1)最深点、(2)最深点から最遠点、(3)既存2点が作る線分から最遠点、(4)既存3点が作る三角形から最大面積となる点を順次残す。候補が線状・点状の場合は独立したSupport Point数だけを残す。最深1点だけに縮約する方式は禁止する。縮約前後の最大貫通・法線分布・支持範囲を計測し、縮約によって接触品質が悪化する場合はPatchを分割する。閾値・最大点数は試験設定で変更可能にし、Run Manifestへ記録する。λは同一サブステップの同一Contact Keyで保持し、Contact KeyまたはPatch Generationが変わった場合は初期化する。
 
 ### 8.4 Edge-Edge
 
@@ -563,9 +563,9 @@ Discrete contactでは位置解決後にvelocity = (position_after - previous_po
 
     cell_width(level) = base_cell_width * 2^level
 
-base_cell_widthは代表PrimitiveのAABB寸法の中央値と最大接触半径の2倍の大きい方を初期候補とし、候補生成数・登録セル数の計測で調整する。各Primitiveは、接触厚みを膨張させたAABBが設定上限max_cells_per_primitive以下のセル数になる最も細かいlevelへ登録する。最大levelでも上限を超える場合はBroadphase Errorとする。全Primitive総当たりへフォールバックしない。
+base_cell_widthは、Physics / Collision Primitiveの正のAABB最大辺長中央値と、最大Contact Thicknessの2倍の大きい方を初期値とする。v1初期値はmax_cells_per_primitive=64、max_hash_levels=24。cell_width(level)=base_cell_width*2^levelとし、各Primitiveは接触厚みで膨張させたAABBが64セル以下となる最も細かいlevelへ登録する。最大levelでも64セルを超えるPrimitiveはLarge Primitiveとして別Bucketへ登録し、同じAABB完全性規則で通常Primitiveとの候補生成を行う。Large Primitive BucketにもCount / Capacity Check / Pair Dedupを適用し、容量不足はBlock / Retryする。全Primitive総当たりへフォールバックしない。
 
-各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。
+各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。大きいPrimitiveがLarge Primitive Bucketへ入った場合、通常Cell RecordとのAABB交差を別Passで列挙し、通常Pairと同一のCanonical Pair Keyで重複排除する。
 
 ### 9.2 接触厚みとセル範囲
 
@@ -607,14 +607,14 @@ VTとEEの最近接距離を正確に計算し、接触厚み以下だけを接�
 
 Meshごとに`max_initial_repair_distance`を設定し、各Physics Vertexについて初期化開始位置からの修正移動量累積をこの値以下に制限する。Gatherで得た仮の頂点補正について、各頂点ごとに接触Constraint寄与の絶対変位量を総和し、その値と残り修正予算からscaleを計算する。各接触Constraintの全参加頂点scaleの最小値をそのConstraintの共通scaleとする。修正量累積は反復ごとの寄与絶対値の総和とし、異なる反復間で符号相殺させない。その共通scaleをdelta_lambdaと全頂点補正に適用してからλと位置を確定する。これにより双方の補正とλを整合させたまま最大修正量を守る。修正予算を使い切っても残存貫通が許容値を超える場合は警告またはAsset Load Errorとし、初期化状態をCommitしない。
 
-自己衝突除外:
+自己衝突除外はPhysics MeshのStable Vertex / Primitive IDからAsset Build時に生成し、Runtime Broadphase前に適用する。v1の既定除外は次の通り。
 
-- 同一三角形・同一辺
-- 共有頂点・共有辺
-- 隣接面および同一Soft Body四面体近傍
-- 設定した近傍リング数以内のトポロジー隣接
+- 同一Primitive。
+- 同一Mesh内で少なくとも1つのPhysics Vertexを共有するPrimitive Pair（共有Vertex / Edge / Faceを含む、topological 1-ring）。
+- Soft Bodyでは同一Tetに属する境界Face Pair、および共有Physics Vertexを持つ境界Face Pair。
+- Mesh Pair除外リストで明示された組み合わせ。
 
-近傍除外リングを広げすぎると折り畳み部の接触が欠落する。除外数・除外距離・テスト結果を可視化する。
+追加の2-ring / 3-ring除外は任意のScenario設定として保持できるが、既定値は0追加ringとする。これにより折り畳み部の接触を広範囲に抑止しない。除外Pair数・対象距離・残存接触を可視化し、Self CollisionのFold / Edge contact fixtureで偽陰性を検証する。
 
 ## 11. Continuous Collision Detection
 
@@ -624,7 +624,7 @@ Meshごとに`max_initial_repair_distance`を設定し、各Physics Vertexにつ
 
     length(relative_displacement) > eta * contact_thickness
 
-etaの初期値は0.5。これは候補の選別値であり、CCD自体の正しさを保証する値ではない。薄い布・高速移動試験で見逃し率を測定し、必要なら対象範囲を広げる。
+etaの初期値は0.5。これは候補の選別値であり、CCD自体の正しさを保証する値ではない。薄い布・高速移動試験で見逃し率を測定し、必要なら対象範囲を広げる。離散終端位置が非接触でもSwept AABBがNarrowphase候補を作る場合、相対移動距離が小さいことだけを理由に候補から除外しない。初期接触・persistent contact・初期貫通はこの速度選別の対象外とする。
 
 ### 11.2 Swept AABB
 
@@ -650,7 +650,7 @@ EE:
     tau_next = tau + delta_tau
     safety = 0.8  // 初期値
 
-d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>delta_t_substepかつ終端距離がrより大きければ当該サブステップでは接触なし。最大反復回数、最小進行時間tau_tolerance、距離許容誤差distance_toleranceを設定する。進行不能または反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
+d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>delta_t_substepかつ終端距離がrより大きければ当該サブステップでは接触なし。Conservative Advancementは最大32反復を初期上限とする。`tau_tolerance = max(1e-7 s, 1e-5 * delta_t_substep)`、`distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)`を初期値とし、L_refは当該Physics Meshのmedian positive rest-edge lengthとする。`safety=0.8`は維持する。停止判定は距離条件または保守的区間No-Hit条件で行い、tau_tolerance到達だけでNo-Hitにしない。進行不能または32反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
 
 ### 11.4 TOI処理
 
@@ -661,7 +661,7 @@ d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>delta_t_substepか�
 
 接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分する。Clothなど位置ベースの系では、この区間の変位から接触前速度を再構築する。Soft Bodyは積分器が保持するtau時点の速度を使う。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度から残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
 
-1サブステップ内のTOI分割上限は初期値2回。上限を超えた場合は残時間を進めずCCDIterationLimitとしてステップを未確定にし、時間刻みを細分化して再試行する。CCDの解決不能を貫通許容として扱わない。
+1サブステップ内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * delta_t_substep)`とし、Event内のImpulseはContact Key順に一度だけ適用する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、Internal Substepを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
 ## 12. Render Vertex Binding
 
@@ -778,6 +778,9 @@ Debug ViewはGPU上のPhysics / Render Bufferからデバッグ用線分・点�
 
 ## 15. GPU Pass・同期・Dispatch
 
+v1のGPU Runtime初期値はpolar iteration最大8回、polar orthogonality residual <=1e-5、CFL factor=0.2、Cloth / Contact Gather relaxation候補omega={0.5, 0.75, 1.0}、CCD safety=0.8、CCD最大32 CA iterations、TOI split<=2 / substepとする。これらは初期Engineering Baselineであり、Numerical Acceptance Profile / Scenario Manifestへ値を記録し、fixture・WARP・物理GPU試験を通過するまで妥当性を確定しない。
+
+
 ### 15.1 Logical Tick / Substep transaction
 
 Logical Tick全体をGPU Commit transactionとする。Tick開始前にCommitted Stateからtick_start_snapshotを確保し、各Substepのworking stateを更新する。すべてのSubstep / Collision / CCD / Validationが成功した後だけGPU Tick Commit Controlを通す。Render FeedbackはCommit済み状態から生成・Publishする。Failure時にWorking StateをRendererへ公開しない。
@@ -808,11 +811,10 @@ Logical Tick全体をGPU Commit transactionとする。Tick開始前にCommitted
 13. Velocity Reconstruction
 14. Coulomb Friction / Restitution Impulse
 15. Substep / Logical Tick Validation
-16. Logical Tick Commit Control（全Substep成功時だけCOMMITTED）
-17. Render Position Feedback Publish（Committed Stateのみ）
-18. Render Normal Gather
-19. Render Tangent Update
-20. Diagnostic Timestamp / Counter / Status Copy + Event Query
+16. Render Feedback Candidate Prepare（Working Physics Stateから専用Render Candidate SlotへPosition / Normal / Tangentを生成）
+17. Render Candidate finite / Binding Validation
+18. Logical Tick Commit Control（全SubstepとRender Candidateが成功した場合だけ、Physics State GenerationとRender Candidate Slotを同時にCOMMITTEDへ切替）
+19. Diagnostic Timestamp / Counter / Status Copy + Event Query
 
 ### 15.2 同期・リソースhazard
 
@@ -966,6 +968,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
 - 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
