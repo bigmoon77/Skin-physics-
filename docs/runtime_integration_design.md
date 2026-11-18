@@ -121,6 +121,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             work_budget_exceeded,
             contact_geometry_unresolved,
             contact_manifold_reduction_failure,
+            contact_impulse_unresolved,
             no_force_target
         };
 
@@ -147,6 +148,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         struct model_desc;
         struct collider_desc;
         struct animation_playback_desc;
+        struct animation_blend_desc;
         struct transform;
         struct force_desc;
         struct impulse_desc;
@@ -219,6 +221,11 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
                 world_handle world,
                 model_handle model,
                 const animation_playback_desc& desc);
+
+            status set_animation_blend(
+                world_handle world,
+                model_handle model,
+                const animation_blend_desc& desc);
 
             status set_model_transform_sample(
                 world_handle world,
@@ -297,7 +304,11 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
 | world_desc | minimum_substeps / maximum_substeps | World共通Substep数の下限 / 上限。初期値1 / 128。超過時はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
-| world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。FEM CFL / Tracking / Cloth Quality Limitと合わせてN_worldを決める |
+| world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。全Solverへ適用する共通上限 |
+| world_desc | contact_max_substep_delta_time | Contact Temporal Quality Limit。初期値1/120 s、0は明示無効。正値ならFEM / Tracking / Cloth Quality LimitとともにN_worldへ集約 |
+| world_desc | contact_impulse_iterations | Coupled Projected JacobiのIteration数。初期値8、許容範囲1～16 |
+| world_desc | contact_impulse_relaxation | Contact Impulse Jacobi Relaxation。初期値0.5、0より大きく1以下 |
+| world_desc | contact_impulse_residual_tolerance | Contact Impulse正規化Residual上限。初期値1e-4、正の有限値 |
 | world_desc | enable_cloth_temporal_quality_limit | Cloth拘束振動数ベースの時間品質上限を有効化。初期値true。XPBDの安定保証とは扱わない |
 | world_desc | cloth_temporal_quality_factor | dt_limit_cloth_quality = cloth_temporal_quality_factor / omega_cloth_max。初期値0.2、正の有限値 |
 | world_desc | render_binding_slots (derived) | maximum_in_flight_ticks + 1。Runtimeが作成し、Hostは変更できない |
@@ -316,8 +327,11 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | collider_desc | initial_transform | 初期World Transform |
 | collider_desc | thickness / friction / restitution | SI単位・係数範囲は詳細設計のCollision Material定義に従う |
 | collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
-| animation_playback_desc | clip_index / time / speed / weight / loop | asset::model内animation_clipの選択、再生時刻、倍率、Blend重み、Loop |
-| animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocityの選択 |
+| animation_playback_desc | clip_index / time / speed / loop | 単一Animation Trackの選択、Clip Local Time、Playback Speed、Loop。Blendは別Descriptorで指定 |
+| animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorのw_eventでVelocityを補間 |
+| animation_blend_desc | source_track / target_track | 最大2本のanimation_playback_desc。Additive / 3本以上はv1 Unsupported |
+| animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | World Simulation Time上のCubic Hermite Blend Weight Curve。wは0～1、tangentは1/s |
+| animation_blend_desc | discontinuity_policy / w_event | 明示Discontinuity時のPolicy。BlendVelocityはw_eventでDynamic Velocityを補間 |
 | force_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
 | force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。start_timeはWorld Simulation Time原点からの絶対秒。end_timeはstart_time + durationの導出値でDescriptorに重複保持しない。正のRadius必須。Mass-weighted Falloffで分配 |
 | impulse_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
@@ -370,13 +384,14 @@ CPUは通常フレームでPhysics Vertex位置・速度、Tet Lambda、Contact 
 
 ### 4.2 GPU側
 
-- Physics Mesh Skinning Target / Animation Velocity生成。
+- Animation Trajectory Packetから任意Simulation TimeのBone Local / Global Transform、Skin Matrix / 微分、Physics Vertex Target / Velocityを評価する。
+- Span全域のConservative Speed / Acceleration / Chord Deviation Boundを利用してSwept AABB / CAを実行する。
 - Soft BodyのF、Polar Rotation、Stress、Tet Force Contribution。
 - Tet→Vertex Force GatherとSoft Body Integration。
 - Cloth Stretch / Shear / Bend / Animation Tracking XPBD。
 - Swept Broadphase、Spatial Hash、Candidate Pair生成・重複排除。
 - VT / EE Narrowphase、Contact Patch、双方向Contact XPBD。
-- CCD / TOI Reduction / TOI Substep Split / Impact / Friction / Restitution。
+- Coupled Projected Jacobi Contact Impulse、TOI Impact / Friction / Restitution。
 - 状態検証・Tick Commit / Reject。
 - Render Vertex Position / Normal / Tangent Feedback。
 - GPU Timestamp対象の全Physics / Render Feedback Pass。
@@ -445,22 +460,19 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 
 ### 5.4 Animation / Kinematic Inputの時間整合
 
-Animation ClipはWorld Simulation Timeを基準にCPU Animation Evaluatorが評価し、各Logical Tick / Integration Segment境界のBone Pose / Skin Matrixと、その時間微分を供給する。GPU SkinningはPhysics Mesh Target PositionとTarget Velocityを同じPose Sampleから生成する。Animation Velocityは最終Skinning Target Trajectoryの時間微分を正本とし、前Step Position差分やRender Frame差分から再推定しない。
+CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Weight / Root Transform Sample境界を抽出し、Span単位のimmutable Animation Trajectory Packetを生成する。各Spanは1つの補間区間だけを含み、GPUが任意のtauで評価できるBone Transform係数・Blend Weight係数・Root Transform係数・解析微分を含む。入力はTick ReservationとともにVersion固定し、Retryで再利用する。
 
-- STEPの区間内Velocityは0とし、Key境界のPose Jumpは明示Discontinuity Eventとして扱う。
-- LINEARはClip時間の区間勾配へPlayback Speedを乗じてSimulation Time微分へ変換する。
-- CUBICSPLINEはglTF Hermite補間の解析微分を使用し、Key間隔 / Playback Speed / Quaternion正規化を反映する。
-- Clip BlendはBlend後Trajectoryを評価し、Blend Weightが変化する場合はWeight時間微分項を含める。
-- Skinning Target VelocityはBone Matrixとその時間微分から最終Skinned Positionを微分して生成する。
-- Kinematic Colliderの接触点Velocityはv_linear + omega cross radiusとし、Angular VelocityはQuaternion Trajectory微分から得る。
+- STEP / LINEAR / CUBICSPLINEの係数化、Quaternion Slerp / normalized Hermite微分、最大2 Track Blend、Hierarchy / Skinning微分はdetailed_design.md §5.3を正とする。
+- CPUは係数区間から保守的なSpeed / Acceleration Boundを生成し、GPU Trajectory Packetと同一Versionで渡す。BoundsはInterval Arithmetic / 外向き丸めを使い、実軌道の上限を過小評価しない。
+- Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じPacketを使って任意tauの姿勢・速度を評価する。
+- Clip Blendは最大2 Track、非Additiveとする。Blend Weightの時間微分項を必ず含める。
+- Missing Pose / Key / Bound、正規化不能Quaternion、非有限微分はBLOCKED_BY_INPUTまたはInvalid Animation Inputとし、前回Poseや速度の流用・有限差分代用を行わない。
 
-外部からBone Poseを直接供給するHostでは、時刻付きPose SampleとTarget Velocity Sampleを登録し、各Tick / Segment時刻を補間できるだけの履歴を保持する。Animation TargetとVelocityを同じ時刻で評価できない場合はBLOCKED_BY_INPUTとし、前回Poseや速度の延長・有限差分代用を行わない。
-
-Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Segment境界の姿勢とTranslation / Angular Velocityを補間する。必要な時刻範囲をbracketできない場合はTickをBLOCKED_BY_INPUTとして待機し、古いPoseで延長しない。Teleportは明示Eventとし、Contact / CCD Cache、前回位置、速度を規定ポリシーで再初期化する。Collider自身は位置補正・Impulseで変形しない。
+外部からBone Pose / Kinematic Transformを直接供給するHostでは、時刻付きSampleとTrajectory Derivative Sampleを登録する。Input Sampleの履歴はTick全体とTOI再試行・Span分割をbracketできるだけ保持する。Kinematic Colliderの回転接触点Velocityはv_linear + omega cross radiusを使う。Teleport / Reset / Time Rewindは明示Discontinuity Eventとし、Policyに従ってContact / CCD CacheとVelocity履歴を再初期化する。
 
 ### 5.5 World共通Substep Schedule
 
-詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限と、全Cloth ConstraintのTemporal Quality Limitを集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitはXPBDの安定保証ではなく、拘束振動数から求める品質上限として扱う。各SubstepはForce / Impulse Event境界およびTOIでIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
+詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactのcontact_max_substep_delta_timeを集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitはXPBDの安定保証ではなく、拘束振動数から求める品質上限として扱う。各SubstepはForce / Impulse Event境界およびTOIでIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -530,12 +542,12 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 ### 7.1 World Logical Tick
 
 1. CPU Animation Evaluation / Kinematic Transform Sampleの取得。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
-2. GPU Animation Target / Target Velocity Skinning。
+2. GPU Animation Trajectory PacketからAnimation Target / Target Velocity SkinningおよびSpan Bound Validate。
 3. Render Candidate Slotの空きを確認してReservation。空きがなければそのTickをpendingへ残し、Accumulatorの時間を保持する。
 4. Logical Tick開始SnapshotとTerminal Status初期化。
 5. 各World Integration Segmentについて次を処理する。
    - Segment開始Snapshot / XPBD Lambda / Contact Lambda / Impact Scratch Reset。
-   - Segment開始・終了時刻のAnimation Target / Animation Velocity / Root / Kinematic Pose Sample。
+   - Animation Span Packet / Bound Versionを選択し、Segment開始・終了時刻のAnimation Target / Animation Velocity / Root / Kinematic Poseを同じGPU Trajectory Evaluatorで取得。
    - Force EventのSegment内有効状態を確定し、Impulse EventをSegment開始でEvent ID単位に一度だけ適用。
    - Soft Body Tet Deformation Gradient / Polar Rotation / Stress / Inversion Penalty / Segment開始状態のTet Force Contribution。
    - Vertex→Tet CSR Force Gather（float Atomic Add禁止）。
@@ -544,10 +556,10 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
    - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill / Sort / Pair Dedup。
    - VT / EE Narrowphase、Contact Patch Reduction、CCD Conservative Advancement / Minimum TOI Reduction。
    - TOIなし: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
-   - TOIあり: Endpoint Contactを確定せず、Dynamicの離散pathとKinematicのtau時刻実TrajectoryでTOI prefixを構成し、非接触内部Constraintをtau時間で解く。
+   - TOIあり: Endpoint Contactを確定せず、Dynamicの離散pathとAnimation Trajectory Packetが評価するtau時刻のKinematic実TrajectoryでTOI prefixを構成し、非接触内部Constraintをtau時間で解く。
    - Contact Position Constraint前にDynamic VertexのContact前Velocityを保存する。通常Segmentはdt_segment、TOI prefixはtauで速度再構築する。Fixed / Kinematic VelocityはAnimation Trajectory微分を維持する。
    - Discrete / TOI Contact Position XPBDを解く。Contact位置補正はPositionだけを変更し、保存済みContact前Velocityへ反映しない。
-   - 保存したContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを計算し、Contact ContributionをVertex Gatherで一度だけ適用する。TOI Contactにimpact_resolvedを設定する。
+   - 保存したContact前VelocityをCoupled Projected Jacobiへ渡す。Contact Contributionを反復Gatherし、Normal / Coulomb Cone Residualが許容範囲へ収束した場合のみv_finalを確定する。W_ii <= epsilon_inverse_massのContactはNON_RESPONSIVE_CONTACTとしてPosition / ImpulseをSkipする。TOI Contactは成功時にimpact_resolvedを設定する。
    - Broadphase Envelope / NonFinite / Capacity / CCD / Physical Quality Gateを検証する。Envelope外は同じSegment内で再Buildし、Contact解決を再実行する。
    - TOIありの場合、Impact後Velocityから残時間の新しいIntegration Segmentへ進む。Impact後Velocityを同じSegmentの速度再構築で上書きしない。
 6. 全Integration Segment / World Substep成功後にRender Feedback Candidate Prepare（Tick Reservation済みslotへ書き込む）。
@@ -561,9 +573,9 @@ Soft Body内部力は各World Integration Segment開始状態で再評価する�
 
 既存のPoint-Triangle CCDは初期Fixtureとして維持する。Production Runtimeでは変形Mesh間の高速接触を満たすため、VTとEEの双方に対してSwept BroadphaseとConservative Advancementを接続する。Triangle-Triangleの交差候補はVT / EEイベントへ分解して扱い、Primitive Pair / Contact Keyの重複を除去する。
 
-TOIは現在Integration Segment開始からの秒単位で管理する。Dynamic Vertex CCD pathはdetailed_design.md §11.4のSemi-implicit Euler離散pathを使用し、TOI prefixでdt=tauの再Predictionを行わない。Kinematic Vertex / ColliderのTOI geometryはtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint Chordは保守的Deviation Boundで膨張したSwept AABB構築に限って使う。Conservative Advancementの距離も実Trajectory位置で評価し、v_boundにkinematic_path_speed_boundを含める。有限個の中間サンプルだけでDeviation / Speed Boundを保証しない。CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角・最大半径のSagitta Boundを用いる。Deviation / Speed Boundを取得できない場合はSegmentを最大深度8まで分割し、それでも証明できなければCCDUnresolvedとする。
+TOIは現在Integration Segment開始からの秒単位で管理する。Dynamic Vertex CCD pathはdetailed_design.md §11.4のSemi-implicit Euler離散pathを使用し、TOI prefixでdt=tauの再Predictionを行わない。Kinematic任意時刻評価は5.4のAnimation Trajectory Packetを使用し、係数・BoundsのVersionをTick Reservationへ固定する。Kinematic Vertex / ColliderのTOI geometryはtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint Chordは保守的Deviation Boundで膨張したSwept AABB構築に限って使う。Conservative Advancementの距離も実Trajectory位置で評価し、v_boundにkinematic_path_speed_boundを含める。有限個の中間サンプルだけでDeviation / Speed Boundを保証しない。CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角・最大半径のSagitta Boundを用いる。Deviation / Speed Boundを取得できない場合はSegmentを最大深度8まで分割し、それでも証明できなければCCDUnresolvedとする。
 
-Kinematic接触相対Velocityはtau時刻のAnimation Target Trajectory微分、またはv_linear + omega cross radiusを使用し、Chord Path Velocityへ置換しない。TOI prefixでは非接触内部Constraintを先に解き、Contact前Dynamic Velocityを再構築して保存する。次にContact Position XPBDを解き、Contact位置補正後のVelocity再構築は禁止する。保存済みContact前VelocityからFriction / Restitution Impulseを一度適用し、Impact後状態から残Segmentを進める。
+Kinematic接触相対Velocityはtau時刻のAnimation Target Trajectory微分、またはv_linear + omega cross radiusを使用し、Chord Path Velocityへ置換しない。TOI prefixでは非接触内部Constraintを先に解き、Contact前Dynamic Velocityを再構築して保存する。次にContact Position XPBDを解き、Contact位置補正後のVelocity再構築は禁止する。保存済みContact前VelocityをCoupled Projected Jacobi Impulse Solverへ渡し、収束Residualを検証する。W_ii <= epsilon_inverse_massの非応答ContactはImpulse / Position correctionをSkipし、全ImpulseがResolvedの場合だけImpact後状態から残Segmentを進める。
 
 複数接触は同時TOI許容幅でグループ化し、同一Eventを二重Impulseしない。Unresolved、進行不能、Iteration上限は未解決のままCommitしない。
 
@@ -644,6 +656,8 @@ Peak計測にはPhysics State Banks / Segment Snapshot / Contact・Candidate / R
 | BlockedByInput | Animation / Kinematic Pose Sample履歴が必要なTick / Substep時刻をbracketできず、入力不足範囲の登録を待つ |
 | RenderBindingBusy | Host Render Leaseが未解放、またはRender Candidate Slot不足により新規Submissionを停止 |
 | BroadphaseOverflow / ContactOverflow / ContributionOverflow | TickをRollbackし、Capacity調整後に再実行 |
+| ContactImpulseUnresolved | Coupled Projected Jacobiが最大IterationでResidualへ収束しない。Tick全体をRollback / Blockし、Iteration / Solver設定を検証してRetry |
+| NonResponsiveContact | 有効逆質量が閾値以下の正常な非応答Contact。Position / ImpulseをSkipし、Diagnostic Counterへ記録 |
 | CCDIterationLimit / CCDUnresolved | TickをRollbackし、Substep / CCD設定変更後に再実行 |
 | InitialPenetrationLimit | Initial StateをCommitしない |
 | NonFiniteState | TickをReject。自動Fallbackしない |
@@ -784,6 +798,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.6: 任意tauを評価できるGPU Animation Trajectory Packet / Span契約、最大2 Track Blend / BlendVelocity、非応答ContactのW_eff判定、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limitを追加。
 - 1.5: Contact Position補正とContact前Velocity / Impulse処理の分離、Animation Trajectory微分の正本化、Kinematic CCDの保守的Chord Bound、GPU Memory Budgetの0 sentinel修正、Cloth Temporal Quality Limitを追加。
 - 1.4: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時間を使うXPBD Compliance、Impact後残Segmentの再評価規則を明文化。
 - 1.3: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / ClothのSegment積分同期、Kinematic Velocity所有規則をRuntime Scheduler / TOI契約へ反映。
