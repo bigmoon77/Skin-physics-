@@ -224,7 +224,7 @@ NarrowphaseではVT / EEの連続判定を候補とし、Time of Impactまたは
 
 ## 8. アニメーション連携
 
-CPU Animation EvaluatorはClip Key / Loop / Blend Weight / Root Transform境界ごとにSpan Packetを作り、GPU Trajectory Evaluatorが任意tauのBone / Skinning Target PositionとVelocityを評価する。v1は最大2 Trackの非Additive Blendとし、Blend Weight時間微分を含める。Animation Target Velocityは最終Skinning Target PositionのSimulation Time微分を正本とし、STEP / LINEAR / CUBICSPLINE / Clip Blendの補間微分とPlayback Speedを反映する。Render Frameや前StepのPosition差分から速度を推定しない。
+CPU Animation EvaluatorはClip Key / Loop / Blend Weight / Root Transform / Collider Sample境界ごとにSpan Packetを作り、GPU Trajectory Evaluatorが任意tauのBone / Skinning / Collider Transform / Contact Point Velocityを評価する。CPU Absolute Timeはdouble、GPUはSpan-local normalized floatとSegment-relative tauを使い、Absolute World TimeをfloatへCastしない。固定SM5 Packet ABIと各Segmentでのnormalized cursor更新を検証する。v1は最大2 Trackの非Additive Blendとし、Blend Weight時間微分を含める。Animation Target Velocityは最終Skinning Target PositionのSimulation Time微分を正本とし、STEP / LINEAR / CUBICSPLINE / Clip Blendの補間微分とPlayback Speedを反映する。Render Frameや前StepのPosition差分から速度を推定しない。
 
 Fixed / Kinematic VertexはSegment終端TargetとTrajectory Velocityを維持する。Dynamic Vertexは非接触内部Constraintを解いた後、Contact Position Constraintを解く前にContact前Velocityを再構築して保存する。Contact位置補正後のPosition差分からVelocityを再構築しない。Teleport / Reset / Clip Discontinuity / Time Rewindでは明示Discontinuity Policyが決めたTarget / Velocityを渡し、不連続を跨ぐ有限差分で速度を生成しない。詳細規則はdetailed_design.md §5.3 / §6.6 / §8.5 / §11.4を正とする。
 
