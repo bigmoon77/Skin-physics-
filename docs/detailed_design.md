@@ -320,7 +320,7 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         gpu_float4 weight_coefficients;  // scalar Cubic Hermite c0..c3
         float duration_seconds;
         float inverse_duration;
-        float reserved1;
+        float blend_start_offset_seconds;
         float reserved2;
     };
 
@@ -395,9 +395,31 @@ Colliderのrotation_start / rotation_endはLocal-to-World Quaternion。angular_a
 | animation_span_gpu_record (80 B) | span_id=0, version_low=4, version_high=8, first_track=12, track_count=16, first_channel=20, channel_count=24, first_blend=28, blend_count=32, first_collider=36, collider_count=40, flags=44, span_duration=48, inverse_span_duration=52, u_segment_start=56, speed_bound=60, acceleration_bound=64, chord_deviation_bound=68, quaternion_normalization_lower_bound=72, reserved0=76 |
 | animation_track_gpu_record (32 B) | clip_index=0, first_channel=4, channel_count=8, flags=12, clip_time_start=16, clip_time_delta=20, playback_speed=24, reserved0=28 |
 | animation_channel_gpu_record (224 B) | node_index=0, parent_index=4, inverse_bind_record_index=8, interpolation_flags=12, channel_mask=16, node_role_flags=20, reserved0=24, reserved1=28, translation_c0=32, translation_c1=48, translation_c2=64, translation_c3=80, rotation_parameter0=96, rotation_parameter1=112, rotation_parameter2=128, rotation_parameter3=144, scale_c0=160, scale_c1=176, scale_c2=192, scale_c3=208 |
-| animation_blend_gpu_record (48 B) | source_track_index=0 (Span-relative), target_track_index=4 (Span-relative), weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, reserved1=40, reserved2=44 |
+| animation_blend_gpu_record (48 B) | source_track_index=0 (Span-relative), target_track_index=4 (Span-relative), weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, blend_start_offset_seconds=40, reserved2=44 |
 | kinematic_collider_gpu_record (128 B) | stable_id_low=0, stable_id_high=4, span_sample_pair_id=8, flags=12, translation_start=16, translation_end=32, rotation_start=48, rotation_end=64, angular_axis_and_angle=80, duration=96, inverse_duration=100, linear_speed_bound=104, angular_speed_bound=108, maximum_local_radius=112, sagitta_bound=116, reserved0=120, reserved1=124 |
 
+#### Record Reference / Flag / Coefficient Semantic
+
+- Span Recordのfirst_*_record / *_record_countは各StructuredBufferに対する絶対Element Index / Count。Track Recordのfirst_channel_record / channel_record_countもChannel Buffer内の絶対Range。Track Recordのparent_indexは同じSpan / Track Channel Range内のParent Channel Record絶対Index。Root NodeはUINT32_MAX。Channel BufferはParentがChildより小さいIndexになるTopological Orderで格納する。
+- node_indexはAsset Node Index。inverse_bind_record_indexはImmutable Inverse Bind Matrix Bufferの絶対Index。Joint Roleを持つRecordは有効Index必須。非Joint NodeはUINT32_MAX。Mesh Node / Root / Required AncestorもChannel Recordへ含める。
+- channel_maskはbit0=Translation、bit1=Rotation、bit2=Scale。未設定ChannelはRest Local Transformの定数値。interpolation_flagsはTranslation bit0..1、Rotation bit2..3、Scale bit4..5。各2-bit値は0=STEP、1=LINEAR、2=CUBICSPLINE、3=Invalid。Reserved bitは0。
+- node_role_flagsはbit0=Joint、bit1=Mesh Node、bit2=Model Root、bit3=Required Joint Ancestor。複数Roleを許可する。Track flagsはbit0=Loop、bit1=Reverse Playback。clip_time_deltaはSpan内の符号付きClip Local Time差、playback_speed=clip_time_delta/span_durationを検証する。
+- Span flagsはbit0=Has Blend、bit1=Has Kinematic Collider、bit2=Has Root Motion。Blend weight_curve_flags bit0=Enabled。source_track_index / target_track_indexはSpan Track Range内の相対Index。範囲外参照はPacket Invalid。
+- Collider flagsはbit0=Kinematic、bit1=Shortest Arc Slerp。Reserved bitは0。
+
+Translation / ScaleはChannel Recordのc0..c3からp(u)=c0+c1*u+c2*u²+c3*u³で評価する。STEPではc0=value、他係数0。LINEARではc0=p0、c1=p1-p0、c2=c3=0。CUBICSPLINEはSpanの符号付きClip Time Deltaを含めてHermite係数へ変換する。
+
+rotation_parameter0..3はRotation Channel専用。STEPでは正規化Quaternionをparameter0へ格納し、他は0。LINEARではHemisphere整合済みq0 / q1をparameter0 / parameter1へ格納し、Shortest-Arc Slerpと解析微分を評価する。CUBICSPLINEでは正規化前Raw Quaternionの各4成分についてCubic Coefficient c0..c3をparameter0..3へ格納し、r(u)を評価後q=r/|r|へ正規化する。q_dot=(r_dot-q*dot(q,r_dot))/|r|。Quaternion Normalization Lower BoundはSpan Recordで保証する。
+
+Blend Recordのweight_coefficientsはSpanを覆うBlend Curveのnormalized Blend Coordinate vに対するScalar Polynomial c0..c3。blend_start_offset_seconds=t_span_start-t_blend_start、duration_seconds=t_blend_end-t_blend_startとし、
+
+    v = clamp((blend_start_offset_seconds + u_tau * span_duration_seconds) * inverse_duration, 0, 1)
+    w = c0 + c1*v + c2*v^2 + c3*v^3
+    w_dot = (c1 + 2*c2*v + 3*c3*v^2) * inverse_duration
+
+で評価する。Blendが存在しないSpanはHas Blendを0、Blend Record Countを0とする。
+
+gpu_matrix4x4 Inverse Bind MatrixはColumn-Majorの4列gpu_float4で保存する。Skin Matrixはinverse(mesh_node_global) * joint_global * inverse_bind_matrix。Node Global MatrixはParent IndexのTopological Orderで評価し、Mesh Node / Root / 全Joint Ancestorを含めて構築する。
 Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。angular_axis_and_angle.xyzはWorld Space回転軸、wはShortest-Arc角度[rad]。Constant-Speed Slerpのomega_world = axis_world * angle / span_duration。Slerp回転の最大点加速度Boundにはomega_max^2 * maximum_local_radiusを加える。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
 
 CPUはdoubleのSpan開始・終了時刻とSegment開始時刻から、正規化Span座標u_segment_startを計算してfloatへ変換する。GPUへの時間入力はAbsolute World Timeを含めず、Segment開始からの相対時間tau [s]だけを渡す。
