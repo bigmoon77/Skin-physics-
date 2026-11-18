@@ -5,12 +5,12 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.8
+- 文書バージョン: 1.9
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.9
-- 対応詳細設計: detailed_design.md 1.11
-- 前版: 1.7
+- 対応基本設計: basic_design.md 1.10
+- 対応詳細設計: detailed_design.md 1.12
+- 前版: 1.8
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -861,7 +861,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 以下を満たした時点でGPU Runtime実装に進める。
 
-- 基本設計1.9 / 詳細設計1.11 / 本書1.8の独立Critical Reviewで重大な設計矛盾が0件。
+- 基本設計1.10 / 詳細設計1.12 / 本書1.9の独立Critical Reviewで重大な設計矛盾が0件。
 - Gate R0-R6の責務、入力、出力、失敗状態、検証Fixtureが追跡可能。
 - Corotational FEM / XPBD Cloth / Contactの式とCPU Double Oracleが一致している。
 - Runtime APIとDevice / Context / Render Bindingの所有権が確定。
@@ -872,6 +872,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.9: Immutable Trajectory PacketとMutable per-World Span Cursorを分離し、Cursor UAV / Segment Snapshot Rollback / R5 ABI Isolation Gateを追加。
 - 1.8: Span / Track / Channel / Blend / Colliderの固定Byte Offset / Flags / Node / Inverse Bind参照、Blend Curve時刻写像、Collider Angular Axis / Velocity、StructuredBuffer ABI検証を確定。
 - 1.7: Shader Model 5固定幅GPU Packet ABI / Byte Offset、CPU double絶対時刻とGPU Span-local float時刻、各Segmentでのnormalized cursor更新、任意tauのBone / Collider評価、Kinematic Collider Record、Segment Preflight Reservation順序を明文化。GPU ABI Readback / Time Precision Gateを追加。
 - 1.6: GPU Animation Trajectory Packet / Spanと任意tau評価、最大2 Track Blend / BlendVelocity、Contact有効逆質量Guard、Coupled Projected Jacobi Impulse、Contact Temporal Quality LimitをRuntime Descriptor / Gateへ反映。
