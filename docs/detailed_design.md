@@ -935,22 +935,23 @@ GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはEvent Query�
 
 各段階でレビューと試験結果を記録する。前段の完了条件を満たさず次段へ進まない。Phase 12のRuntime境界、API、GPU Commit State Machine、Error / Device Lossは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
-## 19. 残課題・実装前に確定する項目
+## 19. 実装前に残る実測・校正タスク
 
-- Corotational Linear Elasticityの適用可能ひずみ範囲と、Neo-Hookean比較が必要となる境界
-- SVD異常要素Passの精度とコスト
-- μ/K/ρの代表材料プリセットと安定時間刻み
-- Soft Body / Cloth材料プリセットの初期値とUI許容範囲の実測調整
-- Bend微分の数値検証・finite difference test
-- Spatial Hashのbase cell width、level数、max_cells_per_primitive
-- Contact Patchの初期閾値と、Conservative Advancementのsafety / tolerance / 最大分割数の実測調整
-- GPUバッファの容量初期値・上限・GTX 1660 SUPER実メモリ予算
-- glTF skin influence・AnimationClipのImporterテストセット
-- numerical_acceptance_profile_v1.jsonの初期値が既存Golden Fixture / 解析Fixture / WARPで誤判定を起こさないことの校正
-- Fixed Delta変更時のin-flight Tick、Accumulator、XPBD Lambdaの安全な切替手順の統合試験
-- in-flight tick上限1 / 2 / 4のGPU物理性能・Query Ring遅延比較
-- Render Publish方式（GPU Copy / Compute Publish）の追加VRAM・GPU時間計測
-- GPU Runtime API / D3D11 Resource Interop / Device LossのPhysical Hardware統合試験
+以下は設計上の未決定事項ではなく、本書で定義した方式・初期値・モデル適用範囲をGolden Fixture / WARP / Physical GPUで検証するタスクである。閾値を満たさない場合は原因を分類し、設計またはProfile Versionを改訂する。測定前にAcceptance Gateを緩和しない。
+
+- Corotational Linear Elasticityの検証領域（Rigid Rotation、Affine Stretch / Shear、J=0.9 / 1.1、J=0.7 / 1.3、局所押込み、反転直前）での精度・安定性。保証領域外の大変形はv1の品質保証範囲としない。必要ならNeo-Hookeanを別候補として比較する。
+- Polar / SVD fallbackの直交性残差、det(R)、特異値Floor、異常要素比率、GPU時間をNumerical Profileで検証する。
+- μ / K / ρ / E_2D / G_2D / D / tracking stiffness / dampingは単位付きScenario Materialとして入力する。代表値はfixtureごとに固定し、Run Manifestへ記録する。
+- Bend解析勾配とcentral finite differenceの相対誤差 <=1e-3、退化Hinge分岐、Jacobi収束を検証する。
+- Spatial Hashの64 cells / Primitive、最大24 level、Large Primitive Bucket、Pair Dedupの完全性と候補数を小規模全探索Fixtureで検証する。
+- Contact Patch最大4 Support PointのReduction前後で最大貫通・法線分布・支持範囲を測定し、未縮約Manifold参照と比較する。Patch分割条件もFixtureで検証する。
+- CCD eta / safety / tolerance / CA 32 iteration / TOI 2 splitの見逃し・未解決率をMoving VT / EE Fixtureで測定する。False No-HitとUnresolvedの診断を独立して集計する。
+- GPU Buffer Capacity Growth、旧Resource Set退役時のPeak Bytes、DXGI Local Memory Budget、Render Candidate Ringを含むVRAMピークをGTX 1660 SUPERで確認する。
+- glTFの1 / 4 / 8 Skin Influence、STEP / LINEAR / CUBICSPLINE、複数Skin / Mesh Instance、OBJ Unit Error、未対応Morph / Draco / MeshoptのDiagnostic Fixtureを拡張する。
+- numerical_acceptance_profile_v1.jsonの全閾値を既存Golden Fixture / Analysis Fixture / WARPで校正し、低解像度Hardware GPUでFP32 / Double差を測定する。
+- Fixed Delta変更・Time Scale・Pose履歴不足・複数WorldのTick Scheduler・in-flight 1 / 2 / 4・Render Lease解放のRuntime統合試験を行う。
+- Render Candidate Ringの追加VRAM、Position / Normal / Tangent生成時間、CPU-observed committed-prefix遅延を測定する。
+- Device Loss / World Destroy / Query Ring pressure / Capacity retryをHardware D3D11で検証する。
 
 ## 20. 参考資料
 
@@ -974,7 +975,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 
 
-## 22. GPU Runtime / Library Integration（v1.3）
+## 22. GPU Runtime / Library Integration（v1.4）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
@@ -988,7 +989,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 後続Tickのtick_begin_controlと全Budgeted Physics Passは先行TickのCommit Sequence / State Generationを確認する。先行Tickが失敗した場合、後続TickはPhysics StateのRead / Write前にBLOCKED_BY_PREDECESSORとして停止する。先行TickをRetryしてCommitした後、後続Tickを新しいGenerationで再Submissionする。
 - get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した最後のCPU-observed committed State Generationを返す。未確認GPU CommitやWorking BufferをRendererへ公開しない。
 - Capacity Overflow / CCD Unresolved / NonFinite / Physical Quality Gate失敗はTickをCommitしない。再試行は同一Tick InputとInitial Snapshotから行い、候補を黙って捨てない。
-- Render Feedback / Publishは成功Commit後に行い、追加Buffer / Copy / Dispatch / VRAM / GPU時間をPerformance Runへ含める。
+- Render Feedback Candidateは専用SlotへCommit前に生成・検証し、GPU Commit ControlがPhysics StateとRender Slot参照を同時に切り替える。CPU-observed committed prefixのみをHostへ公開する。Render Candidate RingはWorldごとにmaximum_in_flight_ticks + 1 Slotとし、Lease解放前のSlotを再利用しない。追加Buffer / Copy / Dispatch / Ring VRAM / GPU時間をPerformance Runへ含める。
 - Device Loss時は新規Submissionを停止し、Asset / Initial StateからWorldを再構築してTimelineをResetする。毎Frameの全State Readbackで復旧しない。
 - 数値・物理品質の初期比較基準はnumerical_acceptance_profile_v1.jsonを使い、同一Solver Algorithm / Update OrderのCPU Double Referenceと比較する。異なるSolver方式同士はAnalytical FixtureとPhysical Invariantで比較する。
 - Production Runtimeの実装開始は独立Critical ReviewとGate R0～R6の実装計画承認後とする。
