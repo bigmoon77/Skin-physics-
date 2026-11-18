@@ -259,6 +259,22 @@ CPU SchedulerはWorld Simulation Timeの絶対時刻、Tick Reservation、Animat
 
 GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う。
 
+    struct gpu_float4
+    {
+        float x;
+        float y;
+        float z;
+        float w;
+    };
+
+    struct gpu_matrix4x4
+    {
+        gpu_float4 column0;
+        gpu_float4 column1;
+        gpu_float4 column2;
+        gpu_float4 column3;
+    };
+
     struct animation_span_gpu_record
     {
         uint32_t span_id;
@@ -301,7 +317,7 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         uint32_t target_track_index;
         uint32_t weight_curve_flags;
         uint32_t reserved0;
-        float4 weight_coefficients;  // scalar Cubic Hermite c0..c3
+        gpu_float4 weight_coefficients;  // scalar Cubic Hermite c0..c3
         float duration_seconds;
         float inverse_duration;
         float reserved1;
@@ -314,11 +330,11 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         uint32_t stable_collider_id_high;
         uint32_t span_sample_pair_id;
         uint32_t flags;
-        float4 translation_start;
-        float4 translation_end;
-        float4 rotation_start;
-        float4 rotation_end;
-        float4 angular_axis_and_angle;
+        gpu_float4 translation_start;
+        gpu_float4 translation_end;
+        gpu_float4 rotation_start;
+        gpu_float4 rotation_end;
+        gpu_float4 angular_axis_and_angle;
         float duration_seconds;
         float inverse_duration;
         float linear_speed_bound;
@@ -339,41 +355,25 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         uint32_t node_role_flags; // joint / mesh node / root / required ancestor
         uint32_t reserved0;
         uint32_t reserved1;
-        float4 translation_c0;
-        float4 translation_c1;
-        float4 translation_c2;
-        float4 translation_c3;
-        float4 rotation_parameter0;
-        float4 rotation_parameter1;
-        float4 rotation_parameter2;
-        float4 rotation_parameter3;
-        float4 scale_c0;
-        float4 scale_c1;
-        float4 scale_c2;
-        float4 scale_c3;
+        gpu_float4 translation_c0;
+        gpu_float4 translation_c1;
+        gpu_float4 translation_c2;
+        gpu_float4 translation_c3;
+        gpu_float4 rotation_parameter0;
+        gpu_float4 rotation_parameter1;
+        gpu_float4 rotation_parameter2;
+        gpu_float4 rotation_parameter3;
+        gpu_float4 scale_c0;
+        gpu_float4 scale_c1;
+        gpu_float4 scale_c2;
+        gpu_float4 scale_c3;
     };
 
 animation_span_gpu_record is exactly 80 bytes, animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start. After every positive-time Segment advance within the same Span, GPU updates it by `u_segment_start += dt_segment * inverse_span_duration`; a TOI prefix uses `tau` in place of `dt_segment`. If the next Segment begins at a Span boundary, Scheduler selects the next immutable Span Record and initializes its `u_segment_start=0`. GPU verifies that every positive-time advance makes u_segment_start strictly increase; failure returns `ANIMATION_TIME_PRECISION_UNRESOLVED` and prevents Commit. No CPU Readback is used to update the normalized cursor.
 
-GPU Shared Float TypeはC++側で次のPODを使い、DirectXMath / SIMD型を直接使わない。
+GPU Shared Recordは上記gpu_float4 / gpu_matrix4x4を使用する。HLSL側のgpu_float4はfloat4、gpu_matrix4x4は明示的なcolumn_major float4x4として同じColumn-Major Storageへ対応させる。
 
-    struct gpu_float4
-    {
-        float x;
-        float y;
-        float z;
-        float w;
-    };
-
-    struct gpu_matrix4x4
-    {
-        gpu_float4 row0;
-        gpu_float4 row1;
-        gpu_float4 row2;
-        gpu_float4 row3;
-    };
-
-gpu_float4はsizeof=16 / alignof=4、gpu_matrix4x4はsizeof=64 / alignof=4とする。MatrixはAsset / HLSLで統一したColumn-Major Storageを使い、CPUからUploadする直前に既定のAsset Matrix Conventionへ変換する。逆Bind MatrixはImmutable Asset Buffer内のgpu_matrix4x4として保存し、inverse_bind_record_indexはこのStructuredBuffer内の絶対Element Indexを参照する。非Joint NodeはUINT32_MAXとする。Record Structは標準レイアウト / Trivially Copyable / alignof=4とし、#pragma packでField Alignmentを暗黙に変えない。
+gpu_float4はsizeof=16 / alignof=4、gpu_matrix4x4はsizeof=64 / alignof=4とする。MatrixはAsset / HLSLで統一したColumn-Major Storageを使い、column0..column3に16個のfloatを格納する。CPUからUploadする直前に既定のAsset Matrix Conventionへ変換する。逆Bind MatrixはImmutable Asset Buffer内のgpu_matrix4x4として保存し、inverse_bind_record_indexはこのStructuredBuffer内の絶対Element Indexを参照する。Joint Nodeは必ず有効Indexを持ち、非Joint NodeはUINT32_MAXとする。Record Structは標準レイアウト / Trivially Copyable / alignof=4とし、#pragma packでField Alignmentを暗黙に変えない。C++のgpu_float4とHLSL float4のfield offsetsはx=0,y=4,z=8,w=12である。
 
 #### Channel / Track / Blend Flagsと係数の意味
 
