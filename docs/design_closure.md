@@ -160,14 +160,16 @@ v1ではWorld内のSoft Body / Cloth / Contact / Animation Trackingが同一時�
     N_world = max(minimum_substeps, ceil(fixed_delta_time / dt_limit_world))
     dt_world = fixed_delta_time / N_world
 
-を算出する。制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。N_worldが上限を超えた場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitせずReservationを保持する。Cloth / Contact XPBDのComplianceは同じdt_worldを使う。TOIはWorld共通Substep内のSegment分割とし、全参加Solverを同じSegment時間だけ進める。
+を算出する。制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。world_max_substep_delta_timeはSoft Body / Cloth / Contact / Animation Trackingすべてへ適用する共通dt上限であり、Cloth / Contactの品質要求によりさらに細かい刻みが必要な場合もこのWorld設定で制限する。N_worldが上限を超えた場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitせずReservationを保持する。Cloth / Contact XPBDのComplianceは同じdt_worldを使う。TOIはWorld共通Substep内のSegment分割とし、全参加Solverを同じSegment時間だけ進める。
 
 Force / Impulseの空間分配:
+- Gravityは一様加速度としてPhysics Vertex iへrest_lumped_mass_i * gravityを適用する。
 - phi(s)=(1-s)^4(4s+1), s=r/R, 0<=s<1。
-- q_i = rest_lumped_mass_i * phi(s_i)、w_i=q_i/sum(q)。
+- q_i = rest_lumped_mass_i * phi(s_i)、w_i=q_i/sum(q)。各Eventのw_iはそのEventの対象Filter内で独立に総和1へ正規化する。
+- r_iはWorld共通Segment開始位置からEvent作用点までの距離。WeightはSegment内で固定する。
 - Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Mass。Fixed Vertexにも分配し、逆質量0で拘束反力を表す。
-- ForceはN単位のF_i=w_i*F_totalとしてSegment全体へ作用。Force start/endでWorld Segmentを分割し、F_i*dt_segmentだけ運動量へ加える。
-- ImpulseはN*s単位のJ_i=w_i*J_eventとしてSegment開始で一度だけ適用。Event IDでRetry中の二重処理を防ぐ。
+- ForceはN単位の方向付きVectorをF_i=w_i*F_totalとしてSegment全体へ作用。Force start/endでWorld Segmentを分割し、F_i*dt_segmentだけ運動量へ加える。
+- ImpulseはN*s単位の方向付きVectorをJ_i=w_i*J_eventとしてSegment開始で一度だけ適用。Event IDでRetry中の二重処理を防ぐ。
 - radiusは正の有限値。サポート対象0または重み総和epsilon以下はNO_FORCE_TARGET。
 
 ## 3. Asset / Material / Animation
@@ -274,7 +276,7 @@ Render Candidate Ring:
 
 - destroy_model / destroy_colliderは対象Worldのin-flight Tickが0件、対象Resourceを参照するTick Reservationが存在せず、Host Render Leaseが存在しない場合だけ成功する。BLOCKED_BY_INPUT / Render Backpressure中の未Submission要求はModel / Collider Snapshotを固定していないため、Destroy後の次回Scheduler評価で現在のWorld構成を使う。条件不足はBUSY。成功するまでHandle / Resourceは有効。
 - reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功する。Pending Reservation / Accumulator / Step Queue / Contact Cache / Lambda / Diagnostic / requested / cancelled / committed / observed timeline countersをResetし、保存済みInitial Stateへ戻る。
-- destroy_worldはPaused / Stopped、in-flight Query / Tick = 0、Host Lease = 0、Pending Reservation / Pending Step Request = 0、Accumulator whole tick = 0でのみ成功する。条件不足はBUSY。未割当Accumulatorにwhole tickが残る場合はDestroy前にStop / Resetで明示的に取消し、Diagnosticへ残す。
+- destroy_worldはPaused / Stopped、in-flight Query / Tick = 0、Host Lease = 0、Pending Reservation / Pending Step Request = 0、未割当Accumulator = 0でのみ成功する。条件不足はBUSY。残時間の破棄はStop / Resetによる明示操作とし、whole tick / fractional remainderの取消しをDiagnosticへ残す。
 - GPU Command / Queryが参照したResourceはCompletion QueryまでDeferred Release Listで保持する。
 - drain()は明示的な非Frame API。新規Submissionを停止し、既にSubmission済みGPU Tick / Queryの完了とDeferred Releaseを待つ。未割当Accumulator whole tick、未処理Step Request、Host Leaseがある場合はBUSYを返す。Host Leaseを強制Releaseしない。
 - shutdown()は全WorldがDestroy済み、Query Ring Idle、Deferred Release List空、Host Lease=0の時だけCOM Resourceを解放してOK。条件不足ならBUSYを返し、Runtime状態を壊さない。Runtime Destructor前にshutdown成功が必要。
