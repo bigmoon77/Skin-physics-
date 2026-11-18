@@ -275,7 +275,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         };
     }
 
-Resource Lifecycleの破棄契約は次の通りとする。destroy_model / destroy_colliderは対象Worldのin-flight Tickが0件で、Host Render Leaseが存在しない場合のみ成功する。該当条件を満たさなければBUSYを返し、HandleとResourceを維持する。reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功し、Accumulator / Pending Reservation / Step Queue / Contact Cache / Lambda / DiagnosticをInitial Stateへ戻す。destroy_worldはPaused / Stoppedで、in-flight Tick / Query未回収 / Host Lease / Pending Step Requestが全て0のときのみ成功し、条件不足ではBUSYを返す。destroy操作の成功後、GPU QueryやCommand Streamが参照するResourceはそのCompletion Queryが完了するまでDeferred Release Listに保持する。
+Resource Lifecycleの破棄契約は次の通りとする。destroy_model / destroy_colliderは対象Worldにin-flight Tick、未Submission Reservation、Pending Step Request、Host Render Leaseが一つもない場合のみ成功する。条件不足ではBUSYを返し、HandleとResourceを維持する。reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功し、Accumulator / Pending Reservation / Step Queue / Contact Cache / Lambda / DiagnosticをInitial Stateへ戻す。destroy_worldはPaused / Stoppedで、in-flight Tick / Query未回収 / Host Lease / Pending Reservation / Pending Step Request / 未割当Accumulatorのwhole tickが全て0のときのみ成功し、条件不足ではBUSYを返す。destroy操作の成功後、GPU QueryやCommand Streamが参照するResourceはそのCompletion Queryが完了するまでDeferred Release Listに保持する。
 
 drain()は明示的な非Frame APIである。新規Tick Submissionを停止し、既にSubmission済みのGPU Query / TickのCompletionとDeferred Releaseを待つ。未割当Accumulatorのwhole Tick、未Submission Reservation、Step RequestまたはHost Render Leaseがある場合はBUSYを返す。DrainはHost Leaseを強制Releaseせず、HostにUnbind / Releaseを要求する。shutdown()は全WorldがDestroy済み、Query RingがIdle、Deferred Release Listが空、Host Leaseが0のときだけOKを返してCOM参照・Library Resourceを解放する。それ以外はBUSYを返し、状態を破壊しない。Runtime Destructorはshutdown成功後に呼び出す契約とする。通常Frame PathにFlush / 同期Waitを入れない。明示drain()のみGPU Event Queryの完了待ちを許可する。
 
@@ -324,7 +324,7 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
 | world_status | submitted_sequence / gpu_committed_sequence / cpu_observed_sequence | GPU CommitとCPU確認済みprefixを別々に保持 |
 | world_status | playback_state / tick_state / terminal_error / simulation_backlog | 状態、最終エラー、遅延・未処理時間を報告 |
-| world_status | requested_simulation_time / reserved_tick_time / gpu_committed_simulation_time / cpu_observed_completed_time | 未割当時間、Tick Reservation時間、GPU Commit時間、CPU確認時間を別々に報告 |
+| world_status | requested_simulation_time / cancelled_requested_time / effective_requested_time / reserved_tick_time / gpu_committed_simulation_time / cpu_observed_completed_time | 要求時間、未Reservation取消時間、有効要求時間、Tick Reservation時間、GPU Commit時間、CPU確認時間を別々に報告 |
 | render_binding | position_srv / normal_srv / tangent_srv | Commit済みPhysics Stateから生成したRead-only SRV |
 | render_binding | format / stride / vertex_count / index_count | Host RendererがDrawを構成するためのLayout |
 | render_binding | resource_generation / device_generation / committed_tick_sequence | Stale Binding検出と描画状態の追跡 |
@@ -401,9 +401,11 @@ CPU側のFixed Step制御はWall Clockから必要Logical Tick数を算出する
 
 管理する時刻は次の3つに分ける。
 
-1. requested_simulation_time: Time Scale適用後、HostがRuntimeへ供給した累積時間。
+1. requested_simulation_time: Time Scale適用後のadvance供給時間と、受理したsingle_step要求時間を合算した累積要求時間。
 2. gpu_committed_simulation_time: GPU Commit Controlが連続成功したLogical Tickの累積時間。
 3. cpu_observed_completed_time: Event Query完了とCOMMITTED Status ReadbackをCPUが確認した連続Tick Prefixの累積時間。
+
+requested_simulation_timeは受理した全要求の累積値であり、Pause / Stop / Resetによる未Reservation Step Requestの取消しでも減算しない。取消した未Reservation Step時間はcancelled_requested_timeへ加算し、effective_requested_time = requested_simulation_time - cancelled_requested_timeとして表示・Backlog評価に使う。Commit済み・Reservation済みStepは取消対象にしない。
 
 各Logical Tickには固定Delta Timeの時間区間、Tick Sequence、Input Snapshot、時間ソース（Accumulator / single_step）を持つTick Reservationを割り当てる。Submission時にAccumulatorからdtを消費する場合、そのdtはAccumulatorからTick Reservationへ移動したものとして記録し、in-flight / blocked / retry中の予約時間として保持する。GPU Commit成功時だけReservationをCommittedへ移す。CPU Observationは表示・Status更新だけを行い、AccumulatorやSimulation Timeを加減算しない。
 
@@ -418,7 +420,8 @@ Capacity / CCD / Predecessorによる一時Blockは同じTick SequenceとReserva
 - SchedulerはAccumulatorにfixed_delta_time以上がある場合、かつin-flight / submission / render slot / input条件が許す場合に限りTick Reservationを作る。Reservation発行時点でAccumulatorからfixed_delta_timeを一度だけ差し引く。GPU Commit時に再度差し引かない。
 - Capacity / CCD / predecessorの一時RejectはReservationを同じSequenceで保持してRetryする。Tick N+1がPredecessor Gateで停止した場合はN+1のReservationを破棄せず、NがReplay / Commitした後に新しいSource Generationで再Submissionする。
 - 回復不能なFailureでWorldがFailedになった場合、当該Reservationおよび後続Pending Reservationは診断用に保持する。ResetはAccumulator、Reservation、Step Queueを明示的に破棄してInitial Stateへ戻す。
-- single_stepはwall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Reservationにはtime_source=single_stepを記録し、Commit時にSimulation Timeだけを1 Fixed Delta進める。複数要求は要求順に保持し、Stop / Reset時の破棄は明示的に診断する。
+- single_stepはPaused / Stopped中のみ受け付ける。受理時にrequested_simulation_timeへfixed_delta_timeを加算し、wall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Reservationにはtime_source=single_stepを記録する。Commit時にGPU committed timeを1 Fixed Delta進める。
+- Stop / Resetが未Reservation Step Requestを破棄する場合、その固定時間をcancelled_requested_timeへ加算し、破棄数・時間をDiagnosticへ残す。既にTick ReservationとなったStepは通常のin-flight / Retry契約に従い、取消し・二重要求を行わない。
 - D3D11 Immediate Contextは単一の順序付きCommand Streamである。PhysicsとRenderが独立GPU Queueで同時に動く前提を置かない。
 - 1 PhysicsSubmissionBatchは1 Logical Tickを含む。
 - 各Worldの初期上限はin-flight logical tick 2件、設定可能値は1 / 2 / 4件とする。Status Query RingはRuntime内の全Worldの上限合計以上のSlotを持ち、World追加時に不足すれば拡張する。未回収Slotを上書きしない。
