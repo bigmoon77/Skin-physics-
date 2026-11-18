@@ -809,6 +809,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - Multi-key glTF Clip / Skeleton / Mesh Node Matrix。
 - GPU Animation Span / Track / Channel / Blend Packet、任意tauのSkinning Position / Velocity / Bounds。
 - Fixed SM5 Packet ABI / Span-local normalized cursor monotonicity / float precision gate (Span 80 B / Track 32 B / Channel 224 B / Blend 48 B / Collider 128 B)。
+- Mutable World Cursor Buffer 16 B / Snapshot rollback / immutable Packet mutation count 0 gate。
 - 2 Track Clip Blend / w_dot / BlendVelocity Discontinuity。
 - Substepped target position / velocity。
 - Animation Discontinuity / Teleport Policy。
