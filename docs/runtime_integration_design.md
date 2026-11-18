@@ -10,6 +10,7 @@
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.8
 - 対応詳細設計: detailed_design.md 1.10
+- 前版: 1.6
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
