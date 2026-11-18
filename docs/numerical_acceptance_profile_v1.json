@@ -24,7 +24,10 @@
       "dimensionless_constraint": "mass_reference * length_reference * length_reference"
     },
     "normalization_is_computed_per_mesh_and_substep": true,
-    "impulse_reference": "mass_reference * velocity_reference"
+    "impulse_reference": "mass_reference * velocity_reference",
+    "contact_mass_reference": "median positive dynamic Physics Vertex mass pooled across every Mesh participating in the World Contact Solver; if no positive dynamic mass exists, all Contacts are NON_RESPONSIVE_CONTACT and no impulse reference is evaluated",
+    "contact_length_reference": "median positive rest-edge length pooled across every Mesh participating in the World Contact Solver",
+    "contact_impulse_reference": "contact_mass_reference * contact_length_reference / actual dt_contact (dt_segment for Discrete Contact; tau for TOI prefix)"
   },
   "gpu_float32_vs_cpu_double": {
     "position": {
@@ -175,11 +178,11 @@
       "iterations_max": 16,
       "relaxation_default": 0.5,
       "projected_residual_normalized_max": 0.0001,
-      "normalization": "impulse_reference",
+      "normalization": "contact_impulse_reference",
       "residual_definition": {
         "normal": "abs(j_n - max(0, j_n - (v_n_current - target_normal_velocity) / W_ii))",
         "tangent": "length(j_t - project_to_disk(j_t - v_t / W_ii, friction * (j_support + j_n)))",
-        "combine": "max(normal_residual, tangent_residual) / impulse_reference"
+        "combine": "max(normal_residual, tangent_residual) / contact_impulse_reference"
       },
       "unresolved_policy": "CONTACT_IMPULSE_UNRESOLVED rejects the entire Logical Tick; never commit a non-converged impact"
     },
@@ -190,6 +193,13 @@
       "projection_only_kinetic_energy_increase_max": 0.000001,
       "normalization": "energy_reference",
       "applies_to": "isolated contact fixtures without external work; measure post-Impulse velocity after removing positional projection work"
+    },
+    "integration_segment_budget": {
+      "maximum_integration_segments_per_tick_default": 512,
+      "overflow_commit_count": 0,
+      "boundary_coalescing_count_for_distinct_times": 0,
+      "undercounted_dynamic_toi_split_count": 0,
+      "overflow_policy": "WORK_BUDGET_EXCEEDED preserves the Tick Reservation; never merge distinct Animation / Force / Impulse / TOI boundaries"
     }
   },
   "reproducibility": {
@@ -221,7 +231,7 @@
     "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
     "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
     "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
-    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time."
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries."
   },
   "governance": {
     "thresholds_are_initial_engineering_candidates": true,
