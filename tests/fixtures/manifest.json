@@ -589,6 +589,10 @@
       {
         "id": "DCR_39_BLEND_VELOCITY",
         "test_case": 39
+      },
+      {
+        "id": "DCR_40_INTEGRATION_SEGMENT_BUDGET",
+        "test_case": 40
       }
     ]
   },
