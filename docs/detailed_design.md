@@ -126,7 +126,7 @@ GPUはRuntime Physics Stateの唯一の正とする。HostからGPU内部Solver 
 | cell_records | UAV出力 / SRV入力 StructuredBuffer<CellRecord> | Integration Segmentごと | 当該SegmentのSwept AABBによるSpatial Hash登録 |
 | contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | Integration Segmentごと | 当該SegmentのVT / EE候補 |
 | contact_data | SRV/UAV StructuredBuffer<ContactData> | Integration Segment / Contact Iterationごと | 接触法線・係数・λ Scratch。Segment開始時Reset |
-| vertex_contact_offsets / ids | StructuredBuffer<uint> | サブステップ | Vertex→Contact CSR |
+| vertex_contact_offsets / ids | StructuredBuffer<uint> | Integration Segmentごと | 現SegmentのContact集合に対するVertex→Contact CSR |
 | contact_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | Contact Iterationごと | Contact位置補正寄与。Velocity再構築には直接加算しない |
 | render_binding | StructuredBuffer<RenderBinding> | 初期化時 | Render Vertex対応 |
 | diagnostic_buffer | RWStructuredBuffer<uint> | Passごと | Count / Overflow / Error |
@@ -144,7 +144,7 @@ GPU ResourceはSRV/UAV両方のViewを必要に応じて作成し、同じBuffer
     struct physics_vertex_state
     {
         float4 position;
-        float4 previous_position;
+        float4 segment_start_position;
         float4 velocity;
         float4 predicted_position;
         float inverse_mass;
