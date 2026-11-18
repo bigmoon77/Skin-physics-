@@ -224,11 +224,9 @@ NarrowphaseではVT / EEの連続判定を候補とし、Time of Impactまたは
 
 ## 8. アニメーション連携
 
-Animation Interfaceは各物理頂点に対し、現在のアニメーション目標位置、前回の目標位置、アニメーション由来速度を供給する。
+Animation Interfaceは各物理頂点へ、World Integration Segment境界時刻のAnimation TargetとAnimation Velocityを供給する。Animation VelocityはTarget Trajectoryの時間微分とし、LINEARでは区間勾配、CUBICSPLINEでは評価曲線の微分を使う。Render Frameの差分だけから速度を推定しない。
 
-アニメーション由来速度は固定時間刻みを用いて目標位置差分から求めることを基本とする。物理速度とのブレンドや慣性の適用は、Animation Trackingのコンプライアンス・ウェイトと組み合わせて設計する。
-
-テレポート、リセット、クリップ切替、時間巻き戻し等の不連続イベントでは、速度差分をそのまま使わず、状態リセットまたは速度引継ぎポリシーを選択する。急激な速度スパイクを検出する上限・診断機能を持たせる。
+Fixed / Kinematic VertexはSegment終端TargetとAnimation Velocityを維持する。Dynamic Vertexのみ位置解決後に区間変位からVelocityを再構築する。Teleport / Reset / Clip Discontinuity / Time Rewindでは明示Discontinuity Policyが決めたTarget / Velocityを渡し、不連続をまたぐ有限差分で速度を捏造しない。詳細規則はdetailed_design.md §6.6 / §7.1.2を正とする。
 
 Hair Cards / Hair BundlesはClothとして扱う。Strand Hairの伸縮・曲げ・ねじりを表す専用モデルは将来拡張とする。
 
@@ -293,24 +291,18 @@ JSONはバージョン、固定時間刻み、初期状態、アニメーショ�
 
 Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は本書のGPU Runtime Integration DesignとGate R0～R6を通す。各段階の完了条件は詳細設計・testing_strategy.mdで定義する。Soft Bodyの構成式をNeo-Hookean XPBDへ無条件に置換せず、初期版はCorotational force-based FEMを維持する。
 
-## 14. 詳細設計への引継ぎ事項
+## 14. 詳細設計との責務境界・校正への引継ぎ
 
-- Soft Body候補モデルの具体的な構成式・積分法・材料パラメータ
-- Cloth各制約の制約関数・コンプライアンス・λ更新
-- Gather Jacobiの寄与式、正規化、緩和、収束性
-- Graph Coloring生成と色数増加時の切替基準
-- CSR隣接リスト構築と更新タイミング
-- VT / EEの接触制約式、質量配分、λ管理、摩擦・反発
-- Spatial Hashセルサイズ、三角形複数セル登録、大型要素処理、重複排除
-- Count / Prefix Sum / Fillの容量・再試行設計
-- CCDのVT / EE判定式、TOIまたはSpeculative Contact、適用基準
-- 初期貫通の最大修正量・停止条件
-- アニメーション速度・慣性・不連続イベント処理
-- Render Vertex Bindingのoffset座標系・許容誤差
-- 法線・接線更新、UVシーム・ハードエッジ処理
-- GPUバッファ構成、メモリ予算、Dispatch・同期順序
-- JSONスキーマとバージョン移行
-- GTX 1660 SUPERでの性能試験条件・数値受け入れ閾値
+本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.6および[runtime_integration_design.md](runtime_integration_design.md) v1.3で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
+
+- Soft Body Corotational FEM、応力・内部力・Segment積分・減衰: detailed_design.md §6。
+- Cloth Stretch / Shear / Bend / XPBD Lambda、外力・Impulse、World Integration Segment: detailed_design.md §7。
+- VT / EE、Contact Patch、双方向応答、摩擦・反発、退化接触: detailed_design.md §8。
+- Hierarchical Spatial Hash、Large Primitive LBVH、Capacity / No-Silent-Drop: detailed_design.md §9-10。
+- CCD / TOI、Segment retime、初期貫通修正: detailed_design.md §10-11。
+- Animation Target / Velocity、Render Binding、属性保持: detailed_design.md §5-6 / §12-13。
+- GPU Pass、Tick Transaction、Capacity、JSON、再現性、Gate R0-R6: detailed_design.md §14-19、runtime_integration_design.md §5-10。
+- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.jsonを正とする。
 
 ## 15. 参考OSS・技術資料
 
@@ -335,9 +327,10 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
 - 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加。
+- 1.5: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / Cloth共通のSegment予測、線形粘性減衰の積分、Fixed / Kinematic Velocityの所有規則を追加。
 
 
-## 17. GPU Runtime / Library統合方針（v1.4）
+## 17. GPU Runtime / Library統合方針（v1.5）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
@@ -348,7 +341,7 @@ Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Dire
 - GPU Submission、GPU Logical Tick Commit、CPU-observed completed prefixを分離する。Event QueryはGPU Command完了を示し、Tick成功はGPU Status Bufferで判定する。
 - Capacity Overflow、CCD Unresolved、NonFinite、Physical Quality Gate FailureはWorking StateをCommitしない。必要に応じて同じTick開始Snapshot・入力でRetryし、解決不能ならWorldをBlock / Failedとする。
 - Hostが利用できるGPUデータはCommitted State専用のRead-only Render Bindingとする。Render BindingはPosition / Normal / TangentのSRV、Stride / Count / Resource Generationを持つ。内部Solver Buffer / Scratch / Writable UAVを公開しない。
-- Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking安定条件からWorld共通Substep数を決定し、Soft Body / Cloth / Contact / Animation Trackingへ同一Substep時間を適用する。v1ではSolverごとの独立Subcyclingを行わない。
+- Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking安定条件からWorld共通Substep数を決定し、Soft Body / Cloth / Contact / Animation Trackingへ同一Substep時間を適用する。Force / Impulse Event境界とTOIでIntegration Segmentへ分割し、全参加Solverを同じSegment時間で進める。v1ではSolverごとの独立Subcyclingを行わない。
 - in-flight GPU Tickは既定2件、設定可能範囲1 / 2 / 4件とする。各TickのImmutable Dispatch Planと先行Tick Gateを必須とし、Status Query Ring容量は設定上限以上とする。性能比較で変更する場合は同じR0 Gateを再実行する。
 - GTX 1660 SUPER 6GBで3～40 FPSをWorkloadごとに測定する。全Asset規模に対する固定保証値を設けない。品質・衝突範囲・Iteration・Substep・時間を黙って削減しない。
 - CPU Reference / Analytical Fixture / WARPはCorrectness検証、物理GPUは性能・Memory検証と明確に分離する。
