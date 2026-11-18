@@ -94,11 +94,11 @@ WARP is a software D3D11 device. These tests establish shader compilation, dispa
 
 The current integration proposal is documented in:
 
-- [Basic design](docs/basic_design.md) 1.8
-- [Detailed design](docs/detailed_design.md) 1.10
-- [Design closure / v1 decisions](docs/design_closure.md) v2.0
+- [Basic design](docs/basic_design.md) 1.9
+- [Detailed design](docs/detailed_design.md) 1.11
+- [Design closure / v1 decisions](docs/design_closure.md) v2.1
 - [Requirements](docs/requirements.md) 1.1
-- [GPU Runtime / Library integration](docs/runtime_integration_design.md) 1.7
+- [GPU Runtime / Library integration](docs/runtime_integration_design.md) 1.8
 - [GPU Runtime UML](docs/uml/phase12_gpu_runtime.md)
 - [Numerical acceptance profile](docs/numerical_acceptance_profile_v1.json)
 - [Runtime test gates](docs/testing_strategy.md), R0-R6
