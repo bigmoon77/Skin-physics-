@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.1",
+  "profile_version": "1.2",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -23,7 +23,8 @@
       "length_constraint": "mass_reference * length_reference",
       "dimensionless_constraint": "mass_reference * length_reference * length_reference"
     },
-    "normalization_is_computed_per_mesh_and_substep": true
+    "normalization_is_computed_per_mesh_and_substep": true,
+    "impulse_reference": "mass_reference * velocity_reference"
   },
   "gpu_float32_vs_cpu_double": {
     "position": {
@@ -64,6 +65,18 @@
       "normalized_rms_max": 0.00001,
       "normalized_max_max": 0.0001,
       "normalization": "rest_length_for_length_constraints; dimensionless_for_shear; radians_for_bend; rest_length_for_contact"
+    },
+    "animation_trajectory_position": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "length_reference",
+      "reference": "independent CPU-double evaluation of the same Span Packet at identical normalized tau"
+    },
+    "animation_trajectory_velocity": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "velocity_reference",
+      "reference": "analytical derivative of the final blended, hierarchical, skinned trajectory"
     }
   },
   "local_operator_validation": {
@@ -92,6 +105,11 @@
     "xpbd_projected_lambda_delta_consistency": {
       "max_absolute_identity_error": 0.000001,
       "identity": "lambda_next - lambda_old equals applied_delta_lambda; position correction uses that same applied delta"
+    },
+    "animation_packet_derivative": {
+      "normalized_position_derivative_max": 0.00001,
+      "normalization": "velocity_reference",
+      "reference": "central difference of independent CPU-double trajectory at interior tau; do not sample across STEP / Span discontinuities"
     }
   },
   "physical_invariants": {
@@ -137,6 +155,41 @@
       "projection_only_kinetic_energy_increase_max": 0.000001,
       "normalization": "energy_reference",
       "applies_to": "fixtures with no external force / no incoming normal kinetic energy and restitution=0"
+    },
+    "animation_trajectory_bounds": {
+      "speed_underbound_count": 0,
+      "chord_deviation_underbound_count": 0,
+      "packet_version_mismatch_count": 0,
+      "reference": "independent CPU-double interval bounds plus adversarial dense samples inside every Animation Span",
+      "unbounded_span_policy": "split deterministically up to depth 8; then BLOCKED_BY_INPUT / CCDUnresolved and no commit"
+    },
+    "non_responsive_contact": {
+      "zero_effective_inverse_mass_response_count": 0,
+      "position_correction_count_for_non_responsive_contact": 0,
+      "impulse_contribution_count_for_non_responsive_contact": 0,
+      "diagnostic": "NON_RESPONSIVE_CONTACT exactly once per canonical contact event",
+      "threshold": "epsilon_inverse_mass = max(32*FLT_MIN, 1e-12 / world_median_positive_dynamic_vertex_mass)"
+    },
+    "coupled_contact_impulse": {
+      "iterations_default": 8,
+      "iterations_max": 16,
+      "relaxation_default": 0.5,
+      "projected_residual_normalized_max": 0.0001,
+      "normalization": "impulse_reference",
+      "residual_definition": {
+        "normal": "abs(j_n - max(0, j_n - (v_n_current - target_normal_velocity) / W_ii))",
+        "tangent": "length(j_t - project_to_disk(j_t - v_t / W_ii, friction * (j_support + j_n)))",
+        "combine": "max(normal_residual, tangent_residual) / impulse_reference"
+      },
+      "unresolved_policy": "CONTACT_IMPULSE_UNRESOLVED rejects the entire Logical Tick; never commit a non-converged impact"
+    },
+    "contact_impulse_energy": {
+      "restitution_range": "0 <= e <= 1",
+      "friction_cone_violation_count": 0,
+      "negative_accumulated_normal_impulse_count": 0,
+      "projection_only_kinetic_energy_increase_max": 0.000001,
+      "normalization": "energy_reference",
+      "applies_to": "isolated contact fixtures without external work; measure post-Impulse velocity after removing positional projection work"
     }
   },
   "reproducibility": {
@@ -168,7 +221,7 @@
     "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
     "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
     "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
-    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately."
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time."
   },
   "governance": {
     "thresholds_are_initial_engineering_candidates": true,
