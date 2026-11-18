@@ -382,6 +382,20 @@ CPU Physics Fallback、Contact候補のDrop、時間のDrop / Clampは禁止す�
 
 CPU completed_timeは、(1) Event Query完了、(2) Status=COMMITTED、(3) 先行Tickがすべて連続COMMITTED、を満たす最後のTickまで進める。Query完了順がTick Sequence順と異なっても、CPU observed completed prefixは連続したCOMMITTED Tickだけから構成する。Event QueryだけでTick成功とみなさない。通常FrameではParticle / Contact / Lambda全体をReadbackしない。
 
+### 6.5 複数in-flight Tickの依存関係
+
+Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhysicsSubmissionBatchをGPU完了前に発行できる。後続Tickの安全性はCPUのQuery Pollタイミングに依存させない。
+
+- BatchはTick Begin時にImmutable Dispatch Planを検査する。
+- Tick NがGPU Commit Controlで成功した場合だけ、Committed Sequence / State Generation / Active State Setを更新する。
+- Tick N+1の先行Submissionは、NのCommit Controlより後に同一Command Streamへ発行する。Nが成功していれば計画済みGenerationが一致し、NのCommit済み状態を入力として処理できる。
+- NがReject / Blockされた場合、N+1のTick Begin GateはGeneration / predecessor mismatchを検出し、Physics StateのRead / Write前に後続処理を抑止する。後続TickはBLOCKED_BY_PREDECESSORとなる。
+- CPUがNの非同期Statusを確認し、NをRetryしてGPU Commitした後、後続Tickを新しいState Generation / predecessor IDで再Submissionする。
+- どのBudgeted Physics Passもtick plan gateを迂回できない。Scheduler Control / Diagnostic PassだけがGate対象外である。
+- Query RingはStatus CopyとEvent Queryの両方をTick IDで対応付け、遅延・順序逆転・Slot再利用を検出する。
+
+これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。実際のState Set数、GPU Copy / Ping-Pong構成、Shader Binding TableはPhase 12実装前にResource ABI Reviewで確定し、Rollback SnapshotとRender Publishを含むVRAM / GPU時間を測定する。
+
 ## 7. GPU Pass / Dataflow Integration
 
 ### 7.1 World Logical Tick
@@ -600,18 +614,3 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - Async GPU Tick Schedulerの状態遷移とRollback / RetryがUML・テストケースで定義済み。
 
 **本書は独立レビューへ提出可能な設計改訂案であり、レビュー合格・実装完了・GTX 1660 SUPER性能達成を意味しない。**
-
-
-### 6.5 複数in-flight Tickの依存関係
-
-Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhysicsSubmissionBatchをGPU完了前に発行できる。後続Tickの安全性はCPUのQuery Pollタイミングに依存させない。
-
-- BatchはTick Begin時にImmutable Dispatch Planを検査する。
-- Tick NがGPU Commit Controlで成功した場合だけ、Committed Sequence / State Generation / Active State Setを更新する。
-- Tick N+1の先行Submissionは、NのCommit Controlより後に同一Command Streamへ発行する。Nが成功していれば計画済みGenerationが一致し、NのCommit済み状態を入力として処理できる。
-- NがReject / Blockされた場合、N+1のTick Begin GateはGeneration / predecessor mismatchを検出し、Physics StateのRead / Write前に後続処理を抑止する。後続TickはBLOCKED_BY_PREDECESSORとなる。
-- CPUがNの非同期Statusを確認し、NをRetryしてGPU Commitした後、後続Tickを新しいState Generation / predecessor IDで再Submissionする。
-- どのBudgeted Physics Passもtick plan gateを迂回できない。Scheduler Control / Diagnostic PassだけがGate対象外である。
-- Query RingはStatus CopyとEvent Queryの両方をTick IDで対応付け、遅延・順序逆転・Slot再利用を検出する。
-
-これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。実際のState Set数、GPU Copy / Ping-Pong構成、Shader Binding TableはPhase 12実装前にResource ABI Reviewで確定し、Rollback SnapshotとRender Publishを含むVRAM / GPU時間を測定する。
