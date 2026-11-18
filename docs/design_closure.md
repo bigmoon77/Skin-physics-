@@ -216,13 +216,15 @@ Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformと
 
 - Fixed Delta Time初期値=1/60 s。Test Environmentで正のFinite値へ変更可能。
 - Time ScaleはFrame elapsedをAccumulatorへ加える倍率のみ。Fixed Delta Timeは変更しない。
-- advanceで供給された時間はrequested_simulation_timeへ累積する。未割当時間はAccumulatorが保持し、TickをSubmissionする際にFixed DeltaをTick Reservationへ一度だけ移す。
+- advanceで供給された時間はrequested_simulation_timeへ累積する。single_stepで受理したFixed Deltaもrequested_simulation_timeへ加算する。未割当時間はAccumulatorが保持し、TickをSubmissionする際にFixed DeltaをTick Reservationへ一度だけ移す。
+- cancelled_requested_timeはStop / Resetで取消した未Reservation Step Requestの累積時間。requested_simulation_timeから減算せず、effective_requested_time = requested_simulation_time - cancelled_requested_timeとしてBacklogを評価する。
 - 各Tick ReservationはTick Sequence、固定時間区間、Input Snapshot、time_source（Accumulator / single_step）を保持する。GPU Commit成功時だけReservedをCommittedへ移す。CPU ObservationはAccumulatorを変更しない。
 - Capacity / CCD / PredecessorによるBlock / Retryでは同一Reservation / Tick Sequenceを維持する。Retry時に時間をAccumulatorへ再加算したり、二重に消費したりしない。
 - Fixed Delta Timeの変更はPaused、in-flight=0、未Submission Reservation=0、Accumulatorのwhole ticks=0、pending Step request=0でのみ許可する。
 - fractional remainderは秒単位の実時間として保持し、新しいdtでwhole tick数を再計算する。
 - 変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。旧dtのwhole tickを新dtで再解釈しない。
-- Step要求はwall-clock Accumulatorを変更せず、Pause / Stop中に独立Step Queueへ1 Fixed Tickを追加する。未実行Step要求はQueueで管理し、Stop / Resetの明示Policyに従う。
+- Step要求はPaused / Stopped中にのみ受理する。受理時にrequested_simulation_timeへ1 Fixed Delta Timeを加算するが、wall-clock Accumulatorは変更せず、独立Step Queueへ1 Fixed Tickを追加する。
+- Stop / Reset時に未Reservation Step Requestを取消す場合、その時間をcancelled_requested_timeへ計上する。Tick Reservation済みのStepは取消し・二重要求を行わず通常のCommit / Retryに従う。
 - 最大Step / Substep / Iteration予算超過時に時間をdrop / clampしない。
 
 ### 4.3 Capacity Growth / Memory
@@ -268,9 +270,9 @@ Render Candidate Ring:
 
 ### 4.5 Model / World / Runtime Resource Lifecycle
 
-- destroy_model / destroy_colliderは対象Worldのin-flight Tickが0件、Host Render Leaseがない場合だけ成功する。条件不足はBUSY。成功するまでHandle / Resourceは有効。
+- destroy_model / destroy_colliderは対象Worldにin-flight Tick、未Submission Reservation、Pending Step Request、Host Render Leaseが一つもない場合だけ成功する。条件不足はBUSY。成功するまでHandle / Resourceは有効。
 - reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功する。Pending Reservation / Accumulator / Step Queue / Contact Cache / Lambda / DiagnosticをResetし、保存済みInitial Stateへ戻る。
-- destroy_worldはPaused / Stopped、in-flight Query / Tick = 0、Host Lease = 0、Pending Step Request = 0でのみ成功する。条件不足はBUSY。
+- destroy_worldはPaused / Stopped、in-flight Query / Tick = 0、Host Lease = 0、Pending Reservation / Pending Step Request = 0、Accumulator whole tick = 0でのみ成功する。条件不足はBUSY。
 - GPU Command / Queryが参照したResourceはCompletion QueryまでDeferred Release Listで保持する。
 - drain()は明示的な非Frame API。新規Submissionを停止し、既にSubmission済みGPU Tick / Queryの完了とDeferred Releaseを待つ。未割当Accumulator whole tick、未Submission Reservation、Step Request、Host Leaseがある場合はBUSYを返す。Host Leaseを強制Releaseしない。
 - shutdown()は全WorldがDestroy済み、Query Ring Idle、Deferred Release List空、Host Lease=0の時だけCOM Resourceを解放してOK。条件不足ならBUSYを返し、Runtime状態を壊さない。Runtime Destructor前にshutdown成功が必要。
