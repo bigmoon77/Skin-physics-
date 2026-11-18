@@ -115,13 +115,13 @@ GPUはRuntime Physics Stateの唯一の正とする。HostからGPU内部Solver 
 | rest_position | StructuredBuffer<float4> | 初期化時 | Rest Pose |
 | animation_target | UAV出力 / SRV入力 StructuredBuffer<float4> | 描画フレーム・サブステップ | Skinning目標 |
 | animation_velocity | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 目標速度 |
-| animation_lambda | RWStructuredBuffer<float4> | サブステップ反復 | Cloth追従制約の3軸λ |
+| animation_lambda | RWStructuredBuffer<float4> | Segment反復 | Cloth追従制約の3軸λ Scratch |
 | tet_indices | StructuredBuffer<uint4> | 初期化時 | 四面体接続 |
 | tet_rest_data | StructuredBuffer<TetRestData> | 初期化時 | Bm、V0、材料ID |
 | vertex_tet_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Tet CSR |
 | tet_force_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 四面体ごとの4頂点力 |
 | cloth_constraints | StructuredBuffer<ConstraintData> | 初期化時 | Stretch / Shear / Bend |
-| constraint_lambda | RWStructuredBuffer<float> | 反復ごと | XPBD λ |
+| constraint_lambda | RWStructuredBuffer<float> | Segment内反復ごと | XPBD λ Scratch |
 | vertex_constraint_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Constraint CSR |
 | cell_records | UAV出力 / SRV入力 StructuredBuffer<CellRecord> | サブステップ | Spatial Hash登録 |
 | contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | サブステップ | VT / EE候補 |
@@ -367,9 +367,9 @@ muとshape_recovery_scaleは主に元形状への復元・せん断応答、Kと
 
 ### 7.1 XPBD共通式
 
-制約関数C(x)、Compliance alpha、固定サブステップdelta_t、制約ごとのlambdaを用いる。
+制約関数C(x)、Compliance alpha、実際のWorld共通Integration Segment時間dt_segment、Segment内の制約ごとのlambdaを用いる。TOIおよびForce / Impulse境界でWorld共通Substepが分割された場合、各Segmentは独立したXPBD Integration Intervalとなる。
 
-    alpha_tilde = alpha / (delta_t * delta_t)
+    alpha_tilde = alpha / (dt_segment * dt_segment)
     delta_lambda_raw =
         (-C(x) - alpha_tilde * lambda_old)
         / (sum_i(inverse_mass_i * dot(gradient_i, gradient_i))
@@ -383,7 +383,7 @@ Compliance alphaは制約関数の単位に依存する。エディタで扱う�
 
 初期版のCloth材料入力は面内引張剛性E_2D (N/m)、面内せん断剛性G_2D (N/m)、曲げ剛性D (N*m)とする。Stretch辺のdual width wは内部辺では隣接2三角形の辺直交高度の平均、境界辺では隣接三角形の高度の半分とし、Rest LengthをL0とするとk_stretch=E_2D*w/L0。Shear三角形はk_shear=G_2D*area。Bend hingeのdual width wは隣接2三角形の辺直交高度の平均とし、共有辺長lを使いk_bend=D*w/lとする。これらは離散化の初期モデルであり、解像度変更時のエネルギー一致を試験する。
 
-分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。λは各World共通Substep開始時に0へ初期化し、同一Substepの反復中は保持する。初期版ではSubstep間Warm Startを行わない。
+分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。Cloth Stretch / Shear / Bend / Animation Tracking / Contactの各XPBD λは、各World共通Integration Segment開始時に0へ初期化し、そのSegment内の全Solver反復で保持する。Segment境界（通常Substep境界、Force / Impulse境界、TOI前後）では必ず0へ戻し、Segment間およびLogical Tick間のWarm Startはv1で行わない。すべてのComplianceは当該Segmentのdt_segmentからalpha_tilde=alpha/(dt_segment*dt_segment)を算出する。
 
 ### 7.1.1 Cloth動力学予測・外力適用
 
@@ -497,7 +497,7 @@ Clothの追従は頂点ごとのXPBDアタッチメント制約とする。固�
     C_animation = position - animation_target
     alpha_tilde = alpha_animation / (delta_t * delta_t)
 
-各軸に対してXPBD更新を行い、lambda_animationはfloat3で頂点単位に保持する。lambdaは各サブステップ開始時にリセットし、反復中に維持する。Animation TrackingはStretch / Shear / BendのComplianceと独立して調整する。
+各軸に対してXPBD更新を行い、lambda_animationはfloat3で頂点単位にSegment Scratchへ保持する。各World共通Integration Segment開始時にリセットし、そのSegmentの反復中だけ維持する。Animation TrackingはStretch / Shear / BendのComplianceと独立して調整する。
 
 ### 7.6 Gather Jacobi
 
@@ -549,7 +549,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     delta_lambda_applied = omega_contact * delta_lambda_projected
     lambda_next = lambda_old + delta_lambda_applied
 
-接触位置補正はdelta_lambda_appliedを使う。0 < omega_contact <= 1とし、初期比較値は0.5 / 0.75 / 1.0。contact Complianceは初期版で0を既定値とするが、完全剛体接触が振動する場合に限り小さいComplianceを比較する。
+接触位置補正はdelta_lambda_appliedを使う。0 < omega_contact <= 1とし、初期比較値は0.5 / 0.75 / 1.0。contact Complianceは初期版で0を既定値とするが、完全剛体接触が振動する場合に限り小さいComplianceを比較する。alpha_tildeは実際のdt_segmentから算出し、contact_lambdaはSegment Scratchに保持する。
 
 ### 8.3 Vertex-Triangle
 
@@ -572,13 +572,13 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
 v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする決定的なManifold Reductionを行い、(1)最深点、(2)最深点から最遠点、(3)既存2点が作る線分から最遠点、(4)既存3点が作る三角形から最大面積となる点を順次残す。候補が線状・点状の場合は幾何epsilonで同一点と判定される重複を除き、独立したSupport Point数だけを残す。
 
-縮約品質は同じ入力予測状態・同じSolver反復回数・同じSubstep時間・同じContact Complianceで、全Candidateを使う未縮約Reference Manifoldと比較する。初期Engineering Threshold:
+縮約品質は同じ入力予測状態・同じSolver反復回数・同じIntegration Segment時間・同じContact Complianceで、全Candidateを使う未縮約Reference Manifoldと比較する。初期Engineering Threshold:
 - 縮約Manifoldの反復後最大残存貫通量が未縮約Referenceより増える量 <= 0.05 * max(contact_thickness, epsilon_length)。
 - 全Candidate法線を平均法線へ整列し、各Candidate法線から最も近いRetained法線までの最大角度 <= 5度。
 - CandidateとRetainedのContact Positionを平均法線に直交する2D基底へ射影したSupport Hull面積の保持率 >= 0.90。Retainedが退化して面積0の場合はCandidateが面積0のケース以外で失敗とする。
 - 線状PatchではSupport Hull長さ保持率 >= 0.90。点状Patchではepsilon内の重複を除いたSupport Point数が一致すること。
 
-いずれかを満たさない場合は、Contact間の相互距離が最大のPairを2つのSplit Seedとし、各Candidateを近いSeedへ割り当てる。同距離はSeed Contact Key順で決定する。Child Patchへ同じReduction / Quality Testを再帰適用する。分割深度上限は8。上限到達後も品質条件を満たさない場合はContact Manifold Reduction FailureとしてTickをRejectする。Patch総数 / Contact数はCapacity Check対象とする。上記閾値は初期Engineering Thresholdであり、Run Manifestへ記録してFixture / Hardware試験で校正する。λは同一Substepの同一Contact Keyで保持し、Contact KeyまたはPatch Generationが変わった場合は初期化する。
+いずれかを満たさない場合は、Contact間の相互距離が最大のPairを2つのSplit Seedとし、各Candidateを近いSeedへ割り当てる。同距離はSeed Contact Key順で決定する。Child Patchへ同じReduction / Quality Testを再帰適用する。分割深度上限は8。上限到達後も品質条件を満たさない場合はContact Manifold Reduction FailureとしてTickをRejectする。Patch総数 / Contact数はCapacity Check対象とする。上記閾値は初期Engineering Thresholdであり、Run Manifestへ記録してFixture / Hardware試験で校正する。contact_lambdaは同一Integration Segmentの同一Contact Keyで反復中保持する。Segment開始時に0へ初期化し、Contact KeyまたはPatch Generationが変わった場合も初期化する。
 
 ### 8.4 Edge-Edge
 
