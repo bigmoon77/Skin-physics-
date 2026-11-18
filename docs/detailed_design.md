@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.10
+- 文書バージョン: 1.11
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.8
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.7
+- 対応基本設計: basic_design.md 1.9
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.8
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
-- 前版: 1.9
+- 前版: 1.10
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1464,6 +1464,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.11: Span / Track / Channel / Blend / Colliderの完全なSM5 ABI、Byte Offset / Flags / Node Role / Inverse Bind Index、gpu_float4 / Column-Major Matrix Layout、Rotation / Blend係数の意味、Hierarchy Channel Rangeを確定。
 - 1.10: Shader Model 5固定幅GPU Packet ABI / Byte Offset、CPU double絶対時刻とGPU Span-local float時刻、Segmentごとのu_segment_start更新、逆再生CUBICSPLINE Tangent選択、Collider Recordとfloat時間Precision Errorを追加。
 - 1.9: GPU Animation Trajectory Packetによる任意TOI時刻のBone / Skinning評価、最大2 Track Clip Blendの微分、非応答Contactの有効逆質量判定、複数Contactを結合するProjected Jacobi Impulse、Contact Temporal Quality Limitを追加。
 - 1.8: Contact Position correctionとContact前Velocity / Restitution Impulseを分離し、Impact後Velocityを再構築で上書きしないPass順を定義。Animation Target Velocityの唯一の正本、Kinematic CCDの保守的Chord偏差Bound、Cloth Temporal Quality Limit、World absolute Event Timeを追加。
