@@ -98,6 +98,7 @@ Add persistent fixture and executable tests for the following state paths before
 8. **Device loss:** Device Removed blocks new submissions. Recovery rebuilds from validated Asset / Initial State and resets the timeline; no false continuation from lost GPU state is reported.
 9. **Mixed model indexing:** Multiple Model Instances with Soft Body / Cloth / None meshes use unique World Global IDs; collision filters and Render Bindings resolve to the intended mesh ranges.
 10. **No hidden CPU fallback:** Device loss, WARP absence, capacity failure or GPU solver failure never switches the World to CPU physics.
+11. **In-flight predecessor failure:** Submit Tick N and N+1. Force N to reject. Verify N+1 is blocked before any physics buffer access/write, then replay N from the same snapshot and resubmit N+1 with the new committed state generation.
 
 The existing `fixed_step_controller` and `simulation_step_pipeline` remain synchronous CPU utilities for reference / test environment use. Production GPU Runtime tests must exercise the asynchronous scheduler and GPU commit status separately.
 
