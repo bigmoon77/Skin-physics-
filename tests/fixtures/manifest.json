@@ -539,5 +539,36 @@
     "workflow_run_id": 44011601086,
     "configuration": "Release x64",
     "result": "success"
+  },
+  "design_review_regressions": {
+    "status": "specified_not_implemented",
+    "source": "docs/testing_strategy.md",
+    "purpose": "Track newly specified regression cases from the latest senior-engineer design review without claiming that fixtures or executable tests already exist.",
+    "cases": [
+      {
+        "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
+        "test_case": 29
+      },
+      {
+        "id": "DCR_30_ANIMATION_TRAJECTORY_DERIVATIVE",
+        "test_case": 30
+      },
+      {
+        "id": "DCR_31_KINEMATIC_COLLIDER_RIGID_VELOCITY_SWEEP",
+        "test_case": 31
+      },
+      {
+        "id": "DCR_32_GPU_MEMORY_BUDGET_SENTINEL",
+        "test_case": 32
+      },
+      {
+        "id": "DCR_33_CLOTH_TEMPORAL_QUALITY_LIMIT",
+        "test_case": 33
+      },
+      {
+        "id": "DCR_34_WORLD_ABSOLUTE_EVENT_TIME",
+        "test_case": 34
+      }
+    ]
   }
 }
