@@ -912,31 +912,30 @@ v1のGPU Runtime初期値はpolar iteration最大8回、polar orthogonality resi
 
 ### 15.1 Logical Tick / Substep transaction
 
-Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Substep / CCD Segment開始状態は専用scratchへ保存し、TOI retime時はinactive_state_bankをそのscratchから復元する。Substep scheduleはLogical Tick Begin時にWorld全体の参加Meshから一度だけ計算し、全Soft Body / Cloth / Contact / Animation Trackingへ共通dt_worldを割り当てる。独立したSolver別Subcyclingは禁止する。Force / Impulse Eventの時刻がSegment内部にある場合もWorld共通Segmentを分割し、全参加Solverを同じ時間だけ進める。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
+Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Integration Segment開始状態は専用scratchへ保存し、TOI retime / Event Segment再計算時はinactive_state_bankをそのscratchから復元する。Substep scheduleはLogical Tick Begin時にWorld全体の参加Meshから一度だけ計算し、全Soft Body / Cloth / Contact / Animation Trackingへ共通dt_worldを割り当てる。独立したSolver別Subcyclingは禁止する。Force / Impulse Eventの時刻がSegment内部にある場合もWorld共通Segmentを分割し、全参加Solverを同じ時間だけ進める。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
 
 基本Pass順序:
 
 1. Logical Tick Begin / Dispatch Plan Gate / Terminal Status Reset
 2. World Substep Schedule Build / Validate
-3. Substep境界のAnimation Target / Root / Kinematic Pose Sample
-4. External Force / Impulse Event Gather（Event ID重複適用防止）
-5. Soft Body FEM Force Evaluation / Gather
-6. Soft Body Velocity / Position Prediction
-7. Cloth Velocity / Position Prediction
+3. 各World Integration Segment境界のAnimation Target / Root / Kinematic Pose Sample
+4. External Force / Impulse Event Gather（ForceはSegment内一定、ImpulseはSegment開始時にEvent ID単位で一度だけ適用）
+5. Segment開始状態のSoft Body FEM Force / Animation Tracking Force Evaluation / Tet Contribution Gather
+6. Soft Body Velocity / Position Prediction（dt_segment）
+7. Cloth Velocity / Position Prediction（dt_segment）
 8. Swept AABB / Broadphase Count / Scan / Fill / Sort / Group
-9. Candidate Generation / Deduplication / Narrowphase
-10. Contact Patch Build / Manifold Reduction
-11. Solver Iterations
-    - Soft Body内部力の必要な再評価
+9. Candidate Generation / Deduplication / Narrowphase / Contact Patch Build / Manifold Reduction
+10. CCD Conservative Advancement / Minimum TOI Reduction
+11. Positive-Time TOIがない場合に限り、EndpointのSolver Iterationsを実行
     - Cloth Stretch Graph Color Passes
     - Cloth Animation Tracking / Shear / Bend Gather / Apply
-    - Contact XPBD Output / Gather / Apply
+    - Discrete Contact XPBD Output / Gather / Apply
     - Broadphase Envelope Exceeded Check; 必要時Rebuild
-12. CCD TOI Detection / World-wide Segment Retiming / Impact (CCD対象のみ)
-13. 速度再構築 / Coulomb Friction / Restitution Impulse
-14. Substep Validation
-15. Logical Tick内の次World共通Substepへ進む
-16. 全Substep完了後のRender Feedback Candidate Prepare（Position / Normal / Tangent）
+12. Positive-Time TOIがある場合はEndpoint Contactを確定せず、予測DestinationをSegment Snapshotへ戻してTOI prefixを再実行し、TOI位置でContact XPBD / Impactを適用する。残時間はImpact後Velocityを次Segment開始状態として再実行
+13. Dynamic Vertex Velocity Reconstruction（Fixed / Kinematic VelocityはAnimation Sampleを維持）/ Coulomb Friction / Restitution Impulse
+14. Segment Validation
+15. 次のWorld Integration Segmentへ進む。全Segment完了時だけ次World共通Substepへ進む
+16. 全Logical Tick完了後のRender Feedback Candidate Prepare（Position / Normal / Tangent）
 17. Render Candidate finite / Binding Validation
 18. Logical Tick Commit Control（全Physics GateとRender Candidateが成功した場合だけPhysics State GenerationとRender Slotを同時にCOMMITTEDへ切替）
 19. Diagnostic Timestamp / Counter / Status Copy + Event Query
