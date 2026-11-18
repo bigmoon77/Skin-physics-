@@ -799,19 +799,19 @@ Paint / Smooth / Average / Eraseを提供する。Paintはtarget_valueへstrengt
 
 ### 14.2 Step / Pause
 
-Pause中のStep要求はFixed Delta Timeを1回だけ要求する。GPU実行は非同期であり、APIがSubmissionを受け付けた時点で完了扱いにしない。複数Step要求は要求数分をキューイングする。GPU容量エラー / CCD Unresolved中はStepを保留し、解消不能ならFailureを返す。
+single_step要求はPause / Stop中にFixed Delta Timeを1回だけ要求する。GPU実行は非同期であり、APIがSubmissionを受け付けた時点で完了扱いにしない。複数Step要求は受理順にStep Request Queueへ保持する。Pause / Stop中はStep Request Queueをwall-clock Accumulatorより優先し、1要求につき1 Logical TickだけをSubmissionする。Accumulatorにwhole tickやfractional remainderが残っていてもStep Requestを先に処理し、そのAccumulatorは変更しない。GPU容量エラー / CCD Unresolved / 入力不足 / Render Backpressure中はStep Requestを保留し、解消不能ならFailureを返す。
 
-Pauseは新規Logical Tick生成を止め、既にGPUへSubmission済みのTickは安全に完了させる。Pause中のWall TimeをAccumulatorへ加えない。Stopはユーザーによる明示操作として未実行Step要求を停止する。ResetはInitial Stateへ戻し、Accumulator・Tick Sequence・Solver Lambda・Contact / CCD Cache・診断カウンタを初期化する。in-flight GPU commandのResource退役は同期waitを通常Frameへ入れず、Query / Deferred Releaseで処理する。
+Pauseはwall-clock時間の追加とAccumulator由来の新規Reservationを止め、既にGPUへSubmission済みのTickは安全に完了させる。未割当Accumulatorは保持する。StopはPaused状態へ移行し、未Reservation Step Requestを取消してcancelled_requested_timeへ記録する。Stopも未割当wall-clock Accumulatorと物理Stateは保持する。ResetはInitial Stateへ戻し、Accumulator（whole tick / fractional remainder）、Tick Reservation / Sequence、Step Request Queue、Solver Lambda、Contact / CCD Cache、Requested / Cancelled / Committed / Observed Timeline Counters、診断カウンタを初期化する。in-flight GPU commandのResource退役は同期waitを通常Frameへ入れず、Query / Deferred Releaseで処理する。
 
 ### 14.3 Test Environment操作
 
 Test Environmentは次の操作を提供する。
 
-- Play: 現在状態から時間進行を再開する。
-- Pause: 時間進行を停止し、状態を保持する。
-- Stop: 時間進行と未実行Step要求を停止し、現在状態を保持する。
-- Reset: 保存済みInitial Stateへ復帰し、Accumulatorと診断カウンタを初期化する。
-- Step: Pause / Stop中に固定時間刻みを正確に1回実行する。
+- Play: 現在状態から時間進行を再開し、保持しているwall-clock Accumulatorを処理する。
+- Pause: wall-clock時間の追加とAccumulator由来の新規Reservationを停止し、状態とAccumulatorを保持する。
+- Stop: Pause状態へ移行し、未Reservation Step Requestを取消してcancelled_requested_timeへ記録する。物理Stateとwall-clock Accumulatorは保持する。
+- Reset: 保存済みInitial Stateへ復帰し、Accumulator全体、Step Queue、Timeline / Sequence / Solver Cache / 診断カウンタを初期化する。
+- Step: Pause / Stop中に1 Fixed Tickだけを要求する。複数要求は要求順に処理し、wall-clock Accumulatorより優先する。既存Accumulatorの時間を消費しない。
 - Time Scale: 実時間DeltaをAccumulatorへ加える倍率。固定物理時間刻み自体は変更しない。
 - Fixed Delta Time: シミュレーションの基本時間刻み。
 - Gravity: 重力ベクトルを変更する。
