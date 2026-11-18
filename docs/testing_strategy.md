@@ -145,3 +145,11 @@ Expected results are reviewed and immutable. A failing test must never regenerat
 - Reject / Block never changes active bank or State Generation.
 - Segment / TOI snapshot is reusable scratch and never treated as a third persistent bank.
 - Submit N and N+1 in command order. N+1 reads the bank selected by N only after its predecessor gate; force N to reject and assert that N+1 performs no Physics State access / writes.
+
+
+### Integration Segment / Damping / Kinematic Velocity regression
+
+23. **Segment prediction boundary:** Build a World Substep split by Force start/end, one-shot Impulse, and TOI. Verify Soft Body / Cloth / Contact / Animation Tracking all use identical Segment start/end timestamps and dt. Verify force evaluation is refreshed at every Segment start, state continues from the preceding Segment end, no zero-duration Segment is submitted, and Event ID prevents duplicate Impulse during Retry / TOI retiming.
+24. **Linear damping integration:** For Dynamic Vertex, compare GPU output against analytical constant-force linear-damping cases: (a) zero damping, (b) positive damping, (c) small z=damping_rate*dt_segment using the series branch, (d) Force plus Segment-start Impulse, and (e) no-force velocity decay. Verify velocity and position formulas separately, finite behavior at damping_rate=0, and that Force / Impulse magnitude is independent of mesh resolution under the normalized mass-weighted distribution.
+25. **Kinematic velocity ownership:** Drive Fixed / Kinematic Soft Body and Cloth vertices with linear, cubic-spline, teleport, and reset trajectories. Verify Segment-end position and prescribed Animation Velocity are preserved after XPBD position solve, Contact, friction and restitution. Verify inverse_mass=0 prevents impulse velocity mutation while the prescribed Kinematic Velocity still contributes to relative contact velocity / CCD. Verify Dynamic Vertex alone uses position-difference velocity reconstruction.
+26. **Impact continuation:** Resolve a TOI impact inside a World Substep, then simulate the remaining Segment time. Verify post-impact Dynamic Velocity is the next Segment input, Kinematic Velocity remains prescribed, XPBD Lambda resets at the new Segment boundary, and no Logical-Tick-wide velocity reconstruction erases the impact response.
