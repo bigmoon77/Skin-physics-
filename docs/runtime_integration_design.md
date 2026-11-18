@@ -316,8 +316,9 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
 | animation_playback_desc | clip_index / time / speed / weight / loop | asset::model内animation_clipの選択、再生時刻、倍率、Blend重み、Loop |
 | animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocityの選択 |
-| force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。対象World / Model / Mesh範囲を明示。正のRadius必須。Mass-weighted Falloffで分配 |
-| impulse_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象範囲 |
+| force_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
+| force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。正のRadius必須。Mass-weighted Falloffで分配 |
+| impulse_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
 | impulse_desc | position / direction / impulse_magnitude / radius / event_time | ImpulseはN·s。瞬間イベントとして一度だけ適用 |
 | advance_report | submitted_tick_count / pending_tick_count / in_flight_tick_count | 今回の受付・未送信・GPU未完了を分離 |
 | advance_report | render_binding_backpressure / capacity_blocked | Render Slot leaseまたはGPU Capacityに起因するSubmission停止理由 |
@@ -627,9 +628,9 @@ Library所有Buffer / TextureのByte数とDXGI Local Memory CurrentUsage / Budge
 
 Render BindingはPosition / Normal / TangentのSRV、Format、Stride、Vertex Count、Index Count、Resource Generation、Device Generation、Committed Tick Sequence、Render Slot ID / Generation、Lease Generationを返す。SRVはBorrowed COM Pointerであり、HostのAddRefはCOM Objectの生存期間だけを延ばす。Render Slotの内容はlease_generationの有効期間だけ保証する。WorldごとにHost Render Leaseは同時に1つだけ許可し、全Mesh Bindingを同じLeaseへ紐付ける。
 
-get_render_bindingはCPUがEvent Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を確認した最後のTickに対応するRender Slotを返す。GPU上でCOMMITTEDになっていてもCPU-observed prefixへまだ入っていないTickのSlotは返さない。Slot leaseはWorldごとに1つであり、HostはすべてのMeshを描画した後、Graphics / Compute StageからSRVをUnbindしてrelease_render_bindingsを呼ぶ。release後はPointerを参照しない。Slot ringは前述のmax_inflight+1で管理し、未回収Status / in-flight Tick / Host leaseを持つSlotを上書きしない。
+get_render_bindingはCPUがEvent Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を確認した最後のTickに対応するRender Slotを返す。GPU上でCOMMITTEDになっていてもCPU-observed prefixへまだ入っていないTickのSlotは返さない。最初の成功呼出しがWorldごとのHost Leaseを取得し、すべてのMesh Bindingは同じlease_generationに属する。release_render_bindings(world, lease_generation)は現在のGenerationと一致する場合だけ成功し、古い / 二重ReleaseはSTALE_HANDLEを返す。
 
-Host Rendererは描画完了後、公開SRVをVS / HS / DS / GS / PS / CSの全Graphics / Compute StageからUnbindし、次のRuntime Submissionを発行する前にrelease_render_bindings(world)を呼ぶ。RuntimeはLease解放を確認するまで当該Render Slotを再利用しない。lease_generationが古いPointerは使用禁止。Runtimeは次のTickのためのRender Candidateを別Slotへ生成する。Render Candidate RingのSlot数はmaximum_in_flight_ticks + 1とする（既定in-flight 2なら3 Slot）。これによりCPU-observedな直前Committed Slot 1つと最大2件のin-flight Candidateを保持できる。Hostがleaseをreleaseせず次のSubmissionを要求した場合、RuntimeはBUSY / render_binding_busyで追加Submissionを止め、Accumulatorの時間を保持する。Render Candidate生成・検証・Ring Memory / Publish CostをPerformance Runへ含める。
+Host Rendererは全MeshのDraw commandをImmediate Contextへ発行し、公開SRVをVS / HS / DS / GS / PS / CSの全Graphics / Compute StageからUnbindしてから、release_render_bindings(world, lease_generation)を呼ぶ。Deferred Contextを使用するHostは、Leaseに属するSRVを参照する全Command ListをImmediate ContextへExecuteCommandListした後にReleaseしなければならない。未実行Command Listを残したままReleaseすることは禁止する。Release後はSRV PointerとCommand List内の参照を使用しない。RuntimeはLease解放を確認するまで当該Render Slotを再利用しない。Render Candidate RingのSlot数はmaximum_in_flight_ticks + 1とする（既定in-flight 2なら3 Slot）。これによりCPU-observedな直前Committed Slot 1つと最大2件のin-flight Candidateを保持できる。HostがLeaseをreleaseせず次のSubmissionを要求した場合、RuntimeはBUSY / render_binding_busyで追加Reservation / Submissionを止め、時間をAccumulator / Step Request Queueに保持する。Render Candidate生成・検証・Ring Memory / Publish CostをPerformance Runへ含める。
 
 ### 9.3 Device Loss
 
