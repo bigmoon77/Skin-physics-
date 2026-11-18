@@ -565,7 +565,15 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
 初期クラスタ判定は接触点距離がcluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)以下、かつ法線内積がcos(10度)以上の場合とする。候補は(Mesh Pair, Surface Patch ID A/B, Contact Key)順に処理し、最初のContactをSeedとして、Seed距離・Seed法線条件を満たす候補だけを追加する。複数Seedに入る候補は距離が最小のSeedへ割り当て、同距離はSeed Contact Key順で決める。連鎖的な近傍判定でPatch全体が無制限に拡大しないよう、候補同士の推移的連結だけで統合しない。
 
-v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする決定的なManifold Reductionを行い、(1)最深点、(2)最深点から最遠点、(3)既存2点が作る線分から最遠点、(4)既存3点が作る三角形から最大面積となる点を順次残す。候補が線状・点状の場合は独立したSupport Point数だけを残す。縮約の許容差は、最大貫通増加<=0.05*contact_thickness、最大法線角度差の増加<=5度、投影Support Hull面積保持率>=0.90を初期Engineering Thresholdとする。線状Patchでは面積を使わずSupport Hull長さ保持率>=0.90を用い、点状PatchではSupport Point数を比較する。いずれかを満たさない場合は、縮約で最も大きく表現誤差を生じた候補を基準にPatchを2分割する。分割Seedは相互距離が最大のContact Pairとし、候補は近いSeedへ割り当て、同距離はContact Key順とする。両Child Patchが単一Contactになるまで再帰できる。分割深度上限は8、上限到達後も品質条件を満たさない場合はContact Manifold Reduction FailureとしてTickをRejectする。Patch総数・Contact数はCapacity Check対象とする。上記閾値は初期Engineering Thresholdであり、Run Manifestへ記録してFixture / Hardware試験で校正する。λは同一Substepの同一Contact Keyで保持し、Contact KeyまたはPatch Generationが変わった場合は初期化する。
+v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする決定的なManifold Reductionを行い、(1)最深点、(2)最深点から最遠点、(3)既存2点が作る線分から最遠点、(4)既存3点が作る三角形から最大面積となる点を順次残す。候補が線状・点状の場合は幾何epsilonで同一点と判定される重複を除き、独立したSupport Point数だけを残す。
+
+縮約品質は同じ入力予測状態・同じSolver反復回数・同じSubstep時間・同じContact Complianceで、全Candidateを使う未縮約Reference Manifoldと比較する。初期Engineering Threshold:
+- 縮約Manifoldの反復後最大残存貫通量が未縮約Referenceより増える量 <= 0.05 * max(contact_thickness, epsilon_length)。
+- 全Candidate法線を平均法線へ整列し、各Candidate法線から最も近いRetained法線までの最大角度 <= 5度。
+- CandidateとRetainedのContact Positionを平均法線に直交する2D基底へ射影したSupport Hull面積の保持率 >= 0.90。Retainedが退化して面積0の場合はCandidateが面積0のケース以外で失敗とする。
+- 線状PatchではSupport Hull長さ保持率 >= 0.90。点状Patchではepsilon内の重複を除いたSupport Point数が一致すること。
+
+いずれかを満たさない場合は、Contact間の相互距離が最大のPairを2つのSplit Seedとし、各Candidateを近いSeedへ割り当てる。同距離はSeed Contact Key順で決定する。Child Patchへ同じReduction / Quality Testを再帰適用する。分割深度上限は8。上限到達後も品質条件を満たさない場合はContact Manifold Reduction FailureとしてTickをRejectする。Patch総数 / Contact数はCapacity Check対象とする。上記閾値は初期Engineering Thresholdであり、Run Manifestへ記録してFixture / Hardware試験で校正する。λは同一Substepの同一Contact Keyで保持し、Contact KeyまたはPatch Generationが変わった場合は初期化する。
 
 ### 8.4 Edge-Edge
 
@@ -716,7 +724,7 @@ d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>delta_t_substepか�
 
 接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分する。Clothなど位置ベースの系では、この区間の変位から接触前速度を再構築する。Soft Bodyは積分器が保持するtau時点の速度を使う。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度から残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
 
-1サブステップ内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * delta_t_substep)`とし、Event内のImpulseはContact Key順に一度だけ適用する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、Internal Substepを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
+1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_world_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前の区間とTOI以後の残区間はWorld共通Segmentである。Soft Body / Cloth / Animation Tracking / Contact対象の全てをSubstep Snapshotから同じtauだけ再積分し、TOI位置でImpactを適用した後、全参加Solverを同じ残時間だけ再積分する。Solverごとに時間を止める・別のtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
 ## 12. Render Vertex Binding
 
