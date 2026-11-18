@@ -3,7 +3,7 @@
 - 文書バージョン: 1.6
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.4
+- 対応基本設計: basic_design.md 1.5
 - Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.3
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
 - 前版: 1.5
@@ -751,11 +751,11 @@ etaの初期値は0.5。これは候補の選別値であり、CCD自体の正�
 
 ### 11.2 Swept AABB
 
-各頂点・辺・三角形の前サブステップ位置と予測位置を含むSwept AABBを生成する。接触厚みで膨張させ、Broadphase候補を絞る。
+各頂点・辺・三角形の現在Integration Segment開始位置と予測位置を含むSwept AABBを生成する。接触厚みで膨張させ、Broadphase候補を絞る。
 
 ### 11.3 Conservative Advancement
 
-各候補の軌道をサブステップ内の線形補間とする。これは前Step位置と予測位置を結ぶ離散軌道モデルであり、サブステップ中の曲線軌道を厳密に表すものではない。大きな加速度・高剛性時はCFL制約に従いサブステップを細かくし、近似誤差を抑える。秒単位の時刻tauにおける距離をd(tau)、接触厚みをr、相対速度上限をv_boundとする。
+各候補の軌道を現在Integration Segment内の線形補間とする。これはSegment開始位置と予測位置を結ぶ離散軌道モデルであり、Segment中の曲線軌道を厳密に表すものではない。大きな加速度・高剛性時はWorld共通Substep制約に従い刻みを細かくし、近似誤差を抑える。秒単位の時刻tauにおける距離をd(tau)、接触厚みをr、相対速度上限をv_boundとする。
 
 VT:
 
@@ -773,18 +773,18 @@ EE:
     tau_next = tau + delta_tau
     safety = 0.8  // 初期値
 
-d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終端距離がrより大きければ当該Segmentでは接触なし。Conservative Advancementは最大32反復を初期上限とする。`tau_tolerance = max(1e-7 s, 1e-5 * delta_t_substep)`、`distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)`を初期値とし、L_refは当該Physics Meshのmedian positive rest-edge lengthとする。`safety=0.8`は維持する。停止判定は距離条件または保守的区間No-Hit条件で行い、tau_tolerance到達だけでNo-Hitにしない。進行不能または32反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
+d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終端距離がrより大きければ当該Segmentでは接触なし。Conservative Advancementは最大32反復を初期上限とする。`tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`、`distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)`を初期値とし、L_refは当該Physics Meshのmedian positive rest-edge lengthとする。`safety=0.8`は維持する。停止判定は距離条件または保守的区間No-Hit条件で行い、tau_tolerance到達だけでNo-Hitにしない。進行不能または32反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
 
 ### 11.4 TOI処理
 
-同一World共通Substep内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。衝突判定用の軌道は現在Segment開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/dt_segment、x(tau)=x_start+tau*path_velocityと定義する。v_boundはこのpath_velocityの速度上限から求める。Conservative Advancementの進行量は次とする。
+現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。衝突判定用の軌道は現在Segment開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/dt_segment、x(tau)=x_start+tau*path_velocityと定義する。v_boundはこのpath_velocityの速度上限から求める。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
 
-接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分する。Soft Body / Clothともに同じSegment積分規則でtauまで再積分し、位置制約解決後はDynamic Vertexの区間変位から接触前Velocityを再構築する。Fixed / Kinematic Vertexはtau時刻のAnimation Velocityを維持する。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度を次Segmentの開始Velocityとして、残時間dt_segment-tauをWorld全体で再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
+接触が確定したら、予測状態をそのまま部分更新しない。現在Segment開始Snapshotへ戻し、tauまでの区間を再積分する。Soft Body / Clothともに同じSegment積分規則でtauまで再積分し、位置制約解決後はDynamic Vertexの区間変位から接触前Velocityを再構築する。Fixed / Kinematic Vertexはtau時刻のAnimation Velocityを維持する。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度を次Segmentの開始Velocityとして、残時間dt_segment-tauをWorld全体で再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
 
-1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_world_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前の区間とTOI以後の残区間はWorld共通Segmentである。Soft Body / Cloth / Animation Tracking / Contact対象の全てをSubstep Snapshotから同じtauだけ再積分し、TOI位置でImpactを適用した後、全参加Solverを同じ残時間だけ再積分する。Solverごとに時間を止める・別のtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
+1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前の区間とTOI以後の残区間はWorld共通Segmentである。Soft Body / Cloth / Animation Tracking / Contact対象の全てを現在Segment Snapshotから同じtauだけ再積分し、TOI位置でImpactを適用した後、全参加Solverを同じ残時間だけ再積分する。Solverごとに時間を止める・別のtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
 ## 12. Render Vertex Binding
 
@@ -1098,13 +1098,14 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 ## 21. バージョン履歴
 
 - 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
+- 1.6: Integration Segment単位のSoft Body / Cloth予測、線形粘性減衰の速度積分、Fixed / Kinematic Velocityの維持、TOI時間変数とSegment Snapshotの整合を明文化。
 - 1.5: World共通Substep、Cloth予測・Force / Impulse分配、Contact Patch品質閾値、退化Contact法線決定、Stackless Morton LBVH構築を明文化。
 - 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 
 
-## 22. GPU Runtime / Library Integration（v1.5）
+## 22. GPU Runtime / Library Integration（v1.6）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
