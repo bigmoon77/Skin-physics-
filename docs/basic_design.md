@@ -1,6 +1,6 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.3
+- 文書バージョン: 1.4
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
@@ -117,21 +117,22 @@ Physics Mesh、要素接続、隣接情報、材料属性、Render Vertex Bindin
 
 ## 5. シミュレーションパイプライン
 
-固定時間刻みのシミュレーションステップを基本単位とする。
+固定時間刻みのLogical Tickを基本単位とし、World内の全Soft Body / Cloth / Contactが同じSubstep時刻を参照する。
 
-1. アニメーション評価
-2. 現在・前回のアニメーション姿勢から目標位置・目標速度を生成
-3. 外力適用と予測位置計算
-4. Soft Body内部制約とCloth内部制約の解決
-5. Broadphase候補生成
-6. Narrowphaseと接触制約生成
-7. 内部制約・接触制約の反復解決
-8. 速度再構築、減衰、摩擦等の速度処理
-9. Physics MeshからRender Meshへの反映
-10. 法線・接線更新
-11. 描画
+1. Logical Tick開始時にWorld共通Substep数を算出する。
+2. 各Substep境界のAnimation / Root Transform / Kinematic Poseを評価する。
+3. 全Meshへ同じSubstep Delta Timeを適用し、Soft BodyとClothの外力・Impulse・予測位置を更新する。
+4. 全参加MeshのSwept AABBからBroadphase候補を生成する。
+5. VT / EE Narrowphase、Contact Patch、接触制約を生成する。
+6. Soft Body内部力、Cloth内部制約、Animation Tracking、Contactを規定順で反復解決する。
+7. CCDでTOIが見つかった場合、World全体をTOI時刻まで再積分し、Impactを一度だけ適用して残時間を同じSubstep内で再積分する。
+8. 位置補正後の速度を再構築し、摩擦・反発を処理する。
+9. Physics MeshからRender MeshへPosition / Normal / Tangentを反映する。
+10. Render CandidateとPhysics Stateを検証し、Logical Tick単位でCommitする。
 
-内部制約と接触制約の反復順序は、詳細設計で比較・確定する。接触を1回だけ解く構成に固定せず、反復中に接触候補を更新する必要性を評価する。各GPU Pass間の依存関係とUAV/リソースバリア相当の同期を明示する。Production Runtimeでは1 Logical TickをGPU Commit transactionとし、Dispatch受付とGPU Commitを分離する。Failure時は確定済みStateを維持し、Tick開始Snapshotから再実行する。Host向け詳細は [runtime_integration_design.md](runtime_integration_design.md) を正とする。
+Soft BodyのCFL / Animation Tracking安定条件からWorld共通Substep数を決定する。ClothとContactにも同じSubstep Delta Timeを適用し、v1ではMeshごとの独立Subcyclingを行わない。TOIによる時間分割もWorld全体へ適用するため、異なるソルバーが異なる時刻の形状を使って接触することを防ぐ。
+
+外力・Impulseの空間分配、Cloth予測式、Contact縮約、Broadphase容量、TOI再積分は詳細設計で規定する。各GPU Pass間の依存関係とUAV unbind / SRV bindを明示する。Production Runtimeでは1 Logical TickをGPU Commit transactionとし、Dispatch受付とGPU Commitを分離する。Failure時は確定済みStateを維持し、同一Tick Inputから再実行する。Host向け詳細は [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
 ## 6. ソルバー設計方針
 
@@ -333,9 +334,10 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
+- 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加。
 
 
-## 17. GPU Runtime / Library統合方針（v1.3）
+## 17. GPU Runtime / Library統合方針（v1.4）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
