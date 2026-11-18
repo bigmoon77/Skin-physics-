@@ -101,6 +101,9 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             invalid_argument,
             invalid_state,
             busy,
+            submission_thread_violation,
+            blocked_by_input,
+            render_binding_busy,
             stale_handle,
             unsupported_feature,
             asset_invalid,
@@ -137,6 +140,8 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         struct transform;
         struct force_desc;
         struct impulse_desc;
+        struct mesh_physics_parameters;
+        struct attribute_edit_desc;
         struct advance_report;
         struct world_status;
         struct render_binding;
@@ -205,6 +210,25 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
                 model_handle model,
                 const animation_playback_desc& desc);
 
+            status set_model_transform_sample(
+                world_handle world,
+                model_handle model,
+                double sample_time,
+                const transform& world_transform,
+                bool is_teleport);
+
+            status set_mesh_physics_parameters(
+                world_handle world,
+                model_handle model,
+                uint32_t mesh_index,
+                const mesh_physics_parameters& parameters);
+
+            status apply_attribute_edit(
+                world_handle world,
+                model_handle model,
+                uint32_t mesh_index,
+                const attribute_edit_desc& edit);
+
             status set_kinematic_pose_sample(
                 world_handle world,
                 collider_handle collider,
@@ -237,7 +261,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         };
     }
 
-Handleはindex + generationで識別し、Destroy後のHandle再利用を拒否する。APIからGPU内部Buffer、Solver Scratch、Writable UAVを公開しない。Statusのdiagnosticは呼び出し結果が保持するstd::stringとし、Runtime内部の一時文字列ポインタを返さない。Public APIはC++静的Library向けであり、異なるCompiler / CRT間の安定ABIは保証しない。Asset / DescriptorはVersioned Schemaを使い、ロード時に既存Asset Cacheのhash・coordinate_system_version・material_layout_version・generator identityを検証する。
+Handleはindex + generationで識別し、Destroy後のHandle再利用を拒否する。APIからGPU内部Buffer、Solver Scratch、Writable UAVを公開しない。Statusのdiagnosticは呼び出し結果が保持するstd::stringとし、Runtime内部の一時文字列ポインタを返さない。Public APIはC++静的Library向けであり、異なるCompiler / CRT間の安定ABIは保証しない。Asset / DescriptorはVersioned Schemaを使い、ロード時に既存Asset Cacheのhash・coordinate_system_version・material_layout_version・generator identityを検証する。v1のRuntime ImporterはOBJ（呼出元が明示するunit scale必須）とglTF 2.0 / GLBを対象とする。ASCII Gmsh MSH 2.2はSoft Body Physics MeshのOffline中間入力として扱う。FBX、Morph Target / Morph Weight Animation、Draco圧縮、Meshopt圧縮はv1で未対応とし、Import時に明示Errorを返す。
 
 ### 3.4 Descriptor / StatusのField Contract
 
@@ -246,8 +270,10 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | Descriptor | Field | 意味・制約 |
 |---|---|---|
 | runtime_desc | shader_package_root | Shader Bytecode / manifestの絶対またはPackage-relative root。Working Directory依存は禁止 |
-| runtime_desc | maximum_gpu_resource_bytes | SkinPhysicsが使用できるGPU Resource上限。0はDXGI Budgetから安全余裕を差し引いて決定 |
-| runtime_desc | query_ring_capacity | in-flight tick数以上。未回収slotを上書きしない |
+| runtime_desc | maximum_gpu_resource_bytes | SkinPhysicsが使用できるLibrary-owned GPU Resource上限。0はDXGI Local Memory Budgetからhost_reserved_gpu_bytesを差し引いて決定 |
+| runtime_desc | host_reserved_gpu_bytes | Renderer / OS / 他Subsystem向けにHostが確保するLocal Memory余裕。Libraryはこの領域を使用しない |
+| runtime_desc | query_ring_capacity | maximum_in_flight_ticks以上。未回収slotを上書きしない |
+| runtime_desc | maximum_render_binding_slots | RuntimeがWorld作成時にmaximum_in_flight_ticks + 1へ固定する。Hostが任意に小さくできない |
 | runtime_desc | enable_debug_layer_validation | Debug / validation buildでD3D11 hazard診断を有効化 |
 | world_desc | fixed_delta_time | 正の有限値。初期値1/60 s。Test Environmentから変更可能 |
 | world_desc | time_scale | 0以上の有限値。Frame elapsedへ適用 |
@@ -259,6 +285,9 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | model_desc | mesh_physics_assets | Soft Body用physics_meshとmesh index / cache identityの対応。Cloth / Noneはphysics_modeに従う |
 | model_desc | render_bindings | mesh indexごとのvalidated render_vertex_binding array。Rest Pose誤差上限を満たす |
 | model_desc | world_transform | 初期World Transform。既存asset::mat4のcolumn-major規約に従う |
+| model transform sample | sample_time / world_transform / is_teleport | 時刻付きRoot Transform履歴。Clip連続移動とTeleportを区別し、Tick / Substep時刻へ補間 |
+| mesh_physics_parameters | material channels | physics_modeに有効な単位付きSoft Body / Cloth Material。無効チャンネルの入力は拒否 |
+| attribute_edit_desc | operation / channel / brush / target / strength | Paint / Smooth / Average / Erase。Render Mesh側の編集値をCPUで更新し、Runtimeへ不変のversioned editとして反映 |
 | collider_desc | collision_mesh | Collision-only / Render Meshの三角形データ。static / kinematicで共通のTopology入力 |
 | collider_desc | initial_transform | 初期World Transform |
 | collider_desc | thickness / friction / restitution | SI単位・係数範囲は詳細設計のCollision Material定義に従う |
@@ -268,18 +297,20 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。対象World / Model / Mesh範囲を明示 |
 | impulse_desc | position / direction / impulse_magnitude / radius / event_time | ImpulseはN·s。瞬間イベントとして一度だけ適用 |
 | advance_report | submitted_tick_count / pending_tick_count / in_flight_tick_count | 今回の受付・未送信・GPU未完了を分離 |
+| advance_report | render_binding_backpressure / capacity_blocked | Render Slot leaseまたはGPU Capacityに起因するSubmission停止理由 |
 | advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
 | world_status | submitted_sequence / gpu_committed_sequence / cpu_observed_sequence | GPU CommitとCPU確認済みprefixを別々に保持 |
 | world_status | playback_state / tick_state / terminal_error / simulation_backlog | 状態、最終エラー、遅延・未処理時間を報告 |
 | render_binding | position_srv / normal_srv / tangent_srv | Commit済みPhysics Stateから生成したRead-only SRV |
 | render_binding | format / stride / vertex_count / index_count | Host RendererがDrawを構成するためのLayout |
 | render_binding | resource_generation / device_generation / committed_tick_sequence | Stale Binding検出と描画状態の追跡 |
+| render_binding | render_slot_id / render_slot_generation / lease_generation | Runtime-owned Render Candidate Ring内のSlot識別とHost lease検証 |
 
 \`model_desc\`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
 
-\`set_fixed_delta_time\`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0のときだけ成功する。条件を満たさなければBUSYを返す。変更時は古いFixed Delta Timeに属する未処理時間を新しいdtへ黙って換算しない。fractional remainderをResetするか、時間単位の余りとして保持するかをTest Environment設定へ明示する。XPBD Lambda / Tick ScratchはResetする。
+\`set_fixed_delta_time\`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0、queued single-step request = 0のときだけ成功する。条件を満たさなければBUSYを返す。fractional remainderは秒単位の実時間として保持し、新しいFixed Delta Timeに対してAccumulatorのwhole tick数を再計算する。旧Fixed Delta Timeのwhole tickは存在しないため、時間を黙って破棄・換算しない。変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。
 
-\`get_render_binding\`はCPU-observed committed State Generationを返す。GPU内部の最新commitがまだCPU-observed prefixに含まれない場合は、前回のCPU-observed committed Bindingを返す。
+\`get_render_binding\`はCPU-observed committed Tick Prefixに対応するRender Slotだけを返す。GPU Commit済みでもCPUがEvent Query / Status Readbackを確認していないTickのSlotは公開しない。Worldごとに同時に有効なHost Render Leaseは1つとし、各Meshのget_render_binding呼び出しは同じlease_generationに属する。HostはDraw後に公開SRVを全Graphics StageからUnbindし、release_render_bindingsを呼ぶ。
 
 ### 3.4 WorldとMesh Instanceの配置
 
@@ -335,7 +366,7 @@ CPUは通常フレームでPhysics Vertex位置・速度、Tet Lambda、Contact 
 - Time ScaleはFrame elapsedをAccumulatorへ加える倍率とする。物理のFixed Delta Timeそのものを変化させない。
 - Soft Bodyの内部力積分にはCFL / Animation Tracking安定条件から求めたInternal Substepを使う。
 - Cloth XPBD / Contact XPBDのComplianceには実際に解決するSubstep Delta Timeを使う。
-- Fixed Delta Timeを変更する場合、WorldをPausedにし、in-flight Tickが0件で、未処理のwhole Tick / pending Step要求がないことを要求する。条件を満たさない場合はBUSYを返す。条件成立後、Accumulator fractional remainderの処理（Resetまたは明示的に保持可能なfractional timeのみ保持）を適用し、XPBD LambdaとStep内ScratchをResetしてから新しい時間刻みへ移行する。旧Fixed Delta Timeのwhole Tickを新しい時間刻みで実行しない。
+- Fixed Delta Timeを変更する場合、WorldをPausedにし、in-flight Tickが0件で、未処理のwhole Tick / pending Step要求がないことを要求する。条件を満たさない場合はBUSYを返す。条件成立後、fractional remainderは秒単位の実時間として保持してAccumulatorのwhole tick数を再計算し、Cloth / Contact / Animation XPBD LambdaとStep内ScratchをResetしてから新しい時間刻みに移行する。旧Fixed Delta Timeのwhole Tickを新しい時間刻みで実行しない。
 - 最大Step / Substep予算に達してもAccumulator内の未処理時間を黙って破棄しない。
 
 ### 5.2 Fixed Stepと非同期GPU Stepの分離
@@ -373,9 +404,9 @@ CPU側のFixed Step制御はWall Clockから必要Logical Tick数を算出する
 
 Animation ClipはRuntimeがSimulation Timeを基準にCPU評価し、各Logical TickおよびInternal SubstepでBone Pose / Skin Matrixを供給する。Render FrameのPoseを複数Physics Tickに無条件複製しない。CUBICSPLINE / LINEAR / STEPはImporterで定義された補間方式を維持する。
 
-外部からBone Poseを直接供給するHostでは、時刻付きPose Sampleを登録し、各Tick時刻を補間できるだけの履歴を保持する。Pose履歴不足時は直前Poseを不明な速度で延長せず、Diagnosticへ記録する。
+外部からBone Poseを直接供給するHostでは、時刻付きPose Sampleを登録し、各Tick時刻を補間できるだけの履歴を保持する。Pose履歴不足時は直前Poseを不明な速度で延長しない。必要なTick / Substep時刻を補間できない場合はそのTickをBLOCKED_BY_INPUTとしてSubmission待ちにし、欠落履歴の範囲をDiagnosticとadvance_reportへ返す。
 
-Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境界の姿勢を補間する。Teleportは明示Eventとし、Contact / CCD Cache、前回位置、速度を規定ポリシーで再初期化する。Collider自身は位置補正・Impulseで変形しない。
+Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境界の姿勢を補間する。必要な時刻範囲をbracketできない場合はTickをBLOCKED_BY_INPUTとして待機し、古いPoseで延長しない。Teleportは明示Eventとし、Contact / CCD Cache、前回位置、速度を規定ポリシーで再初期化する。Collider自身は位置補正・Impulseで変形しない。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -388,7 +419,8 @@ Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境
 - tick_start_snapshot: Capacity / CCD / NonFinite failureから再実行するLogical Tick開始状態。Position / Velocityだけでなく、そのTickのRetryに必要なPersistent Lambda / Contact / Animation Historyも対象とする。
 - tick_dispatch_plan: expected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_id / tokenを持ち、ReservationからExecution / Commitまでimmutableとする。
 - solver_lambda / contact_lambda / impact_state: 各Solverの更新規則に従うWorking / Persistent State。Rollback時はtick_start_snapshotと対応するLambda / Contact Cacheを復元する。
-- render_position / render_normal / render_tangent: Commit後の描画公開用状態。
+- render_candidate_slots: Tickごとに確保するPosition / Normal / Tangent candidateとslot_generation。GPU Commit ControlだけがPhysics committed stateとRender slot referenceを同時に切り替える。
+- host_render_lease: CPU-observed committed Render slotをHostへ貸し出したlease_generation。lease解放までslotを再利用しない。
 - simulation_status / tick_sequence / state_generation / diagnostic_counters: GPU Commit / Reject / Error Control。
 
 GPU Solver ScratchをHost Render Bindingへ直接公開しない。Commit済み状態と描画用BufferはCopyまたはPublish Passで同期する。Committed StateのResource Set切替はGPU Commit Controlだけが行う。Retry / Rejectではactive_state_setとstate_generationを維持する。後続Tickは前TickのCommit結果とGenerationを検証してから実行する。
@@ -402,7 +434,7 @@ Logical Tickは次の条件を全て満たした場合だけCOMMITTEDとする�
 - CCDが全必須候補でResolvedまたはNo Hitに確定し、Unresolvedが0。
 - Position / Velocity / Stress / Lambda / TOI等にNaN / Infがない。
 - Tet Inversion / Volume / Contact Residual / Initial Repair等のScenario Gateを通過。
-- Render Feedback用の対応付けとGeometry更新に致命的エラーがない。
+- Render Feedback Candidateが専用Slotへ生成され、Binding / Geometry ValidationとNonFinite検査を通過している。
 - GPU DiagnosticのTerminal Failureが0。
 
 判定はGPU側のReduce / Commit Controlで行う。CPU Readbackの完了をTick Commitの条件にしない。CPUのcompleted_timeはQuery完了後の非同期Status Readbackを確認してから進める。
@@ -411,7 +443,7 @@ Logical Tickは次の条件を全て満たした場合だけCOMMITTEDとする�
 
 Capacity Overflow、CCD Unresolved、NonFinite、物理品質Gate失敗時は、現在のLogical TickをREJECTED / BLOCKEDにする。作業状態をCommitしない。GPU上のtick_start_snapshotから再実行する。
 
-- Capacity Overflow: Count / Scan / Capacity Checkで必要数を記録し、Fill / Consumerの範囲外アクセスを禁止する。Event Query完了後にCPUが小規模Required Capacityを回収し、Submission ThreadでBufferを再確保する。入力と初期状態を変更せず同じTickを再実行する。
+- Capacity Overflow: Count / Scan / Capacity Checkで必要数を記録し、Fill / Consumerの範囲外アクセスを禁止する。Event Query / Status Readback後にCPUがRequired Capacityを回収し、該当Resource GroupのCapacityを next_power_of_two(max(required_count, ceil(current_capacity * 1.5))) へ拡張する。0容量からの初回確保はnext_power_of_two(required_count)とする。uint32 / D3D11 ByteWidth / Dispatch上限を超える要求は成長で解決できないCapacity Errorとする。Resource Group全体を新規確保できるMemory Budgetを先に確認し、割当・Copy / Rebuildが完了してから新Resource Setへ切り替える。旧Resource Setは参照中の全Query / Tick / Render Leaseが解放されるまで退役させない。Capacity Growth中は新規Tick Submissionを停止し、影響する全in-flight TickのQuery完了と状態判定をnon-blockingで待つ。後続Tickは先行状態が確定するまでBLOCKED_BY_PREDECESSORを維持し、先行Tickを同一Snapshot / Inputで再実行してCommitした後、新Generationに基づいて再Submissionする。最大GPU Resource Budgetを超える場合はBlockedByCapacityを維持し、候補を捨てない。
 - CCD Unresolved: Internal Substep数またはCCD分割上限を上げて同じTickを再実行する。No Hitへ置き換えない。
 - NonFinite / Invalid Asset / ABI mismatch: 自動的な低品質再試行をしない。Failureを報告する。
 - Retry上限到達: TickをCommitせず、Simulation WorldをBlockedByCCD / BlockedByCapacity / Failedへ遷移する。
@@ -444,8 +476,9 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 
 1. CPU Animation Evaluation / Kinematic Transform Sampleの取得。
 2. GPU Animation Target / Velocity Skinning。
-3. Logical Tick開始SnapshotとTerminal Status初期化。
-4. 各Internal Substepについて次を処理。
+3. Render Candidate Slotの空きを確認してReservation。空きがなければそのTickをpendingへ残し、Accumulatorの時間を保持する。
+4. Logical Tick開始SnapshotとTerminal Status初期化。
+5. 各Internal Substepについて次を処理。
    - Previous State Snapshot。
    - Soft Body Tet Deformation Gradient / Polar Rotation / Stress / Inversion Penalty。
    - Tet Force Contribution。
@@ -460,9 +493,10 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
    - Velocity Reconstruction / Impact / Friction / Restitution。
    - Broadphase Envelopeと残存Penetrationの再検査。Envelope外ならRebuild。
    - Substep状態の確認。
-5. 全Substep成功後にRender Position / Normal / Tangent Feedback。
-6. GPU Logical Tick Commit Control。
-7. GPU Status / Diagnostic Copy、Timestamp / Event Query。
+6. 全Substep成功後にRender Feedback Candidate Prepare（Tick Reservation済みslotへ書き込む）。
+7. Render Candidate Validation。
+8. GPU Logical Tick Commit ControlでPhysics State Set / GenerationとRender Candidate Slot / Generationを同時にcommit。
+9. GPU Status / Diagnostic Copy、Timestamp / Event Query。Statusはcommitted render slot ID / generationを記録する。
 
 Soft Body内部力はInternal Substepごとに再評価する。Soft BodyのFEM ForceをXPBD Contact Lambdaへ混ぜない。Contactは双方のPhysics Vertexへ質量・勾配係数に基づいて補正する。
 
@@ -509,7 +543,7 @@ Count / Scanで必要数がCapacityを超える場合Fillを停止する。範�
 
 ### 8.2 Memory Budget
 
-Library所有Buffer / TextureのByte数とDXGI Local Memory CurrentUsage / Budgetを別々に計測する。使用可能BudgetはOS / Renderer等の他利用者を含む実測値から設定し、6GB全量を占有しない。Capacity GrowthはMemory Budgetを超えない範囲で行い、必要容量を確保できなければWorldをBlockedByCapacityにする。
+Library所有Buffer / TextureのByte数とDXGI Local Memory CurrentUsage / Budgetを別々に計測する。使用可能BudgetはOS / Renderer等の他利用者を含む実測値から設定し、6GB全量を占有しない。Capacity GrowthはMemory Budgetを超えない範囲で行う。RuntimeはLibrary-owned Resource Bytes、DXGI Local Memory CurrentUsage / Budget、Host Reserved Bytesを別々に記録し、library_limit = min(runtime_desc.maximum_gpu_resource_bytes, max(0, dxgi_budget - host_reserved_gpu_bytes)) を超える成長は拒否してWorldをBlockedByCapacityにする。Capacityは通常運用中に縮小しない。
 
 ### 8.3 Error分類
 
@@ -519,6 +553,9 @@ Library所有Buffer / TextureのByte数とDXGI Local Memory CurrentUsage / Budge
 | DegenerateTetrahedron / InvertedTetrahedron | Asset / Step Validationに基づき警告またはReject |
 | InvalidMaterialParameter | 設定変更拒否 |
 | SkinWeightTransferError / RenderBindingError | 該当MeshのLoad / FeedbackをReject |
+| SubmissionThreadViolation | 初期化時に登録したSubmission Thread以外からImmediate Context / GPU Resourceを操作しようとしたAPI CallをReject |
+| BlockedByInput | Animation / Kinematic Pose Sample履歴が必要なTick / Substep時刻をbracketできず、入力不足範囲の登録を待つ |
+| RenderBindingBusy | Host Render Leaseが未解放、またはRender Candidate Slot不足により新規Submissionを停止 |
 | BroadphaseOverflow / ContactOverflow / ContributionOverflow | TickをRollbackし、Capacity調整後に再実行 |
 | CCDIterationLimit / CCDUnresolved | TickをRollbackし、Substep / CCD設定変更後に再実行 |
 | InitialPenetrationLimit | Initial StateをCommitしない |
@@ -544,11 +581,11 @@ Library所有Buffer / TextureのByte数とDXGI Local Memory CurrentUsage / Budge
 
 ### 9.2 Render Binding
 
-Render BindingはPosition / Normal / TangentのSRV、Format、Stride、Vertex Count、Index Count、Resource Generationを返す。Borrowed COM Pointerとし、長期保持する場合だけHostがAddRefする。HostはSRVをVS / PS等へBindできるが、UAVとして書き込まない。
+Render BindingはPosition / Normal / TangentのSRV、Format、Stride、Vertex Count、Index Count、Resource Generation、Device Generation、Committed Tick Sequence、Render Slot ID / Generation、Lease Generationを返す。SRVはBorrowed COM Pointerであり、HostのAddRefはCOM Objectの生存期間だけを延ばす。Render Slotの内容はlease_generationの有効期間だけ保証する。WorldごとにHost Render Leaseは同時に1つだけ許可し、全Mesh Bindingを同じLeaseへ紐付ける。
 
-get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した、最後のCPU-observed committed state generationを返す。GPU上でCOMMITTEDになっていてもCPU-observed prefixへまだ入っていないTickの状態は返さない。このためRenderは1 Query Poll周期以上遅れる場合があるが、未確認Working Stateや寿命未確定Resourceを公開しない。
+get_render_bindingはCPUがEvent Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を確認した最後のTickに対応するRender Slotを返す。GPU上でCOMMITTEDになっていてもCPU-observed prefixへまだ入っていないTickのSlotは返さない。Slot leaseはWorldごとに1つであり、HostはすべてのMeshを描画した後、Graphics / Compute StageからSRVをUnbindしてrelease_render_bindingsを呼ぶ。release後はPointerを参照しない。Slot ringは前述のmax_inflight+1で管理し、未回収Status / in-flight Tick / Host leaseを持つSlotを上書きしない。
 
-Host Rendererは描画完了後、次のRuntime Compute Dispatch前に公開SRVを全Graphics StageからUnbindする。Runtimeは公開Render Bufferへ直接Solver書き込みを行わず、Commit後のPublish Pass / Copyで更新する。Publish CostとVRAMはPerformance Runへ含める。
+Host Rendererは描画完了後、公開SRVをVS / HS / DS / GS / PS / CSの全Graphics / Compute StageからUnbindし、次のRuntime Submissionを発行する前にrelease_render_bindings(world)を呼ぶ。RuntimeはLease解放を確認するまで当該Render Slotを再利用しない。lease_generationが古いPointerは使用禁止。Runtimeは次のTickのためのRender Candidateを別Slotへ生成する。Render Candidate RingのSlot数はmaximum_in_flight_ticks + 1とする（既定in-flight 2なら3 Slot）。これによりCPU-observedな直前Committed Slot 1つと最大2件のin-flight Candidateを保持できる。Hostがleaseをreleaseせず次のSubmissionを要求した場合、RuntimeはBUSY / render_binding_busyで追加Submissionを止め、Accumulatorの時間を保持する。Render Candidate生成・検証・Ring Memory / Publish CostをPerformance Runへ含める。
 
 ### 9.3 Device Loss
 
