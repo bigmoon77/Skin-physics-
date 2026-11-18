@@ -196,7 +196,7 @@ sequenceDiagram
     GPU->>B: Rebuild destination from A
 ```
 
-The active bank is the complete Logical Tick rollback source. The inactive bank is disposable destination state. The substep snapshot is reusable TOI / segment scratch, not a third persistent bank.
+The active bank is the complete Logical Tick rollback source. The inactive bank is disposable destination state. The substep snapshot is reusable TOI / segment scratch, not a third persistent bank. The persistent banks contain dynamic state and Contact Cache (Contact Key / Normal / Patch Generation), but do not contain XPBD Lambdas. Cloth Stretch / Shear / Bend / Animation Tracking / Contact Lambdas live in per-World Segment Scratch, are reset to zero at each World Integration Segment boundary (normal Substep, Force / Impulse event split, or TOI split), and accumulate only during that Segment's solver iterations. XPBD Compliance is evaluated with alpha_tilde=alpha/(dt_segment^2); Segment-to-Segment and Tick-to-Tick Lambda Warm Start is disabled in v1.
 
 ## 6. Key implementation invariants
 
