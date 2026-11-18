@@ -122,6 +122,7 @@ stateDiagram-v2
     [*] --> Ready
     Ready --> PendingInput: whole fixed dt / Step Request awaits pre-submit gates
     PendingInput --> BlockedByInput: required Pose / Kinematic sample missing
+    BlockedByInput --> PendingInput: missing samples supplied
     PendingInput --> BlockedByRenderLease: no Candidate Slot / Host Lease busy
     PendingInput --> Reserved: time + input + Render Slot + Query Slot ready
     Reserved --> Submitted: assign sequence / snapshot; move dt to Reservation
@@ -238,7 +239,7 @@ sequenceDiagram
     participant R as Deferred Release List
 
     H->>API: destroy_model / destroy_collider / reset_world
-    alt In-flight Tick, Pending Reservation / Step Request, or Host Lease exists
+    alt Referencing Tick Reservation / in-flight Tick / Host Lease exists
         API-->>H: BUSY (Handle / Resource remains valid)
     else no active or pending reference
         API->>R: retire Resource after last completion Query
@@ -264,7 +265,7 @@ sequenceDiagram
     API-->>H: OK only when Worlds / Queries / Leases / Deferred Releases / Reservations are empty
 ```
 
-`drain()` is an explicit non-frame operation and may wait for Event Query completion. It returns BUSY for unassigned whole-tick backlog, unsubmitted reservations, pending Step requests, or an active Host Lease. It never fabricates a Lease release. `shutdown()` does not destroy live Worlds or invalidate borrowed Render Bindings; callers must release Leases, destroy Worlds, drain, then shutdown.
+`drain()` is an explicit non-frame operation and may wait for Event Query completion. It returns BUSY for unassigned whole-tick backlog, pending Step requests, or an active Host Lease. It never fabricates a Lease release. `destroy_world()` also requires the entire unassigned Accumulator, including fractional remainder, to be zero. `shutdown()` does not destroy live Worlds or invalidate borrowed Render Bindings; callers must release Leases, clear unassigned time / Step requests, destroy Worlds, drain, then shutdown.
 
 ## 8. Time Reservation Invariants
 
