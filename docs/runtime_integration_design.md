@@ -722,6 +722,7 @@ Peak計測にはPhysics State Banks / Segment Snapshot / Contact・Candidate / R
 | RenderBindingBusy | Host Render Leaseが未解放、またはRender Candidate Slot不足により新規Submissionを停止 |
 | BroadphaseOverflow / ContactOverflow / ContributionOverflow | TickをRollbackし、Capacity調整後に再実行 |
 | ContactImpulseUnresolved | Coupled Projected Jacobiが最大IterationでResidualへ収束しない。Tick全体をRollback / Blockし、Iteration / Solver設定を検証してRetry |
+| AnimationTimePrecisionUnresolved | GPU Span-local normalized timeが正のSegment進行を表現できない。Span細分化深度8後も解決しない場合にTick全体をBlock / Reject |
 | NonResponsiveContact | 有効逆質量が閾値以下の正常な非応答Contact。Position / ImpulseをSkipし、Diagnostic Counterへ記録 |
 | CCDIterationLimit / CCDUnresolved | TickをRollbackし、Substep / CCD設定変更後に再実行 |
 | InitialPenetrationLimit | Initial StateをCommitしない |
