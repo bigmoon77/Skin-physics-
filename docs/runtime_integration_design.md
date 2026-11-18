@@ -5,11 +5,11 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.2
+- 文書バージョン: 1.3
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.4
-- 対応詳細設計: detailed_design.md 1.5
+- 対応詳細設計: detailed_design.md 1.6
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -38,7 +38,7 @@ Runtimeは複数の独立Simulation Worldを作成できる。World間のCollisi
 - Static / Kinematic Triangle Mesh Collider。
 - Mesh単位のSelf Collision設定とMesh Pair除外設定。
 
-同一Model内のBody、Shirt、Pants、Hair Cards / Hair Bundles等は共通Worldで接触できる。Soft BodyはPhysics Mesh境界面、ClothはPhysics表面三角形を接触対象とする。Soft Body内部Tet面は外部接触プリミティブへ登録しない。World共通Substep Scheduleを採用し、v1ではSolver別Subcyclingを行わない。
+同一Model内のBody、Shirt、Pants、Hair Cards / Hair Bundles等は共通Worldで接触できる。Soft BodyはPhysics Mesh境界面、ClothはPhysics表面三角形を接触対象とする。Soft Body内部Tet面は外部接触プリミティブへ登録しない。World共通Substep Scheduleを採用し、v1ではSolver別Subcyclingを行わない。Force / Impulse Event境界とTOIでSubstepをIntegration Segmentへ分割し、Soft Body / Cloth / Contact / Animation Trackingは各Segmentを同じdtで進める。Segment開始境界でImpulseを一度だけ適用し、Segment終了後のDynamic Velocity再構築とFixed / Kinematic Animation Velocityの維持はdetailed_design.md §6.6 / §7.1.1 / §7.1.2に従う。
 
 v1では独立した動的Rigid Body、Strand Hair専用線状モデル、GPU上での四面体化、GPU上での任意Topology編集、変形Collision ProxyからPhysics Meshへの汎用応答写像を対象外とする。
 
