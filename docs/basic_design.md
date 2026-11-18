@@ -1,10 +1,10 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.4
+- 文書バージョン: 1.5
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.1
+- 前版: 1.4
 - Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md)
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 
@@ -117,7 +117,7 @@ Physics Mesh、要素接続、隣接情報、材料属性、Render Vertex Bindin
 
 ## 5. シミュレーションパイプライン
 
-固定時間刻みのLogical Tickを基本単位とし、World内の全Soft Body / Cloth / Contactが同じSubstep時刻を参照する。
+固定時間刻みのLogical Tickを基本単位とし、World内の全Soft Body / Cloth / Contact / Animation Trackingが同じ時刻を進む。World共通SubstepはForce / Impulse Event境界およびTOIでIntegration Segmentへ分割し、全Solverを同じSegment時間で進める。Segment単位の予測・速度更新・減衰・Kinematic速度の規則は詳細設計§6.6 / §7.1.1 / §7.1.2を正とする。
 
 1. Logical Tick開始時にWorld共通Substep数を算出する。
 2. 各Substep境界のAnimation / Root Transform / Kinematic Poseを評価する。
