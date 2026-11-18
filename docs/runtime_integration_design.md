@@ -522,7 +522,7 @@ CPU Animation EvaluatorはLogical Tick候補の有効なClip Key / Loop / Blend 
 
 絶対World Simulation Time、Tick Reservation時刻、Clip Local Time、Span境界はCPU上でdouble管理する。GPU Shader Model 5へ渡すPacketはdoubleを含まず、uint32 / floatのみの固定幅Recordとする。GPUは絶対World TimeをfloatへCastしない。各Spanの開始時点の正規化座標u_segment_startとSegment開始からの相対秒tau [s]から、u_tau = clamp(u_segment_start + tau * inverse_span_duration, 0, 1)を算出する。TOIで残Segmentを始める場合はGPU上でu_segment_startをu_tauへ更新し、CPU Readback / 再Uploadを挟まない。
 
-GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 80 bytes、animation_track_gpu_record 32 bytes、animation_channel_gpu_record 208 bytes、animation_blend_gpu_record 48 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。Span / Channel / Blend / Colliderの全Field Byte Offsetも§5.3のABI表で固定する。CPU Absolute Timeはdouble、GPUはSpan-local normalized time / Segment-relative tauのみfloatで扱う。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
+GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 80 bytes、animation_track_gpu_record 32 bytes、animation_channel_gpu_record 224 bytes、animation_blend_gpu_record 48 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。Span / Channel / Blend / Colliderの全Field Byte Offsetも§5.3のABI表で固定する。CPU Absolute Timeはdouble、GPUはSpan-local normalized time / Segment-relative tauのみfloatで扱う。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
 
 
 - STEP / LINEAR / CUBICSPLINEの係数化、Quaternion Slerp / normalized Hermite微分、最大2 Track Blend、Hierarchy / Skinning微分はdetailed_design.md §5.3を正とする。
@@ -806,7 +806,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 - Multi-key glTF Clip / Skeleton / Mesh Node Matrix。
 - GPU Animation Span / Track / Channel / Blend Packet、任意tauのSkinning Position / Velocity / Bounds。
-- Fixed SM5 Packet ABI / Span-local normalized cursor monotonicity / float precision gate (Span 80 B / Track 32 B / Channel 208 B / Blend 48 B / Collider 128 B)。
+- Fixed SM5 Packet ABI / Span-local normalized cursor monotonicity / float precision gate (Span 80 B / Track 32 B / Channel 224 B / Blend 48 B / Collider 128 B)。
 - 2 Track Clip Blend / w_dot / BlendVelocity Discontinuity。
 - Substepped target position / velocity。
 - Animation Discontinuity / Teleport Policy。
