@@ -120,10 +120,11 @@ No candidate is silently dropped. The failed working state is not published to R
 ```mermaid
 stateDiagram-v2
     [*] --> Ready
-    Ready --> PendingInput: required Pose / Kinematic sample missing
-    PendingInput --> Reserved: whole fixed dt available / single-step request
-    Reserved --> Submitted: input ready + Render Slot + Query Slot available
-    Reserved --> BlockedByRenderLease: no Candidate Slot / Host Lease busy
+    Ready --> PendingInput: whole fixed dt / Step Request awaits pre-submit gates
+    PendingInput --> BlockedByInput: required Pose / Kinematic sample missing
+    PendingInput --> BlockedByRenderLease: no Candidate Slot / Host Lease busy
+    PendingInput --> Reserved: time + input + Render Slot + Query Slot ready
+    Reserved --> Submitted: assign sequence / snapshot; move dt to Reservation
     Submitted --> GpuExecuting
     GpuExecuting --> GpuCommitted: GPU commit control passes
     GpuExecuting --> BlockedByCapacity: capacity overflow
@@ -133,7 +134,7 @@ stateDiagram-v2
     BlockedByCapacity --> Reserved: capacity grown; same reservation replay
     BlockedByCCD --> Reserved: common Substep budget raised; same reservation replay
     BlockedByPredecessor --> Reserved: predecessor committed; rebuild source generation
-    BlockedByRenderLease --> Reserved: lease released / slot available
+    BlockedByRenderLease --> PendingInput: lease released / slot available
     GpuCommitted --> CpuObserved: Event Query + COMMITTED status + contiguous prefix
     CpuObserved --> Ready
     Rejected --> Failed
@@ -268,7 +269,7 @@ sequenceDiagram
 ## 8. Time Reservation Invariants
 
 1. `advance` adds elapsed time only while Playing.
-2. Creating a Tick Reservation moves exactly one fixed dt from unassigned Accumulator to the Reservation.
+2. A Tick Reservation is created only after pre-submission Pose / Kinematic, Render Slot and Query Slot gates pass. Exactly one fixed dt moves from Accumulator or Step Request Queue into that Reservation at submission.
 3. Each accepted `single_step` adds one fixed dt to requested time and queues a separate Step Request; it does not modify wall-clock Accumulator.
 4. Stop / Reset cancellation of an unreserved Step Request increments cancelled_requested_time. Effective requested time is requested minus cancelled.
 5. Commit transfers Reservation time to committed simulation time exactly once.
