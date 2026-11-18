@@ -204,7 +204,7 @@ Force / Impulseの空間分配:
 - Dynamic Vertexは線形粘性減衰の区間解を使う。decay=exp(-damping_rate*dt_segment)、g=(1-decay)/damping_rate（damping_rate=0ならdt_segment）として、v_pred=decay*(v_start+inverse_mass*J_segment)+g*inverse_mass*F_segment、x_pred=x_start+dt_segment*v_pred。小さいzでは詳細設計§6.6の級数近似を使う。
 - Fixed / Kinematic VertexはSegment終端Targetと最終Animation Trajectoryの時間微分Velocityを維持する。有限差分による速度代用を行わない。
 - 非接触内部Constraint後にDynamic Contact前Velocityを再構築して保存する。Contact Position correction後のPosition差分をVelocityへ変換しない。Contact Position correctionは幾何補正であり、Restitution Velocityではない。
-- Contact iの有効逆質量W_ii=sum_k(inverse_mass_k*c_ik^2)。W_ii <= epsilon_inverse_massではContact Position / ImpulseをSkipする。epsilon_inverse_mass=max(32*FLT_MIN, 1e-12/mass_reference_world)、mass_reference_worldはWorld内すべての参加Dynamic Physics VertexのMedian Positive Mass。Dynamic Massが存在しないWorldは全Contactを非応答とする。
+- Contact iの有効逆質量W_ii=sum_k(inverse_mass_k*c_ik^2)。W_ii <= epsilon_inverse_massではContact Position / ImpulseをSkipする。epsilon_inverse_mass=1e-12/mass_reference_world [1/kg]、mass_reference_worldはWorld内すべての参加Dynamic Physics VertexのMedian Positive Mass [kg]。Dynamic Massが存在しないWorldは全Contactを非応答とする。
 - Coupled Projected Jacobiは各ContactのNormal Accumulated ImpulseとTangent Vectorを更新し、全Contact ContributionをVertex CSRでGather。Iterations=8、最大16、relaxation=0.5。Residualのimpulse_referenceはContact Solverに参加する全Dynamic Vertex Massの中央値 ×（参加Mesh Rest Edge Lengthの中央値 / dt_contact）とする。Normal Complementarity / Tangent Coulomb ConeのProjected Residualが1e-4以下へ収束しない場合はCONTACT_IMPULSE_UNRESOLVED。
 - XPBD LambdaはSegment開始時にResetし、Segment内の反復でのみ保持する。Impact後Dynamic Velocityを残Segmentへ引き継ぎ、同じTOI Segment内で再構築して上書きしない。
 
