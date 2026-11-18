@@ -210,7 +210,7 @@ VT接触では、接触点の補正を三角形側3頂点へ重心座標で配�
 
 EE接触では、最近接点を構成する各辺の2頂点へ線分パラメータに基づいて補正を配分し、双方の辺へ作用させる。
 
-接触ごとのλ、法線方向、摩擦接線、接触の重複、接触寿命、サブステップ間のλ保持条件を管理する。接触参加頂点の有効逆質量が閾値以下なら非応答ContactとしてPosition / ImpulseをSkipする。複数Contactが頂点を共有するVelocity ImpulseはGlobal Projected JacobiでCoupleし、Residual未収束時はTickをCommitしない。摩擦 / 反発は詳細設計§8.5のCoupled Contact Solverを正とする。
+接触ごとのλ、法線方向、摩擦接線、接触の重複、接触寿命、サブステップ間のλ保持条件を管理する。Contact Temporal Quality Limitは初期値1/120秒、0を明示無効とし、XPBDの安定保証ではなくWorld共通Substepの品質上限として扱う。接触参加頂点の有効逆質量が閾値以下なら非応答ContactとしてPosition / ImpulseをSkipする。複数Contactが頂点を共有するVelocity ImpulseはGlobal Projected JacobiでCoupleし、Residual未収束時はTickをCommitしない。摩擦 / 反発は詳細設計§8.5のCoupled Contact Solverを正とする。
 
 ### 7.5 CCD
 
@@ -328,13 +328,13 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
-- 1.7: GPU Animation Trajectory Packet / Spanによる任意tau評価、最大2 Track Blend、非応答Contactの退化処理、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limitを追加。
+- 1.7: GPU Animation Trajectory Packet / Spanによる任意tau評価、最大2 Track Blend、非応答Contactの退化処理、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limit、Logical Tick内Integration Segment数上限を追加。
 - 1.6: Animation Target Velocityを最終Skinning Trajectoryの時間微分へ統一し、Kinematic CCDの保守的Path Bound、Contact Position correctionとContact前Velocityの分離を追加。
 - 1.5: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / Cloth共通のSegment予測、線形粘性減衰の積分、Fixed / Kinematic Velocityの所有規則を追加。
 - 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加.
 
 
-## 17. GPU Runtime / Library統合方針（v1.6）
+## 17. GPU Runtime / Library統合方針（v1.7）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
