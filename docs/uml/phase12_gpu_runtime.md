@@ -50,11 +50,18 @@ sequenceDiagram
     participant R as Renderer
 
     H->>API: advance(frame_delta_time)
-    API->>S: accumulate active elapsed
-    S->>G: request logical tick(s)
+    API->>S: add elapsed to requested time (Playing only)
+    S->>S: move one fixed dt from Accumulator to Tick Reservation
+    S->>G: submit reserved sequence + immutable input snapshot
     G->>G: reserve per-tick Render Candidate Slot
-    G->>D: snapshot committed state
-    G->>D: Skinning / FEM / Cloth / Broadphase / CCD / Contact
+    G->>D: predecessor / State Generation gate
+    G->>D: calculate World common Substep schedule
+    loop each common Substep / TOI Segment
+        G->>D: sample Animation / Root / Kinematic poses
+        G->>D: distribute Force / Impulse events once
+        G->>D: Soft Body FEM + Cloth prediction
+        G->>D: broadphase / narrowphase / contact / CCD / mixed solver
+    end
     G->>D: prepare Render Candidate (Position / Normal / Tangent)
     G->>D: validate Render Candidate + Physics State
     G->>D: GPU Commit Control (Physics State + Render Slot atomically)
@@ -72,10 +79,12 @@ sequenceDiagram
     H->>R: bind Render Binding
     R->>D: Draw
     H->>R: Unbind VS / HS / DS / GS / PS / CS SRVs
-    H->>API: release_render_bindings(world)
+    H->>API: release_render_bindings(world, lease_generation)
 ```
 
 GPU command submission and CPU observation are separate events. Event Query completion proves command completion; the GPU Status Buffer determines whether a Logical Tick committed. Render Candidate is produced before Commit, but its slot becomes visible only when the same GPU Commit Control atomically selects the committed Physics State and Render Slot. The Host receives only the latest CPU-observed committed prefix. A World has one active Render Lease, and its ring contains maximum_in_flight_ticks + 1 slots; a slot cannot be reused until it is no longer in flight / unobserved and its Host lease has been released.
+
+A Tick Reservation owns its fixed-time interval from submission through Retry / Block until GPU Commit. A transient reject never returns time to the Accumulator and never allocates a new Tick Sequence. CPU Observation updates status only; it never consumes or refunds simulation time. World Substep schedule is common to Soft Body / Cloth / Contact / Animation Tracking, and TOI / Force event boundaries split time for every participant.
 
 The Runtime permits up to two submitted-but-not-observed ticks. Each immutable Dispatch Plan contains the expected predecessor sequence and source State Generation. Tick N+1 checks the GPU Commit result of N before any Physics State read/write. If N fails, N+1 is blocked before touching Physics State and must be resubmitted after N is successfully replayed.
 
@@ -111,15 +120,20 @@ No candidate is silently dropped. The failed working state is not published to R
 ```mermaid
 stateDiagram-v2
     [*] --> Ready
-    Ready --> PendingInput: advance / tick requested
-    PendingInput --> Submitted: required input ready + slot available
+    Ready --> PendingInput: required Pose / Kinematic sample missing
+    PendingInput --> Reserved: whole fixed dt available / single-step request
+    Reserved --> Submitted: input ready + Render Slot + Query Slot available
+    Reserved --> BlockedByRenderLease: no Candidate Slot / Host Lease busy
     Submitted --> GpuExecuting
     GpuExecuting --> GpuCommitted: GPU commit control passes
     GpuExecuting --> BlockedByCapacity: capacity overflow
     GpuExecuting --> BlockedByCCD: CCD unresolved / iteration limit
-    GpuExecuting --> Rejected: nonfinite / physical gate failure
-    BlockedByCapacity --> Submitted: capacity grown + same tick replay
-    BlockedByCCD --> Submitted: substep / CCD budget adjusted + replay
+    GpuExecuting --> BlockedByPredecessor: previous Tick not committed
+    GpuExecuting --> Rejected: NonFinite / ContactGeometry / physical gate failure
+    BlockedByCapacity --> Reserved: capacity grown; same reservation replay
+    BlockedByCCD --> Reserved: common Substep budget raised; same reservation replay
+    BlockedByPredecessor --> Reserved: predecessor committed; rebuild source generation
+    BlockedByRenderLease --> Reserved: lease released / slot available
     GpuCommitted --> CpuObserved: Event Query + COMMITTED status + contiguous prefix
     CpuObserved --> Ready
     Rejected --> Failed
@@ -212,3 +226,50 @@ stateDiagram-v2
 ```
 
 A Host-leased slot, an unobserved committed slot, or an in-flight candidate is never overwritten. When all slots are occupied, the next Logical Tick remains pending in the Runtime Accumulator. No time or contact candidate is dropped.
+
+## 7. Host Resource Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant H as Host
+    participant API as SkinPhysics API
+    participant Q as GPU Query Ring
+    participant R as Deferred Release List
+
+    H->>API: destroy_model / destroy_collider / reset_world
+    alt In-flight Tick or Host Lease exists
+        API-->>H: BUSY (Handle / Resource remains valid)
+    else no in-flight Tick and no Host Lease
+        API->>R: retire Resource after last completion Query
+        API-->>H: OK
+    end
+
+    H->>API: release_render_bindings(world, lease_generation)
+    API->>API: validate current Lease Generation
+    alt stale or duplicate generation
+        API-->>H: STALE_HANDLE
+    else current generation
+        API->>API: mark Render Slot reusable after command submission ordering
+        API-->>H: OK
+    end
+
+    H->>API: drain()
+    API->>Q: stop new submission; wait submitted Queries
+    Q-->>API: all submitted commands complete
+    API->>R: release retired resources
+    API-->>H: drained
+
+    H->>API: shutdown()
+    API-->>H: OK only when Worlds / Queries / Leases / Deferred Releases are empty
+```
+
+`drain()` is an explicit non-frame operation and may wait for Event Query completion. It returns BUSY for unassigned whole-tick backlog, unsubmitted reservations, pending Step requests, or an active Host Lease. It never fabricates a Lease release. `shutdown()` does not destroy live Worlds or invalidate borrowed Render Bindings; callers must release Leases, destroy Worlds, drain, then shutdown.
+
+## 8. Time Reservation Invariants
+
+1. `advance` adds elapsed time only while Playing.
+2. Creating a Tick Reservation moves exactly one fixed dt from unassigned Accumulator to the Reservation.
+3. Commit transfers Reservation time to committed simulation time exactly once.
+4. Capacity / CCD / predecessor Block preserves the same Reservation and Tick Sequence for Retry.
+5. CPU Observation changes status only; it never changes Accumulator or committed simulation time.
+6. `single_step` creates a separate one-Tick Reservation and does not modify wall-clock Accumulator.
