@@ -3,8 +3,8 @@
 - 文書バージョン: 1.4
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.2
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md
+- 対応基本設計: basic_design.md 1.3
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.1
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
 - 前版: 1.2
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
@@ -783,7 +783,7 @@ v1のGPU Runtime初期値はpolar iteration最大8回、polar orthogonality resi
 
 ### 15.1 Logical Tick / Substep transaction
 
-Logical Tick全体をGPU Commit transactionとする。Tick開始前にCommitted Stateからtick_start_snapshotを確保し、各Substepのworking stateを更新する。すべてのSubstep / Collision / CCD / Validationが成功した後だけGPU Tick Commit Controlを通す。Render FeedbackはCommit済み状態から生成・Publishする。Failure時にWorking StateをRendererへ公開しない。
+Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Substep / CCD Segment開始状態は専用scratchへ保存し、TOI retime時はinactive_state_bankをそのscratchから復元する。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
 
 基本Pass順序:
 
@@ -992,6 +992,6 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - Render Feedback Candidateは専用SlotへCommit前に生成・検証し、GPU Commit ControlがPhysics StateとRender Slot参照を同時に切り替える。CPU-observed committed prefixのみをHostへ公開する。Render Candidate RingはWorldごとにmaximum_in_flight_ticks + 1 Slotとし、Lease解放前のSlotを再利用しない。追加Buffer / Copy / Dispatch / Ring VRAM / GPU時間をPerformance Runへ含める。
 - Device Loss時は新規Submissionを停止し、Asset / Initial StateからWorldを再構築してTimelineをResetする。毎Frameの全State Readbackで復旧しない。
 - 数値・物理品質の初期比較基準はnumerical_acceptance_profile_v1.jsonを使い、同一Solver Algorithm / Update OrderのCPU Double Referenceと比較する。異なるSolver方式同士はAnalytical FixtureとPhysical Invariantで比較する。
-- Production Runtimeの実装開始は独立Critical ReviewとGate R0～R6の実装計画承認後とする。
+- Production Runtimeの実装開始は独立Critical ReviewとGate R0～R6の実装計画承認後とする。採用値とReview Checklistは [design_closure.md](design_closure.md) を正とする。
 
 本改訂は設計追加であり、GPU Production Runtimeの実装・Build・Physical GPU Performanceを意味しない。文書状態はINDEPENDENT REVIEW REQUIREDとする。
