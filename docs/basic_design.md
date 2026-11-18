@@ -1,7 +1,7 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.2
-- 状態: GPU Runtime統合設計改訂・独立レビュー待ち
+- 文書バージョン: 1.3
+- 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
 - 前版: 1.1
@@ -10,7 +10,7 @@
 
 ## 1. 設計方針
 
-Skin PhysicsはSoft BodyとClothを同一シミュレーション環境で扱うGPUベースの変形物理ライブラリとする。
+Skin PhysicsはSoft BodyとClothを同一Simulation Worldで扱い、複数Model Instance / Mesh Componentの相互衝突・自己衝突・Skeleton Animation連携をGPU上で実行するC++17 / Direct3D 11静的Libraryとする。v1のPublic Runtimeは単一Bodyに限定せず、1 World内の複数Soft Body / Cloth / physics_mode none Meshを扱う。
 
 1. Render MeshとPhysics Meshを分離する。
 2. Soft BodyとClothの材料モデル・制約ソルバーを分離し、衝突管理とGPU実行管理を共通化する。
@@ -335,7 +335,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
 
 
-## 17. GPU Runtime / Library統合方針（v1.2）
+## 17. GPU Runtime / Library統合方針（v1.3）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
@@ -347,11 +347,11 @@ Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Dire
 - Capacity Overflow、CCD Unresolved、NonFinite、Physical Quality Gate FailureはWorking StateをCommitしない。必要に応じて同じTick開始Snapshot・入力でRetryし、解決不能ならWorldをBlock / Failedとする。
 - Hostが利用できるGPUデータはCommitted State専用のRead-only Render Bindingとする。Render BindingはPosition / Normal / TangentのSRV、Stride / Count / Resource Generationを持つ。内部Solver Buffer / Scratch / Writable UAVを公開しない。
 - Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking安定条件によるInternal SubstepとCloth / Contact XPBDの実Substep時間を分ける。
-- in-flight GPU Tick上限2件は初期候補とし、1 / 2 / 4件のQuery Ring・遅延・Memory比較後に確定する。
+- in-flight GPU Tickは既定2件、設定可能範囲1 / 2 / 4件とする。各TickのImmutable Dispatch Planと先行Tick Gateを必須とし、Status Query Ring容量は設定上限以上とする。性能比較で変更する場合は同じR0 Gateを再実行する。
 - GTX 1660 SUPER 6GBで3～40 FPSをWorkloadごとに測定する。全Asset規模に対する固定保証値を設けない。品質・衝突範囲・Iteration・Substep・時間を黙って削減しない。
 - CPU Reference / Analytical Fixture / WARPはCorrectness検証、物理GPUは性能・Memory検証と明確に分離する。
 
-Library API、Device / Context Ownership、Tick State Machine、Render Interop、Device Loss、Error分類、Gate R0～R6は [runtime_integration_design.md](runtime_integration_design.md) を正とする。数値比較の初期Engineering Thresholdは [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) とし、実測校正前の合格実績として扱わない。
+Library API、Device / Context Ownership、Tick State Machine、Render Interop、Device Loss、Error分類、Gate R0～R6は [runtime_integration_design.md](runtime_integration_design.md) を正とする。v1の具体的な初期パラメータ、接触Patch Reduction、Broadphase / CCD上限、Capacity Growth、Render Binding Ring、実装前Review Checklistは [design_closure.md](design_closure.md) を参照する。数値比較の初期Engineering Thresholdは [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) とし、実測校正前の合格実績として扱わない。
 
 ### 17.1 SoftBodyDemo設計から取り込む共通原則
 
@@ -369,3 +369,11 @@ Library API、Device / Context Ownership、Tick State Machine、Render Interop�
 - Neo-Hookean FEM XPBDへの置換およびTet Lambda Recomputeを前提にしたSolver構成。
 
 これらはSkin Physicsの要件・初期詳細設計と一致しないため採用しない。
+
+
+## 18. 要件整合・設計閉鎖
+
+- v1のImporter対象、Self Collision除外、Broadphase初期値、Contact Patch Manifold、CCD初期値、GPU Capacity Growth、Render Binding Ring、Fixed Delta変更手順を [design_closure.md](design_closure.md) で固定する。
+- Soft Body / Cloth / 混在衝突 / 自己衝突 / Animation / Paint / JSON / Test Environmentの要件を維持する。
+- SoftBodyDemo固有の単一Soft Body、単一Collider、200k粒子、40 FPS必須、1/120秒固定、Neo-Hookean FEM XPBDはSkin Physicsへ適用しない。
+- 本書は独立Critical Review提出候補であり、承認・Production Runtime実装・物理GPU性能達成を意味しない。
