@@ -243,12 +243,12 @@ CPU Animation Evaluatorは各Spanについて不変のanimation_trajectory_packe
 
 - SpanのWorld Simulation Time [t0,t1]、Animation Input Version、Span ID。Span RecordはTrack / Channel / Blend / ColliderそれぞれのBuffer Rangeを明示する。
 - animation_track_gpu_recordはClip Index、Span内Clip Time開始 / 符号付きDelta、Playback Speed、Channel Record Rangeを保持する。Blend RecordのSource / Target Track IndexはSpan内Track Record Indexを参照する。
-- Skinningに必要なBone / Mesh Node / Root / 祖先NodeごとのNode Index・Parent Index・Inverse Bind Matrix参照・Node Typeを保持する。Transform RecordはSkeletonのJointだけでなくMesh Node Global Matrixと全Joint Ancestorも含む。Inverse Bind Matrix自体はAssetのImmutable GPU Bufferへ置き、PacketからStatic Record Indexで参照する。
+- Skinningに必要なBone / Mesh Node / Root / 祖先NodeごとのNode Index・Parent Index・Inverse Bind Matrix Static Record Index・Node Roleを保持する。Track RecordのChannel RangeはSkeleton JointだけでなくMesh Node Global Matrixと全Joint Ancestorを含む。Channelを持たないNodeもRest Local Transformを定数係数として収録し、Hierarchy Global Matrixを完全に再構築する。非Joint NodeのInverse Bind IndexはUINT32_MAX。
 - 最大2本のAnimation Track。各TrackのClip Time区間、Playback Speed、Loop状態、補間種別、Channel有無。
 - BoneごとのTranslation / Scale補間係数c0..c3、Rotation補間パラメータ、Key境界情報。
 - Blend Weight Curveの係数w0..w3、Discontinuity EventとPolicy。
 - Root TransformのTranslation / Rotation Trajectoryと解析微分。
-- Kinematic ColliderごとのStable Collider ID、Sample Span [t0,t1]、Translation Linear係数、Shortest-Arc Slerp Quaternion、解析的Linear / Angular Velocity、最大Local Radius。
+- Kinematic ColliderごとのStable Collider ID、Sample Span [t0,t1]、Translation Linear係数、Shortest-Arc Slerp Quaternion、World Space Angular Axis / Angle、解析的Linear / Angular Velocity、最大Local Radius。
 - Span全域の保守的速度・加速度Boundを構成するCoefficient Interval。Collider BoundにはTranslation Speed、Angular Speed * Maximum Radius、Slerp Sagittaを含める。
 
 GPUはCAの各Iterationで指定されたtauを受け取り、同じPacketを用いてAnimation / Kinematic Transformを評価する。独立Kinematic Colliderはset_kinematic_pose_sampleで受け取った時刻付きTransform SampleをCPUでSpan化し、Translation Linear Interpolation + Shortest-Arc Slerpで評価可能なCollider Trajectory Recordへ変換する。Collider Spanは両端Sampleでbracketし、Span内の位置 / Quaternion / Linear Velocity / Angular Velocityを解析的に算出する。GPU Skinning / Trajectory EvaluatorはBone Local Transform、Bone Global Transform、Skin Matrix、Physics Vertex Target Position / Velocityを同一tauで算出し、Collider Transform Evaluatorは同じtauからCollider Position / Contact Point Velocityを算出する。TOI位置、Contact Relative Velocity、Tracking Targetが異なるPose Sampleを参照してはならない。Animation PacketはTick ReservationへVersion固定し、Retryでは同一Packetを再利用する。
@@ -365,7 +365,7 @@ animation_span_gpu_record is exactly 80 bytes, animation_track_gpu_record is exa
 | animation_blend_gpu_record (48 B) | source_track_index=0 (Span-relative), target_track_index=4 (Span-relative), weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, reserved1=40, reserved2=44 |
 | kinematic_collider_gpu_record (128 B) | stable_id_low=0, stable_id_high=4, span_sample_pair_id=8, flags=12, translation_start=16, translation_end=32, rotation_start=48, rotation_end=64, angular_axis_and_angle=80, duration=96, inverse_duration=100, linear_speed_bound=104, angular_speed_bound=108, maximum_local_radius=112, sagitta_bound=116, reserved0=120, reserved1=124 |
 
-Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
+Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。angular_axis_and_angle.xyzはWorld Space回転軸、wはShortest-Arc角度[rad]。Constant-Speed Slerpのomega_world = axis_world * angle / span_duration。Slerp回転の最大点加速度Boundにはomega_max^2 * maximum_local_radiusを加える。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
 
 CPUはdoubleのSpan開始・終了時刻とSegment開始時刻から、正規化Span座標u_segment_startを計算してfloatへ変換する。GPUへの時間入力はAbsolute World Timeを含めず、Segment開始からの相対時間tau [s]だけを渡す。
 
@@ -391,7 +391,7 @@ RotationはQuaternionを使う。STEPは一定Quaternion、LINEARは最短弧Sle
 
     q_dot = (r_dot - q * dot(q, r_dot)) / |r|
 
-を使用する。SlerpのQuaternion / Angular Velocityも解析的に評価する。Quaternionの符号はSpan開始で連続になるHemisphereへ揃える。CUBICSPLINEの|r|の保守的下限が正規化epsilon以下になる区間は決定的に細分化し、なお保証できなければInvalid Animation Inputとして拒否する。正規化Quaternionの有限差分でVelocityを代用しない。
+を使用する。SlerpのQuaternion / Angular Velocityも解析的に評価する。Quaternion qはLocalからWorldへの回転、q_dotはSimulation Time微分とし、World Angular Velocityはomega_world = 2 * vector(q_dot * conjugate(q))で求める。Quaternion積の順序は左からWorld回転を適用する規約とする。Quaternionの符号はSpan開始で連続になるHemisphereへ揃える。CUBICSPLINEの|r|の保守的下限が正規化epsilon以下になる区間は決定的に細分化し、なお保証できなければInvalid Animation Inputとして拒否する。正規化Quaternionの有限差分でVelocityを代用しない。
 
 #### Clip Blend
 
@@ -429,7 +429,7 @@ Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivat
 
 #### Conservative Trajectory Bounds
 
-Animation Packet生成時にCPUは各Spanの係数から区間演算（Interval Arithmetic）でLocal Transformの速度・加速度上限を算出する。Matrix積の微分BoundはProduct Ruleを上限演算へ適用し、Inverse Matrixは最小特異値の下限が確保できる場合だけ評価する。SkinningではInfluence Weightの総和と非負性を検証し、Bone / Mesh Node / Root Transformを通じてPhysics Mesh全体の保守的な最大頂点速度v_animation_maxと最大加速度a_animation_maxを求める。上限演算は丸め誤差を外側へ膨張させ、実値を過小評価しない。GPUはこのBoundを改変せず利用する。
+Animation Packet生成時にCPUは各Spanの係数から区間演算（Interval Arithmetic）でLocal Transformの速度・加速度上限を算出する。Matrix積の微分BoundはProduct Ruleを上限演算へ適用し、Inverse Matrixは最小特異値の下限が確保できる場合だけ評価する。SkinningではInfluence Weightの総和と非負性を検証し、Bone / Mesh Node / Root Transformを通じてPhysics Mesh全体の保守的な最大頂点速度v_animation_maxと最大加速度a_animation_maxを求める。Quaternion由来のWorld Angular Velocityはomega_world = 2 * vector(q_dot * conjugate(q))、剛体Colliderの接触点Velocityはv_linear + cross(omega_world, x_contact - transform_origin)とする。上限演算は丸め誤差を外側へ膨張させ、実値を過小評価しない。GPUはこのBoundを改変せず利用する。
 
 Twice differentiableなSpanでは、Endpoint Chordに対する最大偏差を、
 
