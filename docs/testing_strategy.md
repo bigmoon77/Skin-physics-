@@ -124,3 +124,11 @@ The v1 defaults and API contracts consolidated in `docs/design_closure.md` must 
 - Render Candidate validation failure, CPU-observed commit, lease release, and Ring Backpressure fixtures.
 
 Expected results are reviewed and immutable. A failing test must never regenerate its expected result automatically.
+
+
+### State Bank invariants
+
+- Exactly two persistent State Banks exist per World. Tick source bank is immutable until Commit; destination bank receives all writes.
+- Reject / Block never changes active bank or State Generation.
+- Segment / TOI snapshot is reusable scratch and never treated as a third persistent bank.
+- Submit N and N+1 in command order. N+1 reads the bank selected by N only after its predecessor gate; force N to reject and assert that N+1 performs no Physics State access / writes.
