@@ -5,11 +5,11 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.3
+- 文書バージョン: 1.4
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.5
-- 対応詳細設計: detailed_design.md 1.6
+- 対応詳細設計: detailed_design.md 1.7
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -535,7 +535,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
    - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill / Sort / Pair Dedup。
    - VT / EE Narrowphase、Contact Patch Reduction、CCD Conservative Advancement / Minimum TOI Reduction。
    - Positive-Time TOIがない場合: Cloth Stretch / Shear / Bend / Animation TrackingとDiscrete Contact XPBDを解き、Dynamic Vertex Velocityを再構築してFriction / Restitutionを適用。
-   - Positive-Time TOIがある場合: Endpoint Contactを確定せず、segment_start_snapshotへ復元してTOI prefixを再積分し、TOI Contact / Impactを一度適用。残時間はImpact後Velocityから次Segmentとして進める。
+   - Positive-Time TOIがある場合: Endpoint Contactを確定せず、Segment開始Snapshotから定義済み離散CCD pathのx_path(tau) / v_path(tau)で全参加Physics Vertexのprefix状態を構成する。dt=tauの再Predictionは行わず、tauをComplianceへ使って内部Constraint / TOI Contactを解き、Dynamic Velocityを補正後位置差分から再構築してImpactを一度適用する。残時間はImpact後Velocityから新Segmentとして再評価・再実行する。
    - Broadphase Envelopeと残存Penetrationの再検査。Envelope外ならRebuild。Fixed / Kinematic VelocityはAnimation Interfaceの指定値を保持。
    - Segment状態 / NonFinite / Capacity / CCD / Physical Quality Gateを確認。
 6. 全Integration Segment / World Substep成功後にRender Feedback Candidate Prepare（Tick Reservation済みslotへ書き込む）。
@@ -549,7 +549,7 @@ Soft Body内部力は各World Integration Segment開始状態で再評価する�
 
 既存のPoint-Triangle CCDは初期Fixtureとして維持する。Production Runtimeでは変形Mesh間の高速接触を満たすため、VTとEEの双方に対してSwept BroadphaseとConservative Advancementを接続する。Triangle-Triangleの交差候補はVT / EEイベントへ分解して扱い、Primitive Pair / Contact Keyの重複を除去する。
 
-TOIは現在Integration Segment開始からの秒単位で管理する。Positive-Time TOIが得られた場合は現在Segment開始Snapshotへ戻し、全World参加Solverを同じtauまで再積分し、Dynamic VertexのVelocityを区間変位から再構築した後、接触Position / Velocity応答を一度だけ適用して残時間を新しいSegmentとして再積分する。Fixed / Kinematic VertexはAnimation Interfaceの規定Velocityを維持する。TOI後のDynamic VelocityをLogical Tick終端のVelocity Reconstructionで上書きしない。複数接触は同時TOI許容幅でグループ化し、同一Eventを二重Impulseしない。Unresolved、進行不能、Iteration上限は未解決のままCommitしない。
+TOIは現在Integration Segment開始からの秒単位で管理する。CCD pathはdetailed_design.md §11.4のSemi-implicit Euler離散軌道を使用し、Positive-Time TOIではdt=tauの再Predictionを行わず、x_path(tau) / v_path(tau)でWorld参加Solverのprefix状態を構成する。TOI時点でtauをIntegration Segment時間としてXPBD内部Constraint / Contact Constraintを解き、Dynamic Velocityを補正後位置差分から再構築してImpactを一度だけ適用する。Fixed / Kinematic VertexはAnimation Interfaceの規定Velocityを維持する。残時間はImpact後の状態から新Segmentとして再評価する。TOI後のDynamic VelocityをLogical Tick終端のVelocity Reconstructionで上書きしない。複数接触は同時TOI許容幅でグループ化し、同一Eventを二重Impulseしない。Unresolved、進行不能、Iteration上限は未解決のままCommitしない。
 
 ### 7.3 D3D11 Compute Pass Executor
 
@@ -742,6 +742,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.4: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時間を使うXPBD Compliance、Impact後残Segmentの再評価規則を明文化。
 - 1.3: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / ClothのSegment積分同期、Kinematic Velocity所有規則をRuntime Scheduler / TOI契約へ反映。
 - 1.2: World共通Substep契約、AccumulatorからTick Reservationへの時間移管、Lease Generation付きRelease、Deferred Context Command Listの解放順序、Model / Collider / World / RuntimeのDestroy・Drain・Shutdown条件を明文化。
 - 1.1: 複数WorldのQuery Ring集約、Model Transform / Material / Paint API、Pose履歴不足時のBLOCKED_BY_INPUT、Fixed Delta fractional remainder、Capacity Growth / Memory Budget、Render Candidate Ring / Host Lease、Physics State Bank 2枚とSubstep Snapshotの分離を明文化。
