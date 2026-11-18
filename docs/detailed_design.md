@@ -794,7 +794,7 @@ prefix状態の構成後、tauをXPBD Integration Segment時間としてCloth St
 
 残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
 
-1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前の区間とTOI以後の残区間はWorld共通Segmentである。Soft Body / Cloth / Animation Tracking / Contact対象の全てを現在Segment Snapshotから同じtauだけ再積分し、TOI位置でImpactを適用した後、全参加Solverを同じ残時間だけ再積分する。Solverごとに時間を止める・別のtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
+1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前のprefixは§11.4のx_path(tau) / v_path(tau)からWorld全体で構成する。Positive-Time TOI時はEndpoint Contactを確定せず、同じ離散path上のTOI位置でtauをXPBD時間として内部Constraint / Contact Constraintを解き、Impactを適用する。残時間はImpact後の状態から全参加Solver共通の新Segmentとして進める。Solverごとに異なるtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
 ## 12. Render Vertex Binding
 
@@ -941,7 +941,7 @@ Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_st
     - Cloth Animation Tracking / Shear / Bend Gather / Apply
     - Discrete Contact XPBD Output / Gather / Apply
     - Broadphase Envelope Exceeded Check; 必要時Rebuild
-12. Positive-Time TOIがある場合はEndpoint Contactを確定せず、予測DestinationをSegment Snapshotへ戻してTOI prefixを再実行し、TOI位置でContact XPBD / Impactを適用する。残時間はImpact後Velocityを次Segment開始状態として再実行
+12. Positive-Time TOIがある場合はEndpoint Contactを確定せず、§11.4のx_path(tau) / v_path(tau)でTOI prefixを構成する。dt=tauの再Predictionは行わず、tauをXPBD時間としてInternal Constraint / TOI Contactを解き、Impactを適用する。残時間はImpact後Velocityから新しいIntegration Segmentとして再評価
 13. Dynamic Vertex Velocity Reconstruction（Fixed / Kinematic VelocityはAnimation Sampleを維持）/ Coulomb Friction / Restitution Impulse
 14. Segment Validation
 15. 次のWorld Integration Segmentへ進む。全Segment完了時だけ次World共通Substepへ進む
