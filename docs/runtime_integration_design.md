@@ -1,5 +1,10 @@
 # Skin Physics GPU Runtime / Library Integration Design
 
+    #include <cstdint>
+    #include <string>
+    #include <d3d11.h>
+    #include "skin_physics/asset/types.hpp"
+
 - 文書バージョン: 1.0
 - 状態: DESIGN REVISION / READY FOR INDEPENDENT REVIEW（承認前）
 - 対応要件: requirements.md 1.1
@@ -163,6 +168,14 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
                 const collider_desc& desc,
                 collider_handle* out_collider);
 
+            status destroy_model(
+                world_handle world,
+                model_handle model);
+
+            status destroy_collider(
+                world_handle world,
+                collider_handle collider);
+
             status set_playback_state(
                 world_handle world,
                 playback_state state);
@@ -280,7 +293,7 @@ CPUは通常フレームでPhysics Vertex位置・速度、Tet Lambda、Contact 
 - Time ScaleはFrame elapsedをAccumulatorへ加える倍率とする。物理のFixed Delta Timeそのものを変化させない。
 - Soft Bodyの内部力積分にはCFL / Animation Tracking安定条件から求めたInternal Substepを使う。
 - Cloth XPBD / Contact XPBDのComplianceには実際に解決するSubstep Delta Timeを使う。
-- Fixed Delta Timeを変更する場合、未処理Accumulatorの扱いを明示し、XPBD LambdaとStep内ScratchをResetしてから新しい時間刻みへ移行する。
+- Fixed Delta Timeを変更する場合、WorldをPausedにし、in-flight Tickが0件で、未処理のwhole Tick / pending Step要求がないことを要求する。条件を満たさない場合はBUSYを返す。条件成立後、Accumulator fractional remainderの処理（Resetまたは明示的に保持可能なfractional timeのみ保持）を適用し、XPBD LambdaとStep内ScratchをResetしてから新しい時間刻みへ移行する。旧Fixed Delta Timeのwhole Tickを新しい時間刻みで実行しない。
 - 最大Step / Substep予算に達してもAccumulator内の未処理時間を黙って破棄しない。
 
 ### 5.2 Fixed Stepと非同期GPU Stepの分離
@@ -476,6 +489,8 @@ Library所有Buffer / TextureのByte数とDXGI Local Memory CurrentUsage / Budge
 ### 9.2 Render Binding
 
 Render BindingはPosition / Normal / TangentのSRV、Format、Stride、Vertex Count、Index Count、Resource Generationを返す。Borrowed COM Pointerとし、長期保持する場合だけHostがAddRefする。HostはSRVをVS / PS等へBindできるが、UAVとして書き込まない。
+
+get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した、最後のCPU-observed committed state generationを返す。GPU上でCOMMITTEDになっていてもCPU-observed prefixへまだ入っていないTickの状態は返さない。このためRenderは1 Query Poll周期以上遅れる場合があるが、未確認Working Stateや寿命未確定Resourceを公開しない。
 
 Host Rendererは描画完了後、次のRuntime Compute Dispatch前に公開SRVを全Graphics StageからUnbindする。Runtimeは公開Render Bufferへ直接Solver書き込みを行わず、Commit後のPublish Pass / Copyで更新する。Publish CostとVRAMはPerformance Runへ含める。
 
