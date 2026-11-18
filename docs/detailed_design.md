@@ -458,13 +458,13 @@ XPBD Stretch / Shear / Bend / Animation Tracking / Contactの位置解決後、D
 ### 7.1.2 World Integration Segmentの処理順
 
 1. Logical Tick内のWorld Substep境界、Force開始 / 終了、Impulse時刻を昇順に統合する。TOIが検出された場合は現在SegmentをTOI時刻で分割する。等しい時刻のEventはEvent ID順でまとめ、重複境界を除去する。隣接する境界時刻が同一または数値的に逆転した場合は同一境界へ統合し、dt_segment <= 0のSegmentを発行しない。
-2. Segment開始時にPhysics Position / VelocityとAnimation Input VersionをSnapshotする。Segment境界でXPBD Lambda / Contact Lambda / Impact Scratchを初期化する。
+2. Segment開始時にPhysics Position / Velocity、Animation Input Version、Impulse Event Cursor / 適用済みEvent ID状態をSnapshotする。Segment境界でXPBD Lambda / Contact Lambda / Impact Scratchを初期化する。
 3. Animation TargetとAnimation VelocityをSegment開始・終了時刻で取得する。必要なSample Bracketが揃わない場合はBLOCKED_BY_INPUTとし、予測へ進まない。
 4. Segment開始位置から各Force DescriptorのFalloff Weightを計算する。Gravity / ForceはSegment内で一定とし、ImpulseはSegment開始時刻のEvent IDを確認して一度だけ消費する。RetryはSnapshotと同じEvent Cursorから再生し、破棄されたWorking Stateへの適用を重複累積させない。
 5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
 7. XPBD Stretch / Shear / Bend / Animation Tracking / Contactを規定反復数だけ解く。Soft Body FEMはSegment開始時評価力に基づく予測状態を使い、Contact位置補正は同じ参加頂点へ双方向に作用させる。
-8. TOIがSegment内部にある場合は予測Destinationを破棄し、Segment開始SnapshotからTOIまでのprefixを同じ共通積分規則で再実行する。TOI位置でContact Constraintを解き、Dynamic VertexのVelocityを区間変位から再構築した後、摩擦 / 反発Impulseを一度だけ適用する。Fixed / Kinematic VertexはTOI時刻のAnimation Velocityを維持する。
+8. TOIがSegment内部にある場合は予測Destinationを破棄し、Segment開始Snapshotと同じImpulse Event Cursorへ戻して、TOIまでのprefixを同じ共通積分規則で再実行する。TOI位置でContact Constraintを解き、Dynamic VertexのVelocityを区間変位から再構築した後、摩擦 / 反発Impulseを一度だけ適用する。Fixed / Kinematic VertexはTOI時刻のAnimation Velocityを維持する。
 9. TOI後の残時間がある場合、Impact後のPosition / Velocityを次Segment開始状態にして処理を繰り返す。TOI分割上限または予算を超えた場合はLogical Tick全体を未Commitにし、同じTick Input / Source StateからRetryする。
 10. TOIがないSegmentはContact位置解決後にDynamic Vertex Velocityを区間変位から再構築し、Fixed / Kinematic VelocityはAnimation Interfaceの指定値のままにする。摩擦 / 反発Impulseを適用した後のVelocityは次Segmentへ保持する。
 
