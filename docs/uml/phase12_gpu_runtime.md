@@ -52,24 +52,30 @@ sequenceDiagram
     H->>API: advance(frame_delta_time)
     API->>S: accumulate active elapsed
     S->>G: request logical tick(s)
+    G->>G: reserve per-tick Render Candidate Slot
     G->>D: snapshot committed state
     G->>D: Skinning / FEM / Cloth / Broadphase / CCD / Contact
-    G->>D: Render Feedback Publish
-    G->>D: GPU Tick Commit Control
-    G->>Q: Copy small status + End Event Query
+    G->>D: prepare Render Candidate (Position / Normal / Tangent)
+    G->>D: validate Render Candidate + Physics State
+    G->>D: GPU Commit Control (Physics State + Render Slot atomically)
+    G->>Q: copy tick / state / render-slot status + Event Query
     API-->>H: submitted / pending / observed status
-    H->>R: bind committed Render Binding
-    R->>D: Draw
     Note over Q: Later frame, non-blocking Poll
-    H->>API: poll()
+    H->>API: advance(frame_delta_time) / poll()
     API->>Q: GetData(DONOTFLUSH)
     Q-->>API: Event Query complete
     API->>Q: Map status (DO_NOT_WAIT)
-    Q-->>API: COMMITTED status + tick sequence
-    API-->>H: contiguous completed tick prefix
+    Q-->>API: COMMITTED + tick / state generation / render slot
+    API-->>H: contiguous CPU-observed committed prefix
+    H->>API: get_render_binding(world, model, mesh)
+    API-->>H: Render Slot lease + read-only SRVs
+    H->>R: bind Render Binding
+    R->>D: Draw
+    H->>R: Unbind VS / HS / DS / GS / PS / CS SRVs
+    H->>API: release_render_bindings(world)
 ```
 
-GPU command submission and CPU observation are separate events. Event Query completion proves command completion; the GPU Status Buffer determines whether a Logical Tick committed.
+GPU command submission and CPU observation are separate events. Event Query completion proves command completion; the GPU Status Buffer determines whether a Logical Tick committed. Render Candidate is produced before Commit, but its slot becomes visible only when the same GPU Commit Control atomically selects the committed Physics State and Render Slot. The Host receives only the latest CPU-observed committed prefix. A World has one active Render Lease, and its ring contains maximum_in_flight_ticks + 1 slots; a slot cannot be reused until it is no longer in flight / unobserved and its Host lease has been released.
 
 The Runtime permits up to two submitted-but-not-observed ticks. Each immutable Dispatch Plan contains the expected predecessor sequence and source State Generation. Tick N+1 checks the GPU Commit result of N before any Physics State read/write. If N fails, N+1 is blocked before touching Physics State and must be resubmitted after N is successfully replayed.
 
@@ -162,3 +168,21 @@ Every budgeted Physics Pass verifies the immutable Tick Plan / scheduler gate be
 8. Render Feedback reads only the committed physics state and is published after the Tick succeeds.
 9. Full Physics Vertex / Contact / Lambda readback is prohibited in the normal frame path.
 10. WARP validates shader execution and readback correctness; physical GPU runs validate performance and memory.
+
+
+## 6. Render Slot backpressure
+
+```mermaid
+stateDiagram-v2
+    [*] --> Free
+    Free --> CandidateReserved: tick plan reserves slot
+    CandidateReserved --> CandidateReady: feedback + validation pass
+    CandidateReserved --> Free: tick rejected
+    CandidateReady --> GpuCommitted: commit control selects state + slot
+    GpuCommitted --> CpuObserved: Event Query + COMMITTED status + contiguous prefix
+    CpuObserved --> HostLeased: get_render_binding
+    HostLeased --> CpuObserved: unbind all stages + release_render_bindings
+    CpuObserved --> Free: superseded by a newer observed commit
+```
+
+A Host-leased slot, an unobserved committed slot, or an in-flight candidate is never overwritten. When all slots are occupied, the next Logical Tick remains pending in the Runtime Accumulator. No time or contact candidate is dropped.
