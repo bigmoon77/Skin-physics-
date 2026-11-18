@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v2.0）
+# Skin Physics 設計閉鎖書（v2.1）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.8
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.10
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.7
+- 基本設計: [basic_design.md](basic_design.md) v1.9
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.11
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.8
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -413,6 +413,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
-- 2.0: SM5固定幅Animation / Collider Packet ABI、CPU double / GPU Span-local float Time Mapping、各Segmentでのnormalized cursor更新、ABI Readback / Time Precision Gateを追加。Design Closureの参照VersionをBasic1.8 / Detailed1.10 / Runtime1.7へ更新。
+- 2.1: Span / Track / Channel / Blend / Colliderの完全ABI、Node Role / Inverse Bind参照、補間Flags / Quaternion / Blend係数、Column-Major Matrix Layout、Runtime Record Stride検証を確定。
+- 2.0: SM5固定幅Animation / Collider Packet ABI、CPU double / GPU Span-local float Time Mapping、各Segmentでのnormalized cursor更新、ABI Readback / Time Precision Gateを追加。
 - 1.9: GPU Animation Trajectory Packet / Span、非応答Contact、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limit、Segment Budgetを閉鎖候補へ追加。
 
