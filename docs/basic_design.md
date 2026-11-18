@@ -1,6 +1,6 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.10
+- 文書バージョン: 1.11
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
@@ -295,7 +295,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 14. 詳細設計との責務境界・校正への引継ぎ
 
-本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.12および[runtime_integration_design.md](runtime_integration_design.md) v1.9で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
+本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.13および[runtime_integration_design.md](runtime_integration_design.md) v1.10で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
 
 - Soft Body Corotational FEM、応力・内部力・Segment積分・減衰: detailed_design.md §6。
 - Cloth Stretch / Shear / Bend / XPBD Lambda、外力・Impulse、World Integration Segment: detailed_design.md §7。
@@ -304,7 +304,8 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - CCD / TOI、Segment retime、初期貫通修正: detailed_design.md §10-11。
 - Animation Target / Velocity、Render Binding、属性保持: detailed_design.md §5-6 / §12-13。
 - GPU Pass、Tick Transaction、Capacity、JSON、再現性、Gate R0-R6: detailed_design.md §14-19、runtime_integration_design.md §5-10。
-- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.jsonを正とする。
+- WORK_BUDGET_EXCEEDEDの回復は、Tick Reservationを維持したまま実行上限だけを更新するruntime_integration_design.md §5.6を正とする。Retry途中に物理品質・材料・時間分割条件を変更しない。
+- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.5を正とする。
 
 ## 15. 参考OSS・技術資料
 
@@ -325,6 +326,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.11: Numerical Acceptance ProfileのGPU Packet ABI参照を単一化し、WORK_BUDGET_EXCEEDEDからのReservation維持・実行予算再設定契約を追加。
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
@@ -337,7 +339,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加.
 
 
-## 17. GPU Runtime / Library統合方針（v1.10）
+## 17. GPU Runtime / Library統合方針（v1.11）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
@@ -346,7 +348,7 @@ Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Dire
 - HostとRuntimeは同じImmediate Contextを単一Submission Threadから操作する。独立Physics GPU Queueを仮定しない。
 - GPU StateはRuntime内部の唯一の正とし、通常FrameでPhysics Vertex / Contact / Lambda全量をCPUへReadbackしない。
 - GPU Submission、GPU Logical Tick Commit、CPU-observed completed prefixを分離する。Event QueryはGPU Command完了を示し、Tick成功はGPU Status Bufferで判定する。
-- Capacity Overflow、CCD Unresolved、NonFinite、Physical Quality Gate FailureはWorking StateをCommitしない。必要に応じて同じTick開始Snapshot・入力でRetryし、解決不能ならWorldをBlock / Failedとする。
+- Capacity Overflow、CCD Unresolved、WORK_BUDGET_EXCEEDED、NonFinite、Physical Quality Gate FailureはWorking StateをCommitしない。WORK_BUDGET_EXCEEDEDは専用APIで実行予算だけを引き上げ、同じTick Reservation / Snapshot / Input VersionからRetryできる。物理品質条件や異なるEvent境界を黙って変更しない。
 - Hostが利用できるGPUデータはCommitted State専用のRead-only Render Bindingとする。Render BindingはPosition / Normal / TangentのSRV、Stride / Count / Resource Generationを持つ。内部Solver Buffer / Scratch / Writable UAVを公開しない。
 - Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限を集約してWorld共通Substep数を決定し、Soft Body / Cloth / Contact / Animation Trackingへ同一Substep時間を適用する。Contact capの初期値は1/120秒、0は明示無効。Animation Span Key / Loop / Blend / Root、Force / Impulse Event境界とTOIでIntegration Segmentへ分割し、maximum_integration_segments_per_tick（初期値512）を超える場合はReservationを保持してBlockする。全参加Solverを同じSegment時間で進め、v1ではSolverごとの独立Subcyclingを行わない。
 - in-flight GPU Tickは既定2件、設定可能範囲1 / 2 / 4件とする。各TickのImmutable Dispatch Planと先行Tick Gateを必須とし、Status Query Ring容量は設定上限以上とする。性能比較で変更する場合は同じR0 Gateを再実行する。

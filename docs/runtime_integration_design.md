@@ -5,11 +5,12 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.9
+- 文書バージョン: 1.10
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.10
-- 対応詳細設計: detailed_design.md 1.12
+- 対応基本設計: basic_design.md 1.11
+- 対応詳細設計: detailed_design.md 1.13
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.5
 - 前版: 1.8
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
@@ -154,6 +155,14 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
 
         struct runtime_desc;
         struct world_desc;
+
+        // Admission limits only; these values do not change solver quality or time-step policy.
+        struct world_execution_budget
+        {
+            uint32_t maximum_substeps = 128;
+            uint32_t maximum_integration_segments_per_tick = 512;
+        };
+
         struct model_desc;
         struct collider_desc;
         struct animation_track_desc
@@ -242,6 +251,11 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             status set_time_scale(
                 world_handle world,
                 double time_scale);
+
+            // Updates scheduler admission caps while preserving a blocked Tick Reservation.
+            status set_world_execution_budget(
+                world_handle world,
+                const world_execution_budget& budget);
 
             status set_gravity(
                 world_handle world,
@@ -360,7 +374,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
 | world_desc | minimum_substeps / maximum_substeps | World共通Substep数の下限 / 上限。初期値1 / 128。超過時はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
-| world_desc | maximum_integration_segments_per_tick | uint32_t。Animation Span / Force / Impulse / TOI境界後のLogical Tick内Integration Segment総数上限。初期値512、許容値1以上。超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
+| world_desc / world_execution_budget | maximum_substeps / maximum_integration_segments_per_tick | uint32_t。初期値128 / 512。Admission Limitのみを表し、必要なSubstep / Segment数や物理品質を変更しない。上限超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
 | world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。全Solverへ適用する共通上限 |
 | world_desc | contact_max_substep_delta_time | double [s]。初期値1/120 s、有限値かつ0以上。0は明示無効（Substep式では+infinity） |
 | world_desc | contact_impulse_iterations | uint32_t。Coupled Projected JacobiのIteration数。初期値8、許容範囲1～16 |
@@ -398,6 +412,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
 | world_status | submitted_sequence / gpu_committed_sequence / cpu_observed_sequence | GPU CommitとCPU確認済みprefixを別々に保持 |
 | world_status | playback_state / tick_state / terminal_error / simulation_backlog | 状態、最終エラー、遅延・未処理時間を報告 |
+| world_status | execution_budget_revision / work_budget_block_flags / required_substeps / required_integration_segments | Admission Limit世代、超過理由（bit0=Substep / bit1=Segment）、当該Tickに必要な正確な実行数。非該当のRequired Countは0 |
 | world_status | requested_simulation_time / cancelled_requested_time / effective_requested_time / reserved_tick_time / gpu_committed_simulation_time / cpu_observed_completed_time | 要求時間、未Reservation取消時間、有効要求時間、Tick Reservation時間、GPU Commit時間、CPU確認時間を別々に報告 |
 | render_binding | position_srv / normal_srv / tangent_srv | Commit済みPhysics Stateから生成したRead-only SRV |
 | render_binding | format / stride / vertex_count / index_count | Host RendererがDrawを構成するためのLayout |
@@ -413,6 +428,8 @@ Model / ColliderのCreate / Destroy、Model Transform Sample、Mesh Physics Para
 `set_fixed_delta_time`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0、queued single-step request = 0のときだけ成功する。条件を満たさなければBUSYを返す。fractional remainderは秒単位の実時間として保持し、新しいFixed Delta Timeに対してAccumulatorのwhole tick数を再計算する。旧Fixed Delta Timeのwhole tickは存在しないため、時間を黙って破棄・換算しない。変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。
 
 `get_render_binding`の最初の成功呼出しはWorldのHost Render Leaseを取得し、以降の各Mesh取得は同じlease_generationを返す。Releaseは取得時に返されたuint64 lease_generationを必須とし、現在Leaseと一致しない世代はSTALE_HANDLEとして拒否する。GPU Commit済みでもCPUがEvent Query / Status Readbackを確認していないTickのSlotは公開しない。Worldごとに同時に有効なHost Render Leaseは1つ。Hostは全MeshのDrawコマンド（Deferred Contextを使った場合はExecuteCommandListも）をImmediate Contextへ発行し、Position / Normal / Tangent SRVをVS / HS / DS / GS / PS / CS全StageからUnbindしてからrelease_render_bindings(world, lease_generation)を呼ぶ。Release後はSRV PointerもCommand List内の参照も使用しない。COM AddRefはCOM Objectの寿命だけを延長し、Slot内容のLeaseは延長しない。
+
+Execution BudgetはWorld生成時に`world_execution_budget`として設定し、その後の変更は`set_world_execution_budget`だけで行う。World内のAdmission LimitはBasic / Detailed / Runtimeの各設計で重複保持せず、このRecordを唯一の実行上限とする。
 
 ### 3.5 WorldとMesh Instanceの配置
 
@@ -508,6 +525,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - 先行TickがRejectされた場合、既にSubmissionされた後続TickはBLOCKED_BY_PREDECESSORとなり、物理状態を変更しない。先行TickのRetryがGPU上でCommitされた後、CPUは後続TickのPlanを新しいCommitted State Generationに合わせて再発行する。
 - Planのsource / destination State SetはSubmission時点の予測Commit順序に基づいて固定する。GPU Commitが成立しない場合の後続Planは必ずgateで停止する。GPUが成功した場合のみ計画されたState Set遷移が有効になる。
 - in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_integration_segments_per_tick超過はQuery / Render Slot確保およびTick Reservation作成後のPreflight Blockとして扱い、同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持する。設定上限を変更して再試行する場合も新しいTickを発行しない。
+- WORK_BUDGET_EXCEEDEDの間は同一Worldで後続Physics Submissionを進めず、未Reservation時間はAccumulator / Step Request Queueへ残す。
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。
 - Accumulatorが長時間増加する場合はsimulation_backlogとして警告・計測する。Skin Physicsの要件にない100ms Failureや40FPS必須条件を追加しない。
@@ -538,6 +556,31 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 ### 5.5 World共通Substep Schedule
 
 詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactの時間上限（contact_max_substep_delta_time > 0の場合だけ適用）を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。contact_max_substep_delta_time=0は+infinityとして扱う。World Substep / Clip Key / Loop / Blend Weight / Root Transform / Force / Impulse境界を統合したSegment数をGPU Physics Upload前にCountし、maximum_integration_segments_per_tick（初期値512）を超える場合はWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Keyまたは異なるEvent時刻の境界を結合・省略しない。TOIで新たな残Segmentを作成する際も実行済みSegment数へ加算し、上限を超えたら残SegmentをDispatchせずTick全体を未Commitにする。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitとContact Temporal Quality LimitはXPBDの安定保証ではなく品質上限として扱う。各SubstepはAnimation Span / Force / Impulse / TOI境界でIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
+
+### 5.6 WORK_BUDGET_EXCEEDEDからの実行予算回復
+
+`WORK_BUDGET_EXCEEDED`は、正当なTick Inputから算出した必要Work量がWorldのAdmission Limitを超えた状態であり、物理状態の失敗・数値不安定・入力不正とは区別する。Runtime Statusは次を公開する。
+
+- `execution_budget_revision`: Worldの実行予算設定世代。
+- `work_budget_block_flags`: bit0=`maximum_substeps`超過、bit1=`maximum_integration_segments_per_tick`超過。両方の同時設定を許可する。
+- `required_substeps` / `required_integration_segments`: 当該Tick Inputから必要と判定した正確な数。非該当は0とし、uint32範囲外はWrapせずOverflow DiagnosticとしてWorldをFailedにする。
+
+`set_world_execution_budget(world, budget)`はAdmission Limitだけを変更するCPU Control APIであり、Immediate Contextを呼び出さない。World SchedulerのControl Lock内で更新を直列化し、同一Worldに対する`advance` / `poll` / 他の設定変更とのデータ競合を許さない。
+
+受理条件:
+
+1. 対象WorldにGPU実行中Command、未完了Event Query、CPU未観測のSubmissionが存在しない。複数in-flight Tickがあった場合は、対象Tickと後続の`BLOCKED_BY_PREDECESSOR` Statusを全てCPU観測してから変更できる。
+2. 復旧対象が最も古い未Commit Tickで、`WORK_BUDGET_EXCEEDED`としてReservation済みである。未Reservation時間はAccumulator / Step Queueに残す。後続ReservationはPredecessor Block状態で保持し、先行Tickの解決前に新規Physics Submissionを進めない。
+3. `maximum_substeps >= world_desc.minimum_substeps`、`maximum_integration_segments_per_tick >= 1`を満たす。新しいBudgetはStatusに報告された`required_substeps` / `required_integration_segments`以上でなければならない。不足する場合は`invalid_argument`として一切変更しない。
+4. Blocked ReservationがないWorldでは、未Reservation Whole Tick、Step Request、Tick Reservation、GPU SubmissionがないIdle状態でのみ変更できる。この場合は増減を許可する。
+
+Budget更新は2フィールドをAtomicに置換し、`execution_budget_revision`を1増やす。Blocked Reservationに対する変更では現在値より小さい上限を指定できない。Substep数・Segment境界・Tick時間区間・Input Snapshot・Animation Packet Version・Cursor開始Snapshot・Force / Impulse Event ID / Cursor・Tick Sequence・Reservation時間は変更しない。既存Dispatch Planは変更せず破棄し、新しい`dispatch_id`とBudget Revisionを持つImmutable Planを同じReservationから再生成する。先行TickがCommit済みなら、そのCommit済みSource State Generationを参照する。後続Reservationは先行TickのCommit後に新しいSource Generationで再Planする。
+
+`set_world_execution_budget`成功後、Schedulerは次の通常Pumpで同じReservationをPreflightから再評価する。API呼出し自体はGPU Dispatch / Flush / Waitを行わない。再評価後も上限を超える場合は同じReservationを保持したまま`WORK_BUDGET_EXCEEDED`を報告する。予算引上げ時に異なるAnimation / Force / Impulse / TOI境界を結合・省略したり、Substep・Iteration・Contact品質を減らしたりしてはならない。
+
+GPU実行中にTOIで追加された残Segmentが上限を超えた場合も、GPUはWorking State / Render CandidateをCommitせず、Tick開始SnapshotへRollback可能な状態でStatusを返す。CPUがQuery完了と`WORK_BUDGET_EXCEEDED`を観測し、後続TickのPredecessor Blockも観測した後に同じAPIで上限を更新する。RetryはTick開始Stateから全Tickを再実行し、Impact / Force / Impulseを破棄済みWorking Stateへ二重適用しない。
+
+不正なBudgetは`invalid_argument`、GPU / Queryが未完了の場合は`busy`を返し、どちらもWorld Budget・Revision・Reservation・Timelineを変更しない。復旧不能なWork Count Overflowは無限Retryせず、明示的なTerminal Errorとする。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -772,6 +815,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - Event Query + asynchronous COMMITTED Status Readback + contiguous Tick Prefix。
 - Accumulator backlog、Pause / Stop / Step / Reset、Time Scale。
 - GPU Capacity Block / Retry、同じInitial Snapshotからの再実行。
+- WORK_BUDGET_EXCEEDEDのRequired Count / Budget Revision / set_world_execution_budget / 同一Reservation Retry / 後続Predecessor停止。
 
 ### Gate R1 — Soft Body GPU Integration
 
@@ -872,6 +916,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.10: `set_world_execution_budget`とWORK_BUDGET_EXCEEDEDのRecovery Contractを追加。Required Work Status、Budget Revision、Reservation / Packet / Event固定、後続Predecessor停止、TOI後Rollback Retryを規定。
 - 1.9: Immutable Trajectory PacketとMutable per-World Span Cursorを分離し、Cursor UAV / Segment Snapshot Rollback / R5 ABI Isolation Gateを追加。
 - 1.8: Span / Track / Channel / Blend / Colliderの固定Byte Offset / Flags / Node / Inverse Bind参照、Blend Curve時刻写像、Collider Angular Axis / Velocity、StructuredBuffer ABI検証を確定。
 - 1.7: Shader Model 5固定幅GPU Packet ABI / Byte Offset、CPU double絶対時刻とGPU Span-local float時刻、各Segmentでのnormalized cursor更新、任意tauのBone / Collider評価、Kinematic Collider Record、Segment Preflight Reservation順序を明文化。GPU ABI Readback / Time Precision Gateを追加。

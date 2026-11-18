@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track newly specified regression cases from the latest senior-engineer design review without claiming that fixtures or executable tests already exist.",
+    "purpose": "Track newly specified regression cases from senior-engineer design reviews without claiming that fixtures or executable tests already exist. Cases remain specified_not_implemented until persistent fixtures and executable assertions are committed and pass CI.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -593,19 +593,25 @@
       {
         "id": "DCR_40_INTEGRATION_SEGMENT_BUDGET",
         "test_case": 40
+      },
+      {
+        "id": "DCR_41_WORK_BUDGET_RECOVERY_RESERVATION_REPLAY",
+        "test_case": 41
       }
     ]
   },
   "latest_ci_attempt": {
-    "commit": "8ec96f947c7d34f05da742686cb03753a7588c56",
-    "workflow_run_id": 44347685834,
+    "commit": "9a6fc72f2beb4c348f6f2ea6326d5272101f1238",
+    "workflow_run_id": 44347985249,
+    "job_id": 134955525618,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
     "runner_name": "",
     "steps_reported": 0,
-    "build": "not_started_or_unreported",
-    "tests": "not_started_or_unreported",
-    "note": "The job ended before runner assignment (runner_name is empty and no steps were reported). This is not evidence of a compiler or test failure. The last successful verified CI remains commit 36dab21 / run 44327398017; all later design revisions remain unverified by CI."
+    "build": "not_started",
+    "tests": "not_started",
+    "classification": "runner_not_assigned",
+    "note": "The latest observed run targets commit 9a6fc72. Its job ended before runner assignment (runner_name is empty and no steps were reported), so this is not evidence of a compiler or test failure. The last successful verified CI remains commit 36dab21 / run 44327398017. Revisions after 9a6fc72 are not verified by this recorded run."
   }
 }

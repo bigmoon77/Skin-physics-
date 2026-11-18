@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.4",
+  "profile_version": "1.5",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -227,7 +227,21 @@
       "cursor_snapshot_restore_mismatch_count": 0,
       "rejected_tick_cursor_leak_count": 0,
       "cursor_buffer_role": "Mutable per-World UAV / Working State; not part of the immutable trajectory Packet",
-      "cursor_update_policy": "GPU advances Cursor after each Segment; TOI retime / Retry restore Cursor from Segment Snapshot; Tick Reject discards Working Cursor without mutating committed Packet / Cursor state"
+      "cursor_update_policy": "GPU advances Cursor after each Segment; TOI retime / Retry restore Cursor from Segment Snapshot; Tick Reject discards Working Cursor without mutating committed Packet / Cursor state",
+      "record_roles": {
+        "immutable_packet_records": [
+          "animation_span_gpu_record",
+          "animation_track_gpu_record",
+          "animation_channel_gpu_record",
+          "animation_blend_gpu_record",
+          "kinematic_collider_gpu_record"
+        ],
+        "mutable_world_working_records": [
+          "animation_span_cursor_gpu_record"
+        ],
+        "stride_source": "expected_record_bytes",
+        "contract_source": "docs/detailed_design.md §5.3"
+      }
     }
   },
   "reproducibility": {
@@ -259,7 +273,7 @@
     "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
     "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
     "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
-    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries. D3D11 SM5 Animation Packet uses float / uint32 only. Absolute World Time stays CPU double; GPU uses Span-local normalized u and Segment-relative tau. Verify fixed Record strides (64 / 208 / 48 / 128 bytes) and monotonic u_segment_start across Substep / Force / Impulse / TOI Segment boundaries. Every Animation Span Record must own explicit Track / Channel / Blend / Collider Buffer Ranges; Blend Source / Target Track indices are Span-relative and range-checked. Each Channel Record carries Node Role and Inverse Bind Static Record Index; invalid references, omitted Mesh Node or omitted Joint Ancestor records fail the animation packet ABI gate. Immutable Animation Trajectory Packet Records are read-only. Per-World animation_span_cursor_gpu_record (16 bytes) is mutable working state, snapshot / rollback protected, and checked separately from Packet ABI. Animation Trajectory Packet is immutable and read-only. Mutable per-World Span Cursor is a separate 16-byte UAV record, included in Segment Snapshot / rollback and validated for zero Packet mutations."
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries. D3D11 SM5 Animation Packet uses float / uint32 only. Absolute World Time stays CPU double; GPU uses Span-local normalized u and Segment-relative tau. Verify every GPU Record stride against animation_gpu_packet_time.expected_record_bytes; this object is the sole byte-size source. The five immutable Packet Records and the separate mutable 16-byte World Cursor are classified by animation_gpu_packet_time.record_roles. Every Animation Span Record owns explicit Track / Channel / Blend / Collider Buffer Ranges; Blend Source / Target Track indices are Span-relative and range-checked. Each Channel Record carries Node Role and Inverse Bind Static Record Index; invalid references, omitted Mesh Node or omitted Joint Ancestor records fail the animation packet ABI gate. Immutable Packet mutation count, Cursor Snapshot Restore mismatch and rejected-Tick Cursor leak must all remain zero."
   },
   "governance": {
     "thresholds_are_initial_engineering_candidates": true,
@@ -271,5 +285,15 @@
       "rerun of all analytical, numerical, physical and integration tests"
     ],
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
-  }
+  },
+  "version_history": [
+    {
+      "version": "1.5",
+      "changes": "Removed the stale 64 / 208 / 48 / 128 byte stride list. expected_record_bytes is the single ABI byte-size source; immutable Packet records and the mutable World Cursor are explicitly separated."
+    },
+    {
+      "version": "1.4",
+      "changes": "Initial Animation Packet ABI sizes, normalized Span time, Cursor rollback, and non-responsive / coupled contact acceptance thresholds."
+    }
+  ]
 }

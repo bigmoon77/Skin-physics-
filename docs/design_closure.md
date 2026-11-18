@@ -1,11 +1,11 @@
-# Skin Physics 設計閉鎖書（v2.2）
+# Skin Physics 設計閉鎖書（v2.3）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.10
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.12
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.9
-- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
+- 基本設計: [basic_design.md](basic_design.md) v1.11
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.13
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.10
+- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.5
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
 
@@ -335,6 +335,15 @@ Render Candidate Ring:
 - shutdown()は全WorldがDestroy済み、Query Ring Idle、Deferred Release List空、Host Lease=0の時だけCOM Resourceを解放してOK。条件不足ならBUSYを返し、Runtime状態を壊さない。Runtime Destructor前にshutdown成功が必要。
 - 通常Frame PathにFlush / 同期Waitを入れない。明示drainのみGPU Query完了待ちを許可する。
 
+### 4.6 WORK_BUDGET_EXCEEDED Recovery
+
+- Worldの実行上限は`world_execution_budget`として保持し、Admission Limitは`maximum_substeps` / `maximum_integration_segments_per_tick`の2項目に限定する。
+- Budget超過でBlockされたTickはTick Sequence / Reservation時間 / Input Snapshot / Animation Packet Version / Cursor開始Snapshot / Event IDを保持する。
+- `set_world_execution_budget`は関連GPU Query / Predecessor Blockが全てCPU観測済みで、GPU実行中Commandがない場合だけ受理する。Block中は上限引上げのみ、かつStatusのRequired Count以上を要求する。
+- 更新対象はAdmission Limitのみ。物理材料、Compliance、Contact品質、Fixed Delta、Substep / Segment境界の意味は変更しない。
+- Retryでは新しい`dispatch_id`とBudget Revisionを付けたImmutable Planを再生成し、同じReservationを使用する。後続Tickは先行Commit後に新Source Generationで再Planする。
+- 表現可能なWork Countを超えるOverflowは無限RetryせずTerminal Errorにする。
+
 ## 5. Validation / Acceptance
 
 ### 5.1 Canonical numerical profile
@@ -376,6 +385,7 @@ Render Candidate Ring:
 - [ ] W_ii <= epsilon_inverse_massの非応答ContactはPosition / ImpulseをSkipし、ゼロ除算を発生させない。
 - [ ] 複数Contactの速度ImpulseはContact間Couplingを含むProjected Jacobiとし、Residual未収束時はTickをCommitしない。
 - [ ] GPU Animation Trajectory PacketがTOI任意tauのBone / Skinning Position / VelocityとKinematic Collider Transform / Contact Point Velocityを評価し、Clip Key Span / Blend / Collider Sample / Boundが同一Versionである。
+- [ ] WORK_BUDGET_EXCEEDEDはRequired Work CountをStatusへ報告し、set_world_execution_budgetで同じTick Reservation / Input / Packet / Eventを保って復旧できる。GPU Query未完了時の変更拒否、TOI後Rollback、後続Predecessor再Planを検証する。
 - [ ] SM5 GPU PacketはAbsolute World TimeをfloatへCastせず、CPU doubleからSpan-local normalized u / Segment-relative tauへ変換する。Record Byte Size / Offsets / Stridesとu_segment_startの単調進行を検証する。 Immutable PacketのMutation Count=0、CursorのSnapshot Restore Mismatch=0、Rejected TickからのCursor Leak=0も検証する。
 - [ ] Animation Target Velocityは最終Skinning Trajectoryの時間微分とし、STEP / LINEAR / CUBICSPLINE / Blendの規則が一意。
 - [ ] Kinematic CCDは曲線全区間の保守的偏差Boundを用い、有限サンプルだけでNo-Missを主張しない。
@@ -413,6 +423,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
+- 2.3: WORK_BUDGET_EXCEEDEDのStatus / Required Count / 実行予算再設定 / 同一Reservation RetryをRuntime API・Validation Checklistへ追加。Numerical Acceptance Profile v1.5と各設計書の版番号を同期。
 - 2.2: Immutable Animation Packetと16-byte Mutable World Span Cursorを分離し、Segment / TOI Cursor Advance、Snapshot Rollback、Packet不変性のAcceptance Gateを追加。
 - 2.1: Span / Track / Channel / Blend / Colliderの完全ABI、Node Role / Inverse Bind参照、補間Flags / Quaternion / Blend係数、Column-Major Matrix Layout、Runtime Record Stride検証を確定。
 - 2.0: SM5固定幅Animation / Collider Packet ABI、CPU double / GPU Span-local float Time Mapping、各Segmentでのnormalized cursor更新、ABI Readback / Time Precision Gateを追加。

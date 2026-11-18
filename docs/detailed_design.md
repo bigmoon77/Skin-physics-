@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.12
+- 文書バージョン: 1.13
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.10
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.9
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
-- 前版: 1.11
+- 対応基本設計: basic_design.md 1.11
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.10
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.5
+- 前版: 1.12
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1329,6 +1329,8 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 
 ## 16. 容量・エラー・ステップ状態
 
+WORK_BUDGET_EXCEEDEDは、World共通Substep数またはIntegration Segment数が設定上限を超え、Tick全体をCommitできない状態を表す。Runtimeは必要な実行数をDiagnosticへ記録し、同じTick Reservationを保持する。復旧API・設定変更可能範囲・Query完了条件・Retry時のSnapshot / Packet / Event固定規則は [runtime_integration_design.md](runtime_integration_design.md) §5.6を正とする。実行上限の変更は既に確定した物理条件を変更せず、要求済みSubstep / Segmentを実行可能にするAdmission Limitだけを更新する。
+
 シミュレーションインスタンスとGPU Logical Tickは状態を分けて管理する。
 
 World Playback State:
@@ -1474,6 +1476,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.13: WORK_BUDGET_EXCEEDEDからの復旧をRuntime契約へ分離し、実行予算変更と物理入力Snapshotの不変性を明記。Numerical Acceptance Profile v1.5のABI正本参照と同期。
 - 1.12: Immutable Span / Track / Channel / Blend / Collider Packetと16-byte Mutable World Cursorを分離。Segment Cursor Advance / TOI Retiming / Snapshot Rollbackを確定。
 - 1.11: Span / Track / Channel / Blend / Colliderの完全なSM5 ABI、Byte Offset / Flags / Node Role / Inverse Bind Index、gpu_float4 / Column-Major Matrix Layout、Rotation / Blend係数の意味、Hierarchy Channel Rangeを確定。
 - 1.10: Shader Model 5固定幅GPU Packet ABI / Byte Offset、CPU double絶対時刻とGPU Span-local float時刻、Segmentごとのu_segment_start更新、逆再生CUBICSPLINE Tangent選択、Collider Recordとfloat時間Precision Errorを追加。
@@ -1488,9 +1491,9 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
 
-## 22. GPU Runtime / Library Integration（v1.8）
+## 22. GPU Runtime / Library Integration（v1.10）
 
-本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
+本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～41は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
 - 配布Targetは既存のSkinPhysics Visual Studio Static Libraryとし、.sln / .vcxprojを正規Build手段にする。CMakeを必須にしない。
 - HostがD3D11 Device / Immediate Contextを生成・破棄する。RuntimeはCOM参照を保持してGPU Resourceを管理する。Host RendererとRuntimeは単一Submission ThreadでImmediate Contextを共有する。
@@ -1501,7 +1504,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 最大2件のin-flight Tickはexpected_predecessor_tick_sequence / expected_source_state_generation / expected_source_state_set / dispatch_idを持つImmutable Dispatch Planで連結する。Tick Commit ControlだけがCommitted State Generation / Active State Setを更新し、Rejectでは更新しない。
 - 後続Tickのtick_begin_controlと全Budgeted Physics Passは先行TickのCommit Sequence / State Generationを確認する。先行Tickが失敗した場合、後続TickはPhysics StateのRead / Write前にBLOCKED_BY_PREDECESSORとして停止する。先行TickをRetryしてCommitした後、後続Tickを新しいGenerationで再Submissionする。
 - get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した最後のCPU-observed committed State Generationを返す。未確認GPU CommitやWorking BufferをRendererへ公開しない。
-- Capacity Overflow / CCD Unresolved / NonFinite / Physical Quality Gate失敗はTickをCommitしない。再試行は同一Tick InputとInitial Snapshotから行い、候補を黙って捨てない。
+- Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDED / NonFinite / Physical Quality Gate失敗はTickをCommitしない。WORK_BUDGET_EXCEEDEDの回復はRuntime §5.6の専用実行予算APIのみを使い、同一Tick InputとInitial Snapshotを再利用する。候補や異なる時間境界を黙って捨てない。
 - Render Feedback Candidateは専用SlotへCommit前に生成・検証し、GPU Commit ControlがPhysics StateとRender Slot参照を同時に切り替える。CPU-observed committed prefixのみをHostへ公開する。Render Candidate RingはWorldごとにmaximum_in_flight_ticks + 1 Slotとし、Lease解放前のSlotを再利用しない。追加Buffer / Copy / Dispatch / Ring VRAM / GPU時間をPerformance Runへ含める。
 - Device Loss時は新規Submissionを停止し、Asset / Initial StateからWorldを再構築してTimelineをResetする。毎Frameの全State Readbackで復旧しない。
 - 数値・物理品質の初期比較基準はnumerical_acceptance_profile_v1.jsonを使い、同一Solver Algorithm / Update OrderのCPU Double Referenceと比較する。異なるSolver方式同士はAnalytical FixtureとPhysical Invariantで比較する。

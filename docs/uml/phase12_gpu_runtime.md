@@ -57,7 +57,7 @@ sequenceDiagram
     S->>S: move one fixed dt from Accumulator to Tick Reservation; pin Input / Packet Version
     S->>G: submit reserved sequence + immutable input snapshot
     G->>G: preflight World Substep / Animation / Force / Impulse segment count
-    Note over S,G: Over cap -> WORK_BUDGET_EXCEEDED; keep same Reservation / Packet Version, no Physics Dispatch
+    Note over S,G: Work Budget over cap -> WORK_BUDGET_EXCEEDED; keep same Reservation / Packet Version / required-work counts, no Physics Dispatch
     G->>D: predecessor / State Generation gate
     G->>D: upload immutable Animation Trajectory Span Packets / Collider Records + Bounds
     G->>D: initialize per-World Mutable Span Cursor Buffer from Tick Reservation
@@ -134,6 +134,42 @@ sequenceDiagram
 
 No candidate is silently dropped. The failed working state is not published to Renderer. If the error cannot be repaired within configured limits, the World remains blocked or failed and simulation time is not advanced.
 
+## 3.1 WORK_BUDGET_EXCEEDED recovery
+
+```mermaid
+sequenceDiagram
+    participant H as Host
+    participant API as SkinPhysics API
+    participant C as Runtime CPU Control
+    participant Q as Query / Status Ring
+    participant G as GPU Tick Scheduler
+    participant D as D3D11 GPU
+
+    alt Preflight detects Substep / Segment budget excess
+        C->>C: keep head Tick Reservation; record required work counts
+    else TOI residual Segment exceeds budget during execution
+        G->>D: suppress remaining Segment / Render Publish / Commit
+        G->>Q: WORK_BUDGET_EXCEEDED + required counts + Event Query
+        C->>Q: poll until Query and status are complete
+        Q-->>C: blocked status; committed State Generation unchanged
+    end
+    C->>C: wait for all submitted descendants to report BLOCKED_BY_PREDECESSOR
+    H->>API: set_world_execution_budget(world, raised_limits)
+    API->>C: validate idle GPU/query state and required counts
+    alt Query or GPU work remains pending / limits invalid
+        API-->>H: BUSY / invalid_argument; no mutation
+    else budget accepted
+        C->>C: atomically update limits + Budget Revision
+        C->>C: retain Reservation / Input / Packet / Cursor / Event Snapshot
+        C->>G: rebuild immutable Plan with new dispatch_id; same Tick Sequence
+        G->>D: replay full Tick from original committed State
+        D-->>G: Commit only when all gates pass
+        G->>C: retry later descendants after predecessor commit
+    end
+```
+
+The API changes admission caps only; it does not change material parameters, solver quality, Fixed Delta, Substep / Segment boundaries, or event times. It is CPU-only and does not call the Immediate Context, Flush, or Wait. A successful update requires all related GPU work and Status Queries to be CPU-observed. The retry uses the same Tick Reservation and Input / Packet / Event identity with a new immutable Dispatch Plan / dispatch_id. If the required Work Count cannot be represented by the uint32 contract, the World enters a terminal error instead of retrying indefinitely.
+
 ## 4. Submission and completion state
 
 ```mermaid
@@ -144,13 +180,17 @@ stateDiagram-v2
     BlockedByInput --> PendingInput: missing samples supplied
     PendingInput --> BlockedByRenderLease: no Candidate Slot / Host Lease busy
     PendingInput --> Reserved: time + input + Render Slot + Query Slot ready
-    Reserved --> Submitted: assign sequence / snapshot; move dt to Reservation
+    Reserved --> Preflight: assign sequence / snapshot; move dt to Reservation
+    Preflight --> BlockedByWorkBudget: required Substep / Segment count exceeds Admission Limit
+    Preflight --> Submitted: all Admission Limits pass
     Submitted --> GpuExecuting
     GpuExecuting --> GpuCommitted: GPU commit control passes
+    GpuExecuting --> BlockedByWorkBudget: TOI residual Segment exceeds Admission Limit; no Commit
     GpuExecuting --> BlockedByCapacity: capacity overflow
     GpuExecuting --> BlockedByCCD: CCD unresolved / iteration limit
     GpuExecuting --> BlockedByPredecessor: previous Tick not committed
     GpuExecuting --> Rejected: NonFinite / ContactGeometry / physical gate failure
+    BlockedByWorkBudget --> Reserved: set_world_execution_budget; same Reservation / Input / Event; new dispatch_id
     BlockedByCapacity --> Reserved: capacity grown; same reservation replay
     BlockedByCCD --> Reserved: common Substep budget raised; same reservation replay
     BlockedByPredecessor --> Reserved: predecessor committed; rebuild source generation
