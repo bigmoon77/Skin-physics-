@@ -2,7 +2,7 @@
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.4
+- 基本設計: [basic_design.md](basic_design.md) v1.5
 - 詳細設計: [detailed_design.md](detailed_design.md) v1.6
 - Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.3
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
@@ -144,11 +144,11 @@ Additional 2-ring / 3-ring除外は既定0。折り畳み部の接触見逃し�
 - CCD適用候補の初期選別: relative_displacement > eta * contact_thickness、eta=0.5。
 - Swept AABBが候補化したPairを、低速という理由だけで候補から落とさない。Initial Contact / Persistent Contact / Initial Penetrationは速度による選別の対象外。
 - Conservative Advancement safety=0.8、最大32 Iterations。
-- tau_tolerance = max(1e-7 s, 1e-5 * dt_world_segment)。
+- tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)。
 - distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)。
 - tau_toleranceに到達しただけでNo-Hitにしない。距離条件または保守的区間No-Hitを証明できない場合はUnresolved。
 - Positive-Time TOI splitは最大2回 / World共通Substep。TOI時刻は全Soft Body / Cloth / Contactを含むWorld全体へ適用する。
-- 同時TOI Group tolerance = max(1e-7 s, 1e-5 * dt_world_segment)。ImpactはContact Key順に一度だけ適用。
+- 同時TOI Group tolerance = max(1e-7 s, 1e-5 * dt_segment)。ImpactはContact Key順に一度だけ適用。
 - 分割上限超過 / UnresolvedはTickをCommitせず、World共通Substep数を増やしてTick開始SnapshotからRetryする。Retry上限到達時はBlockedByCCD / Failed。
 
 ### 2.7 World共通Substep / 外力イベント
