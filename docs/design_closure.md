@@ -157,10 +157,10 @@ Additional 2-ring / 3-ring除外は既定0。折り畳み部の接触見逃し�
 - tau_toleranceだけでNo-Hitにしない。距離条件または保守的区間No-Hitを証明できない場合はUnresolved。
 - Positive-Time TOI splitは最大2回 / World共通Substep。TOI時刻は全参加Solverへ適用する。
 - TOI prefixはSemi-implicit Eulerの同一離散pathから構成し、dt=tauの再Predictionで別速度・別軌道を作らない。
-- Kinematic Vertex / Colliderの幾何PathはSegment端点Chordを使い、Animation / Transform Evaluatorが返す全区間の保守的Chord偏差BoundでSwept AABBを膨張させる。有限個の中間サンプルのみで偏差を保証しない。
-- CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角・最大半径に対するSagitta Boundを使う。
+- Kinematic Vertex / ColliderのSwept AABBはSegment端点Chordを基準に、全区間の保守的Chord偏差Boundで膨張させる。Conservative Advancementの距離判定はtau時刻の実Animation / Rigid Transform Trajectoryで行い、区間速度上限Boundをv_boundへ含める。ChordはNarrowphase / TOIの幾何位置として使わない。有限個の中間サンプルのみで偏差・速度上限を保証しない。
+- CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角・最大半径に対するSagitta Boundを使い、Deviation BoundとCA用Speed Boundの両方を与える。
 - Boundを計算できない場合はSegmentを決定的に細分化する。最大深度8でもdistance_tolerance以下を証明できない場合はCCDUnresolvedとしてTickをCommitしない。
-- Contact Relative Velocityにはtau時刻のAnimation Target Trajectory微分、Rigid Colliderではv_linear + omega cross radiusを使う。Chord速度へ置換しない。
+- Kinematic TOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価する。Contact Relative Velocityには同時刻のAnimation Target Trajectory微分、Rigid Colliderではv_linear + omega cross radiusを使う。Chord速度へ置換しない。
 - TOI prefixでは非接触内部Constraintを先に解き、Contact前Velocityを保存してからContact Position correction / Impactを行う。Contact位置補正後にVelocityを再構築しない。
 - 同時TOI Group tolerance = max(1e-7 s, 1e-5 * dt_segment)。ImpactはContact Key順に一度だけ適用。
 - 分割上限超過 / UnresolvedはTickをCommitせず、同じTick ReservationからRetryする。Retry上限到達時はBlockedByCCD / Failed。
@@ -204,8 +204,8 @@ Force / Impulseの空間分配:
 
 - §6.6のSemi-implicit Eulerで得たSegment終端Velocityをpath_velocityとし、Dynamic Vertex CCD pathをx_path(tau)=x_segment_start+tau*path_velocityと定義する。
 - Positive-Time TOIでは同一pathのx_path(tau) / v_path(tau)をprefix状態として使い、dt=tauの再Predictionを行わない。
-- Fixed / Kinematic Vertex / Colliderの幾何PathはSegment端点Chord。区間全時刻に対する保守的Chord偏差BoundでSwept AABBを膨張させる。有限サンプルのみの検証は保証に使わない。
-- Kinematicの偏差BoundはCUBICSPLINEのBezier Control Hull、階層Skinningの区間演算 / 保守的導関数Bound、Slerp ColliderのSagitta Boundで求める。Boundを得られない場合は最大深度8で分割し、依然証明不能ならCCDUnresolved。
+- Fixed / Kinematic Vertex / ColliderのSwept AABBはSegment端点Chordを基準に、全区間の保守的Chord偏差Boundで膨張させる。Conservative Advancement / TOI位置評価はtau時刻の実Trajectory位置を使い、CA v_boundには保守的Speed Boundを含める。有限サンプルのみの検証は保証に使わない。
+- Kinematicの偏差Bound / Speed BoundはCUBICSPLINEのBezier Control Hull、階層Skinningの区間演算 / 保守的導関数Bound、Slerp ColliderのSagitta Bound / 角速度Boundで求める。Boundを得られない場合は最大深度8で分割し、依然証明不能ならCCDUnresolved。
 - Kinematic接触Velocityにはtau時刻のTrajectory微分、Colliderはv_linear + omega cross radiusを使用する。Chord速度はGeometry CAに限定する。
 - TOI位置でtauをXPBD時間として非接触内部Constraintを先に解き、Dynamic Contact前Velocityを保存する。Contact Position correction後にVelocityを再構築せず、保存したVelocityからImpactを一度だけ適用する。
 - Impact後の残時間は新しいIntegration Segmentとして開始し、FEM / Animation Tracking / External Forceを新しい開始状態から評価する。
