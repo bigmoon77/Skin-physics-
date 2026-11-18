@@ -8,7 +8,7 @@
 - 文書バージョン: 1.3
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.4
+- 対応基本設計: basic_design.md 1.5
 - 対応詳細設計: detailed_design.md 1.6
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
@@ -451,7 +451,7 @@ Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境
 
 ### 5.5 World共通Substep Schedule
 
-詳細設計§6.8 / §7.1.1のWorld共通SubstepをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全MeshのFEM / Animation Tracking制限を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
+詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全MeshのFEM / Animation Tracking制限を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。各SubstepはForce / Impulse Event境界およびTOIでIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -462,7 +462,7 @@ Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境
 - state_bank[2]: Worldごとに2つの完全なPersistent State Bankを持つ。各BankはPosition / Velocity / Soft Body dynamic state / Animation target history / Persistent Contact Cache（Contact Key / Normal / Patch Generation）を保持する。XPBD Lambda / Impact EventはPersistent State Bankへ含めない。
 - active_state_bank: GPU Commit済みのSource Bank。Tick全体を通してRead-onlyであり、Retry / Reject時の完全なLogical Tick開始状態を兼ねる。
 - inactive_state_bank: 次のTickがWriteするDestination / Working Bank。Physics Stateの変更はこのBank内だけで行う。
-- substep_start_snapshot: Internal Substep / CCD Segmentの開始状態を保存するWorldごとの再利用Scratch。TOI retime / Segment Retry時にinactive_state_bankを復元する。1本のWorld Command Stream内で順序実行するため、同一Worldで同時使用するSnapshotは1つ。
+- substep_start_snapshot: 現在処理中のIntegration Segment開始状態を保存するWorldごとの再利用Scratch。TOI retime / Event Segment Retry時にinactive_state_bankを復元する。1本のWorld Command Stream内で順序実行するため、同一Worldで同時使用するSnapshotは1つ。
 - tick_dispatch_plan: expected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_id / tokenを持ち、ReservationからExecution / Commitまでimmutableとする。
 - segment_solver_scratch: Cloth Stretch / Shear / Bend / Animation Tracking / ContactのXPBD Lambda、projected correction、Impact Resolved Eventを保持する。各World共通Integration Segment開始時にLambdaを0へ初期化し、同Segment内のSolver反復中だけ保持する。Segment間 / Logical Tick間のLambda Warm Startはv1で行わない。Persistent Contact Key / Normal / Patch GenerationだけをState Bankへ保持する。
 - render_candidate_slots: Tickごとに確保するPosition / Normal / Tangent candidateとslot_generation。GPU Commit ControlだけがPhysics committed stateとRender slot referenceを同時に切り替える。
@@ -550,7 +550,7 @@ Soft Body内部力はInternal Substepごとに再評価する。Soft BodyのFEM 
 
 既存のPoint-Triangle CCDは初期Fixtureとして維持する。Production Runtimeでは変形Mesh間の高速接触を満たすため、VTとEEの双方に対してSwept BroadphaseとConservative Advancementを接続する。Triangle-Triangleの交差候補はVT / EEイベントへ分解して扱い、Primitive Pair / Contact Keyの重複を除去する。
 
-TOIは秒単位で管理する。Positive-Time TOIが得られた場合はSubstep開始Snapshotへ戻し、TOIまで再積分し、接触Position / Velocity応答を一度だけ適用して残時間を再積分する。TOI後の速度をStep終端のVelocity Reconstructionで上書きしない。複数接触は同時TOI許容幅でグループ化し、同一Eventを二重Impulseしない。Unresolved、進行不能、Iteration上限は未解決のままCommitしない。
+TOIは現在Integration Segment開始からの秒単位で管理する。Positive-Time TOIが得られた場合は現在Segment開始Snapshotへ戻し、全World参加Solverを同じtauまで再積分し、Dynamic VertexのVelocityを区間変位から再構築した後、接触Position / Velocity応答を一度だけ適用して残時間を新しいSegmentとして再積分する。Fixed / Kinematic VertexはAnimation Interfaceの規定Velocityを維持する。TOI後のDynamic VelocityをLogical Tick終端のVelocity Reconstructionで上書きしない。複数接触は同時TOI許容幅でグループ化し、同一Eventを二重Impulseしない。Unresolved、進行不能、Iteration上限は未解決のままCommitしない。
 
 ### 7.3 D3D11 Compute Pass Executor
 
@@ -732,7 +732,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 以下を満たした時点でGPU Runtime実装に進める。
 
-- 基本設計1.4 / 詳細設計1.5 / 本書1.2の独立Critical Reviewで重大な設計矛盾が0件。
+- 基本設計1.5 / 詳細設計1.6 / 本書1.3の独立Critical Reviewで重大な設計矛盾が0件。
 - Gate R0-R6の責務、入力、出力、失敗状態、検証Fixtureが追跡可能。
 - Corotational FEM / XPBD Cloth / Contactの式とCPU Double Oracleが一致している。
 - Runtime APIとDevice / Context / Render Bindingの所有権が確定。
@@ -743,6 +743,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.3: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / ClothのSegment積分同期、Kinematic Velocity所有規則をRuntime Scheduler / TOI契約へ反映。
 - 1.2: World共通Substep契約、AccumulatorからTick Reservationへの時間移管、Lease Generation付きRelease、Deferred Context Command Listの解放順序、Model / Collider / World / RuntimeのDestroy・Drain・Shutdown条件を明文化。
 - 1.1: 複数WorldのQuery Ring集約、Model Transform / Material / Paint API、Pose履歴不足時のBLOCKED_BY_INPUT、Fixed Delta fractional remainder、Capacity Growth / Memory Budget、Render Candidate Ring / Host Lease、Physics State Bank 2枚とSubstep Snapshotの分離を明文化。
 - 1.0: Runtime / Library境界、Public API、D3D11 Device / Context所有権、Fixed Step Scheduler、GPU Commit / Rollback、Render Binding、Device Loss、R0-R6 Gateの初版。
