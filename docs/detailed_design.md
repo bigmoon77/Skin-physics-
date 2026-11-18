@@ -1,10 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.2
-- 状態: 要件定義との整合性レビュー対応・再レビュー合格
+- 文書バージョン: 1.3
+- 状態: GPU Runtime統合設計改訂・独立レビュー待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.1
-- 前版: 1.0
+- 対応基本設計: basic_design.md 1.2
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
+- 前版: 1.2
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -80,11 +82,12 @@ Skinning influenceは初期版で最大8本とする。インポート時に上�
 - アセット読み込み、入力検査、Physics Mesh生成・キャッシュ
 - 四面体・三角形の隣接リスト、制約リスト、Graph Coloringの構築
 - アニメーションClip評価、Bone行列生成
-- GPUリソース生成・破棄、固定時間刻み制御
-- JSON入出力、試験環境制御
-- 非同期GPU診断結果の回収と容量再設定
+- GPUリソース生成・破棄、Fixed Step AccumulatorとGPU Submission SchedulerのCPU制御
+- JSON入出力、試験環境制御、Model / Mesh / Collider登録
+- 非同期GPU診断結果・Commit Statusの回収と容量再設定
+- Host / Rendererと共有するD3D11 Immediate ContextのSubmission Thread管理
 
-CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。GPU診断結果の回収は非同期とし、通常処理を同期Readbackで停止させない。
+CPUは通常フレームのPhysics Vertex位置・速度・Contact / Lambda配列をReadbackしない。GPU診断結果とLogical Tick Statusの小規模Bufferだけを非同期回収し、通常処理を同期Readbackで停止させない。RuntimeはHostから渡されたD3D11 Device / Immediate Contextを使い、Hostと同じ単一Submission ThreadでGPU commandを発行する。
 
 ### 3.2 GPU側
 
@@ -94,7 +97,10 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 - Broadphase / Narrowphase / CCD
 - 接触位置補正、速度摩擦、反発
 - Render Mesh位置・法線・接線更新
+- Logical Tick / Substepの状態検証、Commit / Reject Control
 - GPUタイムスタンプ計測対象Pass
+
+GPUはRuntime Physics Stateの唯一の正とする。HostからGPU内部Solver Buffer / Scratch / Writable UAVを公開しない。Render向けにはCommit済みPhysics Stateから生成した専用Read-only Render Bindingを公開する。
 
 ### 3.3 GPUリソース構成
 
@@ -719,11 +725,15 @@ Paint / Smooth / Average / Eraseを提供する。Paintはtarget_valueへstrengt
 
 ### 14.1 固定時間刻み
 
-描画Delta Timeを直接ソルバーへ渡さない。Accumulatorで固定時間刻みのStep要求を管理する。フレームあたりの最大Step数を超えた場合は遅延を記録し、シミュレーション時間を黙って飛ばさない。
+描画Delta Timeを直接ソルバーへ渡さない。Simulation ManagerがAccumulatorでFixed Delta TimeのLogical Tick要求を管理し、Runtime SchedulerがGPUへのSubmissionを管理する。既存fixed_step_controllerはCPU reference / test環境の同期Callback用として保持し、GPU Production RuntimeのCommit判定へそのまま流用しない。GPUへのSubmission受付とGPU Tick Commitは別の状態である。
+
+フレームあたりの最大Step / GPU in-flight上限に達した場合は遅延を記録し、Accumulatorへ時間を保持する。性能維持のために時間を黙って飛ばさない。GPU完了StatusはEvent Queryと非同期Status Readbackで確認する。Event QueryはCommand完了を示し、Tickが成功したことはGPU Status Bufferで判定する。
 
 ### 14.2 Step / Pause
 
-Pause中のStep要求は固定時間刻みを1回だけ実行する。描画フレーム更新とは独立させる。複数Step要求は要求数分をキューイングする。GPU容量エラー中はStepを保留する。
+Pause中のStep要求はFixed Delta Timeを1回だけ要求する。GPU実行は非同期であり、APIがSubmissionを受け付けた時点で完了扱いにしない。複数Step要求は要求数分をキューイングする。GPU容量エラー / CCD Unresolved中はStepを保留し、解消不能ならFailureを返す。
+
+Pauseは新規Logical Tick生成を止め、既にGPUへSubmission済みのTickは安全に完了させる。Pause中のWall TimeをAccumulatorへ加えない。Stopはユーザーによる明示操作として未実行Step要求を停止する。ResetはInitial Stateへ戻し、Accumulator・Tick Sequence・Solver Lambda・Contact / CCD Cache・診断カウンタを初期化する。in-flight GPU commandのResource退役は同期waitを通常Frameへ入れず、Query / Deferred Releaseで処理する。
 
 ### 14.3 Test Environment操作
 
@@ -768,9 +778,14 @@ Debug ViewはGPU上のPhysics / Render Bufferからデバッグ用線分・点�
 
 ## 15. GPU Pass・同期・Dispatch
 
-### 15.1 サブステップ基本順
+### 15.1 Logical Tick / Substep transaction
 
-1. Animation Target / Animation Velocity Update
+Logical Tick全体をGPU Commit transactionとする。Tick開始前にCommitted Stateからtick_start_snapshotを確保し、各Substepのworking stateを更新する。すべてのSubstep / Collision / CCD / Validationが成功した後だけGPU Tick Commit Controlを通す。Render FeedbackはCommit済み状態から生成・Publishする。Failure時にWorking StateをRendererへ公開しない。
+
+基本Pass順序:
+
+1. Logical Tick Begin / Snapshot / Terminal Status Reset
+2. Animation Target / Animation Velocity Update
 2. Physics Vertex Previous State Snapshot
 3. Soft Body Tet Deformation Gradient
 4. Soft Body Rotation / Stress / Inversion Penalty
@@ -792,15 +807,16 @@ Debug ViewはGPU上のPhysics / Render Bufferからデバッグ用線分・点�
 12. TOI検出・TOI分割処理（CCD対象のみ）
 13. Velocity Reconstruction
 14. Coulomb Friction / Restitution Impulse
-15. State Commit
-16. Render Position Feedback
-17. Render Normal Gather
-18. Render Tangent Update
-19. Diagnostic Timestamp / Counter
+15. Substep / Logical Tick Validation
+16. Logical Tick Commit Control（全Substep成功時だけCOMMITTED）
+17. Render Position Feedback Publish（Committed Stateのみ）
+18. Render Normal Gather
+19. Render Tangent Update
+20. Diagnostic Timestamp / Counter / Status Copy + Event Query
 
 ### 15.2 同期・リソースhazard
 
-同じResourceをSRVとUAVへ同時にバインドしない。Pass境界で必要なUAV unbind / SRV bindを行う。読み書きが競合する反復はPing-Pong Bufferを使う。Immediate Contextの発行順序を基本とし、Deferred Contextを使う場合はリソース依存を保つ。
+同じResourceをSRVとUAVへ同時にバインドしない。Pass境界で必要なUAV unbind / SRV bindを行う。読み書きが競合する反復はPing-Pong Bufferを使う。Immediate Contextの発行順序を基本とし、Deferred Contextを使う場合はリソース依存を保つ。Production Runtime v1ではDeferred Contextと複数Submission Threadを使わず、Host RendererとSkinPhysics Runtimeは同一Immediate Contextへ単一Submission Threadから順序付けて発行する。Dispatch間依存はPass境界で解決し、Thread Group間Global Barrierを仮定しない。
 
 Compute Shader thread groupは初期値128 threadsとし、頂点・要素・制約別に64/128/256を実測比較する。Dispatch上限を超える場合は複数Batchに分割する。グループ内同期とDispatch間同期を混同しない。
 
@@ -810,15 +826,27 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 
 ## 16. 容量・エラー・ステップ状態
 
-シミュレーションインスタンスは少なくとも以下の状態を持つ。
+シミュレーションインスタンスとGPU Logical Tickは状態を分けて管理する。
 
+World Playback State:
 - Ready
 - Running
 - Paused
 - Stopped
 - BlockedByCapacity
 - BlockedByCCD
+- DeviceLost
 - Failed
+
+Logical Tick State:
+- Pending
+- Submitted
+- GpuExecuting
+- GpuCommitted
+- CpuObserved
+- Rejected
+
+GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはEvent Query完了・COMMITTED Status Readback・連続Tick Prefixの3条件をCPUが確認した状態である。CPU observed completed timeはCpuObserved Prefixから算出する。GPU StatusがCOMMITTEDでもEvent Query未完了または先行Tick未完了ならCPU completed timeを進めない。
 
 予測位置と確定位置を分離する。Broadphase/Contact/Contributionのoverflowや非有限状態が検出されたStepはCommitしない。Broadphase envelopeはサブステップ開始位置から予測位置までのSwept AABBを基本とし、設定した最大拘束補正余裕を加える。位置反復後に頂点がこのenvelope外へ移動した場合は、次の反復前にBroadphaseを再構築する。再構築時に容量超過が起きた場合も同じStepをBlock / Retryする。容量を増やして同じStepを再実行するか、Failureとしてユーザーへ通知する。
 
@@ -835,11 +863,11 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 - NonFiniteState
 - GpuResourceAllocationFailure
 
-警告はMesh ID、Element ID、Pass名、関連カウンタを含む。NonFiniteState発生時は該当StepをCommitしない。
+警告はWorld ID、Model ID、Mesh ID、Element ID、Logical Tick Sequence、Substep、Pass名、関連カウンタを含む。NonFiniteState発生時は該当TickをCommitしない。GPU StatusのREJECTED / BLOCKED状態は非同期Readbackで回収し、CPU APIはSubmission受付成功とGPU成功を混同しない。
 
 ## 17. 初期試験・受け入れ基準案
 
-数値は初期合格基準案。ベンチマーク前に達成済みと扱わない。変更時は理由と比較結果をレビュー記録へ残す。
+数値は初期合格基準案。ベンチマーク前に達成済みと扱わない。GPU float32とCPU doubleの比較には [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) の正規化スケールと初期Engineering Thresholdを適用する。これらは実測校正前の提案値であり、分析fixture・既存Golden Test・低解像度GPU試験で誤判定がないことを確認する。変更時は理由と比較結果をレビュー記録へ残し、Profile Versionを更新する。
 
 | ID | 試験 | 初期合格基準案 |
 |---|---|---|
@@ -899,7 +927,11 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 11. 品質・性能最適化
     - Pass別計測と代表規模のスケーリング。
 
-各段階でレビューと試験結果を記録する。前段の完了条件を満たさず次段へ進まない。
+12. GPU Runtime Transaction / Async Scheduler / Render Interop
+    - World Global ID、複数Model / Mesh統合、Host-owned Device / Context、GPU Commit / Rollback、Query Ring、Committed Render Binding、Device Lossを接続する。
+    - Gate R0～R6を通し、既存T01～T28のRegressionを維持する。
+
+各段階でレビューと試験結果を記録する。前段の完了条件を満たさず次段へ進まない。Phase 12のRuntime境界、API、GPU Commit State Machine、Error / Device Lossは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
 ## 19. 残課題・実装前に確定する項目
 
@@ -912,7 +944,11 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 - Contact Patchの初期閾値と、Conservative Advancementのsafety / tolerance / 最大分割数の実測調整
 - GPUバッファの容量初期値・上限・GTX 1660 SUPER実メモリ予算
 - glTF skin influence・AnimationClipのImporterテストセット
-- 数値受け入れ基準の実測妥当性
+- numerical_acceptance_profile_v1.jsonの初期値が既存Golden Fixture / 解析Fixture / WARPで誤判定を起こさないことの校正
+- Fixed Delta変更時のin-flight Tick、Accumulator、XPBD Lambdaの安全な切替手順の統合試験
+- in-flight tick上限1 / 2 / 4のGPU物理性能・Query Ring遅延比較
+- Render Publish方式（GPU Copy / Compute Publish）の追加VRAM・GPU時間計測
+- GPU Runtime API / D3D11 Resource Interop / Device LossのPhysical Hardware統合試験
 
 ## 20. 参考資料
 
@@ -933,3 +969,22 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
+
+
+## 22. GPU Runtime / Library Integration（v1.3）
+
+本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
+
+- 配布Targetは既存のSkinPhysics Visual Studio Static Libraryとし、.sln / .vcxprojを正規Build手段にする。CMakeを必須にしない。
+- HostがD3D11 Device / Immediate Contextを生成・破棄する。RuntimeはCOM参照を保持してGPU Resourceを管理する。Host RendererとRuntimeは単一Submission ThreadでImmediate Contextを共有する。
+- 1 Worldに複数Model Instance / Mesh Componentを登録し、Soft Body / Cloth / Noneを混在させる。Contact KeyはWorld / Model / Mesh / Primitive IDを持つ。
+- 既存fixed_step_controllerとsimulation_step_pipelineはCPU Reference / Test Environment用に保持する。非同期GPU Commitの判定やProduction GPU Stateの所有には流用しない。
+- GPUがRuntime Physics Stateの唯一の正。Commit済みRender BindingだけをHostへRead-only公開し、通常FrameでPhysics Vertex / Contact / Lambdaを全量Readbackしない。
+- GPU StatusはLogical Tick単位でPENDING / SUBMITTED / GPU_COMMITTED / REJECTEDを管理する。CPU completed timeはEvent Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を満たした範囲だけ進める。
+- Capacity Overflow / CCD Unresolved / NonFinite / Physical Quality Gate失敗はTickをCommitしない。再試行は同一Tick InputとInitial Snapshotから行い、候補を黙って捨てない。
+- Render Feedback / Publishは成功Commit後に行い、追加Buffer / Copy / Dispatch / VRAM / GPU時間をPerformance Runへ含める。
+- Device Loss時は新規Submissionを停止し、Asset / Initial StateからWorldを再構築してTimelineをResetする。毎Frameの全State Readbackで復旧しない。
+- 数値・物理品質の初期比較基準はnumerical_acceptance_profile_v1.jsonを使い、同一Solver Algorithm / Update OrderのCPU Double Referenceと比較する。異なるSolver方式同士はAnalytical FixtureとPhysical Invariantで比較する。
+- Production Runtimeの実装開始は独立Critical ReviewとGate R0～R6の実装計画承認後とする。
+
+本改訂は設計追加であり、GPU Production Runtimeの実装・Build・Physical GPU Performanceを意味しない。文書状態はINDEPENDENT REVIEW REQUIREDとする。
