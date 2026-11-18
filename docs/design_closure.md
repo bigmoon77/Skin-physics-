@@ -69,7 +69,7 @@ Corotational Linear Elasticityの保証領域は解析Fixtureで定義する。�
 - Cloth予測はSubstep開始位置・速度から行い、予測速度は外力Impulseと指数減衰、予測位置は同じSubstep Delta Timeで更新する。
 - Force / Impulseは共通Mass-weighted Wendland C2 FalloffでPhysics Vertexへ分配する。ForceはN、ImpulseはN*s。Force開始・終了とImpulse event時刻でWorld共通Segmentを分割し、Impulseのみ一度適用する。
 - XPBD Complianceは各Constraint Functionの単位と整合する物理剛性から生成する。
-- LambdaはWorld共通Substep開始時に0へ初期化し、同一Substepの反復中は保持する。初期v1はSubstep間Warm Startを行わない。
+- Cloth Stretch / Shear / Bend / Animation Tracking / ContactのXPBD LambdaはPersistent State Bankへ保存しない。各World共通Integration Segment（通常Substep、Force / Impulse境界、TOI分割区間）開始時に0へ初期化し、そのSegment内のSolver反復だけ保持する。Complianceはalpha_tilde=alpha/(dt_segment^2)。Segment間 / Logical Tick間のWarm Startはv1で行わない。Persistent Contact CacheのContact Key / Normal / Patch GenerationだけをState Bankに保持する。
 
 Cloth / Contact Gatherの比較候補は omega={0.5, 0.75, 1.0}。初期比較値は0.5とし、収束・誤差・最大貫通・GPU時間をFixture単位で比較する。Clampや平均化でSolverの物理重みを暗黙に変えない。
 
@@ -161,7 +161,7 @@ v1ではWorld内のSoft Body / Cloth / Contact / Animation Trackingが同一時�
     N_world = max(minimum_substeps, ceil(fixed_delta_time / dt_limit_world))
     dt_world = fixed_delta_time / N_world
 
-を算出する。制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。world_max_substep_delta_timeはSoft Body / Cloth / Contact / Animation Trackingすべてへ適用する共通dt上限であり、Cloth / Contactの品質要求によりさらに細かい刻みが必要な場合もこのWorld設定で制限する。N_worldが上限を超えた場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitせずReservationを保持する。Cloth / Contact XPBDのComplianceは同じdt_worldを使う。TOIはWorld共通Substep内のSegment分割とし、全参加Solverを同じSegment時間だけ進める。
+を算出する。制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。world_max_substep_delta_timeはSoft Body / Cloth / Contact / Animation Trackingすべてへ適用する共通dt上限であり、Cloth / Contactの品質要求によりさらに細かい刻みが必要な場合もこのWorld設定で制限する。N_worldが上限を超えた場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitせずReservationを保持する。Cloth / Contact XPBDのComplianceはWorld共通Substep内の各dt_segmentを使う。各Force / Impulse Event境界とTOI時刻でWorld全体をSegment分割し、全参加Solverを同じSegment時間だけ進める。XPBD LambdaはSegmentごとにResetし、Segment内だけ累積する。
 
 Force / Impulseの空間分配:
 - Gravityは一様加速度としてPhysics Vertex iへrest_lumped_mass_i * gravityを適用する。
