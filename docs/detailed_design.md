@@ -776,7 +776,7 @@ Contact iの頂点係数をc_ik、参加頂点の逆質量をw_kとし、
 
 を有効逆質量とする。VT / EEのNormal / Tangent方向は同じScalar係数を使うため、等方的Particle Massでは同じ対角有効逆質量になる。
 
-W_iiが有限でない場合はNonFinite ErrorとしてTickを拒否する。W_ii <= epsilon_inverse_massの場合、そのContactはNON_RESPONSIVE_CONTACTとしてImpulse対象から除外する。Contact Position XPBDも同じ事前判定でSkipし、Complianceにより0/0や無意味なLambdaを作らない。Static-Static、Kinematic-Kinematic、または接触係数が掛かるDynamic Vertexを持たないContactは正常な非応答Contactであり、CCD応答 / Position / Impulseを生成しない。Diagnostic Countへ記録する。epsilon_inverse_mass=max(32*FLT_MIN, 1e-12/mass_reference_world)とし、mass_reference_worldはWorld内のMedian Positive Dynamic Vertex Mass。Dynamic Massが存在しないWorldは全Contactを非応答とする。
+W_iiが有限でない場合はNonFinite ErrorとしてTickを拒否する。W_ii <= epsilon_inverse_massの場合、そのContactはNON_RESPONSIVE_CONTACTとしてImpulse対象から除外する。Contact Position XPBDも同じ事前判定でSkipし、Complianceにより0/0や無意味なLambdaを作らない。Static-Static、Kinematic-Kinematic、または接触係数が掛かるDynamic Vertexを持たないContactは正常な非応答Contactであり、CCD応答 / Position / Impulseを生成しない。Diagnostic Countへ記録する。epsilon_inverse_mass = 1e-12 / mass_reference_worldとする。mass_reference_worldはWorld内すべての参加Dynamic Physics VertexのMedian Positive Mass [kg]であり、epsilon_inverse_massの単位は[1/kg]。mass_reference_worldが存在しない場合は前述の通り全Contactを非応答とする。Dynamic Massが存在しないWorldは全Contactを非応答とする。
 
 #### Contact Relative Velocity / Normal / Friction
 
@@ -796,7 +796,13 @@ Contact間でDynamic Vertexを共有する場合、各Contactを同じv_pre_cont
 
 Contact iごとにAccumulated Normal Impulse j_n_i >= 0とWorld Tangent Impulse Vector j_t_iを保持する。初期値は0。Contact XPBDの最終Normal Lambdaをlambda_n_iとすると、Support Friction Impulseはj_support_i=max(0,lambda_n_i)/dt_contactとする。dt_contactは通常Segmentでdt_segment、TOI prefixでtau。XPBD Lambdaの単位はkg*m、Lambda/dtの単位はN*sである。
 
-Iteration開始時のWorking Velocityは、v_pre_contactへ前Iterationまでに蓄積した全Contact ImpulseをVertex CSRでGatherしたものとする。各Contact iは同じIteration開始Snapshotからv_n_i_current / v_t_i_currentを評価し、
+Iteration開始時のWorking Velocityは、v_pre_contactへ前Iterationまでに蓄積した全Contact ImpulseをVertex CSRでGatherしたものとする。Contact iの符号付き頂点係数をc_ik、法線をn_iとすると、
+
+    v_work_k = v_pre_contact_k
+             + inverse_mass_k
+               * sum_i(c_ik * (j_n_i * n_i + j_t_i))
+
+とする。各Contact iは同じIteration開始Snapshotからv_n_i_current / v_t_i_currentを評価し、
 
     target_normal_velocity = -restitution * min(v_n_i_pre, 0)
     delta_j_n = -omega_impulse
@@ -809,7 +815,13 @@ Iteration開始時のWorking Velocityは、v_pre_contactへ前Iterationまでに
         j_t_candidate,
         friction_i * (j_support_i + j_n_i_new))
 
-としてAccumulated Impulseを更新する。project_to_diskはNormalに直交する2D Tangent Plane上で実行する。Iteration内の全Contactが同一Velocity Snapshotを読むJacobi更新とし、変更量delta_j_n / delta_j_tだけをVertex Contact CSRでDeterministic Gatherする。Gather後のWorking Velocityを次Iteration入力とする。Contact Key順のContribution Reductionにより同一GPU / Driver / Buildで同じ順序を維持する。
+としてAccumulated Impulseを更新する。project_to_diskはNormalに直交する2D Tangent Plane上で実行する。Iteration内の全Contactが同一Velocity Snapshotを読むJacobi更新とし、変更量だけを次でVertex単位にGatherする。
+
+    delta_v_k = inverse_mass_k
+                 * sum_i(c_ik * (delta_j_n_i * n_i + delta_j_t_i))
+    v_work_next_k = v_work_k + delta_v_k
+
+Contact Key順のContribution Reductionにより同一GPU / Driver / Buildで同じ順序を維持する。Contact iのc_ikはVT / EEのNormal / Tangent Gradient係数と同じ符号付き係数を使う。
 
 初期値はcontact_impulse_iterations=8、omega_impulse=0.5、最大許可Iterationは16。各Iteration後、Normal / TangentのProjected Fixed-Point Residualを次で評価する。
 
