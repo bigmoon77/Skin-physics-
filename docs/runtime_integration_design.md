@@ -300,6 +300,11 @@ CPU側のFixed Step制御はWall Clockから必要Logical Tick数を算出する
 - D3D11 Immediate Contextは単一の順序付きCommand Streamである。PhysicsとRenderが独立GPU Queueで同時に動く前提を置かない。
 - 1 PhysicsSubmissionBatchは1 Logical Tickを含む。
 - 初期の上限はin-flight logical tick 2件とし、Status Query Ringはその上限以上のSlotを持つ。上限は設定で変更できるが、未回収Slotを上書きしない。
+- 各TickのDispatch Planはexpected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_idを持つ不変Recordとする。
+- Tick NのCommit Controlは成功時だけcommitted_tick_sequenceとcommitted_state_generation / active_state_setを更新する。Reject / BlockではCommitted Stateの参照先を変更しない。
+- Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
+- 先行TickがRejectされた場合、既にSubmissionされた後続TickはBLOCKED_BY_PREDECESSORとなり、物理状態を変更しない。先行TickのRetryがGPU上でCommitされた後、CPUは後続TickのPlanを新しいCommitted State Generationに合わせて再発行する。
+- Planのsource / destination State SetはSubmission時点の予測Commit順序に基づいて固定する。GPU Commitが成立しない場合の後続Planは必ずgateで停止する。GPUが成功した場合のみ計画されたState Set遷移が有効になる。
 - 上限到達中は新しいPhysics Dispatchを発行せず、Fixed Step Accumulatorに時間を残す。
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。
@@ -323,14 +328,15 @@ Kinematic Colliderは時刻付きTransform SampleからLogical Tick / Substep境
 
 少なくとも次を分ける。
 
-- committed_position / committed_velocity: 最後にCommit済みのWorld State。
-- working_position / working_velocity: 現在解いているLogical Tick / Substepの作業状態。
-- tick_start_snapshot: Capacity / CCD / NonFinite failureから再実行するLogical Tick開始状態。
-- solver_lambda / contact_lambda / impact_state: 各Solverの更新規則に従うScratch / Persistent State。
+- committed_state_set: 最後にCommit済みのPosition / Velocity / Solver Persistent Stateと、そのstate_generation / active_state_set。
+- working_state_set: 現在解いているLogical Tick / Substepの作業状態。Commit前にCommitted Stateを上書きしない。
+- tick_start_snapshot: Capacity / CCD / NonFinite failureから再実行するLogical Tick開始状態。Position / Velocityだけでなく、そのTickのRetryに必要なPersistent Lambda / Contact / Animation Historyも対象とする。
+- tick_dispatch_plan: expected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_id / tokenを持ち、ReservationからExecution / Commitまでimmutableとする。
+- solver_lambda / contact_lambda / impact_state: 各Solverの更新規則に従うWorking / Persistent State。Rollback時はtick_start_snapshotと対応するLambda / Contact Cacheを復元する。
 - render_position / render_normal / render_tangent: Commit後の描画公開用状態。
-- simulation_status / tick_sequence / diagnostic_counters: GPU Commit / Reject / Error Control。
+- simulation_status / tick_sequence / state_generation / diagnostic_counters: GPU Commit / Reject / Error Control。
 
-GPU Solver ScratchをHost Render Bindingへ直接公開しない。Commit済み状態と描画用BufferはCopyまたはPublish Passで同期する。
+GPU Solver ScratchをHost Render Bindingへ直接公開しない。Commit済み状態と描画用BufferはCopyまたはPublish Passで同期する。Committed StateのResource Set切替はGPU Commit Controlだけが行う。Retry / Rejectではactive_state_setとstate_generationを維持する。後続Tickは前TickのCommit結果とGenerationを検証してから実行する。
 
 ### 6.2 GPU Commit Control
 
@@ -361,7 +367,7 @@ CPU Physics Fallback、Contact候補のDrop、時間のDrop / Clampは禁止す�
 
 各Tickの最後にGPU Status BufferをStagingへCopyし、同じImmediate Context Command StreamへEvent Queryを発行する。QueryのGetDataはDO_NOT_FLUSHでnon-blocking Pollし、Query完了後にStaging BufferをDO_NOT_WAITでMapする。未完了なら前回Statusを維持する。
 
-CPU completed_timeは、(1) Event Query完了、(2) Status=COMMITTED、(3) 先行Tickがすべて連続COMMITTED、を満たす最後のTickまで進める。Event QueryだけでTick成功とみなさない。通常FrameではParticle / Contact / Lambda全体をReadbackしない。
+CPU completed_timeは、(1) Event Query完了、(2) Status=COMMITTED、(3) 先行Tickがすべて連続COMMITTED、を満たす最後のTickまで進める。Query完了順がTick Sequence順と異なっても、CPU observed completed prefixは連続したCOMMITTED Tickだけから構成する。Event QueryだけでTick成功とみなさない。通常FrameではParticle / Contact / Lambda全体をReadbackしない。
 
 ## 7. GPU Pass / Dataflow Integration
 
@@ -579,3 +585,18 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - Async GPU Tick Schedulerの状態遷移とRollback / RetryがUML・テストケースで定義済み。
 
 **本書は独立レビューへ提出可能な設計改訂案であり、レビュー合格・実装完了・GTX 1660 SUPER性能達成を意味しない。**
+
+
+### 6.5 複数in-flight Tickの依存関係
+
+Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhysicsSubmissionBatchをGPU完了前に発行できる。後続Tickの安全性はCPUのQuery Pollタイミングに依存させない。
+
+- BatchはTick Begin時にImmutable Dispatch Planを検査する。
+- Tick NがGPU Commit Controlで成功した場合だけ、Committed Sequence / State Generation / Active State Setを更新する。
+- Tick N+1の先行Submissionは、NのCommit Controlより後に同一Command Streamへ発行する。Nが成功していれば計画済みGenerationが一致し、NのCommit済み状態を入力として処理できる。
+- NがReject / Blockされた場合、N+1のTick Begin GateはGeneration / predecessor mismatchを検出し、Physics StateのRead / Write前に後続処理を抑止する。後続TickはBLOCKED_BY_PREDECESSORとなる。
+- CPUがNの非同期Statusを確認し、NをRetryしてGPU Commitした後、後続Tickを新しいState Generation / predecessor IDで再Submissionする。
+- どのBudgeted Physics Passもtick plan gateを迂回できない。Scheduler Control / Diagnostic PassだけがGate対象外である。
+- Query RingはStatus CopyとEvent Queryの両方をTick IDで対応付け、遅延・順序逆転・Slot再利用を検出する。
+
+これにより、先行Tickの失敗後に後続Tickが未確定Working Stateを入力としてCommitする経路を禁止する。実際のState Set数、GPU Copy / Ping-Pong構成、Shader Binding TableはPhase 12実装前にResource ABI Reviewで確定し、Rollback SnapshotとRender Publishを含むVRAM / GPU時間を測定する。
