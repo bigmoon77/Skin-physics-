@@ -441,7 +441,7 @@ CPUは通常フレームでPhysics Vertex位置・速度、Tet Lambda、Contact 
 
 ### 4.2 GPU側
 
-- Animation Trajectory Packetから任意Simulation TimeのBone Local / Global Transform、Skin Matrix / 微分、Physics Vertex Target / Velocityを評価する。
+- Animation Trajectory PacketからSpan-local normalized timeとSegment-relative tauを使ってBone Local / Global Transform、Skin Matrix / 微分、Physics Vertex Target / Velocityを評価する。Absolute World TimeはCPU doubleで保持しGPU floatへCastしない。
 - Span全域のConservative Speed / Acceleration / Chord Deviation Boundを利用してSwept AABB / CAを実行する。
 - Soft BodyのF、Polar Rotation、Stress、Tet Force Contribution。
 - Tet→Vertex Force GatherとSoft Body Integration。
@@ -505,7 +505,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
 - 先行TickがRejectされた場合、既にSubmissionされた後続TickはBLOCKED_BY_PREDECESSORとなり、物理状態を変更しない。先行TickのRetryがGPU上でCommitされた後、CPUは後続TickのPlanを新しいCommitted State Generationに合わせて再発行する。
 - Planのsource / destination State SetはSubmission時点の予測Commit順序に基づいて固定する。GPU Commitが成立しない場合の後続Planは必ずgateで停止する。GPUが成功した場合のみ計画されたState Set遷移が有効になる。
-- in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_integration_segments_per_tick超過はReservation作成後のPreflight Blockとして扱い、同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持する。設定上限を変更して再試行する場合も新しいTickを発行しない。
+- in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_integration_segments_per_tick超過はQuery / Render Slot確保およびTick Reservation作成後のPreflight Blockとして扱い、同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持する。設定上限を変更して再試行する場合も新しいTickを発行しない。
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。
 - Accumulatorが長時間増加する場合はsimulation_backlogとして警告・計測する。Skin Physicsの要件にない100ms Failureや40FPS必須条件を追加しない。
@@ -521,7 +521,7 @@ CPU Animation EvaluatorはLogical Tick候補の有効なClip Key / Loop / Blend 
 
 絶対World Simulation Time、Tick Reservation時刻、Clip Local Time、Span境界はCPU上でdouble管理する。GPU Shader Model 5へ渡すPacketはdoubleを含まず、uint32 / floatのみの固定幅Recordとする。GPUは絶対World TimeをfloatへCastしない。各Spanの開始時点の正規化座標u_segment_startとSegment開始からの相対秒tau [s]から、u_tau = clamp(u_segment_start + tau * inverse_span_duration, 0, 1)を算出する。TOIで残Segmentを始める場合はGPU上でu_segment_startをu_tauへ更新し、CPU Readback / 再Uploadを挟まない。
 
-GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 64 bytes、animation_channel_gpu_record 208 bytes、animation_blend_gpu_record 96 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
+GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 64 bytes、animation_channel_gpu_record 208 bytes、animation_blend_gpu_record 48 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。Span / Channel / Blend / Colliderの全Field Byte Offsetも§5.3のABI表で固定する。CPU Absolute Timeはdouble、GPUはSpan-local normalized time / Segment-relative tauのみfloatで扱う。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
 
 
 - STEP / LINEAR / CUBICSPLINEの係数化、Quaternion Slerp / normalized Hermite微分、最大2 Track Blend、Hierarchy / Skinning微分はdetailed_design.md §5.3を正とする。
