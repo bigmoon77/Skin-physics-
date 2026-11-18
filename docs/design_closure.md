@@ -124,7 +124,8 @@ Hierarchical Spatial Hash初期値:
 - 64セルを超えるPrimitiveはLarge Primitive Bucketへ登録する。
 - Bucketの索引は30-bit Morton Code（各空間軸10-bit）+ Stable Primitive IDの辞書順Keyを用いるGPU Linear BVH。Karras方式で構築し、同Morton CodeもStable Primitive IDで一意化する。
 - Node LayoutはAABB min/max、left/right child、parent、escape_index、leaf primitive ID。TraversalはStackless depth-firstとし、逃避先はそのNodeのSubtree直後のDFS Node。Traversal Stackは使用しない。
-- 各Large PrimitiveのAABB QueryをBVH全体へ行い、Regular-LargeとLarge-Largeを生成してCanonical Pair Keyで重複排除する。全Large Primitiveの相互総当たりを実行しない。
+- Regular Primitiveは自身の膨張AABBでLarge BVHをQueryし、Regular-Large Pairを生成する。各Large PrimitiveもLarge BVHをQueryし、相手Stable IDが自身より大きいPairだけを生成してLarge-Largeの逆順重複を防ぐ。
+- Hash / BVH候補はCanonical Pair KeyでUnion / DedupしてNarrowphaseへ渡す。全Large Primitiveまたは全Primitiveの総当たりを実行しない。
 - Node Countは2*N-1。Node / Pair / Dedup BufferにCount / Capacity Checkを適用し、uint32 / ByteWidth超過はCapacity Error。
 - 全Primitive総当たりへのFallbackは禁止。
 - Hash一致だけでセル一致を判定せず、levelと元の整数Cell座標を比較する。
