@@ -517,9 +517,10 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 
 ### 5.4 Animation / Kinematic Inputの時間整合
 
-CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Weight / Root Transform Sample境界を抽出し、Span単位のimmutable Animation Trajectory Packetを生成する。各Spanは1つの補間区間だけを含み、GPUが任意のtauで評価できるBone Transform係数・Blend Weight係数・Root Transform係数・解析微分を含む。入力はTick ReservationとともにVersion固定し、Retryで再利用する。
+CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Weight / Root Transform Sample / Kinematic Collider Transform Sample境界を抽出し、Span単位のimmutable Animation Trajectory Packetを生成する。各Spanは1つの補間区間だけを含み、GPUが任意のtauで評価できるBone Transform係数・Blend Weight係数・Root Transform係数・解析微分を含む。set_kinematic_pose_sampleで登録された各ColliderはStable Collider ID / Span Sample Pair / Translation Linear係数 / Shortest-Arc Slerp Quaternion / Linear・Angular Velocity / Maximum Radius / Conservative Boundsを持つCollider Trajectory Recordへ変換する。入力Packet / Collider RecordはTick ReservationとともにVersion固定し、Retryで再利用する。
 
 - STEP / LINEAR / CUBICSPLINEの係数化、Quaternion Slerp / normalized Hermite微分、最大2 Track Blend、Hierarchy / Skinning微分はdetailed_design.md §5.3を正とする。
+- Kinematic Colliderは連続する時刻付きTransform SampleをTranslation Linear + Shortest-Arc Slerpで評価する。CAの任意tauでTransform / Contact Point Velocityを算出し、Speed / Sagitta Boundを同じPacket Versionで提供する。必要なSample Pairがbracketできない場合はBLOCKED_BY_INPUT。
 - CPUは係数区間から保守的なSpeed / Acceleration Boundを生成し、GPU Trajectory Packetと同一Versionで渡す。BoundsはInterval Arithmetic / 外向き丸めを使い、実軌道の上限を過小評価しない。
 - Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じPacketを使って任意tauの姿勢・速度を評価する。
 - Clip Blendは最大2 Track、非Additiveとする。Blend Weightの時間微分項を必ず含める。
