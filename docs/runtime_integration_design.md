@@ -311,6 +311,7 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
 | world_desc | minimum_substeps / maximum_substeps | World共通Substep数の下限 / 上限。初期値1 / 128。超過時はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
+| world_desc | maximum_integration_segments_per_tick | Animation Span / Force / Impulse / TOI境界後のLogical Tick内Integration Segment総数上限。初期値512。超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
 | world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。全Solverへ適用する共通上限 |
 | world_desc | contact_max_substep_delta_time | Contact Temporal Quality Limit。初期値1/120 s、0は明示無効。正値ならFEM / Tracking / Cloth Quality LimitとともにN_worldへ集約 |
 | world_desc | contact_impulse_iterations | Coupled Projected JacobiのIteration数。初期値8、許容範囲1～16 |
@@ -335,7 +336,7 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | collider_desc | thickness / friction / restitution | SI単位・係数範囲は詳細設計のCollision Material定義に従う |
 | collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
 | animation_playback_desc | clip_index / time / speed / loop | 単一Animation Trackの選択、Clip Local Time、Playback Speed、Loop。Blendは別Descriptorで指定 |
-| animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorのw_eventでVelocityを補間 |
+| animation_playback_desc | discontinuity_policy / w_event | PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorの0～1 w_eventでDynamic Velocityを補間 |
 | animation_blend_desc | source_track / target_track | 最大2本のanimation_playback_desc。Additive / 3本以上はv1 Unsupported |
 | animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | World Simulation Time上のCubic Hermite Blend Weight Curve。時間は絶対秒、tangentは1/s。区間外は端点Weightを保持し、Curve全域で0<=w<=1を必須とする |
 | animation_blend_desc | discontinuity_policy / w_event | 明示Discontinuity時のPolicy。BlendVelocityはv_after=(1-w_event)*v_before+w_event*v_target(t_event+)。w_eventは0～1 |
@@ -481,7 +482,7 @@ CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Wei
 
 ### 5.5 World共通Substep Schedule
 
-詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactのcontact_max_substep_delta_timeを集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitはXPBDの安定保証ではなく、拘束振動数から求める品質上限として扱う。各SubstepはForce / Impulse Event境界およびTOIでIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
+詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactのcontact_max_substep_delta_timeを集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。Clip Key / Loop / Blend Weight / Root Transform境界で追加されるIntegration Segmentの総数はmaximum_integration_segments_per_tick以下とし、初期値512。超過時はWORK_BUDGET_EXCEEDEDとしてTick Reservationを保持し、Segmentを結合してKey境界を跨がせない。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitはXPBDの安定保証ではなく、拘束振動数から求める品質上限として扱う。各SubstepはForce / Impulse Event境界およびTOIでIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -550,11 +551,12 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 
 ### 7.1 World Logical Tick
 
-1. CPU Animation Evaluation / Kinematic Transform Sampleの取得。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
-2. GPU Animation Trajectory PacketからAnimation Target / Target Velocity SkinningおよびSpan Bound Validate。
+1. CPU Animation EvaluationでLogical Tick全体のAnimation Trajectory Span Packet / Conservative Boundsを生成し、Kinematic Transform Sampleを収集する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
+2. GPUへAnimation Trajectory PacketをUploadし、Span Coefficient / Bound / Input VersionをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
 3. Render Candidate Slotの空きを確認してReservation。空きがなければそのTickをpendingへ残し、Accumulatorの時間を保持する。
 4. Logical Tick開始SnapshotとTerminal Status初期化。
 5. 各World Integration Segmentについて次を処理する。
+   - Animation Span Packet / Bound Versionを選択する。CAの各Iterationは同一Packetを任意tauで評価し、Kinematic候補のPosition / Velocity / Speed Boundを得る。
    - Segment開始Snapshot / XPBD Lambda / Contact Lambda / Impact Scratch Reset。
    - Animation Span Packet / Bound Versionを選択し、Segment開始・終了時刻のAnimation Target / Animation Velocity / Root / Kinematic Poseを同じGPU Trajectory Evaluatorで取得。
    - Force EventのSegment内有効状態を確定し、Impulse EventをSegment開始でEvent ID単位に一度だけ適用。
@@ -582,7 +584,7 @@ Soft Body内部力は各World Integration Segment開始状態で再評価する�
 
 既存のPoint-Triangle CCDは初期Fixtureとして維持する。Production Runtimeでは変形Mesh間の高速接触を満たすため、VTとEEの双方に対してSwept BroadphaseとConservative Advancementを接続する。Triangle-Triangleの交差候補はVT / EEイベントへ分解して扱い、Primitive Pair / Contact Keyの重複を除去する。
 
-TOIは現在Integration Segment開始からの秒単位で管理する。Dynamic Vertex CCD pathはdetailed_design.md §11.4のSemi-implicit Euler離散pathを使用し、TOI prefixでdt=tauの再Predictionを行わない。Kinematic任意時刻評価は5.4のAnimation Trajectory Packetを使用し、係数・BoundsのVersionをTick Reservationへ固定する。Kinematic Vertex / ColliderのTOI geometryはtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint Chordは保守的Deviation Boundで膨張したSwept AABB構築に限って使う。Conservative Advancementの距離も実Trajectory位置で評価し、v_boundにkinematic_path_speed_boundを含める。有限個の中間サンプルだけでDeviation / Speed Boundを保証しない。CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角・最大半径のSagitta Boundを用いる。Deviation / Speed Boundを取得できない場合はSegmentを最大深度8まで分割し、それでも証明できなければCCDUnresolvedとする。
+TOIは現在Integration Segment開始からの秒単位で管理する。Dynamic Vertex CCD pathはdetailed_design.md §11.4のSemi-implicit Euler離散pathを使用し、TOI prefixでdt=tauの再Predictionを行わない。CAの各tauでAnimation Trajectory Evaluate PassがBone / Skinning Transformを評価し、その同一出力からDistance / Contact Velocityを得る。Kinematic任意時刻評価は5.4のAnimation Trajectory Packetを使用し、係数・BoundsのVersionをTick Reservationへ固定する。Kinematic Vertex / ColliderのTOI geometryはtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint Chordは保守的Deviation Boundで膨張したSwept AABB構築に限って使う。Conservative Advancementの距離も実Trajectory位置で評価し、v_boundにkinematic_path_speed_boundを含める。有限個の中間サンプルだけでDeviation / Speed Boundを保証しない。CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角・最大半径のSagitta Boundを用いる。Deviation / Speed Boundを取得できない場合はSegmentを最大深度8まで分割し、それでも証明できなければCCDUnresolvedとする。
 
 Kinematic接触相対Velocityはtau時刻のAnimation Target Trajectory微分、またはv_linear + omega cross radiusを使用し、Chord Path Velocityへ置換しない。TOI prefixでは非接触内部Constraintを先に解き、Contact前Dynamic Velocityを再構築して保存する。次にContact Position XPBDを解き、Contact位置補正後のVelocity再構築は禁止する。保存済みContact前VelocityをCoupled Projected Jacobi Impulse Solverへ渡し、収束Residualを検証する。W_ii <= epsilon_inverse_massの非応答ContactはImpulse / Position correctionをSkipし、全ImpulseがResolvedの場合だけImpact後状態から残Segmentを進める。
 
