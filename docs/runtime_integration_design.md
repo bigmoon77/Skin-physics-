@@ -5,11 +5,11 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.6
+- 文書バージョン: 1.7
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.6
-- 対応詳細設計: detailed_design.md 1.8
+- 対応基本設計: basic_design.md 1.8
+- 対応詳細設計: detailed_design.md 1.10
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -857,7 +857,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 以下を満たした時点でGPU Runtime実装に進める。
 
-- 基本設計1.7 / 詳細設計1.9 / 本書1.6の独立Critical Reviewで重大な設計矛盾が0件。
+- 基本設計1.8 / 詳細設計1.10 / 本書1.7の独立Critical Reviewで重大な設計矛盾が0件。
 - Gate R0-R6の責務、入力、出力、失敗状態、検証Fixtureが追跡可能。
 - Corotational FEM / XPBD Cloth / Contactの式とCPU Double Oracleが一致している。
 - Runtime APIとDevice / Context / Render Bindingの所有権が確定。
@@ -868,8 +868,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
-- 1.7: SM5向け固定幅GPU Packet ABI / Span-local float time mapping、最大2 Track Blend / BlendVelocity、Kinematic Collider Arbitrary-tau Record、bounded Segment Scheduler / preflightを追加。
-- 1.6: 任意tauを評価できるGPU Animation Trajectory Packet / Span契約、最大2 Track Blend / BlendVelocity、非応答ContactのW_eff判定、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limitを追加。
+- 1.7: Shader Model 5固定幅GPU Packet ABI / Byte Offset、CPU double絶対時刻とGPU Span-local float時刻、各Segmentでのnormalized cursor更新、任意tauのBone / Collider評価、Kinematic Collider Record、Segment Preflight Reservation順序を明文化。GPU ABI Readback / Time Precision Gateを追加。
 - 1.6: GPU Animation Trajectory Packet / Spanと任意tau評価、最大2 Track Blend / BlendVelocity、Contact有効逆質量Guard、Coupled Projected Jacobi Impulse、Contact Temporal Quality LimitをRuntime Descriptor / Gateへ反映。
 - 1.5: Contact Position補正とContact前Velocity / Impulse処理の分離、Animation Trajectory微分の正本化、Kinematic CCDの保守的Chord Bound、GPU Memory Budgetの0 sentinel修正、Cloth Temporal Quality Limitを追加。
 - 1.4: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時間を使うXPBD Compliance、Impact後残Segmentの再評価規則を明文化。
