@@ -237,9 +237,9 @@ sequenceDiagram
     participant R as Deferred Release List
 
     H->>API: destroy_model / destroy_collider / reset_world
-    alt In-flight Tick or Host Lease exists
+    alt In-flight Tick, Pending Reservation / Step Request, or Host Lease exists
         API-->>H: BUSY (Handle / Resource remains valid)
-    else no in-flight Tick and no Host Lease
+    else no active or pending reference
         API->>R: retire Resource after last completion Query
         API-->>H: OK
     end
@@ -260,7 +260,7 @@ sequenceDiagram
     API-->>H: drained
 
     H->>API: shutdown()
-    API-->>H: OK only when Worlds / Queries / Leases / Deferred Releases are empty
+    API-->>H: OK only when Worlds / Queries / Leases / Deferred Releases / Reservations are empty
 ```
 
 `drain()` is an explicit non-frame operation and may wait for Event Query completion. It returns BUSY for unassigned whole-tick backlog, unsubmitted reservations, pending Step requests, or an active Host Lease. It never fabricates a Lease release. `shutdown()` does not destroy live Worlds or invalidate borrowed Render Bindings; callers must release Leases, destroy Worlds, drain, then shutdown.
@@ -269,7 +269,8 @@ sequenceDiagram
 
 1. `advance` adds elapsed time only while Playing.
 2. Creating a Tick Reservation moves exactly one fixed dt from unassigned Accumulator to the Reservation.
-3. Commit transfers Reservation time to committed simulation time exactly once.
-4. Capacity / CCD / predecessor Block preserves the same Reservation and Tick Sequence for Retry.
-5. CPU Observation changes status only; it never changes Accumulator or committed simulation time.
-6. `single_step` creates a separate one-Tick Reservation and does not modify wall-clock Accumulator.
+3. Each accepted `single_step` adds one fixed dt to requested time and queues a separate Step Request; it does not modify wall-clock Accumulator.
+4. Stop / Reset cancellation of an unreserved Step Request increments cancelled_requested_time. Effective requested time is requested minus cancelled.
+5. Commit transfers Reservation time to committed simulation time exactly once.
+6. Capacity / CCD / predecessor Block preserves the same Reservation and Tick Sequence for Retry.
+7. CPU Observation changes status only; it never changes Accumulator or committed simulation time.
