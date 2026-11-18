@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.7
+- 文書バージョン: 1.8
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.5
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.4
+- 対応基本設計: basic_design.md 1.6
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.5
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
-- 前版: 1.5
+- 前版: 1.7
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -109,25 +109,25 @@ GPUはRuntime Physics Stateの唯一の正とする。HostからGPU内部Solver 
 | バッファ | 形式例 | 更新頻度 | 主な用途 |
 |---|---|---|---|
 | position_read / position_write | SRV/UAV StructuredBuffer<float4> | 反復ごと | 位置Ping-Pong |
-| previous_position | StructuredBuffer<float4> | サブステップごと | 速度再構築 |
-| velocity | RWStructuredBuffer<float4> | サブステップごと | 速度 |
+| segment_start_position | StructuredBuffer<float4> | Integration Segment開始ごと | 内部Constraint後のVelocity再構築基準。Contact位置補正前に保持 |
+| velocity | RWStructuredBuffer<float4> | Integration Segmentごと / Impulse適用後 | 予測・内部Constraint反映・Contact Impulse後の速度 |
 | inverse_mass | StructuredBuffer<float> | 初期化時 | 逆質量 |
 | rest_position | StructuredBuffer<float4> | 初期化時 | Rest Pose |
-| animation_target | UAV出力 / SRV入力 StructuredBuffer<float4> | 描画フレーム・サブステップ | Skinning目標 |
-| animation_velocity | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 目標速度 |
+| animation_target | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始・終了境界 | Skinning目標位置。CCD prefix時刻は同じTrajectory Evaluatorから取得 |
+| animation_velocity | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始・終了境界 / TOI時刻 | Skinning済みTarget Trajectoryの時間微分 |
 | animation_lambda | RWStructuredBuffer<float4> | Segment反復 | Cloth追従制約の3軸λ Scratch |
 | tet_indices | StructuredBuffer<uint4> | 初期化時 | 四面体接続 |
 | tet_rest_data | StructuredBuffer<TetRestData> | 初期化時 | Bm、V0、材料ID |
 | vertex_tet_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Tet CSR |
-| tet_force_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 四面体ごとの4頂点力 |
+| tet_force_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始状態ごと | 四面体ごとの4頂点力。Segmentごとに再評価 |
 | cloth_constraints | StructuredBuffer<ConstraintData> | 初期化時 | Stretch / Shear / Bend |
 | constraint_lambda | RWStructuredBuffer<float> | Segment内反復ごと | XPBD λ Scratch |
 | vertex_constraint_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Constraint CSR |
-| cell_records | UAV出力 / SRV入力 StructuredBuffer<CellRecord> | サブステップ | Spatial Hash登録 |
-| contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | サブステップ | VT / EE候補 |
-| contact_data | SRV/UAV StructuredBuffer<ContactData> | 反復ごと | 接触法線・係数・λ |
+| cell_records | UAV出力 / SRV入力 StructuredBuffer<CellRecord> | Integration Segmentごと | 当該SegmentのSwept AABBによるSpatial Hash登録 |
+| contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | Integration Segmentごと | 当該SegmentのVT / EE候補 |
+| contact_data | SRV/UAV StructuredBuffer<ContactData> | Integration Segment / Contact Iterationごと | 接触法線・係数・λ Scratch。Segment開始時Reset |
 | vertex_contact_offsets / ids | StructuredBuffer<uint> | サブステップ | Vertex→Contact CSR |
-| contact_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | 反復ごと | 接触補正寄与 |
+| contact_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | Contact Iterationごと | Contact位置補正寄与。Velocity再構築には直接加算しない |
 | render_binding | StructuredBuffer<RenderBinding> | 初期化時 | Render Vertex対応 |
 | diagnostic_buffer | RWStructuredBuffer<uint> | Passごと | Count / Overflow / Error |
 
@@ -223,7 +223,18 @@ glTFのSkin Matrixは次で定義する。
                    * joint_global_matrix[j]
                    * inverse_bind_matrix[j]
 
-inverseBindMatricesが省略されている場合は全Jointで単位行列を使う。CPUはSimulation Timeに対応するAnimation ClipのPoseを評価してBone行列をGPUへアップロードする。描画フレーム内に複数の物理Stepがある場合も、各Step時刻のPoseを評価または時間補間する。GPUはPhysics MeshのRest Positionとweightから各Stepの目標位置を計算する。前回Step目標位置との差分をそのStepの固定時間刻みで除してAnimation Velocityを得る。
+inverseBindMatricesが省略されている場合は全Jointで単位行列を使う。CPU Animation EvaluatorはSimulation Time上のPoseに加え、各Bone Transformの時間微分情報を評価する。GPU SkinningはPhysics MeshのRest Position / Bone Weight / Skin MatrixからAnimation Target Positionと、その全Skinning変換を微分したAnimation Target Velocityを生成する。Animation VelocityをRender Frameまたは前StepのPosition差分から推定しない。詳細なInterpolation / Blend / Discontinuity規則は§6.6 / §6.7.1を正とする。
+
+Animation TargetとAnimation Velocityは同一のAnimation Trajectory Evaluatorが返す組とする。Animation Velocityは最終Skinning Target PositionのSimulation Timeに対する時間微分であり、Boneごとの位置差分を後段で近似してはならない。
+
+- STEP: Clip区間内部の微分は0。Key境界のPose JumpはSTEP Discontinuity Eventとして扱い、区間を跨ぐ有限差分速度を生成しない。
+- LINEAR: Clip時間に対する区間勾配を計算し、Playback Speedを乗じてSimulation Time微分へ変換する。
+- CUBICSPLINE: glTF Hermite補間の解析微分を評価し、Key間隔とPlayback Speedを正しく反映する。Quaternion / Scale ChannelもImporterで定義した補間と正規化処理を微分し、非有限・特異な微分はInput Errorとする。
+- Clip Blend: Blend後の最終Pose / Skinning Targetを評価する。Blend Weightが時刻変化する場合はWeightの時間微分項も含める。
+- Skinning: Bone Matrixの時間微分を使って最終Skinned Positionを微分する。Linear Blend Skinningでは各InfluenceのPosition / Matrix derivative contributionをWeight付きで合成する。
+- Root Transform: Translation VelocityとAngular Velocityを別々に評価し、Kinematic Collider接触点Velocityへ伝播する。
+
+Animation EvaluatorがTarget Positionと対応する時間微分を同時に供給できない時刻はBLOCKED_BY_INPUTとし、前回値の流用や有限差分による代用を行わない。
 
 ## 6. Soft Body Solver詳細
 
@@ -381,12 +392,24 @@ Segment開始時に評価した陽的内部力と半陰的Eulerによる位置�
     delta_t_limit = cfl_factor * min_t(h_t / c_p_t)
     cfl_factor = 0.2  // 初期評価値。実測で検証する
 
-これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。上限超過時は警告し、設定に応じてWorld共通Substep数を増やす。最大World Substep数を超えたらWORK_BUDGET_EXCEEDEDとしてLogical TickをCommitせず、時間を保持する。Soft Bodyだけを細かく進めてCloth / Contactを旧時刻に残す独立Subcyclingはv1で禁止する。
+これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。
 
-World共通Substep数はLogical Tick開始時に一度だけ決定する。全参加Soft Body MeshのFEM / Animation Tracking制限と、World設定のminimum_substeps / maximum_substepsを集約し、
+ClothはXPBDであるため、ここでの時間刻み上限はFEM CFLのような明示積分の安定保証ではなく、拘束振動数に基づくTemporal Quality Limitとする。各Constraint cについて、Rest / Current Geometryで評価したGradientと有効逆質量から、
+
+    omega_c = sqrt(k_c * sum_i(inverse_mass_i * dot(gradient_i, gradient_i)))
+    omega_cloth_max = max_c(omega_c)
+    dt_limit_cloth_quality = c_cloth / max(omega_cloth_max, epsilon_omega)
+
+と推定する。初期係数c_cloth=0.2はEngineering Baselineであり、Stretch / Shear / Bendの解像度収束・反復収束試験で校正する。全頂点固定、Compliance無限大、または拘束剛性0のConstraintは推定対象から除外する。推定値は厳密安定保証と称さず、品質上限として使う。
+
+World共通Substep ScheduleはFEM CFL、Animation Tracking、Cloth Temporal Quality Limit、World設定上限の最小値を集約する。Cloth品質LimitをScenarioで無効にした場合はその項を無限大として扱う。Contact Compliance 0のContactについて数値的な固有振動数を推定できないため、Contact時間解像度はworld_max_substep_delta_timeまたは明示されたContact Temporal Quality Limitで制限する。
+上限超過時は警告し、設定に応じてWorld共通Substep数を増やす。最大World Substep数を超えたらWORK_BUDGET_EXCEEDEDとしてLogical TickをCommitせず、時間を保持する。Soft Bodyだけを細かく進めてCloth / Contactを旧時刻に残す独立Subcyclingはv1で禁止する。
+
+World共通Substep数はLogical Tick開始時に一度だけ決定する。全参加Soft Body MeshのFEM / Animation Tracking制限、全参加Cloth MeshのTemporal Quality Limit、World設定のminimum_substeps / maximum_substepsを集約し、
 
     dt_limit_world = min(all_mesh_dt_limit_fem,
                          all_mesh_dt_limit_tracking,
+                         all_mesh_dt_limit_cloth_quality,
                          world_max_substep_delta_time if > 0 else +infinity)
 
     N_world = max(minimum_substeps,
@@ -449,11 +472,11 @@ ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済�
 
 Clothには§6.6の共通Segment積分式を適用し、F_segment = F_external、J_segment = J_segment_iとする。Soft Bodyは§6.6の定義に従いFEM internal forceとKelvin-Voigt Animation Tracking forceもF_segmentへ加える。ClothのAnimation TrackingはXPBD Attachment Constraintとして位置解決時に扱う。
 
-XPBD Stretch / Shear / Bend / Animation Tracking / Contactの位置解決後、Dynamic Vertexだけについて、
+Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解決した後、Contact Position Constraintを解く前にDynamic Vertexだけについて、
 
-    v_reconstructed = (x_solved - x_segment_start) / dt_segment
+    v_pre_contact = (x_internal_solved - x_segment_start) / dt_segment
 
-で速度を再構築する。Fixed / Kinematic Vertexは§6.6に従い、Animation TargetとAnimation Velocityを維持する。TOI Impact / Coulomb Friction / Restitution Impulseは速度再構築後に一度だけ適用し、Kinematic VertexのVelocityは変更しない。Impact後のVelocityは次Segmentへ引き継ぐ。Logical Tick全体の始点・終点差分でImpact後Velocityを上書きしない。
+でContact前Velocityを再構築して保存する。Contact Position XPBDはPositionだけを補正し、保存済みv_pre_contactを変更しない。Fixed / Kinematic Vertexは§6.6に従い、Animation TargetとAnimation Trajectory Velocityを維持する。Friction / Restitution Impulseは保存済みContact前Velocityから一度だけ計算し、Kinematic VertexのVelocityは変更しない。Impact後のVelocityは次Segmentへ引き継ぐ。Logical Tick全体の始点・終点差分でImpact後Velocityを上書きしない。
 
 ### 7.1.2 World Integration Segmentの処理順
 
@@ -586,7 +609,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
 ### 8.1.1 Collision-only Collider
 
-初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、静的形状または固定時間刻みごとに与えられるTransformで移動する形状として扱う。Kinematic Colliderの頂点速度は前Stepと現在Stepの変換後位置から算出し、CCDと接触の相対速度へ含める。接触位置補正・ImpulseによってCollider自体は変形させない。
+初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、時刻付きRigid Transform Sampleで移動する形状として扱う。接触点xのKinematic Collider速度は、剛体の並進速度v_linearと角速度omegaから、v_point = v_linear + cross(omega, x - transform_origin)で求める。Slerp区間ではQuaternionの解析微分からomegaを評価し、Transformの位置差分だけで頂点速度を近似しない。CCDの幾何SweepはSegment端点Transformを結ぶChord Pathを使うが、Chord Pathの偏差は§11.4の保守的Boundで制限する。Contact Relative VelocityにはTOI時刻の剛体Transform Trajectory微分を使う。接触位置補正・ImpulseによってCollider自体は変形させない。
 
 変形オブジェクトの衝突面は初期版ではSoft Body境界面とCloth Physics Mesh表面を使う。低解像度Collision Proxyを変形メッシュへ割り当て、そのProxy接触を高解像度Physics Meshへ戻す埋め込み応答は初期版の対象外とする。将来追加時はProxy頂点からPhysics MeshへのEmbeddingと、接触勾配のPhysics Vertexへの合成を定義する。
 
@@ -650,20 +673,38 @@ v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする
 
 ### 8.5 摩擦・反発
 
-位置XPBD接触と速度Impulseを分離する。位置反復中に摩擦を重ねて適用しない。
+位置XPBD接触と速度Impulseを明確に分ける。接触位置補正で生じた変位を反発速度へ混ぜない。各Integration Segmentでは、次の順で処理する。
 
-Discrete contactでは位置解決後にvelocity = (position_after - previous_position) / delta_tを再構築する。TOIでImpulseを解決したcontactはimpact_resolvedフラグを設定し、同一Step終端のImpulse処理から除外する。TOIを伴わないDiscrete contactについて、接触点の相対速度をv_rel、法線速度をv_n = dot(v_rel,n)とする。接触が接近中の場合のみ、
+1. Segment開始状態からDynamic Velocity / Positionを予測する。
+2. ClothのStretch / Shear / Bend / Animation Tracking等の**非接触内部Constraint**を解く。
+3. 非接触内部Constraint後の状態からDynamic VertexのContact前速度を一度だけ再構築し、v_pre_contactとして保存する。
+4. Contact Position XPBDを解く。Contact補正はPositionにだけ反映し、v_pre_contactを変更しない。
+5. v_pre_contactとKinematic Trajectory Velocityから接触点相対速度を計算し、Friction / Restitution Impulseを適用する。
 
-    j_n = -(1 + restitution) * min(v_n, 0) / effective_inverse_mass
+非接触内部Constraint後のDynamic Vertex速度は、
 
-の法線Impulseを計算する。
+    v_pre_contact_i = (x_internal_solved_i - x_segment_start_i) / dt_segment
 
-接線速度v_t = v_rel - v_n*nから摩擦Impulse候補を求め、Coulomb円錐でクランプする。
+とする。TOI prefixではdt_segmentの代わりにtauを用いる。Fixed / Kinematic Vertexの速度はAnimation InterfaceのTrajectory微分を維持する。
 
-    j_t_candidate = -v_t / effective_inverse_mass
+Contact XPBDの後にContact補正込みのPosition差分からVelocityを再構築してはならない。Contact Position correctionは非貫通を満たすための幾何修正であり、反発エネルギーを生成する速度ではない。Contact Position Passが複数回反復してもv_pre_contactは不変とする。
+
+Contact点の相対速度は、接触勾配係数をg_i、各参加Dynamic Vertex速度をv_pre_contact_i、Kinematic側の接触点速度をv_kinとすると、
+
+    v_rel = sum_i(g_i * v_pre_contact_i) - v_kin
+    v_n = dot(v_rel, n)
+
+で求める。接近中（v_n < 0）の場合だけ法線Impulseを計算する。
+
+    j_n = -(1 + restitution) * v_n / effective_inverse_mass
+    j_t_candidate = -(v_rel - v_n * n) / effective_inverse_mass
     j_t = clamp_magnitude(j_t_candidate, friction * j_n)
 
-接触の4頂点へ、接触勾配係数と逆質量でImpulseを配分する。摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。接触前の相対速度を保存し、同一接触で複数反復するたびに反発を重複適用しない。TOI contactはimpact_resolvedフラグにより同じImpulseをStep終端で二重適用しない。
+Contactの4頂点へ勾配係数とInverse Massに従いImpulseをGather適用する。接触候補が重複する場合はCanonical Contact Key順のDeterministic Impulse Groupを作り、同じContactへ重複適用しない。複数ContactのImpulseは同じv_pre_contact SnapshotからContributionを出し、Vertex Contact CSRで一度Gatherする。v1では各Discrete Contact Eventに1回Impulseを適用し、同一Pass内で逐次的な速度書換えを行わない。複数接触の過不足はContact Patch Reduction / Solver Iteration Fixtureで検証する。
+
+TOI ContactはTOI prefixで同じ順序を使い、Impact Impulse適用後にimpact_resolvedを設定する。残SegmentはImpact後Velocityから開始する。Impact後に同一SegmentのVelocity Reconstructionを実行しない。Discrete ContactとTOI Contactのどちらも、同一Contact EventにRestitutionを複数回適用しない。
+
+摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。Kinematic Vertex / ColliderはInverse Mass 0であり、Contact Impulseによって速度を変更しない。Colliderの接触速度は§8.1.1で定義する。
 
 ### 8.6 退化接触の法線決定
 
@@ -790,11 +831,13 @@ TOIが確定したら、検出に使った離散軌道と同一の位置・速�
 
 このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic VertexのCCD幾何PathもSegment開始 / 終了Animation Targetを結ぶChordとし、kinematic_path_velocity=(animation_target_end-animation_target_start)/dt_segment、x_kin_path(tau)=animation_target_start+tau*kinematic_path_velocityとする。Kinematic VelocityとしてはAnimation Interfaceがtau時刻に評価したTarget Trajectory微分を維持し、Chord速度はBroadphase / CAの幾何Path速度に限って使う。
 
-prefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation TrackingおよびTOI Contact Constraintを解く。Soft Bodyはprefix軌道位置を初期状態としてTOI Contactを解き、Contact位置補正を適用する。Dynamic Vertexは位置補正後に(x_solved - x_segment_start) / tauで接触直前Velocityを再構築する。Fixed / Kinematic VertexはAnimation Velocityを維持する。続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。
+prefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを先に解く。Soft Bodyはprefix軌道状態を維持する。Contact Position Constraintを解く前にDynamic VertexのContact前Velocityを(x_internal_solved - x_segment_start) / tauで再構築して保存する。次にTOI Contact Position Constraintを解くが、Contact位置補正後にVelocityを再構築しない。保存済みContact前Velocityとtau時刻のKinematic Trajectory Velocityから法線 / Coulomb接線Impulseを一度適用し、impact_resolvedフラグを設定する。
 
-Kinematic Animation CurveとCCD Chordの差を抑えるため、各SegmentでAnimation Target Curveをu={0.25, 0.5, 0.75}の時刻で評価し、Chord Positionとの差の最大値をkinematic_path_deviationとして計測する。初期許容値はdistance_toleranceとする。超過した場合は最大8段の決定的なSegment細分化を行い、各子Segmentで再評価する。深度8でも許容値を満たさない場合はCCDUnresolvedとしてTickをCommitしない。Animation VelocityはChord速度へ置換せず、各TOI時刻のTarget Trajectory微分を維持する。Run Manifestへ最大偏差・細分化回数を記録する。
+Kinematic Animation CurveとCCD Chordの差は、有限個のサンプル最大値で保証しない。Animation Evaluatorは各Kinematic Geometry Primitive / VertexについてSegment内全時刻のChord偏差上限kinematic_path_deviation_boundを返す。CUBICSPLINEのTranslationはHermite曲線をBezier Control Hullへ変換し、Chordとの差分Bezier Control Pointの最大Normを保守的上限とする。Quaternion / Bone Hierarchy / Skinningを含む変換は区間演算または保守的な導関数Boundを階層合成・Skin Weight合成へ伝播し、Boundを得られない場合はSegmentを細分化して再評価する。固定軸Slerpで動く剛体Colliderの回転Chord偏差は、Collider原点からの最大距離r_maxと角度thetaからsagitta_bound = r_max * (1 - cos(theta / 2))で求める（theta <= piとなるまで分割）。Translation Curveの偏差Boundと回転BoundはTriangle AABBへ加算膨張する。
 
-残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
+kinematic_path_deviation_boundがdistance_tolerance以下になるまで最大分割深度8で決定的にSegment細分化する。深度8でもBoundが許容値を超える、またはEvaluatorが保守的Boundを返せない場合はCCDUnresolvedとしてTickをCommitしない。実サンプル点の偏差は診断・校正用に計測するが、合否は保守的Boundで決める。Contact Relative Velocityはtau時刻のAnimation Target Trajectory微分、Kinematic Colliderではv_linear + omega cross radiusで求め、Chord速度へ置換しない。Run Manifestへ最大Bound・分割深度・未解決数を記録する。
+
+残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。Impact後Velocityは残Segment開始Velocityとして固定し、同じTOI Segmentの末尾で再Velocity Reconstructionしない。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
 
 1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前のprefixは§11.4のx_path(tau) / v_path(tau)からWorld全体で構成する。Positive-Time TOI時はEndpoint Contactを確定せず、同じ離散path上のTOI位置でtauをXPBD時間として内部Constraint / Contact Constraintを解き、Impactを適用する。残時間はImpact後の状態から全参加Solver共通の新Segmentとして進める。Solverごとに異なるtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
@@ -889,7 +932,7 @@ Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物�
 
 #### 14.3.1 Force / Impulseの適用契約
 
-Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。各Eventのw_i,eは、そのEventの対象Filter内で独立に総和1へ正規化する。分配Weightは各World共通Segmentの開始位置で距離r_iを評価し、Segment途中では変化させない。directionは単位ベクトル、magnitudeはForceならN、ImpulseならN*sである。
+Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。start_time / end_time / event_timeは全てWorld Simulation Time原点からの絶対秒であり、Render Frame時刻・Clip Local Time・Logical Tick indexを直接渡さない。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。各Eventのw_i,eは、そのEventの対象Filter内で独立に総和1へ正規化する。分配Weightは各World共通Segmentの開始位置で距離r_iを評価し、Segment途中では変化させない。directionは単位ベクトル、magnitudeはForceならN、ImpulseならN*sである。
 
 ForceはF_i=w_i*F_totalとして連続的に作用し、Force開始・終了時刻でWorld共通Segmentを分割する。各Segment内のForce積分量はF_i*dt_segmentであり、別途Impulseへ変換して重複加算しない。ImpulseだけをJ_i=w_i*J_eventとしてSegment開始時に一度適用する。イベントIDと適用済みTick / Segmentを記録し、Retry時は同じSource State / Input Snapshot / Segment時刻から同じイベントを再適用する。対象頂点が存在しない、Falloff重み総和がepsilon以下、イベント時刻が既にCommit済みTimelineより前に到着して反映できない場合はDiagnosticを返し、イベントを黙って捨てない。
 
@@ -924,33 +967,31 @@ v1のGPU Runtime初期値はpolar iteration最大8回、polar orthogonality resi
 
 ### 15.1 Logical Tick / Substep transaction
 
-Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Integration Segment開始状態は専用scratchへ保存し、TOI retime / Event Segment再計算時はinactive_state_bankをそのscratchから復元する。Substep scheduleはLogical Tick Begin時にWorld全体の参加Meshから一度だけ計算し、全Soft Body / Cloth / Contact / Animation Trackingへ共通dt_worldを割り当てる。独立したSolver別Subcyclingは禁止する。Force / Impulse Eventの時刻がSegment内部にある場合もWorld共通Segmentを分割し、全参加Solverを同じ時間だけ進める。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
+Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Integration Segment開始状態は専用scratchへ保存し、TOI prefix / Event Segment再計算時はinactive_state_bankをそのscratchから復元する。Substep scheduleはLogical Tick Begin時にWorld全体の参加Meshから一度だけ計算し、全Soft Body / Cloth / Contact / Animation Trackingへ共通dt_worldを割り当てる。独立したSolver別Subcyclingは禁止する。Force / Impulse Eventの時刻がSegment内部にある場合もWorld共通Segmentを分割し、全参加Solverを同じ時間だけ進める。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
 
 基本Pass順序:
 
-1. Logical Tick Begin / Dispatch Plan Gate / Terminal Status Reset
-2. World Substep Schedule Build / Validate
-3. 各World Integration Segment境界のAnimation Target / Root / Kinematic Pose Sample
-4. External Force / Impulse Event Gather（ForceはSegment内一定、ImpulseはSegment開始時にEvent ID単位で一度だけ適用）
-5. Segment開始状態のSoft Body FEM Force / Animation Tracking Force Evaluation / Tet Contribution Gather
-6. Soft Body Velocity / Position Prediction（dt_segment）
-7. Cloth Velocity / Position Prediction（dt_segment）
-8. Swept AABB / Broadphase Count / Scan / Fill / Sort / Group
-9. Candidate Generation / Deduplication / Narrowphase / Contact Patch Build / Manifold Reduction
-10. CCD Conservative Advancement / Minimum TOI Reduction
-11. Positive-Time TOIがない場合に限り、EndpointのSolver Iterationsを実行
-    - Cloth Stretch Graph Color Passes
-    - Cloth Animation Tracking / Shear / Bend Gather / Apply
-    - Discrete Contact XPBD Output / Gather / Apply
-    - Broadphase Envelope Exceeded Check; 必要時Rebuild
-12. Positive-Time TOIがある場合はEndpoint Contactを確定せず、§11.4のx_path(tau) / v_path(tau)でTOI prefixを構成する。dt=tauの再Predictionは行わず、tauをXPBD時間としてInternal Constraint / TOI Contactを解き、Impactを適用する。残時間はImpact後Velocityから新しいIntegration Segmentとして再評価
-13. Dynamic Vertex Velocity Reconstruction（Fixed / Kinematic VelocityはAnimation Sampleを維持）/ Coulomb Friction / Restitution Impulse
-14. Segment Validation
-15. 次のWorld Integration Segmentへ進む。全Segment完了時だけ次World共通Substepへ進む
-16. 全Logical Tick完了後のRender Feedback Candidate Prepare（Position / Normal / Tangent）
-17. Render Candidate finite / Binding Validation
-18. Logical Tick Commit Control（全Physics GateとRender Candidateが成功した場合だけPhysics State GenerationとRender Slotを同時にCOMMITTEDへ切替）
-19. Diagnostic Timestamp / Counter / Status Copy + Event Query
+1. Logical Tick Begin / Dispatch Plan Gate / Terminal Status Reset。
+2. World Substep Schedule Build / Validate。
+3. Integration Segment境界のAnimation Target / Animation Target Velocity / Root / Kinematic Pose Sample。
+4. External Force / Impulse Event Gather（ForceはSegment内一定、ImpulseはSegment開始時にEvent ID単位で一度だけ適用）。
+5. Segment開始状態のSoft Body FEM Force / Kelvin-Voigt Tracking Force Evaluation / Tet Contribution Gather。
+6. Soft Body / Cloth Velocity / Position Prediction（dt_segment）。
+7. Swept AABB / Broadphase Count / Scan / Fill / Sort / Group / Candidate Dedup / Narrowphase / Contact Patch Build。
+8. CCD Conservative Advancement / Minimum TOI Reduction。
+9. TOIがない場合: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
+10. TOIがある場合: Endpoint Contactを確定せず、§11.4のx_path(tau) / v_path(tau)およびKinematic conservative chord pathでTOI prefixを構成し、tauを使って非接触内部Constraintを解く。
+11. Dynamic VertexのContact前Velocityを再構築してv_pre_contactへ保存する。TOIではtau、通常Segmentではdt_segmentを用いる。Fixed / Kinematic VelocityはAnimation Trajectory微分を維持する。
+12. Discrete / TOI Contact Position XPBDを解く。Contact位置補正はPositionへだけ適用し、v_pre_contactを変更しない。
+13. v_pre_contactとKinematic接触点VelocityからFriction / Restitution Impulseを計算し、Contact ContributionをVertex Gatherで一度適用する。TOI Contactにはimpact_resolvedを設定する。
+14. Broadphase Envelope / NonFinite / Capacity / CCD / Physical Quality Gateを検証する。Envelope外は同じSegment時間内でBroadphaseを再構築し、再度Contact解決する。
+15. TOIがある場合はImpact後Velocityから残時間の新しいIntegration Segmentへ進む。TOI後に当該Impact結果をVelocity Reconstructionで上書きしない。
+16. 次Integration Segment / World Substepへ進み、全Logical Tick完了後にRender Feedback Candidate Prepare（Position / Normal / Tangent）。
+17. Render Candidate finite / Binding Validation。
+18. Logical Tick Commit Control（全Physics GateとRender Candidateが成功した場合だけPhysics State GenerationとRender Slotを同時にCOMMITTEDへ切替）。
+19. Diagnostic Timestamp / Counter / Status Copy + Event Query。
+
+Discrete Contact / TOI Contactのいずれでも、Contact Position XPBDとVelocity Impulseを別Pass / 別Snapshotで扱う。Contact Position correctionを含むPosition差分から速度を再構築する処理は禁止する。
 
 ### 15.2 同期・リソースhazard
 
@@ -1109,6 +1150,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 ## 21. バージョン履歴
 
 - 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
+- 1.8: Contact Position correctionとContact前Velocity / Restitution Impulseを分離し、Impact後Velocityを再構築で上書きしないPass順を定義。Animation Target Velocityの唯一の正本、Kinematic CCDの保守的Chord偏差Bound、Cloth Temporal Quality Limit、World absolute Event Timeを追加。
 - 1.7: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時のXPBD Segment時間、Impact後残Segmentの再評価を明文化。
 - 1.6: Integration Segment単位のSoft Body / Cloth予測、線形粘性減衰の速度積分、Fixed / Kinematic Velocityの維持、TOI時間変数とSegment Snapshotの整合を明文化。
 - 1.5: World共通Substep、Cloth予測・Force / Impulse分配、Contact Patch品質閾値、退化Contact法線決定、Stackless Morton LBVH構築を明文化。
@@ -1117,7 +1159,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 
 
-## 22. GPU Runtime / Library Integration（v1.7）
+## 22. GPU Runtime / Library Integration（v1.8）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
