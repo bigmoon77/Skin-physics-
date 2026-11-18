@@ -5,7 +5,7 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.5
+- 文書バージョン: 1.6
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.6
@@ -123,6 +123,13 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             contact_manifold_reduction_failure,
             contact_impulse_unresolved,
             no_force_target
+        };
+
+        enum class animation_discontinuity_policy : uint8_t
+        {
+            preserve_velocity,
+            reset_velocity,
+            blend_velocity
         };
 
         enum class playback_state : uint8_t
@@ -330,8 +337,8 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | animation_playback_desc | clip_index / time / speed / loop | 単一Animation Trackの選択、Clip Local Time、Playback Speed、Loop。Blendは別Descriptorで指定 |
 | animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorのw_eventでVelocityを補間 |
 | animation_blend_desc | source_track / target_track | 最大2本のanimation_playback_desc。Additive / 3本以上はv1 Unsupported |
-| animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | World Simulation Time上のCubic Hermite Blend Weight Curve。wは0～1、tangentは1/s |
-| animation_blend_desc | discontinuity_policy / w_event | 明示Discontinuity時のPolicy。BlendVelocityはw_eventでDynamic Velocityを補間 |
+| animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | World Simulation Time上のCubic Hermite Blend Weight Curve。時間は絶対秒、tangentは1/s。区間外は端点Weightを保持し、Curve全域で0<=w<=1を必須とする |
+| animation_blend_desc | discontinuity_policy / w_event | 明示Discontinuity時のPolicy。BlendVelocityはv_after=(1-w_event)*v_before+w_event*v_target(t_event+)。w_eventは0～1 |
 | force_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
 | force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。start_timeはWorld Simulation Time原点からの絶対秒。end_timeはstart_time + durationの導出値でDescriptorに重複保持しない。正のRadius必須。Mass-weighted Falloffで分配 |
 | impulse_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
@@ -346,6 +353,8 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | render_binding | format / stride / vertex_count / index_count | Host RendererがDrawを構成するためのLayout |
 | render_binding | resource_generation / device_generation / committed_tick_sequence | Stale Binding検出と描画状態の追跡 |
 | render_binding | render_slot_id / render_slot_generation / lease_generation | Runtime-owned Render Candidate Ring内のSlot識別とHost lease検証。Releaseには同じlease_generationを必須指定 |
+
+Animation Playback APIの状態遷移は次の通りとする。set_animation_playbackは単一Trackを有効にし、存在するClip Blendを次のTick Reservation境界で解除する。set_animation_blendはSource / Targetの2 TrackとBlend Weight Curveを同じ境界で一括置換する。Blend期間外はweight_start / weight_endを保持し、区間内だけCubic Hermiteを評価する。API呼出しの途中でGPU Packetを変更しない。Clip / Weight / Root Sampleの更新はTick Reservation開始前に採用され、そのTickのPacket Versionへ固定される。Discontinuity Policyは明示されたTeleport / Reset / Time Rewind / Clip Switch Eventにだけ適用する。通常BlendはTrajectory微分へw_dotを含め、Velocity Resetしない。
 
 `model_desc`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
 
@@ -724,19 +733,23 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - GPU Spatial Hash Build / Rebuild / Pair Dedup。
 - 全有効Mesh PairとSelf Collision。
 - VT / EE Narrowphase、双方補正、Contact Patch。
-- Contact Candidate集合が小規模全探索の確定候補を全て含む。
-- Capacity OverflowのRollback / Retry。
+- 有効逆質量0のNonResponsiveContact GuardとWorld-wide Coupled Projected Jacobi Impulse。
+- Contact Candidate集合が小規模全探索の確定候補を全て含む。Contact Impulse Residual / Coulomb Cone Acceptanceも満たす。
+- Capacity Overflow / ContactImpulseUnresolvedのRollback / Retry。
 
 ### Gate R4 — CCD / Initial Repair
 
 - Moving VT / EE Conservative Advancement。
+- GPU Animation Trajectory Packetを使う任意tauのKinematic Position / Velocity評価、保守的Span Bounds。
 - 同時TOI、Positive-Time TOI、初期接触、退化・進行不能。
-- TOI impulse一度だけ適用、残時間再積分。
+- TOI Coupled Impulse一度だけCommit、残時間再積分。
 - Initial Repair per-vertex budgetと未修復Error。
 
 ### Gate R5 — Animation / Render Integration
 
 - Multi-key glTF Clip / Skeleton / Mesh Node Matrix。
+- GPU Animation Span Packet / 任意tauのSkinning Position / Velocity / Bounds。
+- 2 Track Clip Blend / w_dot / BlendVelocity Discontinuity。
 - Substepped target position / velocity。
 - Animation Discontinuity / Teleport Policy。
 - GPU Render FeedbackとUV / Color / Material / Index維持。
@@ -799,6 +812,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 ## 14. バージョン履歴
 
 - 1.6: 任意tauを評価できるGPU Animation Trajectory Packet / Span契約、最大2 Track Blend / BlendVelocity、非応答ContactのW_eff判定、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limitを追加。
+- 1.6: GPU Animation Trajectory Packet / Spanと任意tau評価、最大2 Track Blend / BlendVelocity、Contact有効逆質量Guard、Coupled Projected Jacobi Impulse、Contact Temporal Quality LimitをRuntime Descriptor / Gateへ反映。
 - 1.5: Contact Position補正とContact前Velocity / Impulse処理の分離、Animation Trajectory微分の正本化、Kinematic CCDの保守的Chord Bound、GPU Memory Budgetの0 sentinel修正、Cloth Temporal Quality Limitを追加。
 - 1.4: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時間を使うXPBD Compliance、Impact後残Segmentの再評価規則を明文化。
 - 1.3: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / ClothのSegment積分同期、Kinematic Velocity所有規則をRuntime Scheduler / TOI契約へ反映。
