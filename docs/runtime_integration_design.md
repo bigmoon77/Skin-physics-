@@ -106,11 +106,18 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             step_rejected
         };
 
+        enum class playback_state : uint8_t
+        {
+            stopped,
+            playing,
+            paused
+        };
+
         struct status
         {
             status_code code;
             int32_t native_code;
-            const char* diagnostic;
+            std::string diagnostic;
         };
 
         struct world_handle { uint32_t index; uint32_t generation; };
@@ -121,6 +128,10 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         struct world_desc;
         struct model_desc;
         struct collider_desc;
+        struct animation_playback_desc;
+        struct transform;
+        struct force_desc;
+        struct impulse_desc;
         struct advance_report;
         struct world_status;
         struct render_binding;
@@ -152,6 +163,30 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
                 const collider_desc& desc,
                 collider_handle* out_collider);
 
+            status set_playback_state(
+                world_handle world,
+                playback_state state);
+
+            status set_fixed_delta_time(
+                world_handle world,
+                double fixed_delta_time);
+
+            status set_time_scale(
+                world_handle world,
+                double time_scale);
+
+            status set_gravity(
+                world_handle world,
+                const asset::vec3& gravity);
+
+            status enqueue_force(
+                world_handle world,
+                const force_desc& force);
+
+            status enqueue_impulse(
+                world_handle world,
+                const impulse_desc& impulse);
+
             status set_animation_playback(
                 world_handle world,
                 model_handle model,
@@ -172,6 +207,10 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
                 world_handle world,
                 world_status* out_status);
 
+            status single_step(
+                world_handle world,
+                advance_report* out_report);
+
             status get_render_binding(
                 world_handle world,
                 model_handle model,
@@ -185,7 +224,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         };
     }
 
-Handleはindex + generationで識別し、Destroy後のHandle再利用を拒否する。APIからGPU内部Buffer、Solver Scratch、Writable UAVを公開しない。Asset / DescriptorはVersioned Schemaを使い、ロード時に既存Asset Cacheのhash・coordinate_system_version・material_layout_version・generator identityを検証する。
+Handleはindex + generationで識別し、Destroy後のHandle再利用を拒否する。APIからGPU内部Buffer、Solver Scratch、Writable UAVを公開しない。Statusのdiagnosticは呼び出し結果が保持するstd::stringとし、Runtime内部の一時文字列ポインタを返さない。Public APIはC++静的Library向けであり、異なるCompiler / CRT間の安定ABIは保証しない。Asset / DescriptorはVersioned Schemaを使い、ロード時に既存Asset Cacheのhash・coordinate_system_version・material_layout_version・generator identityを検証する。
 
 ### 3.4 WorldとMesh Instanceの配置
 
