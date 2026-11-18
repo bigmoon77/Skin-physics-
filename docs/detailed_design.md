@@ -784,18 +784,18 @@ Logical Tick全体をGPU Commit transactionとする。Tick開始前にCommitted
 
 基本Pass順序:
 
-1. Logical Tick Begin / Snapshot / Terminal Status Reset
+1. Logical Tick Begin / Dispatch Plan Gate / Terminal Status Reset
 2. Animation Target / Animation Velocity Update
-2. Physics Vertex Previous State Snapshot
-3. Soft Body Tet Deformation Gradient
-4. Soft Body Rotation / Stress / Inversion Penalty
-5. Soft Body Tet Force Contribution
-6. Soft Body Vertex Force Gather
-7. Soft Body Velocity / Position Prediction
-8. Cloth Velocity / Position Prediction
-9. Broadphase Count / Scan / Fill / Sort / Group
-10. Candidate Generation / Deduplication
-11. 各ソルバー反復
+3. Physics Vertex Previous State Snapshot
+4. Soft Body Tet Deformation Gradient
+5. Soft Body Rotation / Stress / Inversion Penalty
+6. Soft Body Tet Force Contribution
+7. Soft Body Vertex Force Gather
+8. Soft Body Velocity / Position Prediction
+9. Cloth Velocity / Position Prediction
+10. Broadphase Count / Scan / Fill / Sort / Group
+11. Candidate Generation / Deduplication
+12. 各ソルバー反復
     - Cloth Stretch Graph Color Passes
     - Cloth Animation Tracking Constraint Output / Gather / Apply
     - Cloth Shear Constraint Output / Gather / Apply
