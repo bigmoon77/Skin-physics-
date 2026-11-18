@@ -486,10 +486,10 @@ Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraint
 4. Segment開始位置から各Force DescriptorのFalloff Weightを計算する。Gravity / ForceはSegment内で一定とし、ImpulseはSegment開始時刻のEvent IDを確認して一度だけ消費する。RetryはSnapshotと同じEvent Cursorから再生し、破棄されたWorking Stateへの適用を重複累積させない。
 5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
-7. CCD / CAでPositive-Time TOIを検出した場合、EndpointのXPBD / Discrete Contact solveは実行しない。TOIがない場合だけEndpointのCloth Stretch / Shear / Bend / Animation Tracking / Discrete Contactを規定反復数だけ解き、Contact位置補正は双方の頂点へ作用させる。
-8. Positive-Time TOIがある場合は、§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic VertexはSegment端点Animation Targetを結ぶChord位置x_kin_path(tau)を使い、接触相対Velocityにはtau時刻のAnimation Target Trajectory微分を使う。tauをXPBD Integration Segment時間として内部Constraint / TOI Contactを解き、Dynamic VertexのVelocityを位置補正後の区間変位から再構築して、摩擦 / 反発Impulseを一度だけ適用する。
-9. TOI後の残時間がある場合、Impact後のPosition / Velocityを次Segment開始状態にして新しいSegmentを開始する。Force / Internal Force / Animation Trackingを新しい開始状態で再評価し、Impulse Event Cursorから未消費Eventだけを適用する。TOI分割上限または予算を超えた場合はLogical Tick全体を未Commitにし、同じTick Input / Source StateからRetryする。
-10. Positive-Time TOIがないSegmentはEndpointの位置解決後にDynamic Vertex Velocityを区間変位から再構築し、Fixed / Kinematic VelocityはAnimation Interfaceの指定値のままにする。摩擦 / 反発Impulseを適用した後のVelocityは次Segmentへ保持する。
+7. TOIがない場合は、Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを規定反復数だけ解く。
+8. Positive-Time TOIがある場合は、§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexは保守的Chord Boundで検証済みのSegment端点Animation Target chord位置を使い、接触相対Velocityにはtau時刻のAnimation Target Trajectory微分を使う。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
+9. Discrete / TOIの双方で、非接触内部Constraint後・Contact Position Constraint前にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、TOI prefixではtauを使う。次にContact候補を現在の内部Constraint後Positionで再検査し、接触が成立しているものだけContact Position XPBDを解く。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
+10. 保存済みContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを一度適用する。TOI Impactはimpact_resolvedに記録し、Impact後Velocityから残時間の新Segmentを開始する。Contact位置補正後またはImpact後に同じSegmentのVelocity Reconstructionを実行しない。TOI候補がprefix再検査で成立しない場合はImpactを発生させず、tau位置から残時間を継続し、必要ならCCD候補を再構築する。
 
 Soft BodyとClothの内部解法は異なるが、時間境界・Force / Impulse Eventの意味・Kinematic Velocity所有者はWorld共通である。各Substepの単純な1回更新へ戻す実装、Solverごとの異なるSegment時間、固定頂点への差分Velocity上書きは禁止する。
 
@@ -689,12 +689,14 @@ v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする
 
 Contact XPBDの後にContact補正込みのPosition差分からVelocityを再構築してはならない。Contact Position correctionは非貫通を満たすための幾何修正であり、反発エネルギーを生成する速度ではない。Contact Position Passが複数回反復してもv_pre_contactは不変とする。
 
-Contact点の相対速度は、接触勾配係数をg_i、各参加Dynamic Vertex速度をv_pre_contact_i、Kinematic側の接触点速度をv_kinとすると、
+Contact点A / Bの相対速度は、各接触点のVT重心係数またはEE最近接係数をβ_i / γ_jとし、各頂点の接触前速度をDynamicならv_pre_contact、Fixed / KinematicならAnimation Trajectory Velocityとして、
 
-    v_rel = sum_i(g_i * v_pre_contact_i) - v_kin
+    v_A = sum_i(beta_i * v_contact_pre_i)
+    v_B = sum_j(gamma_j * v_contact_pre_j)
+    v_rel = v_A - v_B
     v_n = dot(v_rel, n)
 
-で求める。接近中（v_n < 0）の場合だけ法線Impulseを計算する。
+で求める。ここでnはBからAへ向く法線であり、接近中はv_n < 0。effective_inverse_massはDynamic参加頂点だけのinverse_mass * coefficient^2の総和とする。Kinematic Colliderの接触点Velocityは§8.1.1のv_linear + omega cross radiusである。
 
     j_n = -(1 + restitution) * v_n / effective_inverse_mass
     j_t_candidate = -(v_rel - v_n * n) / effective_inverse_mass
