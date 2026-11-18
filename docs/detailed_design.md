@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.5
+- 文書バージョン: 1.6
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.4
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.2
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.3
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
-- 前版: 1.2
+- 前版: 1.5
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -18,7 +18,7 @@
 
 | 領域 | 初期採用方式 | 補足・代替 |
 |---|---|---|
-| Soft Body | 四面体Corotational Linear Elasticity、半陰的Euler | 反転要素はSVD補助処理と体積ペナルティ |
+| Soft Body | 四面体Corotational Linear Elasticity、Segment単位の半陰的積分 + 指数線形減衰 | 反転要素はSVD補助処理と体積ペナルティ |
 | Cloth Stretch | XPBD距離制約、Graph Coloring | 色数超過時はGather Jacobi |
 | Cloth Shear | XPBD内積ひずみ制約、Gather Jacobi | 三角形局所Rest基底 |
 | Cloth Bend | XPBD符号付き二面角制約、Gather Jacobi | 退化ケースの検出必須 |
@@ -298,14 +298,51 @@ Rest Shape Function勾配を用い、頂点iの内部力を次で求める。
 
 ### 6.6 時間積分・減衰
 
-半陰的Eulerを使う。サブステップ開始位置と速度を保持し、外力・内部力を加えて予測する。
+v1では全ての変形Physics VertexをWorld共通Integration Segment単位で更新する。通常Substep、Force / Impulse Event境界、TOI境界のいずれでも同じ積分規則を使用する。ここでいうSegmentは正の有限時間幅を持つ区間であり、Segment開始状態を (x_segment_start, v_segment_start)、区間時間をdt_segmentとする。
 
-    force_total = force_external + force_internal + force_animation
-    velocity_next = velocity + delta_t * inverse_mass * force_total
-    velocity_next *= exp(-damping_rate * delta_t)
-    position_next = position + delta_t * velocity_next
+Dynamic Vertexに対するSegment中の運動方程式は、Segment内で評価した合力F_segmentを一定とみなす線形粘性減衰モデルとする。
 
-固定頂点はposition_next = animation_target、velocity_next = animation_velocityとする。Soft Body内部力は各物理サブステップで再評価する。
+    dv/dt = inverse_mass * F_segment - damping_rate * v
+
+F_segmentはSolverごとに次のように構成する。
+
+- Soft Body: gravity / User Force / Corotational FEM internal force / Kelvin-Voigt Animation Tracking forceの合計。内部力とTracking forceはSegment開始状態 (x_segment_start, v_segment_start) および同時刻のAnimation Target / Velocityで評価し、当該Segment内では固定する。
+- Cloth: gravity / User Forceの合計。Stretch / Shear / Bend / Animation Tracking / Contactは位置制約としてSegment内で解く。Clothへ将来Force型の追加項を導入する場合はF_segmentへ加え、単位と安定時間刻みを更新する。
+
+User ImpulseはForceへ変換しない。Impulse J_segmentはSegment開始境界で一度だけ速度へ加え、その直後から当該Segmentの減衰を受ける。Force Eventの有効状態はSegment内で一定でなければならない。Impulse Eventの時刻は必ずSegment境界へ挿入する。
+
+数値計算は次の順で行う。damping_rateは0以上の有限値とする。
+
+    z = damping_rate * dt_segment
+    decay = exp(-z)
+
+    damping_integral =
+        dt_segment                                      // z == 0
+        dt_segment * (1 - z/2 + z^2/6 - z^3/24)        // 0 < z < 1e-3
+        (1 - decay) / damping_rate                    // z >= 1e-3
+
+    v_after_impulse = v_segment_start
+                    + inverse_mass * J_segment
+
+    acceleration = inverse_mass * F_segment
+
+    v_predicted = decay * v_after_impulse
+                + damping_integral * acceleration
+
+    x_predicted = x_segment_start + dt_segment * v_predicted
+
+damping_integralは一定加速度に対する線形粘性減衰の速度積分係数である。小さいzでは級数近似を使い、1-exp(-z)の桁落ちを避ける。上式は速度についてSegment内一定加速度・線形減衰の解を使い、位置について半陰的Euler更新を行う。Soft Bodyの非線形内部力はSegment開始時に評価するため、この一定力近似の誤差をWorld Substep / TOI Segment解像度と収束試験で評価する。
+
+inverse_massが0のFixed / Kinematic Vertexには上記のDynamic更新式を適用しない。代わりにSegment終端時刻のAnimation Targetと、その時刻におけるAnimation Target Trajectoryの時間微分を設定する。
+
+    x_predicted = animation_target(t_segment_end)
+    v_predicted = animation_velocity(t_segment_end)
+
+Animation Velocityは同一内部時間軸でサンプリングされたTarget Trajectoryの時間微分とする。線形補間では区間勾配、CUBICSPLINEでは評価曲線の終端微分を使う。Velocity Sampleが得られない場合に前Frame値を流用しない。必要なPose Bracketが欠落していればBLOCKED_BY_INPUTとする。
+
+XPBD位置解決後の速度再構築はDynamic Vertexだけに適用する。Fixed / Kinematic Vertexは再構築値で上書きせず、Animation Interfaceが与えた終端Velocityを維持する。Contact Impulse / Friction / Restitutionは逆質量に従ってDynamic Vertexへだけ速度反映し、Kinematic VertexのVelocityは変えない。Kinematic Velocityは相対速度、摩擦、反発、CCDの入力として使用する。
+
+Impact後に次Segmentが存在する場合、Impact後の位置・速度を次Segment開始状態とする。Logical Tick全体の始点・終点差分でImpact後Velocityを再構築してはならない。
 
 ### 6.7 Animation Tracking力
 
@@ -329,7 +366,7 @@ Clip Blendはブレンド比率を連続更新し、通常はvelocity resetを�
 
 ### 6.8 明示積分の安定時間刻み
 
-陽的内部力 + 半陰的Eulerは条件付き安定であり、1/240秒にしただけで全メッシュ・全材料の安定性を保証しない。
+Segment開始時に評価した陽的内部力と半陰的Eulerによる位置更新は条件付き安定であり、速度に線形粘性減衰を厳密適用しても、1/240秒にしただけで全メッシュ・全材料の安定性を保証しない。
 
 材料の縦波速度を
 
@@ -387,33 +424,51 @@ Compliance alphaは制約関数の単位に依存する。エディタで扱う�
 
 ### 7.1.1 Cloth動力学予測・外力適用
 
-Clothの予測は各World共通Substepの開始状態から1回だけ行う。重力は一様加速度としてPhysics Vertex iへmass_i * gravityで適用する。ユーザーForce / Impulse Descriptorはワールド空間の作用点・方向・半径を持ち、Soft Body / ClothのPhysics Vertexへ同じ質量測度付きFalloffで分配する。頂点iのRest Lumped Massをm_i、Segment開始位置から作用点までのワールド空間距離をr_i、Force半径をRとする。Rは正の有限値を必須とし、サポート内頂点に対して、
+Clothの予測はWorld共通Integration Segmentごとに1回行う。World Substepの開始時だけに限定しない。Force / Impulse Event境界またはTOIでSubstepが分割された場合、直前Segmentの終了状態を次Segmentの開始状態として使い、次Segmentのdt_segmentで予測する。重力は一様加速度としてPhysics Vertex iへmass_i * gravityで適用する。
+
+ユーザーForce / Impulse Descriptorはワールド空間の作用点・方向・半径を持ち、Soft Body / ClothのPhysics Vertexへ同じ質量測度付きFalloffで分配する。頂点iのRest Lumped Massをm_i、Segment開始位置から作用点までのワールド空間距離をr_i、Force半径をRとする。Rは正の有限値を必須とし、サポート内頂点に対して、
 
     s_i = r_i / R
     phi(s_i) = (1 - s_i)^4 * (4 * s_i + 1)   // 0 <= s_i < 1
     q_i = m_i * phi(s_i)
     w_i = q_i / sum_j(q_j)
 
-とする。s_i >= 1の頂点はq_i=0。質量はSoft Bodyの四面体Lumped Mass、Clothの三角形Lumped Massから得る。sum_j(q_j)は同じForce Descriptorの対象World / Model / Mesh範囲内で動的・固定を含む全サポート頂点について求める。これによりForce / Impulseの合計量を頂点数やメッシュ解像度によらず保存し、固定頂点に配分された分は拘束反力として扱う。サポート頂点が0、または重み総和が閾値以下の場合はNO_FORCE_TARGETを記録し、そのイベントを適用しない。
+とする。s_i >= 1の頂点はq_i=0。質量はSoft Bodyの四面体Lumped Mass、Clothの三角形Lumped Massから得る。sum_j(q_j)は同じForce Descriptorの対象World / Model / Mesh範囲内で動的・固定を含む全サポート頂点について求める。これによりDescriptorのForce / Impulse合計量を頂点数やMesh解像度によらず保存する。固定頂点へ配分された分は拘束反力として扱う。サポート頂点が0、または重み総和が閾値以下の場合はNO_FORCE_TARGETを記録し、そのEventを適用しない。
 
-ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Forceイベントの開始・終了時刻とImpulseイベント時刻はWorld共通Segment境界へ追加し、Segment内ではForceの有効状態が一定になるようにする。Impulseイベントは指定時刻を含むSegment開始境界で一度だけ適用する。SegmentはWorld共通で分割し、イベントを次Substepまで遅延・重複適用しない。
+ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Force Eventの開始・終了時刻とImpulse Event時刻はWorld共通Segment境界へ追加する。Segment時間区間は半開区間[t_segment_start, t_segment_end)として扱い、ForceはSegment内で有効状態を一定にする。Impulseは時刻を含むSegmentの開始境界で一度だけ適用する。Logical Tick終端と一致するEventは次のLogical Tick開始境界に属する。イベントIDとTick Reservation内の消費記録を保持し、Retry / TOI再積分で同じImpulseを二重適用しない。0時間または負時間のSegmentを生成しない。
 
-各外部イベントeは対象Filter内で独立にw_i,eを正規化する。Substep開始状態でのVertex iの合計入力は、
+各外部Event eは対象Filter内で独立にw_i,eを正規化する。Segment開始時のPhysics Vertex iへの入力は、
 
-    F_i = m_i * gravity + sum_e(w_i,e * direction_force_e * magnitude_force_e)
-    J_i = sum_e(w_i,e * direction_impulse_e * magnitude_impulse_e)
+    F_external_i = m_i * gravity
+                 + sum_e(w_i,e * direction_force_e * magnitude_force_e)
 
-とする。Force開始・終了境界でWorld共通Segmentを分割するため、ForceはSegment全体へ適用する。ForceはF_i * dt_segmentだけ運動量へ加え、ImpulseはJ_iだけ一度加える。両者を同じForceへ変換して二重加算しない。Clothの予測速度・位置は次で求める。
+    J_segment_i = sum_events_at_segment_start(
+                      w_i,e * direction_impulse_e * magnitude_impulse_e)
 
-    v_i_star = exp(-damping_rate_i * dt_segment)
-             * (v_i + inverse_mass_i * (F_i * dt_segment + J_i))
-    x_i_star = x_i + dt_segment * v_i_star
+とする。Force開始・終了境界でWorld共通Segmentを分割するため、ForceはSegment全体へ作用する。ImpulseはSegment開始時に一度だけ適用する。F_externalとJ_segmentを同じForceへ変換して二重加算しない。
 
-固定頂点はx_i_star = animation_target_i、v_i_star = animation_velocity_iとする。XPBD Stretch / Shear / Bend / Animation Tracking / Contactの位置解決後に、
+Clothには§6.6の共通Segment積分式を適用し、F_segment = F_external、J_segment = J_segment_iとする。Soft Bodyは§6.6の定義に従いFEM internal forceとKelvin-Voigt Animation Tracking forceもF_segmentへ加える。ClothのAnimation TrackingはXPBD Attachment Constraintとして位置解決時に扱う。
 
-    v_i_reconstructed = (x_i_solved - x_i_segment_start) / dt_segment
+XPBD Stretch / Shear / Bend / Animation Tracking / Contactの位置解決後、Dynamic Vertexだけについて、
 
-で速度を再構築し、TOI Impact / Coulomb Friction / Restitution Impulseを一度だけ適用する。TOI Impactを適用したSegmentの速度をLogical Tick全体の始点・終点差分で上書きしない。dt_segmentはWorld共通Substep内の通常SegmentまたはTOI分割後Segmentであり、全参加Solverに同じ値を渡す。
+    v_reconstructed = (x_solved - x_segment_start) / dt_segment
+
+で速度を再構築する。Fixed / Kinematic Vertexは§6.6に従い、Animation TargetとAnimation Velocityを維持する。TOI Impact / Coulomb Friction / Restitution Impulseは速度再構築後に一度だけ適用し、Kinematic VertexのVelocityは変更しない。Impact後のVelocityは次Segmentへ引き継ぐ。Logical Tick全体の始点・終点差分でImpact後Velocityを上書きしない。
+
+### 7.1.2 World Integration Segmentの処理順
+
+1. Logical Tick内のWorld Substep境界、Force開始 / 終了、Impulse時刻を昇順に統合する。TOIが検出された場合は現在SegmentをTOI時刻で分割する。等しい時刻のEventはEvent ID順でまとめ、重複境界を除去する。隣接する境界時刻が同一または数値的に逆転した場合は同一境界へ統合し、dt_segment <= 0のSegmentを発行しない。
+2. Segment開始時にPhysics Position / VelocityとAnimation Input VersionをSnapshotする。Segment境界でXPBD Lambda / Contact Lambda / Impact Scratchを初期化する。
+3. Animation TargetとAnimation VelocityをSegment開始・終了時刻で取得する。必要なSample Bracketが揃わない場合はBLOCKED_BY_INPUTとし、予測へ進まない。
+4. Segment開始位置から各Force DescriptorのFalloff Weightを計算する。Gravity / ForceはSegment内で一定とし、ImpulseはSegment開始時刻のEvent IDを確認して一度だけ消費する。RetryはSnapshotと同じEvent Cursorから再生し、破棄されたWorking Stateへの適用を重複累積させない。
+5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
+6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
+7. XPBD Stretch / Shear / Bend / Animation Tracking / Contactを規定反復数だけ解く。Soft Body FEMはSegment開始時評価力に基づく予測状態を使い、Contact位置補正は同じ参加頂点へ双方向に作用させる。
+8. TOIがSegment内部にある場合は予測Destinationを破棄し、Segment開始SnapshotからTOIまでのprefixを同じ共通積分規則で再実行する。TOI位置でContact Constraintを解き、Dynamic VertexのVelocityを区間変位から再構築した後、摩擦 / 反発Impulseを一度だけ適用する。Fixed / Kinematic VertexはTOI時刻のAnimation Velocityを維持する。
+9. TOI後の残時間がある場合、Impact後のPosition / Velocityを次Segment開始状態にして処理を繰り返す。TOI分割上限または予算を超えた場合はLogical Tick全体を未Commitにし、同じTick Input / Source StateからRetryする。
+10. TOIがないSegmentはContact位置解決後にDynamic Vertex Velocityを区間変位から再構築し、Fixed / Kinematic VelocityはAnimation Interfaceの指定値のままにする。摩擦 / 反発Impulseを適用した後のVelocityは次Segmentへ保持する。
+
+Soft BodyとClothの内部解法は異なるが、時間境界・Force / Impulse Eventの意味・Kinematic Velocity所有者はWorld共通である。各Substepの単純な1回更新へ戻す実装、Solverごとの異なるSegment時間、固定頂点への差分Velocity上書きは禁止する。
 
 ### 7.2 Stretch
 
@@ -495,7 +550,7 @@ StretchはGraph Coloringを基本方式とする。同色内の制約は頂点�
 Clothの追従は頂点ごとのXPBDアタッチメント制約とする。固定頂点は逆質量0として目標位置へ直接固定する。柔軟頂点は次のベクトル制約を持つ。
 
     C_animation = position - animation_target
-    alpha_tilde = alpha_animation / (delta_t * delta_t)
+    alpha_tilde = alpha_animation / (dt_segment * dt_segment)
 
 各軸に対してXPBD更新を行い、lambda_animationはfloat3で頂点単位にSegment Scratchへ保持する。各World共通Integration Segment開始時にリセットし、そのSegmentの反復中だけ維持する。Animation TrackingはStretch / Shear / BendのComplianceと独立して調整する。
 
@@ -718,16 +773,16 @@ EE:
     tau_next = tau + delta_tau
     safety = 0.8  // 初期値
 
-d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>delta_t_substepかつ終端距離がrより大きければ当該サブステップでは接触なし。Conservative Advancementは最大32反復を初期上限とする。`tau_tolerance = max(1e-7 s, 1e-5 * delta_t_substep)`、`distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)`を初期値とし、L_refは当該Physics Meshのmedian positive rest-edge lengthとする。`safety=0.8`は維持する。停止判定は距離条件または保守的区間No-Hit条件で行い、tau_tolerance到達だけでNo-Hitにしない。進行不能または32反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
+d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終端距離がrより大きければ当該Segmentでは接触なし。Conservative Advancementは最大32反復を初期上限とする。`tau_tolerance = max(1e-7 s, 1e-5 * delta_t_substep)`、`distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)`を初期値とし、L_refは当該Physics Meshのmedian positive rest-edge lengthとする。`safety=0.8`は維持する。停止判定は距離条件または保守的区間No-Hit条件で行い、tau_tolerance到達だけでNo-Hitにしない。進行不能または32反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
 
 ### 11.4 TOI処理
 
-同一サブステップ内の最小TOIをGPU Reductionで求める。TOI時刻は秒単位のtauで扱い、0 <= tau <= delta_t_substepとする。衝突判定用の軌道はサブステップ開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/delta_t_substep、x(tau)=x_start+tau*path_velocityと定義する。v_boundはこのpath_velocityの速度上限から求める。Conservative Advancementの進行量は次とする。
+同一World共通Substep内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。衝突判定用の軌道は現在Segment開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/dt_segment、x(tau)=x_start+tau*path_velocityと定義する。v_boundはこのpath_velocityの速度上限から求める。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
 
-接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分する。Clothなど位置ベースの系では、この区間の変位から接触前速度を再構築する。Soft Bodyは積分器が保持するtau時点の速度を使う。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度から残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
+接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分する。Soft Body / Clothともに同じSegment積分規則でtauまで再積分し、位置制約解決後はDynamic Vertexの区間変位から接触前Velocityを再構築する。Fixed / Kinematic Vertexはtau時刻のAnimation Velocityを維持する。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度を次Segmentの開始Velocityとして、残時間dt_segment-tauをWorld全体で再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
 
 1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_world_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前の区間とTOI以後の残区間はWorld共通Segmentである。Soft Body / Cloth / Animation Tracking / Contact対象の全てをSubstep Snapshotから同じtauだけ再積分し、TOI位置でImpactを適用した後、全参加Solverを同じ残時間だけ再積分する。Solverごとに時間を止める・別のtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
