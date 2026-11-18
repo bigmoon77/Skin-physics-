@@ -517,9 +517,9 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 
 ### 5.4 Animation / Kinematic Inputの時間整合
 
-CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Weight / Root Transform Sample / Kinematic Collider Transform Sample境界を抽出し、Span単位のimmutable Animation Trajectory Packetを生成する。各Spanは1つの補間区間だけを含み、GPUが任意のtauで評価できるBone Transform係数・Blend Weight係数・Root Transform係数・解析微分を含む。set_kinematic_pose_sampleで登録された各ColliderはStable Collider ID / Span Sample Pair / Translation Linear係数 / Shortest-Arc Slerp Quaternion / Linear・Angular Velocity / Maximum Radius / Conservative Boundsを持つCollider Trajectory Recordへ変換する。入力Packet / Collider RecordはTick ReservationとともにVersion固定し、Retryで再利用する。
+CPU Animation EvaluatorはLogical Tick候補の有効なClip Key / Loop / Blend Weight / Root Transform Sample / Kinematic Collider Transform Sample境界を抽出し、Span単位の暫定Animation Trajectory Packetと境界表を生成する。PacketはRender / Query Slot確保後のTick Reservation作成時にImmutable Versionとして確定する。各Spanは1つの補間区間だけを含み、GPUが任意のtauで評価できるBone Transform係数・Blend Weight係数・Root Transform係数・解析微分を含む。set_kinematic_pose_sampleで登録された各ColliderはStable Collider ID / Span Sample Pair / Translation Linear係数 / Shortest-Arc Slerp Quaternion / Linear・Angular Velocity / Maximum Radius / Conservative Boundsを持つCollider Trajectory Recordへ変換する。入力Packet / Collider RecordはTick ReservationとともにVersion固定し、Retryで再利用する。
 
-絶対World Simulation Time、Tick Reservation時刻、Clip Local Time、Span境界はCPU上でdouble管理する。GPU Shader Model 5へ渡すPacketはdoubleを含まず、uint32 / floatのみの固定幅Recordとする。GPUは絶対World TimeをfloatへCastしない。各Spanの開始時点の正規化座標u_segment_startと相対秒tau [s]から、u_tau = clamp(u_segment_start + tau * inverse_span_duration, 0, 1)を算出する。TOIで残Segmentを始める場合はGPU上でu_segment_startをu_tauへ更新し、CPU Readback / 再Uploadを挟まない。
+絶対World Simulation Time、Tick Reservation時刻、Clip Local Time、Span境界はCPU上でdouble管理する。GPU Shader Model 5へ渡すPacketはdoubleを含まず、uint32 / floatのみの固定幅Recordとする。GPUは絶対World TimeをfloatへCastしない。各Spanの開始時点の正規化座標u_segment_startとSegment開始からの相対秒tau [s]から、u_tau = clamp(u_segment_start + tau * inverse_span_duration, 0, 1)を算出する。TOIで残Segmentを始める場合はGPU上でu_segment_startをu_tauへ更新し、CPU Readback / 再Uploadを挟まない。
 
 GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 64 bytes、animation_channel_gpu_record 208 bytes、animation_blend_gpu_record 96 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
 
@@ -865,6 +865,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.7: SM5向け固定幅GPU Packet ABI / Span-local float time mapping、最大2 Track Blend / BlendVelocity、Kinematic Collider Arbitrary-tau Record、bounded Segment Scheduler / preflightを追加。
 - 1.6: 任意tauを評価できるGPU Animation Trajectory Packet / Span契約、最大2 Track Blend / BlendVelocity、非応答ContactのW_eff判定、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limitを追加。
 - 1.6: GPU Animation Trajectory Packet / Spanと任意tau評価、最大2 Track Blend / BlendVelocity、Contact有効逆質量Guard、Coupled Projected Jacobi Impulse、Contact Temporal Quality LimitをRuntime Descriptor / Gateへ反映。
 - 1.5: Contact Position補正とContact前Velocity / Impulse処理の分離、Animation Trajectory微分の正本化、Kinematic CCDの保守的Chord Bound、GPU Memory Budgetの0 sentinel修正、Cloth Temporal Quality Limitを追加。
