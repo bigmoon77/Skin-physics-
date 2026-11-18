@@ -788,9 +788,11 @@ TOIが確定したら、検出に使った離散軌道と同一の位置・速�
     x_path(tau) = position_segment_start + tau * path_velocity
     v_path(tau) = path_velocity
 
-このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic Vertexはtau時刻のAnimation Target / Velocityを使用する。
+このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic VertexのCCD幾何PathもSegment開始 / 終了Animation Targetを結ぶChordとし、kinematic_path_velocity=(animation_target_end-animation_target_start)/dt_segment、x_kin_path(tau)=animation_target_start+tau*kinematic_path_velocityとする。Kinematic VelocityとしてはAnimation Interfaceがtau時刻に評価したTarget Trajectory微分を維持し、Chord速度はBroadphase / CAの幾何Path速度に限って使う。
 
 prefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation TrackingおよびTOI Contact Constraintを解く。Soft Bodyはprefix軌道位置を初期状態としてTOI Contactを解き、Contact位置補正を適用する。Dynamic Vertexは位置補正後に(x_solved - x_segment_start) / tauで接触直前Velocityを再構築する。Fixed / Kinematic VertexはAnimation Velocityを維持する。続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。
+
+Kinematic Animation CurveとCCD Chordの差を抑えるため、各SegmentでAnimation Target Curveをu={0.25, 0.5, 0.75}の時刻で評価し、Chord Positionとの差の最大値をkinematic_path_deviationとして計測する。初期許容値はdistance_toleranceとする。超過した場合は最大8段の決定的なSegment細分化を行い、各子Segmentで再評価する。深度8でも許容値を満たさない場合はCCDUnresolvedとしてTickをCommitしない。Animation VelocityはChord速度へ置換せず、各TOI時刻のTarget Trajectory微分を維持する。Run Manifestへ最大偏差・細分化回数を記録する。
 
 残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
 
