@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v1.6）
+# Skin Physics 設計閉鎖書（v1.7）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
 - 基本設計: [basic_design.md](basic_design.md) v1.5
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.6
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.3
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.7
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.4
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -181,6 +181,14 @@ Force / Impulseの空間分配:
 - ForceはN単位の方向付きVectorをF_i=w_i*F_totalとしてSegment全体へ作用。Force start/endでWorld Segmentを分割し、F_i*dt_segmentだけ運動量へ加える。
 - ImpulseはN*s単位の方向付きVectorをJ_i=w_i*J_eventとしてSegment開始で一度だけ適用。Event IDでRetry中の二重処理を防ぐ。
 - radiusは正の有限値。サポート対象0または重み総和epsilon以下はNO_FORCE_TARGET。
+
+### 2.9 CCD離散軌道とTOI prefixの一致
+
+- §6.6のSemi-implicit Eulerで得たSegment終端Velocityをpath_velocityとし、Dynamic VertexのCCD pathをx_path(tau)=x_segment_start+tau*path_velocityと定義する。
+- Positive-Time TOIではこの同一pathのx_path(tau) / v_path(tau)をprefix状態として使う。dt=tauの再Predictionで別軌道を生成しない。
+- TOI位置でtauをXPBD Integration Segment時間として内部Constraint / Contact Constraintを解き、Dynamic VertexのVelocityを補正後位置差分から再構築する。Fixed / Kinematic VelocityはAnimation Interface指定値を維持する。
+- Impact後の残時間は新しいIntegration Segmentとして開始し、FEM / Animation Tracking / External Forceを新しい開始状態から評価する。
+- TOI candidate pathとTOI prefix stateの一致、TOI時のCompliance時間、Impact後の残Segment継続をFixtureで検証する。離散軌道近似の精度範囲はNumerical Acceptance Profileで校正する。
 
 ### 2.8 Integration Segment積分・減衰・Kinematic Velocity
 
