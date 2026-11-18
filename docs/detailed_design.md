@@ -387,7 +387,7 @@ Compliance alphaは制約関数の単位に依存する。エディタで扱う�
 
 ### 7.1.1 Cloth動力学予測・外力適用
 
-Clothの予測は各World共通Substepの開始状態から1回だけ行う。全外力はワールド空間の力として扱い、Soft Body / ClothのPhysics Vertexへ同じ空間Falloff規則で分配する。Vertex iのRest Lumped Massをm_i、作用点からの距離をr_i、Force半径をRとする。Rは正の有限値を必須とし、サポート内頂点に対して、
+Clothの予測は各World共通Substepの開始状態から1回だけ行う。重力は一様加速度としてPhysics Vertex iへmass_i * gravityで適用する。ユーザーForce / Impulse Descriptorはワールド空間の作用点・方向・半径を持ち、Soft Body / ClothのPhysics Vertexへ同じ質量測度付きFalloffで分配する。頂点iのRest Lumped Massをm_i、Segment開始位置から作用点までのワールド空間距離をr_i、Force半径をRとする。Rは正の有限値を必須とし、サポート内頂点に対して、
 
     s_i = r_i / R
     phi(s_i) = (1 - s_i)^4 * (4 * s_i + 1)   // 0 <= s_i < 1
@@ -398,7 +398,12 @@ Clothの予測は各World共通Substepの開始状態から1回だけ行う。�
 
 ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Forceイベントの開始・終了時刻とImpulseイベント時刻はWorld共通Segment境界へ追加し、Segment内ではForceの有効状態が一定になるようにする。Impulseイベントは指定時刻を含むSegment開始境界で一度だけ適用する。SegmentはWorld共通で分割し、イベントを次Substepまで遅延・重複適用しない。
 
-各Vertexへ分配された瞬間ImpulseをJ_i = w_i * J_event、Substep内で有効な継続ForceをF_i = w_i * F_totalとする。Force開始・終了境界でSegmentを分割するため、ForceはSegment全体へ適用する。Clothの予測速度・位置は次で求める。
+各外部イベントeは対象Filter内で独立にw_i,eを正規化する。Substep開始状態でのVertex iの合計入力は、
+
+    F_i = m_i * gravity + sum_e(w_i,e * F_total_e)
+    J_i = sum_e(w_i,e * J_event_e)
+
+とする。Force開始・終了境界でWorld共通Segmentを分割するため、ForceはSegment全体へ適用する。ForceはF_i * dt_segmentだけ運動量へ加え、ImpulseはJ_iだけ一度加える。両者を同じForceへ変換して二重加算しない。Clothの予測速度・位置は次で求める。
 
     v_i_star = exp(-damping_rate_i * dt_segment)
              * (v_i + inverse_mass_i * (F_i * dt_segment + J_i))
