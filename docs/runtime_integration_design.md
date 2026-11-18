@@ -297,7 +297,9 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
 | world_desc | minimum_substeps / maximum_substeps | World共通Substep数の下限 / 上限。初期値1 / 128。超過時はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
-| world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。Soft Body CFL / Trackingの制限と合わせてN_worldを決める |
+| world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。FEM CFL / Tracking / Cloth Quality Limitと合わせてN_worldを決める |
+| world_desc | enable_cloth_temporal_quality_limit | Cloth拘束振動数ベースの時間品質上限を有効化。初期値true。XPBDの安定保証とは扱わない |
+| world_desc | cloth_temporal_quality_factor | dt_limit_cloth_quality = cloth_temporal_quality_factor / omega_cloth_max。初期値0.2、正の有限値 |
 | world_desc | render_binding_slots (derived) | maximum_in_flight_ticks + 1。Runtimeが作成し、Hostは変更できない |
 | world_desc | maximum_steps_per_advance | CPU submission budget。未処理tickはAccumulatorに保持 |
 | world_desc | memory_budget_bytes | World単位のResource総量上限。0はRuntime全体上限を継承。正値はWorld所有Resourceの合計へ適用 |
@@ -317,9 +319,9 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | animation_playback_desc | clip_index / time / speed / weight / loop | asset::model内animation_clipの選択、再生時刻、倍率、Blend重み、Loop |
 | animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocityの選択 |
 | force_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
-| force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。正のRadius必須。Mass-weighted Falloffで分配 |
+| force_desc | position / direction / magnitude / radius / duration / start_time / end_time | ForceはN、半径m、継続時間s。start_time / end_timeはWorld Simulation Time原点からの絶対秒。正のRadius必須。Mass-weighted Falloffで分配 |
 | impulse_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
-| impulse_desc | position / direction / impulse_magnitude / radius / event_time | ImpulseはN·s。瞬間イベントとして一度だけ適用 |
+| impulse_desc | position / direction / impulse_magnitude / radius / event_time | ImpulseはN·s。event_timeはWorld Simulation Time原点からの絶対秒。瞬間イベントとして一度だけ適用 |
 | advance_report | submitted_tick_count / pending_tick_count / in_flight_tick_count | 今回の受付・未送信・GPU未完了を分離 |
 | advance_report | render_binding_backpressure / capacity_blocked | Render Slot leaseまたはGPU Capacityに起因するSubmission停止理由 |
 | advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
