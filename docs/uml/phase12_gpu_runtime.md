@@ -122,6 +122,34 @@ stateDiagram-v2
 
 The CPU-observed completed time advances only from the contiguous COMMITTED tick prefix. Render Binding exposes committed data only.
 
+## 5. In-flight predecessor dependency
+
+```mermaid
+sequenceDiagram
+    participant CPU as Runtime CPU Scheduler
+    participant GPU as GPU Tick Control
+    participant N as Tick N Passes
+    participant N1 as Tick N+1 Passes
+
+    CPU->>GPU: Immutable Plan N (expected predecessor = N-1)
+    GPU->>N: tick_begin_control validates predecessor + state generation
+    N->>GPU: Commit Control
+    alt Tick N commits
+        GPU->>GPU: committed_sequence = N; advance state_generation
+        CPU->>GPU: Immutable Plan N+1 (expected predecessor = N)
+        GPU->>N1: gate matches; execute from committed generation N
+    else Tick N rejects or blocks
+        GPU->>GPU: retain previous committed sequence / generation
+        CPU->>GPU: previously submitted Plan N+1 reaches tick_begin_control
+        GPU-->>N1: BLOCKED_BY_PREDECESSOR; no Physics State read/write
+        CPU->>GPU: replay Tick N from same snapshot
+        N->>GPU: successful Commit N
+        CPU->>GPU: resubmit Tick N+1 with new predecessor generation
+    end
+```
+
+Every budgeted Physics Pass verifies the immutable Tick Plan / scheduler gate before touching Physics State. Commit failure must leave the committed State Set and its generation unchanged. Later submitted ticks are replayed only after their predecessor commits.
+
 ## 5. Key implementation invariants
 
 1. A Logical Tick is the smallest GPU Commit transaction.
