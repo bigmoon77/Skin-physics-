@@ -195,6 +195,7 @@ Force / Impulseの空間分配:
 
 - §6.6のSemi-implicit Eulerで得たSegment終端Velocityをpath_velocityとし、Dynamic VertexのCCD pathをx_path(tau)=x_segment_start+tau*path_velocityと定義する。
 - Positive-Time TOIではこの同一pathのx_path(tau) / v_path(tau)をprefix状態として使う。dt=tauの再Predictionで別軌道を生成しない。
+- Fixed / Kinematic VertexのCCD幾何PathはSegment端点Animation TargetのChordを使用する。kinematic_path_deviationはu={0.25, 0.5, 0.75}の曲線評価点とChordの差の最大値とし、distance_toleranceを超えたら最大8段まで決定的にSegment細分化する。上限後も超過する場合はCCDUnresolved。Kinematicの速度にはtau時刻のAnimation Target Trajectory微分を使い、Chord速度へ置換しない。
 - TOI位置でtauをXPBD Integration Segment時間として内部Constraint / Contact Constraintを解き、Dynamic VertexのVelocityを補正後位置差分から再構築する。Fixed / Kinematic VelocityはAnimation Interface指定値を維持する。
 - Impact後の残時間は新しいIntegration Segmentとして開始し、FEM / Animation Tracking / External Forceを新しい開始状態から評価する。
 - TOI candidate pathとTOI prefix stateの一致、TOI時のCompliance時間、Impact後の残Segment継続をFixtureで検証する。離散軌道近似の精度範囲はNumerical Acceptance Profileで校正する。
