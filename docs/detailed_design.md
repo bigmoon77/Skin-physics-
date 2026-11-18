@@ -717,7 +717,7 @@ TOI ContactはTOI prefixで同じ順序を使い、Impact Impulse適用後にimp
 3. Rest Poseの面法線 / Hinge Binormalを現在の局所変形基底で写した参照方向。
 4. 相対速度ベクトル。速度がepsilon以下の場合は利用しない。
 
-候補法線はContactの正規向き（VTは三角形Bから頂点A、EEはCanonical PairのAからB）へ符号を統一する。候補間で向きが矛盾する場合は前回法線との内積で連続性を優先する。上記を適用しても法線が定まらない、または退化幾何によりNarrowphaseの距離・勾配が有限に計算できない場合はCONTACT_GEOMETRY_UNRESOLVEDとしてLogical TickをCommitしない。Stable IDから任意軸を生成して押し出す処理は禁止する。
+候補法線はContactの正規向き（VTは三角形Bから頂点A、EEはCanonical PairのBからA）へ符号を統一する。候補間で向きが矛盾する場合は前回法線との内積で連続性を優先する。上記を適用しても法線が定まらない、または退化幾何によりNarrowphaseの距離・勾配が有限に計算できない場合はCONTACT_GEOMETRY_UNRESOLVEDとしてLogical TickをCommitしない。Stable IDから任意軸を生成して押し出す処理は禁止する。
 
 Contact Cacheに法線があってもMesh Topology / Contact Key / Patch Generationが変化した場合は流用しない。無効Cacheを検出した場合は再評価し、失敗すればUnresolvedとする。
 
@@ -927,7 +927,7 @@ Test Environmentは次の操作を提供する。
 - Time Scale: 実時間DeltaをAccumulatorへ加える倍率。固定物理時間刻み自体は変更しない。
 - Fixed Delta Time: シミュレーションの基本時間刻み。
 - Gravity: 重力ベクトルを変更する。
-- Impulse / Force: kind（instant impulse / sustained force）、位置（m）、方向（正規化ベクトル）、強度、正の半径（m）、継続時間（s）、開始時刻または開始Stepを指定する。Impulseの強度単位はN*s、ForceはNとし、Impulseは指定時刻のWorld共通Segment境界で一度だけ適用し、Forceは指定時間と各Substep Segmentの重なり時間に応じて積分する。空間分配は§7.1.1の質量測度付きFalloffで行い、対象World / Model / Mesh範囲をDescriptorで明示する。
+- Impulse / Force: kind（instant impulse / sustained force）、位置（m）、方向（正規化ベクトル）、強度、正の半径（m）、継続時間（s）、World Simulation Time原点からの絶対開始時刻start_timeを指定する。Forceのend_timeはstart_time + durationから導出し、Descriptorで二重指定しない。Impulseはevent_timeの絶対時刻を持ち、duration=0としてWorld共通Segment境界で一度だけ適用する。Impulseの強度単位はN*s、ForceはNとし、Forceは指定時間と各Integration Segmentの重なり時間に応じて積分する。空間分配は§7.1.1の質量測度付きFalloffで行い、対象World / Model / Mesh範囲をDescriptorで明示する。
 - Animation: Clip、再生時刻、速度、Blend、Discontinuity Policyを指定する。
 
 Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。World内のSubstep数はLogical Tick開始時に一度決定し、Soft Body / Cloth / Contactが同一Substep時刻・同一dtを使う。§6.8で定義したWorld共通Substepをv1の唯一の時間分割方式とする。
@@ -1151,14 +1151,14 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
-- 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
 - 1.8: Contact Position correctionとContact前Velocity / Restitution Impulseを分離し、Impact後Velocityを再構築で上書きしないPass順を定義。Animation Target Velocityの唯一の正本、Kinematic CCDの保守的Chord偏差Bound、Cloth Temporal Quality Limit、World absolute Event Timeを追加。
 - 1.7: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時のXPBD Segment時間、Impact後残Segmentの再評価を明文化。
 - 1.6: Integration Segment単位のSoft Body / Cloth予測、線形粘性減衰の速度積分、Fixed / Kinematic Velocityの維持、TOI時間変数とSegment Snapshotの整合を明文化。
 - 1.5: World共通Substep、Cloth予測・Force / Impulse分配、Contact Patch品質閾値、退化Contact法線決定、Stackless Morton LBVH構築を明文化。
+- 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
 - 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
-- 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
+- 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
 
 ## 22. GPU Runtime / Library Integration（v1.8）
