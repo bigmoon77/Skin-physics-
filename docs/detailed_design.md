@@ -435,7 +435,7 @@ Clothの予測はWorld共通Integration Segmentごとに1回行う。World Subst
 
 とする。s_i >= 1の頂点はq_i=0。質量はSoft Bodyの四面体Lumped Mass、Clothの三角形Lumped Massから得る。sum_j(q_j)は同じForce Descriptorの対象World / Model / Mesh範囲内で動的・固定を含む全サポート頂点について求める。これによりDescriptorのForce / Impulse合計量を頂点数やMesh解像度によらず保存する。固定頂点へ配分された分は拘束反力として扱う。サポート頂点が0、または重み総和が閾値以下の場合はNO_FORCE_TARGETを記録し、そのEventを適用しない。
 
-ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Force Eventの開始・終了時刻とImpulse Event時刻はWorld共通Segment境界へ追加する。Segment時間区間は半開区間[t_segment_start, t_segment_end)として扱い、ForceはSegment内で有効状態を一定にする。Impulseは時刻を含むSegmentの開始境界で一度だけ適用する。Logical Tick終端と一致するEventは次のLogical Tick開始境界に属する。イベントIDとTick Reservation内の消費記録を保持し、Retry / TOI再積分で同じImpulseを二重適用しない。0時間または負時間のSegmentを生成しない。
+ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Force Eventの開始・終了時刻とImpulse Event時刻はWorld共通Segment境界へ追加する。Segment時間区間は半開区間[t_segment_start, t_segment_end)として扱い、ForceはSegment内で有効状態を一定にする。Impulseは時刻を含むSegmentの開始境界で一度だけ適用する。Logical Tick終端と一致するEventは次のLogical Tick開始境界に属する。イベントIDとTick Reservation内の消費記録を保持し、Retry / TOI prefix構成で同じImpulseを二重適用しない。0時間または負時間のSegmentを生成しない。
 
 各外部Event eは対象Filter内で独立にw_i,eを正規化する。Segment開始時のPhysics Vertex iへの入力は、
 
