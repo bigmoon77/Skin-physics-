@@ -535,8 +535,8 @@
   ],
   "gpu_validation_environment": "Windows x64 CI uses D3D11 WARP for shader compilation, dispatch and readback correctness. WARP timings are not physical-GPU performance measurements.",
   "last_verified_ci": {
-    "commit": "706f9a06983efca052fa972901f814ccb5f972c4",
-    "workflow_run_id": 44011601086,
+    "commit": "36dab21d16ac3298d56a86d10a9d07262fae6d21",
+    "workflow_run_id": 44327398017,
     "configuration": "Release x64",
     "result": "success"
   },
