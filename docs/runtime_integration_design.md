@@ -319,7 +319,7 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | animation_playback_desc | clip_index / time / speed / weight / loop | asset::model内animation_clipの選択、再生時刻、倍率、Blend重み、Loop |
 | animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocityの選択 |
 | force_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
-| force_desc | position / direction / magnitude / radius / duration / start_time / end_time | ForceはN、半径m、継続時間s。start_time / end_timeはWorld Simulation Time原点からの絶対秒。正のRadius必須。Mass-weighted Falloffで分配 |
+| force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。start_timeはWorld Simulation Time原点からの絶対秒。end_timeはstart_time + durationの導出値でDescriptorに重複保持しない。正のRadius必須。Mass-weighted Falloffで分配 |
 | impulse_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
 | impulse_desc | position / direction / impulse_magnitude / radius / event_time | ImpulseはN·s。event_timeはWorld Simulation Time原点からの絶対秒。瞬間イベントとして一度だけ適用 |
 | advance_report | submitted_tick_count / pending_tick_count / in_flight_tick_count | 今回の受付・未送信・GPU未完了を分離 |
