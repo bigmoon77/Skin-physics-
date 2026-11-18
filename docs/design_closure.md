@@ -173,12 +173,14 @@ v1ではWorld内のSoft Body / Cloth / Contact / Animation Trackingが同一時�
     dt_limit_world = min(all FEM CFL limits,
                          all Animation Tracking limits,
                          all Cloth Temporal Quality limits,
-                         contact_max_substep_delta_time,
+                         contact_max_substep_delta_time if > 0 else +infinity,
                          world_max_substep_delta_time if > 0 else +infinity)
     N_world = max(minimum_substeps, ceil(fixed_delta_time / dt_limit_world))
     dt_world = fixed_delta_time / N_world
 
-を算出する。Cloth Temporal Quality LimitはXPBDの安定保証ではなく、拘束振動数omega_c = sqrt(k_c * sum_i(inverse_mass_i * |gradient_i|^2))に基づく品質上限である。Runtime Descriptorのenable_cloth_temporal_quality_limitは初期値true、cloth_temporal_quality_factorは初期値0.2とする。dt_limit_cloth_quality = cloth_temporal_quality_factor / max(omega_cloth_max, epsilon_omega)とし、解像度・反復収束試験で校正する。enable_cloth_temporal_quality_limit=falseの場合だけその項を無限大とする。Contact Compliance 0に固有振動数を割り当てず、contact_max_substep_delta_timeで時間品質を管理する。初期値は1/120 s、0は明示無効。無効時はworld_max_substep_delta_timeを適用する。Contact Temporal Quality LimitもXPBDの安定保証ではなく品質上限とする。
+を算出する。contact_max_substep_delta_time=0およびworld_max_substep_delta_time=0は+infinityとして扱う。Cloth Temporal Quality LimitはXPBDの安定保証ではなく、拘束振動数omega_c = sqrt(k_c * sum_i(inverse_mass_i * |gradient_i|^2))に基づく品質上限である。Runtime Descriptorのenable_cloth_temporal_quality_limitは初期値true、cloth_temporal_quality_factorは初期値0.2とする。dt_limit_cloth_quality = cloth_temporal_quality_factor / max(omega_cloth_max, epsilon_omega)とし、解像度・反復収束試験で校正する。enable_cloth_temporal_quality_limit=falseの場合だけその項を無限大とする。Contact Compliance 0に固有振動数を割り当てず、contact_max_substep_delta_timeで時間品質を管理する。初期値は1/120 s、0は明示無効。無効時はworld_max_substep_delta_timeを適用する。Contact Temporal Quality LimitもXPBDの安定保証ではなく品質上限とする。
+
+Clip Key / Loop / Blend Weight / Root Transform、Force / Impulse境界を含むLogical Tick内の予定Segment総数はmaximum_integration_segments_per_tick（uint32、初期値512）以下とする。World Substep境界もSegment数へ含める。TOIで残Segmentを作るたびに実行済みSegment数を増分し、上限超過時はそのSegmentをDispatchせずTick Reservationを保持してWORK_BUDGET_EXCEEDEDとする。異なる時刻のKey / Event境界は結合・省略しない。
 
 制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。world_max_substep_delta_timeは全Solverへ適用する共通dt上限とする。N_worldが上限を超えた場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitせずReservationを保持する。Cloth / Contact XPBD Complianceは各Integration Segmentのdt_segmentを使う。Force / Impulse Event境界とTOIでWorld全体をSegment分割し、全参加Solverを同じSegment時間だけ進める。XPBD LambdaはSegmentごとにResetし、Segment内だけ累積する。
 
@@ -202,8 +204,8 @@ Force / Impulseの空間分配:
 - Dynamic Vertexは線形粘性減衰の区間解を使う。decay=exp(-damping_rate*dt_segment)、g=(1-decay)/damping_rate（damping_rate=0ならdt_segment）として、v_pred=decay*(v_start+inverse_mass*J_segment)+g*inverse_mass*F_segment、x_pred=x_start+dt_segment*v_pred。小さいzでは詳細設計§6.6の級数近似を使う。
 - Fixed / Kinematic VertexはSegment終端Targetと最終Animation Trajectoryの時間微分Velocityを維持する。有限差分による速度代用を行わない。
 - 非接触内部Constraint後にDynamic Contact前Velocityを再構築して保存する。Contact Position correction後のPosition差分をVelocityへ変換しない。Contact Position correctionは幾何補正であり、Restitution Velocityではない。
-- Contact iの有効逆質量W_ii=sum_k(inverse_mass_k*c_ik^2)。W_ii <= epsilon_inverse_massではContact Position / ImpulseをSkipする。epsilon_inverse_mass=max(32*FLT_MIN, 1e-12/mass_reference)、mass_referenceはWorld内Median Positive Dynamic Vertex Mass。
-- Coupled Projected Jacobiは各ContactのNormal Accumulated ImpulseとTangent Vectorを更新し、全Contact ContributionをVertex CSRでGather。Iterations=8、最大16、relaxation=0.5。Normal Complementarity / Tangent Coulomb ConeのProjected Residualが1e-4以下へ収束しない場合はCONTACT_IMPULSE_UNRESOLVED。
+- Contact iの有効逆質量W_ii=sum_k(inverse_mass_k*c_ik^2)。W_ii <= epsilon_inverse_massではContact Position / ImpulseをSkipする。epsilon_inverse_mass=max(32*FLT_MIN, 1e-12/mass_reference_world)、mass_reference_worldはWorld内すべての参加Dynamic Physics VertexのMedian Positive Mass。Dynamic Massが存在しないWorldは全Contactを非応答とする。
+- Coupled Projected Jacobiは各ContactのNormal Accumulated ImpulseとTangent Vectorを更新し、全Contact ContributionをVertex CSRでGather。Iterations=8、最大16、relaxation=0.5。Residualのimpulse_referenceはContact Solverに参加する全Dynamic Vertex Massの中央値 ×（参加Mesh Rest Edge Lengthの中央値 / dt_contact）とする。Normal Complementarity / Tangent Coulomb ConeのProjected Residualが1e-4以下へ収束しない場合はCONTACT_IMPULSE_UNRESOLVED。
 - XPBD LambdaはSegment開始時にResetし、Segment内の反復でのみ保持する。Impact後Dynamic Velocityを残Segmentへ引き継ぎ、同じTOI Segment内で再構築して上書きしない。
 
 ### 2.9 CCD離散軌道とTOI prefixの一致
@@ -240,7 +242,7 @@ FBX / Morph Target / Draco / Meshoptは未対応。Importerは未対応Feature�
 
 ### 3.3 Animation Input
 
-Animation ClipのSTEP / LINEAR / CUBICSPLINE補間をImporter契約に従って保持する。CPUはLogical Tick内のClip Key / Loop / Blend Weight / Root Transform境界ごとにAnimation Trajectory Packetを作成し、GPUはPacketから任意tauのBone Hierarchy / Skin Matrix / 微分 / Physics Vertex Targetを評価する。v1は最大2 Trackの非Additive Blendとし、Translation / ScaleはWeight微分項を含む線形Blend、RotationはHemisphere補正Normalized Linear Blendとその解析微分を使う。TOIはSpan内で発生し、Span BoundaryでWorld Segmentを分割する。Root TransformとKinematic Colliderは時刻付きSampleから評価する。
+Animation ClipのSTEP / LINEAR / CUBICSPLINE補間をImporter契約に従って保持する。Animation Span / Force / Impulse / TOIの境界と最大Segment数は§2.7 / §2.8を正とする。CPUはLogical Tick内のClip Key / Loop / Blend Weight / Root Transform境界ごとにAnimation Trajectory Packetを作成し、GPUはPacketから任意tauのBone Hierarchy / Skin Matrix / 微分 / Physics Vertex Targetを評価する。v1は最大2 Trackの非Additive Blendとし、Translation / ScaleはWeight微分項を含む線形Blend、RotationはHemisphere補正Normalized Linear Blendとその解析微分を使う。TOIはSpan内で発生し、Span BoundaryでWorld Segmentを分割する。Root TransformとKinematic Colliderは時刻付きSampleから評価する。
 
 Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformとし、ScaleはIdentity固定。非一様・負・ゼロScaleや実行中のRoot Scale変更は拒否する。Static Mesh / Mesh Node ScaleはOffline Build時にGeometry / Rest Data / Mass / BindingへBakeする。Bone Scale Animationは正値かつ特異でない成分のみ許可し、負値・ゼロ・符号反転をImport Errorとする。
 
