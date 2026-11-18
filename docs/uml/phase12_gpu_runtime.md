@@ -55,8 +55,8 @@ sequenceDiagram
     S->>G: submit reserved sequence + immutable input snapshot
     G->>G: reserve per-tick Render Candidate Slot
     G->>D: predecessor / State Generation gate
-    G->>D: calculate World common Substep schedule
-    loop each common Substep / TOI Segment
+    G->>D: calculate World common Substep schedule + event boundaries
+    loop each World Integration Segment
         G->>D: sample Animation / Root / Kinematic poses
         G->>D: distribute Force / Impulse events once
         G->>D: Soft Body FEM + Cloth prediction
