@@ -72,16 +72,16 @@ The proposed normalized GPU float32 / CPU double comparison and physical-invaria
 
 ## Phase 12 — GPU Runtime transaction and integration
 
-The Runtime design is specified in `docs/runtime_integration_design.md`; its UML is `docs/uml/phase12_gpu_runtime.md`. These gates connect the existing CPU references and WARP kernels into a production asynchronous GPU Runtime. The gates are planned; they are not claimed complete by the presence of design documents.
+The Runtime design is specified in `docs/runtime_integration_design.md`; the design-closure decisions and review checklist are in `docs/design_closure.md`; its UML is `docs/uml/phase12_gpu_runtime.md`. These gates connect the existing CPU references and WARP kernels into a production asynchronous GPU Runtime. The gates are planned; they are not claimed complete by the presence of design documents.
 
 | Gate | Fixture / test family | Required executable verification | Exit condition |
 |---|---|---|---|
-| R0 Runtime boundary / scheduler | API lifecycle, fixed-step, async status ring | Host-owned Device / Context; single submission thread; Handle generation; advance/poll separation; Pause / Stop / Step / Reset; in-flight limit 1/2/4; non-blocking Query polling; contiguous COMMITTED prefix; no full-state readback | No double-accumulator, stale-handle, query overwrite or false-completion path |
+| R0 Runtime boundary / scheduler | API lifecycle, fixed-step, async status ring | Host-owned Device / Context; single submission thread; Handle generation; advance/poll separation; Pause / Stop / Step / Reset; Fixed Delta変更時のseconds remainder保持; per-World in-flight limit 1/2/4; aggregate Query Ring across Worlds; non-blocking Query polling; contiguous COMMITTED prefix; no full-state readback | No double-accumulator, stale-handle, query overwrite, premature state reuse or false-completion path |
 | R1 Soft Body integration | Existing P06 analytical / WARP tests plus multi-tet fixture | GPU Tet stress / force contribution, Vertex→Tet CSR force Gather, mass integration, CFL substeps, inversion diagnostics, CPU double agreement | Multi-tet force integration and substep path pass with no float Atomic Add |
 | R2 Cloth integration | Existing P05 cloth fixtures | Multi-iteration Stretch Coloring, Shear / Bend Gather Jacobi, same-snapshot evaluation, lambda / position delta identity, substep lambda lifetime | Full cloth iteration scheduler passes and each constraint family meets analytic / FD tolerances |
-| R3 Mixed Collision Runtime | Existing P07 broadphase / VT / EE / overflow fixtures plus mixed Model World | GPU Spatial Hash build / pair generation / dedup; all default Mesh Pair combinations; self-collision adjacency filters; bidirectional correction; contact patch lifecycle; capacity rollback | GPU-produced candidate set contains exhaustive small-scene reference set; no candidate silently dropped |
+| R3 Mixed Collision Runtime | Existing P07 broadphase / VT / EE / overflow fixtures plus mixed Model World | GPU Spatial Hash build / pair generation / dedup; Large Primitive Bucket; all default Mesh Pair combinations; topological 1-ring self-collision filter; bidirectional correction; deterministic up-to-4-point Contact Patch Manifold; capacity growth / rollback | GPU-produced candidate set contains exhaustive small-scene reference set; all required manifold support regions are retained within declared reduction error; no candidate silently dropped |
 | R4 CCD / Initial Repair | Existing P08 point-triangle / initial repair plus moving VT / EE fixtures | Moving VT and EE CA; simultaneous TOI; initial contact; positive-time TOI; impact once; remaining-time reintegration; unresolved rollback | False no-hit = 0; unresolved candidates never commit |
-| R5 Animation / Render Interop | Existing P03 / P09 fixtures plus multi-key / discontinuity fixtures | Multi-key STEP / LINEAR / CUBICSPLINE pose samples; angular motion; substepped Animation Tracking; Teleport policy; Committed-only Render Binding; SRV unbind / generation; Device Loss reset | UV / Color / Material / Index preserved; no solver scratch exposed; no normal-frame Physics Vertex readback |
+| R5 Animation / Render Interop | Existing P03 / P09 fixtures plus multi-key / discontinuity fixtures | Multi-key STEP / LINEAR / CUBICSPLINE pose samples; angular motion; substepped Animation Tracking; missing-pose BLOCKED_BY_INPUT; Teleport policy; Render Candidate validation before Commit; atomic Physics State / Render Slot generation switch; CPU-observed Committed-only Render Binding; SRV unbind / Lease release; Render Ring backpressure / no-overwrite; Device Loss reset | UV / Color / Material / Index preserved; no solver scratch exposed; no slot overwritten while leased / in-flight / unobserved; no normal-frame Physics Vertex readback |
 | R6 Physical GPU performance / memory | Existing P11 profiles plus mixed collision profiles | GTX 1660 SUPER physical GPU pass times, CPU submission, frame time, 2k/8k/32k scaling, candidate/contact/CCD counts, rollback, library allocation and DXGI Budget | Workload results reported with all correctness gates; 3–40 FPS remains an evaluation range, not a universal guarantee |
 
 ### Runtime transaction regression cases
@@ -94,14 +94,33 @@ Add persistent fixture and executable tests for the following state paths before
 4. **CCD unresolved:** Iteration limit is reached. The candidate is not treated as No Hit; the tick is rejected / blocked and time is preserved.
 5. **Out-of-order observation:** A later tick's query completes before an earlier tick. CPU completed time advances only when the earlier committed prefix is complete.
 6. **Query ring pressure:** Fill the ring with delayed queries. Slots are not overwritten and normal polling does not Flush / synchronously wait.
-7. **Render binding generation:** Host retains an AddRef'd Render Binding; World reset / recreation changes generation. Stale binding use is diagnosed and the Host re-acquires the new binding.
+7. **Render binding lease and generation:** Host obtains all Mesh Bindings for one World lease, binds SRVs, draws, unbinds every relevant Graphics / Compute stage, then calls release_render_bindings. AddRef preserves COM object lifetime only and does not extend the slot-content lease. Verify no slot is overwritten before release, Render Ring exhaustion blocks new submission without dropping time, and World / Device / Slot generation mismatch is diagnosed.
 8. **Device loss:** Device Removed blocks new submissions. Recovery rebuilds from validated Asset / Initial State and resets the timeline; no false continuation from lost GPU state is reported.
 9. **Mixed model indexing:** Multiple Model Instances with Soft Body / Cloth / None meshes use unique World Global IDs; collision filters and Render Bindings resolve to the intended mesh ranges.
 10. **No hidden CPU fallback:** Device loss, WARP absence, capacity failure or GPU solver failure never switches the World to CPU physics.
 11. **In-flight predecessor failure:** Submit Tick N and N+1. Force N to reject. Verify N+1 is blocked before any physics buffer access/write, then replay N from the same snapshot and resubmit N+1 with the new committed state generation.
+12. **Contact Patch support manifold:** Use planar face contact, edge contact, corner contact, and a narrow folded cloth fixture. Verify deterministic up-to-4 support point reduction, tie-breaking by Contact Key, correct handling of point/line patches, and no increase beyond the declared penetration / support-region tolerance relative to the unreduced reference.
+13. **Render Candidate / Commit atomicity:** Force Render Candidate geometry validation to fail after Physics solve succeeds. Verify neither Physics State Generation nor Committed Render Slot Generation changes and the prior render binding remains usable.
+14. **Render Ring exhaustion:** Hold the CPU-observed Render Lease while forcing all Candidate Slots to be occupied. Verify the next Tick is not submitted, the Accumulator retains elapsed time, and a new submission proceeds only after Graphics SRV Unbind plus release_render_bindings.
+15. **Multi-World Query Ring:** Create multiple independent Worlds with different in-flight limits. Verify Runtime Query Ring capacity covers the aggregate limits, World Tick Sequences and State Generations remain isolated, and shared Immediate Context submissions remain serialized.
+16. **Pose history gap:** Omit a required Root / Bone / Kinematic sample interval. Verify the affected Tick becomes BLOCKED_BY_INPUT, no stale-pose extrapolation or false velocity is generated, and time remains pending until the interval is supplied.
 
 The existing `fixed_step_controller` and `simulation_step_pipeline` remain synchronous CPU utilities for reference / test environment use. Production GPU Runtime tests must exercise the asynchronous scheduler and GPU commit status separately.
 
 ## Runtime phase exit evidence
 
 For every R0-R6 gate, record the exact commit, CI workflow run, test IDs, GPU adapter/driver, WARP-versus-Hardware mode, expected/observed values, tolerance profile ID/hash, capacity / retry counters and known untested paths. A passing WARP run establishes shader behavior and resource ABI correctness only. A physical-GPU run is required for measured execution time and DXGI memory behavior.
+
+
+## Design closure regression coverage
+
+The v1 defaults and API contracts consolidated in `docs/design_closure.md` must have persistent fixtures before their production kernels are implemented. At minimum, add:
+- broadphase Large Primitive vs regular-cell cross-pair and exact candidate-set fixtures;
+- Contact Patch point / line / plane / folded-surface support-point fixtures;
+- CA tolerance boundary and maximum-iteration Unresolved fixtures;
+- Capacity Growth power-of-two / 1.5x / uint32 overflow / DXGI budget rejection fixtures;
+- Fixed Delta Time change with fractional remainder preservation;
+- multiple Worlds sharing one Runtime Query Ring;
+- Render Candidate validation failure, CPU-observed commit, lease release, and Ring Backpressure fixtures.
+
+Expected results are reviewed and immutable. A failing test must never regenerate its expected result automatically.
