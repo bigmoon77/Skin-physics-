@@ -270,10 +270,47 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         uint32_t flags;
         float span_duration_seconds;
         float inverse_span_duration;
+        float u_segment_start;
         float speed_bound;
         float acceleration_bound;
         float chord_deviation_bound;
         float quaternion_normalization_lower_bound;
+        float reserved0;
+    };
+
+    struct animation_blend_gpu_record
+    {
+        uint32_t source_track_index;
+        uint32_t target_track_index;
+        uint32_t weight_curve_flags;
+        uint32_t reserved0;
+        float4 weight_c0;
+        float4 weight_c1;
+        float4 weight_c2;
+        float4 weight_c3;
+        float duration_seconds;
+        float inverse_duration;
+        float reserved1;
+        float reserved2;
+    };
+
+    struct kinematic_collider_gpu_record
+    {
+        uint32_t stable_collider_id_low;
+        uint32_t stable_collider_id_high;
+        uint32_t span_sample_pair_id;
+        uint32_t flags;
+        float4 translation_start;
+        float4 translation_end;
+        float4 rotation_start;
+        float4 rotation_end;
+        float4 angular_axis_and_angle;
+        float duration_seconds;
+        float inverse_duration;
+        float linear_speed_bound;
+        float angular_speed_bound;
+        float maximum_local_radius;
+        float sagitta_bound;
         float reserved0;
         float reserved1;
     };
@@ -297,6 +334,8 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         float4 scale_c2;
         float4 scale_c3;
     };
+
+animation_span_gpu_record is exactly 64 bytes, animation_channel_gpu_record is exactly 208 bytes, animation_blend_gpu_record is exactly 96 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start; TOI residual Segment updates it by u_tau without CPU Readback.
 
 Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
 
