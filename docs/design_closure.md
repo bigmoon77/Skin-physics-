@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v1.5）
+# Skin Physics 設計閉鎖書（v1.6）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
 - 基本設計: [basic_design.md](basic_design.md) v1.4
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.5
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.2
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.6
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.3
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -172,6 +172,15 @@ Force / Impulseの空間分配:
 - ForceはN単位の方向付きVectorをF_i=w_i*F_totalとしてSegment全体へ作用。Force start/endでWorld Segmentを分割し、F_i*dt_segmentだけ運動量へ加える。
 - ImpulseはN*s単位の方向付きVectorをJ_i=w_i*J_eventとしてSegment開始で一度だけ適用。Event IDでRetry中の二重処理を防ぐ。
 - radiusは正の有限値。サポート対象0または重み総和epsilon以下はNO_FORCE_TARGET。
+
+### 2.8 Integration Segment積分・減衰・Kinematic Velocity
+
+- Soft Body / Cloth / Contact / Animation TrackingはWorld共通Integration Segmentを同じdt_segmentで進める。通常SubstepはForce / Impulse Event境界またはTOIで複数Segmentへ分かれ得る。
+- Segment内のForceは区間開始時に評価し、次Segment境界まで一定とする。Soft BodyのF_segmentはExternal + FEM Internal + Kelvin-Voigt Animation Tracking、ClothのF_segmentはExternal Forceとする。Cloth Animation TrackingはXPBD Attachment Constraintとして解く。
+- ImpulseはSegment開始境界で一度だけ適用し、Forceへ変換しない。Event時間区間は半開区間[t_start, t_end)とし、Logical Tick終端上のEventは次Tick開始へ所属させる。Retry / TOI再積分でEvent IDを二重消費しない。
+- Dynamic Vertexの速度更新は線形粘性減衰 dv/dt = inverse_mass * F_segment - damping_rate * v の区間解を使う。decay=exp(-damping_rate*dt_segment)、g=(1-decay)/damping_rate（damping_rate=0の極限はdt_segment）として、v_pred=decay*(v_start+inverse_mass*J_segment)+g*inverse_mass*F_segment、x_pred=x_start+dt_segment*v_predとする。小さいz=damping_rate*dt_segmentでは詳細設計§6.6の級数近似を使用する。速度は区間内一定Force・線形減衰に対する解、位置は半陰的Eulerである。
+- Fixed / Kinematic VertexはDynamic積分式を使わず、Segment終端Animation Targetとその時間微分Animation Velocityを維持する。位置差分によるVelocity再構築やContact Impulseで上書きしない。Kinematic Velocityは相対速度・摩擦・反発・CCDに使う。
+- XPBD LambdaはSegment開始時にResetし、Segment内の反復でのみ保持する。Impact後のDynamic Velocityを次Segmentへ渡し、Logical Tick全体の始点・終点差分で上書きしない。
 
 ## 3. Asset / Material / Animation
 
