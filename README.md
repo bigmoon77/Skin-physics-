@@ -4,6 +4,8 @@ Skin Physics is a GPU-oriented C++ library for real-time Soft Body and Cloth sim
 
 The repository is being implemented in stages. Asset import, Physics Mesh construction, CPU reference solvers and fixture-based GPU verification kernels are present. A complete production simulation runtime that connects every stage is still in progress; phase status and known gaps are tracked in `tests/fixtures/manifest.json`.
 
+The GPU Runtime / Library integration design is being revised against `docs/requirements.md` 1.1. The design revision is on branch `feature/integrated-gpu-runtime-design`; it does not claim that the production asynchronous Runtime has been implemented. The original `feature/phase1-importer` implementation remains the source baseline.
+
 ## Current implementation
 
 - C++17, Visual Studio solution and project files.
@@ -86,3 +88,21 @@ Persistent inputs and reviewed expected results are in \`tests/fixtures/\`. The 
 Windows CI runs the CPU test suite and D3D11 WARP readback tests. Current WARP coverage includes Render Feedback, all three Cloth XPBD constraint types, positive-J Corotational FEM, VT/EE contacts, host-built BVH traversal and overflow, point/static-triangle CCD, animation/teleport, Paint/Smooth/Average/Erase, Timestamp Query/DXGI telemetry, and a two-pass Compute Pass Graph. Scenario JSON round-trip, Run Result validation/comparison and transactional pipeline behavior are also tested.
 
 WARP is a software D3D11 device. These tests establish shader compilation, dispatch, buffer layout and numerical agreement with references; they are not physical-GPU performance measurements. Phase 2 fTetWild execution, full solver runtime connection, GPU BVH construction, global FEM integration, complete cloth iterations, moving-primitive CCD, editor workflows and physical-GPU performance profiles remain open.
+
+
+## GPU Runtime integration design
+
+The current integration proposal is documented in:
+
+- [Basic design](docs/basic_design.md) 1.2
+- [Detailed design](docs/detailed_design.md) 1.3
+- [GPU Runtime / Library integration](docs/runtime_integration_design.md)
+- [GPU Runtime UML](docs/uml/phase12_gpu_runtime.md)
+- [Numerical acceptance profile](docs/numerical_acceptance_profile_v1.json)
+- [Runtime test gates](docs/testing_strategy.md), R0-R6
+
+The v1 Runtime preserves the Skin Physics model: multiple Mesh Components per World, mixed Soft Body / Cloth, Corotational FEM for Soft Body, XPBD for Cloth and Contact, bidirectional VT / EE collision, and self-collision. The implementation target remains the existing C++17 Visual Studio static library and D3D11. The Host owns the D3D11 Device / Immediate Context; Runtime owns GPU physics resources and asynchronous tick commit state.
+
+This proposal intentionally does not import another project's single-body / 200k-particle / 40-FPS / fixed-1/120-second requirements. Skin Physics keeps its configurable Fixed Delta Time and workload-dependent 3-40 FPS evaluation range.
+
+**Status: independent critical review required.** GPU Runtime integration, global force / contact scheduling, full multi-iteration solver execution, moving VT / EE CCD and physical-GPU performance measurements remain incomplete. WARP validates correctness only; it is not physical-GPU performance evidence.
