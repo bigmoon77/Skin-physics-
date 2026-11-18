@@ -154,8 +154,32 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         struct world_desc;
         struct model_desc;
         struct collider_desc;
-        struct animation_playback_desc;
-        struct animation_blend_desc;
+        struct animation_playback_desc
+        {
+            std::uint32_t clip_index = 0;
+            double time = 0.0;             // Clip Local Time [s]
+            double speed = 1.0;             // d(Clip Time) / d(World Time)
+            bool loop = false;
+            animation_discontinuity_policy discontinuity_policy =
+                animation_discontinuity_policy::preserve_velocity;
+            float w_event = 0.0f;           // BlendVelocity event weight [0,1]
+        };
+
+        struct animation_blend_desc
+        {
+            animation_playback_desc source_track;
+            animation_playback_desc target_track;
+            double blend_start_time = 0.0;  // Absolute World Simulation Time [s]
+            double blend_end_time = 1.0;    // Absolute World Simulation Time [s]
+            float weight_start = 0.0f;
+            float weight_end = 1.0f;
+            float tangent_start = 0.0f;     // d(weight) / d(World Time) [1/s]
+            float tangent_end = 0.0f;       // d(weight) / d(World Time) [1/s]
+            animation_discontinuity_policy discontinuity_policy =
+                animation_discontinuity_policy::preserve_velocity;
+            float w_event = 0.0f;           // BlendVelocity event weight [0,1]
+        };
+
         struct transform;
         struct force_desc;
         struct impulse_desc;
@@ -297,7 +321,25 @@ Handleはindex + generationで識別し、Destroy後のHandle再利用を拒否�
 
 ### 3.4 Descriptor / StatusのField Contract
 
-v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり、実装時にC++17 / 既存Asset PODへ整合させる。
+v1のPublic Descriptorは次の意味を持つ。
+#### Review対象DescriptorのC++17 Field Width / Validation
+
+この節で追加したPublic Fieldの型は次を固定する。Runtime / World Descriptor本体の実装はこのField Widthを使用し、暗黙のsize_t / long / pointer-sized整数をPublic設定値へ使わない。
+
+| Field | C++17 Type | Validation |
+|---|---|---|
+| maximum_integration_segments_per_tick | std::uint32_t | 1以上。初期値512 |
+| contact_max_substep_delta_time | double | finite、0以上。0は無効 |
+| contact_impulse_iterations | std::uint32_t | 1～16。初期値8 |
+| contact_impulse_relaxation | float | finite、0より大きく1以下。初期値0.5 |
+| contact_impulse_residual_tolerance | float | finite、0より大きい。初期値1e-4 |
+| animation_playback_desc::time / speed | double | finite。speed=0はPose停止、負値は逆再生 |
+| animation_playback_desc::clip_index | std::uint32_t | Asset内Clip範囲内 |
+| animation_blend_desc::blend_start_time / blend_end_time | double | finite、end > start |
+| animation_blend_desc::weight_start / weight_end / tangent_start / tangent_end / w_event | float | finite。Weight / w_eventは0～1。Tangentは1/s |
+
+animation_playback_descとanimation_blend_descは標準レイアウトを維持し、独自Pointer / std::string / std::vectorを含めない。RuntimeはAPI呼出し中にDescriptorを検証・コピーし、呼出し元のメモリを後続Dispatchまで保持しない。Public C++静的LibraryのABIは同一Compiler / CRTの組合せを対象とし、異なるCompiler / CRT間のBinary ABI互換性は保証しない。
+
 
 | Descriptor | Field | 意味・制約 |
 |---|---|---|
@@ -311,12 +353,12 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
 | world_desc | minimum_substeps / maximum_substeps | World共通Substep数の下限 / 上限。初期値1 / 128。超過時はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
-| world_desc | maximum_integration_segments_per_tick | Animation Span / Force / Impulse / TOI境界後のLogical Tick内Integration Segment総数上限。初期値512。超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
+| world_desc | maximum_integration_segments_per_tick | uint32_t。Animation Span / Force / Impulse / TOI境界後のLogical Tick内Integration Segment総数上限。初期値512、許容値1以上。超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
 | world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。全Solverへ適用する共通上限 |
-| world_desc | contact_max_substep_delta_time | Contact Temporal Quality Limit。初期値1/120 s、0は明示無効。正値ならFEM / Tracking / Cloth Quality LimitとともにN_worldへ集約 |
-| world_desc | contact_impulse_iterations | Coupled Projected JacobiのIteration数。初期値8、許容範囲1～16 |
-| world_desc | contact_impulse_relaxation | Contact Impulse Jacobi Relaxation。初期値0.5、0より大きく1以下 |
-| world_desc | contact_impulse_residual_tolerance | Contact Impulse正規化Residual上限。初期値1e-4、正の有限値 |
+| world_desc | contact_max_substep_delta_time | double [s]。初期値1/120 s、有限値かつ0以上。0は明示無効（Substep式では+infinity） |
+| world_desc | contact_impulse_iterations | uint32_t。Coupled Projected JacobiのIteration数。初期値8、許容範囲1～16 |
+| world_desc | contact_impulse_relaxation | float。Contact Impulse Jacobi Relaxation。初期値0.5、有限値かつ0より大きく1以下 |
+| world_desc | contact_impulse_residual_tolerance | float。Contact Impulse正規化Residual上限。初期値1e-4、正の有限値 |
 | world_desc | enable_cloth_temporal_quality_limit | Cloth拘束振動数ベースの時間品質上限を有効化。初期値true。XPBDの安定保証とは扱わない |
 | world_desc | cloth_temporal_quality_factor | dt_limit_cloth_quality = cloth_temporal_quality_factor / omega_cloth_max。初期値0.2、正の有限値 |
 | world_desc | render_binding_slots (derived) | maximum_in_flight_ticks + 1。Runtimeが作成し、Hostは変更できない |
@@ -336,9 +378,9 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | collider_desc | thickness / friction / restitution | SI単位・係数範囲は詳細設計のCollision Material定義に従う |
 | collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
 | animation_playback_desc | clip_index / time / speed / loop | 単一Animation Trackの選択、Clip Local Time、Playback Speed、Loop。Blendは別Descriptorで指定 |
-| animation_playback_desc | discontinuity_policy / w_event | PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorの0～1 w_eventでDynamic Velocityを補間 |
+| animation_playback_desc | discontinuity_policy / w_event | enum class / float。PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorの0～1 w_eventでDynamic Velocityを補間 |
 | animation_blend_desc | source_track / target_track | 最大2本のanimation_playback_desc。Additive / 3本以上はv1 Unsupported |
-| animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | World Simulation Time上のCubic Hermite Blend Weight Curve。時間は絶対秒、tangentは1/s。区間外は端点Weightを保持し、Curve全域で0<=w<=1を必須とする |
+| animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | double / float。World Simulation Time上のCubic Hermite Blend Weight Curve。時間は絶対秒、tangentは1/s。区間外は端点Weightを保持し、Curve全域で0<=w<=1を必須とする |
 | animation_blend_desc | discontinuity_policy / w_event | 明示Discontinuity時のPolicy。BlendVelocityはv_after=(1-w_event)*v_before+w_event*v_target(t_event+)。w_eventは0～1 |
 | force_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
 | force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。start_timeはWorld Simulation Time原点からの絶対秒。end_timeはstart_time + durationの導出値でDescriptorに重複保持しない。正のRadius必須。Mass-weighted Falloffで分配 |
@@ -365,7 +407,7 @@ Model / ColliderのCreate / Destroy、Model Transform Sample、Mesh Physics Para
 
 `get_render_binding`の最初の成功呼出しはWorldのHost Render Leaseを取得し、以降の各Mesh取得は同じlease_generationを返す。Releaseは取得時に返されたuint64 lease_generationを必須とし、現在Leaseと一致しない世代はSTALE_HANDLEとして拒否する。GPU Commit済みでもCPUがEvent Query / Status Readbackを確認していないTickのSlotは公開しない。Worldごとに同時に有効なHost Render Leaseは1つ。Hostは全MeshのDrawコマンド（Deferred Contextを使った場合はExecuteCommandListも）をImmediate Contextへ発行し、Position / Normal / Tangent SRVをVS / HS / DS / GS / PS / CS全StageからUnbindしてからrelease_render_bindings(world, lease_generation)を呼ぶ。Release後はSRV PointerもCommand List内の参照も使用しない。COM AddRefはCOM Objectの寿命だけを延長し、Slot内容のLeaseは延長しない。
 
-### 3.4 WorldとMesh Instanceの配置
+### 3.5 WorldとMesh Instanceの配置
 
 Worldは複数Model InstanceとColliderを管理する。各Model Instanceは複数Mesh Componentを持ち、各Mesh Componentにphysics_mode、Collision Filter、Material、Attribute Channelを割り当てる。
 
@@ -482,7 +524,7 @@ CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Wei
 
 ### 5.5 World共通Substep Schedule
 
-詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactのcontact_max_substep_delta_timeを集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。Clip Key / Loop / Blend Weight / Root Transform境界で追加されるIntegration Segmentの総数はmaximum_integration_segments_per_tick以下とし、初期値512。超過時はWORK_BUDGET_EXCEEDEDとしてTick Reservationを保持し、Segmentを結合してKey境界を跨がせない。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitはXPBDの安定保証ではなく、拘束振動数から求める品質上限として扱う。各SubstepはForce / Impulse Event境界およびTOIでIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
+詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactの時間上限（contact_max_substep_delta_time > 0の場合だけ適用）を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。contact_max_substep_delta_time=0は+infinityとして扱う。Clip Key / Loop / Blend Weight / Root Transform、Force / Impulse境界を統合したSegment数をGPU Physics Upload前にCountし、maximum_integration_segments_per_tick（初期値512）を超える場合はWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Keyまたは異なるEvent時刻の境界を結合・省略しない。TOIで新たな残Segmentを作成する際も実行済みSegment数へ加算し、上限を超えたら残SegmentをDispatchせずTick全体を未Commitにする。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitとContact Temporal Quality LimitはXPBDの安定保証ではなく品質上限として扱う。各SubstepはAnimation Span / Force / Impulse / TOI境界でIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -551,12 +593,11 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 
 ### 7.1 World Logical Tick
 
-1. CPU Animation EvaluationでLogical Tick全体のAnimation Trajectory Span Packet / Conservative Boundsを生成し、Kinematic Transform Sampleを収集する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
-2. GPUへAnimation Trajectory PacketをUploadし、Span Coefficient / Bound / Input VersionをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
-3. Render Candidate Slotの空きを確認してReservation。空きがなければそのTickをpendingへ残し、Accumulatorの時間を保持する。
+1. CPU Animation EvaluationでLogical Tick全体のAnimation Trajectory Span Packet / Conservative Boundsを生成し、Kinematic Transform Sampleを収集する。Animation / Force / Impulseの既知境界を統合して予定Segment数をCountし、maximum_integration_segments_per_tickを超えた場合はGPU Physics Passへ進まずWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
+2. Render Candidate Slotの空きを確認してReservation。空きがなければGPU Packet Upload / Dispatchを行わず、そのTickをpendingへ残し、Accumulatorの時間を保持する。
+3. GPUへAnimation Trajectory PacketをUploadし、Span Coefficient / Bound / Input VersionをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
 4. Logical Tick開始SnapshotとTerminal Status初期化。
 5. 各World Integration Segmentについて次を処理する。
-   - Animation Span Packet / Bound Versionを選択する。CAの各Iterationは同一Packetを任意tauで評価し、Kinematic候補のPosition / Velocity / Speed Boundを得る。
    - Segment開始Snapshot / XPBD Lambda / Contact Lambda / Impact Scratch Reset。
    - Animation Span Packet / Bound Versionを選択し、Segment開始・終了時刻のAnimation Target / Animation Velocity / Root / Kinematic Poseを同じGPU Trajectory Evaluatorで取得。
    - Force EventのSegment内有効状態を確定し、Impulse EventをSegment開始でEvent ID単位に一度だけ適用。
@@ -567,7 +608,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
    - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill / Sort / Pair Dedup。
    - VT / EE Narrowphase、Contact Patch Reduction、CCD Conservative Advancement / Minimum TOI Reduction。
    - TOIなし: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
-   - TOIあり: Endpoint Contactを確定せず、Dynamicの離散pathとAnimation Trajectory Packetが評価するtau時刻のKinematic実TrajectoryでTOI prefixを構成し、非接触内部Constraintをtau時間で解く。
+   - TOIあり: Endpoint Contactを確定せず、Dynamicの離散pathとAnimation Trajectory Packetが評価するtau時刻のKinematic実TrajectoryでTOI prefixを構成し、非接触内部Constraintをtau時間で解く。TOI分割後に作成する残SegmentをSegment数へ加算し、maximum_integration_segments_per_tickを超える場合は残SegmentをDispatchせずTickをWORK_BUDGET_EXCEEDEDで未Commitにする。
    - Contact Position Constraint前にDynamic VertexのContact前Velocityを保存する。通常Segmentはdt_segment、TOI prefixはtauで速度再構築する。Fixed / Kinematic VelocityはAnimation Trajectory微分を維持する。
    - Discrete / TOI Contact Position XPBDを解く。Contact位置補正はPositionだけを変更し、保存済みContact前Velocityへ反映しない。
    - 保存したContact前VelocityをCoupled Projected Jacobiへ渡す。Contact Contributionを反復Gatherし、Normal / Coulomb Cone Residualが許容範囲へ収束した場合のみv_finalを確定する。W_ii <= epsilon_inverse_massのContactはNON_RESPONSIVE_CONTACTとしてPosition / ImpulseをSkipする。TOI Contactは成功時にimpact_resolvedを設定する。
@@ -802,7 +843,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 以下を満たした時点でGPU Runtime実装に進める。
 
-- 基本設計1.6 / 詳細設計1.8 / 本書1.5の独立Critical Reviewで重大な設計矛盾が0件。
+- 基本設計1.7 / 詳細設計1.9 / 本書1.6の独立Critical Reviewで重大な設計矛盾が0件。
 - Gate R0-R6の責務、入力、出力、失敗状態、検証Fixtureが追跡可能。
 - Corotational FEM / XPBD Cloth / Contactの式とCPU Double Oracleが一致している。
 - Runtime APIとDevice / Context / Render Bindingの所有権が確定。
