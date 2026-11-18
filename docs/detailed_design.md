@@ -247,9 +247,10 @@ CPU Animation Evaluatorは各Spanについて不変のanimation_trajectory_packe
 - BoneごとのTranslation / Scale補間係数c0..c3、Rotation補間パラメータ、Key境界情報。
 - Blend Weight Curveの係数w0..w3、Discontinuity EventとPolicy。
 - Root TransformのTranslation / Rotation Trajectoryと解析微分。
-- Span全域の保守的速度・加速度Boundを構成するCoefficient Interval。
+- Kinematic ColliderごとのStable Collider ID、Sample Span [t0,t1]、Translation Linear係数、Shortest-Arc Slerp Quaternion、解析的Linear / Angular Velocity、最大Local Radius。
+- Span全域の保守的速度・加速度Boundを構成するCoefficient Interval。Collider BoundにはTranslation Speed、Angular Speed * Maximum Radius、Slerp Sagittaを含める。
 
-GPUはCAの各Iterationで指定されたtauを受け取り、同じPacketを用いてAnimation / Kinematic Transformを評価する。GPU Skinning / Trajectory EvaluatorはBone Local Transform、Bone Global Transform、Skin Matrix、Physics Vertex Target Position / Velocityを同一tauで算出する。TOI位置、Contact Relative Velocity、Tracking Targetが異なるPose Sampleを参照してはならない。Animation PacketはTick ReservationへVersion固定し、Retryでは同一Packetを再利用する。
+GPUはCAの各Iterationで指定されたtauを受け取り、同じPacketを用いてAnimation / Kinematic Transformを評価する。独立Kinematic Colliderはset_kinematic_pose_sampleで受け取った時刻付きTransform SampleをCPUでSpan化し、Translation Linear Interpolation + Shortest-Arc Slerpで評価可能なCollider Trajectory Recordへ変換する。Collider Spanは両端Sampleでbracketし、Span内の位置 / Quaternion / Linear Velocity / Angular Velocityを解析的に算出する。GPU Skinning / Trajectory EvaluatorはBone Local Transform、Bone Global Transform、Skin Matrix、Physics Vertex Target Position / Velocityを同一tauで算出し、Collider Transform Evaluatorは同じtauからCollider Position / Contact Point Velocityを算出する。TOI位置、Contact Relative Velocity、Tracking Targetが異なるPose Sampleを参照してはならない。Animation PacketはTick ReservationへVersion固定し、Retryでは同一Packetを再利用する。
 
 #### Channel補間と時間微分
 
