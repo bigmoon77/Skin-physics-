@@ -154,12 +154,17 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         struct world_desc;
         struct model_desc;
         struct collider_desc;
-        struct animation_playback_desc
+        struct animation_track_desc
         {
             std::uint32_t clip_index = 0;
             double time = 0.0;             // Clip Local Time [s]
             double speed = 1.0;             // d(Clip Time) / d(World Time)
             bool loop = false;
+        };
+
+        struct animation_playback_desc
+        {
+            animation_track_desc track;
             animation_discontinuity_policy discontinuity_policy =
                 animation_discontinuity_policy::preserve_velocity;
             float w_event = 0.0f;           // BlendVelocity event weight [0,1]
@@ -167,8 +172,8 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
 
         struct animation_blend_desc
         {
-            animation_playback_desc source_track;
-            animation_playback_desc target_track;
+            animation_track_desc source_track;
+            animation_track_desc target_track;
             double blend_start_time = 0.0;  // Absolute World Simulation Time [s]
             double blend_end_time = 1.0;    // Absolute World Simulation Time [s]
             float weight_start = 0.0f;
@@ -333,12 +338,12 @@ v1のPublic Descriptorは次の意味を持つ。
 | contact_impulse_iterations | std::uint32_t | 1～16。初期値8 |
 | contact_impulse_relaxation | float | finite、0より大きく1以下。初期値0.5 |
 | contact_impulse_residual_tolerance | float | finite、0より大きい。初期値1e-4 |
-| animation_playback_desc::time / speed | double | finite。speed=0はPose停止、負値は逆再生 |
-| animation_playback_desc::clip_index | std::uint32_t | Asset内Clip範囲内 |
+| animation_track_desc::time / speed | double | finite。speed=0はPose停止、負値は逆再生 |
+| animation_track_desc::clip_index | std::uint32_t | Asset内Clip範囲内 |
 | animation_blend_desc::blend_start_time / blend_end_time | double | finite、end > start |
 | animation_blend_desc::weight_start / weight_end / tangent_start / tangent_end / w_event | float | finite。Weight / w_eventは0～1。Tangentは1/s |
 
-animation_playback_descとanimation_blend_descは標準レイアウトを維持し、独自Pointer / std::string / std::vectorを含めない。RuntimeはAPI呼出し中にDescriptorを検証・コピーし、呼出し元のメモリを後続Dispatchまで保持しない。Public C++静的LibraryのABIは同一Compiler / CRTの組合せを対象とし、異なるCompiler / CRT間のBinary ABI互換性は保証しない。
+animation_track_desc / animation_playback_desc / animation_blend_descは標準レイアウトを維持し、独自Pointer / std::string / std::vectorを含めない。RuntimeはAPI呼出し中にDescriptorを検証・コピーし、呼出し元のメモリを後続Dispatchまで保持しない。Public C++静的LibraryのABIは同一Compiler / CRTの組合せを対象とし、異なるCompiler / CRT間のBinary ABI互換性は保証しない。
 
 
 | Descriptor | Field | 意味・制約 |
@@ -377,9 +382,9 @@ animation_playback_descとanimation_blend_descは標準レイアウトを維持�
 | collider_desc | initial_transform | 初期World Transform |
 | collider_desc | thickness / friction / restitution | SI単位・係数範囲は詳細設計のCollision Material定義に従う |
 | collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
-| animation_playback_desc | clip_index / time / speed / loop | 単一Animation Trackの選択、Clip Local Time、Playback Speed、Loop。Blendは別Descriptorで指定 |
+| animation_playback_desc | track.clip_index / time / speed / loop | animation_track_desc。単一TrackのClip Local Time / Playback Speed / Loop。Blendは別Descriptorで指定 |
 | animation_playback_desc | discontinuity_policy / w_event | enum class / float。PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorの0～1 w_eventでDynamic Velocityを補間 |
-| animation_blend_desc | source_track / target_track | 最大2本のanimation_playback_desc。Additive / 3本以上はv1 Unsupported |
+| animation_blend_desc | source_track / target_track | 最大2本のanimation_track_desc。Additive / 3本以上はv1 Unsupported |
 | animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | double / float。World Simulation Time上のCubic Hermite Blend Weight Curve。時間は絶対秒、tangentは1/s。区間外は端点Weightを保持し、Curve全域で0<=w<=1を必須とする |
 | animation_blend_desc | discontinuity_policy / w_event | 明示Discontinuity時のPolicy。BlendVelocityはv_after=(1-w_event)*v_before+w_event*v_target(t_event+)。w_eventは0～1 |
 | force_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象World / Model / Mesh範囲 |
