@@ -798,7 +798,7 @@ etaの初期値は0.5。これは候補の選別値であり、CCD自体の正�
 
 ### 11.3 Conservative Advancement
 
-各候補の軌道を現在Integration Segment内の線形補間とする。これはSegment開始位置と予測位置を結ぶ離散軌道モデルであり、Segment中の曲線軌道を厳密に表すものではない。大きな加速度・高剛性時はWorld共通Substep制約に従い刻みを細かくし、近似誤差を抑える。秒単位の時刻tauにおける距離をd(tau)、接触厚みをr、相対速度上限をv_boundとする。
+Dynamic Physics VertexのCCD pathはSemi-implicit Eulerが生成したSegment開始 / 終端状態を結ぶ離散線形軌道とする。Kinematic Vertex / ColliderのNarrowphase / Conservative Advancementは各tau時刻でAnimation / Rigid Transform Trajectoryを直接評価した幾何位置を使う。KinematicのEndpoint ChordはSwept AABBの基準形状として使い、全区間の保守的Chord偏差BoundでAABBを膨張させる。CAの距離d(tau)は実Trajectory位置から計算し、速度上限v_boundはDynamic path速度上限とKinematic Trajectoryの区間速度Boundを合成する。秒単位の時刻tauにおける距離をd(tau)、実接触厚みをr、相対速度上限をv_boundとする。
 
 VT:
 
@@ -820,7 +820,7 @@ d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終
 
 ### 11.4 TOI処理
 
-現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。衝突判定用の軌道は現在Segment開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/dt_segment、x(tau)=x_start+tau*path_velocityと定義する。v_boundはこのpath_velocityの速度上限から求める。Conservative Advancementの進行量は次とする。
+現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価する。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
@@ -831,13 +831,13 @@ TOIが確定したら、検出に使った離散軌道と同一の位置・速�
     x_path(tau) = position_segment_start + tau * path_velocity
     v_path(tau) = path_velocity
 
-このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic VertexのCCD幾何PathもSegment開始 / 終了Animation Targetを結ぶChordとし、kinematic_path_velocity=(animation_target_end-animation_target_start)/dt_segment、x_kin_path(tau)=animation_target_start+tau*kinematic_path_velocityとする。Kinematic VelocityとしてはAnimation Interfaceがtau時刻に評価したTarget Trajectory微分を維持し、Chord速度はBroadphase / CAの幾何Path速度に限って使う。
+このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic VertexのTOI位置はtau時刻のAnimation Target Trajectoryを直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準だけに使い、kinematic_path_deviation_boundでAABBを保守的に膨張させる。Conservative Advancementは実Trajectory位置の距離d(tau)を使い、v_boundにはAnimation / Skinning Trajectoryの区間速度上限を加える。
 
 prefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを先に解く。Soft Bodyはprefix軌道状態を維持する。Contact Position Constraintを解く前にDynamic VertexのContact前Velocityを(x_internal_solved - x_segment_start) / tauで再構築して保存する。次にTOI Contact Position Constraintを解くが、Contact位置補正後にVelocityを再構築しない。保存済みContact前Velocityとtau時刻のKinematic Trajectory Velocityから法線 / Coulomb接線Impulseを一度適用し、impact_resolvedフラグを設定する。
 
-Kinematic Animation CurveとCCD Chordの差は、有限個のサンプル最大値で保証しない。Animation Evaluatorは各Kinematic Geometry Primitive / VertexについてSegment内全時刻のChord偏差上限kinematic_path_deviation_boundを返す。CUBICSPLINEのTranslationはHermite曲線をBezier Control Hullへ変換し、Chordとの差分Bezier Control Pointの最大Normを保守的上限とする。Quaternion / Bone Hierarchy / Skinningを含む変換は区間演算または保守的な導関数Boundを階層合成・Skin Weight合成へ伝播し、Boundを得られない場合はSegmentを細分化して再評価する。固定軸Slerpで動く剛体Colliderの回転Chord偏差は、Collider原点からの最大距離r_maxと角度thetaからsagitta_bound = r_max * (1 - cos(theta / 2))で求める（theta <= piとなるまで分割）。Translation Curveの偏差Boundと回転BoundはTriangle AABBへ加算膨張する。
+Kinematic Animation CurveとEndpoint Chordの差は、有限個のサンプル最大値で保証しない。Animation Evaluatorは各Kinematic Geometry Primitive / VertexについてSegment内全時刻のChord偏差上限kinematic_path_deviation_boundと、CA用の区間速度上限kinematic_path_speed_boundを返す。CUBICSPLINEのTranslationはHermite曲線をBezier Control Hullへ変換し、Chordとの差分Bezier Control Pointの最大Normを保守的上限とする。Quaternion / Bone Hierarchy / Skinningを含む変換は区間演算または保守的な導関数Boundを階層合成・Skin Weight合成へ伝播する。固定軸Slerpで動く剛体Colliderの回転Chord偏差は、Collider原点からの最大距離r_maxと角度thetaからsagitta_bound = r_max * (1 - cos(theta / 2))で求める（theta <= piとなるまで分割）。Translation Curveの偏差Boundと回転BoundはSwept AABBへ加算膨張する。Kinematic Trajectoryの区間速度上限はTranslation / Skinningの導関数Boundと、剛体Colliderではmax(|v_linear|) + max(|omega|) * r_maxを使う。
 
-kinematic_path_deviation_boundがdistance_tolerance以下になるまで最大分割深度8で決定的にSegment細分化する。深度8でもBoundが許容値を超える、またはEvaluatorが保守的Boundを返せない場合はCCDUnresolvedとしてTickをCommitしない。実サンプル点の偏差は診断・校正用に計測するが、合否は保守的Boundで決める。Contact Relative Velocityはtau時刻のAnimation Target Trajectory微分、Kinematic Colliderではv_linear + omega cross radiusで求め、Chord速度へ置換しない。Run Manifestへ最大Bound・分割深度・未解決数を記録する。
+kinematic_path_deviation_boundがdistance_tolerance以下になるまで最大分割深度8で決定的にSegment細分化する。深度8でもBoundが許容値を超える、またはDeviation / Speed Evaluatorが保守的Boundを返せない場合はCCDUnresolvedとしてTickをCommitしない。Conservative AdvancementはChord上の距離ではなく実Trajectory位置で評価した距離d(tau)を使い、v_boundへkinematic_path_speed_boundを含める。TOI prefix位置にはtau時刻のAnimation Target / Rigid Transform Trajectoryを直接評価し、Contact Relative Velocityには同時刻のAnimation Target Trajectory微分、Kinematic Colliderではv_linear + omega cross radiusを使う。実サンプル点の偏差は診断・校正用に計測するが、合否は保守的Boundで決める。Run Manifestへ最大Deviation Bound / Speed Bound・分割深度・未解決数を記録する。
 
 残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。Impact後Velocityは残Segment開始Velocityとして固定し、同じTOI Segmentの末尾で再Velocity Reconstructionしない。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
 
@@ -940,7 +940,7 @@ ForceはF_i=w_i*F_totalとして連続的に作用し、Force開始・終了時�
 
 ### 14.4 JSON
 
-トップレベルにschema_version、asset_id、asset_cache_version、asset_generation_settings、solver_settings、initial_state、animation、gravity、forces、collisions、materials、vertex_weights、test_sequence、random_seedを持つ。test_sequenceは開始条件、終了条件、再生・停止・Reset条件、測定区間を保持する。forcesはkind、位置、方向、強度、半径、継続時間、開始Stepを持つ。Impulseでは継続時間を0とし、Forceでは正の継続時間を指定する。collisionsは接触厚み、摩擦、反発、collision_enabled、self_collision_enabled、Mesh Pair除外リストを保持する。solver_settingsはfixed_delta_time、time_scale、substeps、iterationsを保持する。
+トップレベルにschema_version、asset_id、asset_cache_version、asset_generation_settings、solver_settings、initial_state、animation、gravity、forces、collisions、materials、vertex_weights、test_sequence、random_seedを持つ。test_sequenceは開始条件、終了条件、再生・停止・Reset条件、測定区間を保持する。forcesはkind、位置、方向、強度、半径、継続時間、World Simulation Time原点からの絶対start_timeを持つ。Forceのend_timeはstart_time + durationから導出し、二重保存しない。Impulseはduration=0と絶対event_timeを持つ。Step番号をEvent時刻として入力しない。collisionsは接触厚み、摩擦、反発、collision_enabled、self_collision_enabled、Mesh Pair除外リストを保持する。solver_settingsはfixed_delta_time、time_scale、substeps、iterationsを保持する。
 
 未知のschema_version、必須項目欠落、NaN/Infinity、負の時間刻み、範囲外パラメータはロードエラー。未知の任意拡張項目は保持して再保存できる。省略可能項目への既定値適用はログへ記録する。
 
