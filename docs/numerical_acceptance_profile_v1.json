@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.0",
+  "profile_version": "1.1",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -14,7 +14,7 @@
     "per_mesh": true,
     "length_reference": "median positive rest-edge length in the Physics Mesh",
     "mass_reference": "median positive dynamic Physics Vertex mass",
-    "time_reference": "actual internal substep duration used by the compared update",
+    "time_reference": "actual Integration Segment duration used by the compared update",
     "velocity_reference": "length_reference / time_reference",
     "force_reference": "mass_reference * length_reference / (time_reference * time_reference)",
     "stress_reference": "max(absolute(mu), absolute(K), 1 Pa)",
@@ -100,7 +100,7 @@
     "fixed_vertex_position_error_normalized_max": 0.000001,
     "normalized_weights": {
       "sum_absolute_error_max": 0.0001,
-      "minimum_weight": 0.0
+      "minimum_weight": 0
     },
     "contact_penetration_after_solve": {
       "maximum_fraction_of_combined_contact_thickness": 0.25,
@@ -115,7 +115,7 @@
       "missing_pair_count": 0
     },
     "ccd": {
-      "toi_absolute_error_max": "max(1e-6 seconds, 1e-4 * actual_substep_duration)",
+      "toi_absolute_error_max": "max(1e-6 seconds, 1e-4 * actual_integration_segment_duration)",
       "resolved_distance_gap_max": "configured distance_tolerance",
       "false_no_hit_count": 0,
       "unresolved_candidate_policy": "reject logical step; never reinterpret unresolved as no-hit"
@@ -126,6 +126,17 @@
       "out_of_range_index_count": 0,
       "undetected_capacity_overflow_count": 0,
       "silent_candidate_drop_count": 0
+    },
+    "contact_projection_velocity_leakage": {
+      "normalized_max_max": 0.000001,
+      "normalization": "velocity_reference",
+      "rule": "v_pre_contact is captured after non-contact constraints and before Contact Position XPBD; Contact positional correction must not change the saved velocity used by Friction / Restitution."
+    },
+    "contact_restitution_energy_source": {
+      "policy": "restitution uses relative velocity sampled before Contact Position correction",
+      "projection_only_kinetic_energy_increase_max": 0.000001,
+      "normalization": "energy_reference",
+      "applies_to": "fixtures with no external force / no incoming normal kinetic energy and restitution=0"
     }
   },
   "reproducibility": {
@@ -141,15 +152,23 @@
   },
   "benchmark_policy": {
     "profiles": {
-      "tet_counts": [2000, 8000, 32000],
-      "cloth_triangle_counts": [2000, 8000, 32000],
+      "tet_counts": [
+        2000,
+        8000,
+        32000
+      ],
+      "cloth_triangle_counts": [
+        2000,
+        8000,
+        32000
+      ],
       "mixed_mesh_pairs": "include Soft Body / Soft Body, Cloth / Cloth, Soft Body / Cloth and self-collision cases"
     },
     "hardware": "NVIDIA GeForce GTX 1660 SUPER 6GB",
     "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
     "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
     "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
-    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result."
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately."
   },
   "governance": {
     "thresholds_are_initial_engineering_candidates": true,
