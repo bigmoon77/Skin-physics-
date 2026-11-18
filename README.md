@@ -94,8 +94,9 @@ WARP is a software D3D11 device. These tests establish shader compilation, dispa
 
 The current integration proposal is documented in:
 
-- [Basic design](docs/basic_design.md) 1.2
-- [Detailed design](docs/detailed_design.md) 1.3
+- [Basic design](docs/basic_design.md) 1.3
+- [Detailed design](docs/detailed_design.md) 1.4
+- [Design closure / v1 decisions](docs/design_closure.md)
 - [GPU Runtime / Library integration](docs/runtime_integration_design.md)
 - [GPU Runtime UML](docs/uml/phase12_gpu_runtime.md)
 - [Numerical acceptance profile](docs/numerical_acceptance_profile_v1.json)
@@ -105,4 +106,4 @@ The v1 Runtime preserves the Skin Physics model: multiple Mesh Components per Wo
 
 This proposal intentionally does not import another project's single-body / 200k-particle / 40-FPS / fixed-1/120-second requirements. Skin Physics keeps its configurable Fixed Delta Time and workload-dependent 3-40 FPS evaluation range.
 
-**Status: independent critical review required.** GPU Runtime integration, global force / contact scheduling, full multi-iteration solver execution, moving VT / EE CCD and physical-GPU performance measurements remain incomplete. WARP validates correctness only; it is not physical-GPU performance evidence.
+**Status: design closure candidate / independent critical review required.** The v1 support scope, initial numerical / collision parameters, Capacity Growth, async multi-World scheduling, and Render Candidate / Lease lifetime are consolidated in docs/design_closure.md. This is documentation only: GPU Runtime integration, global force / contact scheduling, full multi-iteration solver execution, moving VT / EE CCD and physical-GPU performance measurements remain incomplete. WARP validates correctness only; it is not physical-GPU performance evidence.
