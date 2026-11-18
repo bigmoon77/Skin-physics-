@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v1.9）
+# Skin Physics 設計閉鎖書（v2.0）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.7
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.9
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.6
+- 基本設計: [basic_design.md](basic_design.md) v1.8
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.10
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.7
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -242,7 +242,7 @@ FBX / Morph Target / Draco / Meshoptは未対応。Importerは未対応Feature�
 
 ### 3.3 Animation Input
 
-Animation ClipのSTEP / LINEAR / CUBICSPLINE補間をImporter契約に従って保持する。Animation Span / Force / Impulse / TOIの境界と最大Segment数は§2.7 / §2.8を正とする。CPUはLogical Tick内のClip Key / Loop / Blend Weight / Root Transform / Kinematic Collider Sample境界ごとにAnimation Trajectory Packetを作成し、GPUはPacketから任意tauのBone Hierarchy / Skin Matrix / 微分 / Physics Vertex Targetを評価する。独立Kinematic Colliderは時刻付きTransform SampleをTranslation Linear + Shortest-Arc SlerpのCollider Trajectory Recordへ変換し、任意tauのTransform / Contact Point Velocity / Speed / Sagitta Boundを同一Packet Versionで評価する。v1は最大2 Trackの非Additive Blendとし、Translation / ScaleはWeight微分項を含む線形Blend、RotationはHemisphere補正Normalized Linear Blendとその解析微分を使う。TOIはSpan内で発生し、Span BoundaryでWorld Segmentを分割する。Root TransformとKinematic Colliderは時刻付きSampleから評価する。
+Animation ClipのSTEP / LINEAR / CUBICSPLINE補間をImporter契約に従って保持する。Animation Span / Force / Impulse / TOIの境界と最大Segment数は§2.7 / §2.8を正とする。CPUはLogical Tick内のClip Key / Loop / Blend Weight / Root Transform / Kinematic Collider Sample境界ごとにAnimation Trajectory Packetを作成し、GPUはPacketから任意tauのBone Hierarchy / Skin Matrix / 微分 / Physics Vertex Targetを評価する。独立Kinematic Colliderは時刻付きTransform SampleをTranslation Linear + Shortest-Arc SlerpのCollider Trajectory Recordへ変換し、任意tauのTransform / Contact Point Velocity / Speed / Sagitta Boundを同一Packet Versionで評価する。 CPU Absolute World Time / Reservation / Span境界はdoubleで保持し、GPU SM5はuint32 / float固定幅Packet、Span-local normalized u、Segment-relative tauのみを使う。GPUへAbsolute World Timeをfloat Castしない。Record ABIはSpan64 / Channel208 / Blend48 / Collider128 byteとし、Byte Offset / Stride / normalized cursor monotonicityをWARP ABI Fixtureで検証する。全Segment進行後にu_segment_startを更新し、TOIのみtauを進める。float cursorが正の進行を表現できなければSpanを最大深度8まで細分化し、解決しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。v1は最大2 Trackの非Additive Blendとし、Translation / ScaleはWeight微分項を含む線形Blend、RotationはHemisphere補正Normalized Linear Blendとその解析微分を使う。TOIはSpan内で発生し、Span BoundaryでWorld Segmentを分割する。Root TransformとKinematic Colliderは時刻付きSampleから評価する。
 
 Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformとし、ScaleはIdentity固定。非一様・負・ゼロScaleや実行中のRoot Scale変更は拒否する。Static Mesh / Mesh Node ScaleはOffline Build時にGeometry / Rest Data / Mass / BindingへBakeする。Bone Scale Animationは正値かつ特異でない成分のみ許可し、負値・ゼロ・符号反転をImport Errorとする。
 
@@ -372,6 +372,7 @@ Render Candidate Ring:
 - [ ] W_ii <= epsilon_inverse_massの非応答ContactはPosition / ImpulseをSkipし、ゼロ除算を発生させない。
 - [ ] 複数Contactの速度ImpulseはContact間Couplingを含むProjected Jacobiとし、Residual未収束時はTickをCommitしない。
 - [ ] GPU Animation Trajectory PacketがTOI任意tauのBone / Skinning Position / VelocityとKinematic Collider Transform / Contact Point Velocityを評価し、Clip Key Span / Blend / Collider Sample / Boundが同一Versionである。
+- [ ] SM5 GPU PacketはAbsolute World TimeをfloatへCastせず、CPU doubleからSpan-local normalized u / Segment-relative tauへ変換する。Record Byte Size / Offsets / Stridesとu_segment_startの単調進行を検証する。
 - [ ] Animation Target Velocityは最終Skinning Trajectoryの時間微分とし、STEP / LINEAR / CUBICSPLINE / Blendの規則が一意。
 - [ ] Kinematic CCDは曲線全区間の保守的偏差Boundを用い、有限サンプルだけでNo-Missを主張しない。
 - [ ] Buffer更新頻度・Scratch LifetimeがIntegration Segmentと一致する。
@@ -405,3 +406,9 @@ Render Candidate Ring:
 | §15 History | source requirement version history | requirements.md itself; design docs record corresponding version | Review metadata |
 
 **追跡上の注意:** 要件§5のImporter形式は「複数形式」という抽象要件を満たすためv1具体形式をOBJ / glTF 2.0 / GLBへ固定した。FBX / Morph / Draco / Meshoptはv1未対応として明示Errorにする。§13の未確定事項は基本・詳細設計で具体化済みであり、残る数値は設計未決定ではなく測定・校正タスクである。
+
+## 7. バージョン履歴
+
+- 2.0: SM5固定幅Animation / Collider Packet ABI、CPU double / GPU Span-local float Time Mapping、各Segmentでのnormalized cursor更新、ABI Readback / Time Precision Gateを追加。Design Closureの参照VersionをBasic1.8 / Detailed1.10 / Runtime1.7へ更新。
+- 1.9: GPU Animation Trajectory Packet / Span、非応答Contact、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limit、Segment Budgetを閉鎖候補へ追加。
+
