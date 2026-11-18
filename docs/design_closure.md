@@ -206,7 +206,7 @@ Force / Impulseの空間分配:
 - Positive-Time TOIでは同一pathのx_path(tau) / v_path(tau)をprefix状態として使い、dt=tauの再Predictionを行わない。
 - Fixed / Kinematic Vertex / ColliderのSwept AABBはSegment端点Chordを基準に、全区間の保守的Chord偏差Boundで膨張させる。Conservative Advancement / TOI位置評価はtau時刻の実Trajectory位置を使い、CA v_boundには保守的Speed Boundを含める。有限サンプルのみの検証は保証に使わない。
 - Kinematicの偏差Bound / Speed BoundはCUBICSPLINEのBezier Control Hull、階層Skinningの区間演算 / 保守的導関数Bound、Slerp ColliderのSagitta Bound / 角速度Boundで求める。Boundを得られない場合は最大深度8で分割し、依然証明不能ならCCDUnresolved。
-- Kinematic接触Velocityにはtau時刻のTrajectory微分、Colliderはv_linear + omega cross radiusを使用する。Chord速度はGeometry CAに限定する。
+- Kinematic TOI位置とConservative Advancementの距離評価にはtau時刻の実Trajectoryを使用する。Kinematic接触Velocityはtau時刻のTrajectory微分、Colliderはv_linear + omega cross radius。Endpoint Chordは保守的Deviation Boundで膨張するSwept AABBの基準形状に限定する。
 - TOI位置でtauをXPBD時間として非接触内部Constraintを先に解き、Dynamic Contact前Velocityを保存する。Contact Position correction後にVelocityを再構築せず、保存したVelocityからImpactを一度だけ適用する。
 - Impact後の残時間は新しいIntegration Segmentとして開始し、FEM / Animation Tracking / External Forceを新しい開始状態から評価する。
 
