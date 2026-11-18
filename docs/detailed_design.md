@@ -563,9 +563,9 @@ Discrete contactでは位置解決後にvelocity = (position_after - previous_po
 
     cell_width(level) = base_cell_width * 2^level
 
-base_cell_widthは、Physics / Collision Primitiveの正のAABB最大辺長中央値と、最大Contact Thicknessの2倍の大きい方を初期値とする。v1初期値はmax_cells_per_primitive=64、max_hash_levels=24。cell_width(level)=base_cell_width*2^levelとし、各Primitiveは接触厚みで膨張させたAABBが64セル以下となる最も細かいlevelへ登録する。最大levelでも64セルを超えるPrimitiveはLarge Primitiveとして別Bucketへ登録し、同じAABB完全性規則で通常Primitiveとの候補生成を行う。Large Primitive BucketにもCount / Capacity Check / Pair Dedupを適用し、容量不足はBlock / Retryする。全Primitive総当たりへフォールバックしない。
+base_cell_widthは、Point Primitiveを除いたCollision Primitive（Edge / Triangle）の正のAABB最大辺長中央値、最大Contact Thicknessの2倍、cell_width_floorの最大値とする。cell_width_floor=max(1e-6 m, 1e-3 * L_ref)、L_refはMeshのmedian positive rest-edge length。v1初期値はmax_cells_per_primitive=64、max_hash_levels=24。cell_width(level)=base_cell_width*2^levelとし、各Primitiveは接触厚みで膨張させたAABBが64セル以下となる最も細かいlevelへ登録する。最大levelでも64セルを超えるPrimitiveはLarge Primitiveとして別Bucketへ登録する。Large Primitive BucketはMorton Code Sortで構築するGPU Binary BVHで索引し、通常PrimitiveからのAABB QueryとLarge-LargeのTree Self-Traversalで候補を生成する。BVH Node / PairのCount / Capacity Check / Dedupを適用し、容量不足はBlock / Retryする。Large Primitive間も含め全Primitive総当たりへフォールバックしない。
 
-各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。大きいPrimitiveがLarge Primitive Bucketへ入った場合、通常Cell RecordとのAABB交差を別Passで列挙し、通常Pairと同一のCanonical Pair Keyで重複排除する。
+各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。大きいPrimitiveがLarge Primitive Bucketへ入った場合、通常PrimitiveはLarge Bucket GPU BVHをAABB Queryし、Large Primitive同士はBVH Self-Traversalで候補化する。候補は通常Hash由来Pairと同一のCanonical Pair Keyで重複排除する。
 
 ### 9.2 接触厚みとセル範囲
 
@@ -943,7 +943,7 @@ GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはEvent Query�
 - Polar / SVD fallbackの直交性残差、det(R)、特異値Floor、異常要素比率、GPU時間をNumerical Profileで検証する。
 - μ / K / ρ / E_2D / G_2D / D / tracking stiffness / dampingは単位付きScenario Materialとして入力する。代表値はfixtureごとに固定し、Run Manifestへ記録する。
 - Bend解析勾配とcentral finite differenceの相対誤差 <=1e-3、退化Hinge分岐、Jacobi収束を検証する。
-- Spatial Hashの64 cells / Primitive、最大24 level、Large Primitive Bucket、Pair Dedupの完全性と候補数を小規模全探索Fixtureで検証する。
+- Spatial Hashの64 cells / Primitive、最大24 level、positive cell floor、Morton LBVH Large Primitive Bucket、Hash / BVH間Pair Dedupの完全性と候補数を小規模全探索Fixtureで検証する。
 - Contact Patch最大4 Support PointのReduction前後で最大貫通・法線分布・支持範囲を測定し、未縮約Manifold参照と比較する。Patch分割条件もFixtureで検証する。
 - CCD eta / safety / tolerance / CA 32 iteration / TOI 2 splitの見逃し・未解決率をMoving VT / EE Fixtureで測定する。False No-HitとUnresolvedの診断を独立して集計する。
 - GPU Buffer Capacity Growth、旧Resource Set退役時のPeak Bytes、DXGI Local Memory Budget、Render Candidate Ringを含むVRAMピークをGTX 1660 SUPERで確認する。
