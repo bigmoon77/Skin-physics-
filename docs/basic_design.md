@@ -132,7 +132,7 @@ Physics Mesh、要素接続、隣接情報、材料属性、Render Vertex Bindin
 
 Soft BodyのCFL / Animation Tracking安定条件からWorld共通Substep数を決定する。ClothとContactにも同じSubstep Delta Timeを適用し、v1ではMeshごとの独立Subcyclingを行わない。TOIによる時間分割もWorld全体へ適用するため、異なるソルバーが異なる時刻の形状を使って接触することを防ぐ。
 
-外力・Impulseの空間分配、Cloth予測式、Contact縮約、Broadphase容量、TOI再積分は詳細設計で規定する。各GPU Pass間の依存関係とUAV unbind / SRV bindを明示する。Production Runtimeでは1 Logical TickをGPU Commit transactionとし、Dispatch受付とGPU Commitを分離する。Failure時は確定済みStateを維持し、同一Tick Inputから再実行する。Host向け詳細は [runtime_integration_design.md](runtime_integration_design.md) を正とする。
+外力・Impulseの空間分配、Cloth予測式、Contact縮約、Broadphase容量、TOI prefix構成は詳細設計で規定する。各GPU Pass間の依存関係とUAV unbind / SRV bindを明示する。Production Runtimeでは1 Logical TickをGPU Commit transactionとし、Dispatch受付とGPU Commitを分離する。Failure時は確定済みStateを維持し、同一Tick Inputから再実行する。Host向け詳細は [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
 ## 6. ソルバー設計方針
 
