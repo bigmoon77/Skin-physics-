@@ -1,10 +1,10 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.5
+- 文書バージョン: 1.6
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.4
+- 前版: 1.5
 - Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md)
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 
@@ -224,9 +224,11 @@ NarrowphaseではVT / EEの連続判定を候補とし、Time of Impactまたは
 
 ## 8. アニメーション連携
 
-Animation Interfaceは各物理頂点へ、World Integration Segment境界時刻のAnimation TargetとAnimation Velocityを供給する。Animation VelocityはTarget Trajectoryの時間微分とし、LINEARでは区間勾配、CUBICSPLINEでは評価曲線の微分を使う。Render Frameの差分だけから速度を推定しない。
+Animation Interfaceは各物理頂点へ、World Integration Segment境界時刻のAnimation TargetとAnimation Target Velocityを同一Trajectory Evaluatorから供給する。Velocityは最終Skinning Target PositionのSimulation Time微分を正本とし、STEP / LINEAR / CUBICSPLINE / Clip Blendの補間微分とPlayback Speedを反映する。Render Frameや前StepのPosition差分から速度を推定しない。
 
-Fixed / Kinematic VertexはSegment終端TargetとAnimation Velocityを維持する。Dynamic Vertexのみ位置解決後に区間変位からVelocityを再構築する。Teleport / Reset / Clip Discontinuity / Time Rewindでは明示Discontinuity Policyが決めたTarget / Velocityを渡し、不連続をまたぐ有限差分で速度を捏造しない。詳細規則はdetailed_design.md §6.6 / §7.1.2を正とする。
+Fixed / Kinematic VertexはSegment終端TargetとTrajectory Velocityを維持する。Dynamic Vertexは非接触内部Constraintを解いた後、Contact Position Constraintを解く前にContact前Velocityを再構築して保存する。Contact位置補正後のPosition差分からVelocityを再構築しない。Teleport / Reset / Clip Discontinuity / Time Rewindでは明示Discontinuity Policyが決めたTarget / Velocityを渡し、不連続を跨ぐ有限差分で速度を生成しない。詳細規則はdetailed_design.md §5.3 / §6.6 / §8.5 / §11.4を正とする。
+
+Kinematic Animation / ColliderのCCD幾何PathはSegment端点を結ぶChordを使用する。Chord偏差はAnimation / Rigid Transform Evaluatorから得るSegment全体の保守的Boundで判定し、Boundを得られない場合はSegment細分化またはCCDUnresolvedとする。Kinematic接触相対VelocityにはTrajectory微分を使う。
 
 Hair Cards / Hair BundlesはClothとして扱う。Strand Hairの伸縮・曲げ・ねじりを表す専用モデルは将来拡張とする。
 
@@ -293,7 +295,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 14. 詳細設計との責務境界・校正への引継ぎ
 
-本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.6および[runtime_integration_design.md](runtime_integration_design.md) v1.3で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
+本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.8および[runtime_integration_design.md](runtime_integration_design.md) v1.5で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
 
 - Soft Body Corotational FEM、応力・内部力・Segment積分・減衰: detailed_design.md §6。
 - Cloth Stretch / Shear / Bend / XPBD Lambda、外力・Impulse、World Integration Segment: detailed_design.md §7。
@@ -327,6 +329,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
 - 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加。
+- 1.6: Animation Target Velocityを最終Skinning Trajectoryの時間微分へ統一し、Kinematic CCDの保守的Path Bound、Contact Position correctionとContact前Velocityの分離を追加。
 - 1.5: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / Cloth共通のSegment予測、線形粘性減衰の積分、Fixed / Kinematic Velocityの所有規則を追加。
 
 
