@@ -332,7 +332,7 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         float4 scale_c3;
     };
 
-animation_span_gpu_record is exactly 64 bytes, animation_channel_gpu_record is exactly 208 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start; TOI residual Segment updates it by u_tau without CPU Readback.
+animation_span_gpu_record is exactly 64 bytes, animation_channel_gpu_record is exactly 208 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start. After every positive-time Segment advance within the same Span, GPU updates it by `u_segment_start += dt_segment * inverse_span_duration`; a TOI prefix uses `tau` in place of `dt_segment`. If the next Segment begins at a Span boundary, Scheduler selects the next immutable Span Record and initializes its `u_segment_start=0`. GPU verifies that every positive-time advance makes u_segment_start strictly increase; failure returns `ANIMATION_TIME_PRECISION_UNRESOLVED` and prevents Commit. No CPU Readback is used to update the normalized cursor.
 
 固定RecordのByte Offsetは次の通りとする。OffsetはBuffer先頭からのbyte単位であり、全Fieldは4-byte alignmentとする。
 
@@ -363,7 +363,7 @@ Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / 
     p(u) = c0 + c1*u + c2*u^2 + c3*u^3
     dp/dt = (c1 + 2*c2*u + 3*c3*u^2) / (t1 - t0)
 
-STEPはc0=value、他係数0。LINEARはc0=p0, c1=p1-p0、c2=c3=0。glTF CUBICSPLINEは、Span両端の値p0 / p1、Clip TimeでのOutgoing / Incoming Tangent m0 / m1、符号付きClip Time幅Δcを使い、h0=m0*Δc、h1=m1*Δcとして、c0=p0、c1=h0、c2=-3p0+3p1-2h0-h1、c3=2p0-2p1+h0+h1へ変換する。ΔcにはPlayback SpeedとWorld Span時間を含め、負のPlayback Speedも同じ式で扱う。ScaleはSpan全域で正かつ特異でないことを保証する。
+STEPはc0=value、他係数0。LINEARはc0=p0, c1=p1-p0、c2=c3=0。glTF CUBICSPLINEはSpan両端の値p0 / p1、符号付きClip Time幅Δcを使い、正方向Playbackではp0のOutgoing Tangentとp1のIncoming Tangent、逆方向Playbackではp0のIncoming Tangentとp1のOutgoing Tangentをm0 / m1として選ぶ。h0=m0*Δc、h1=m1*Δcとし、c0=p0、c1=h0、c2=-3p0+3p1-2h0-h1、c3=2p0-2p1+h0+h1へ変換する。ΔcにはPlayback SpeedとWorld Span時間を含める。負のPlayback SpeedではTangentsのKey側も方向に応じて入れ替える。ScaleはSpan全域で正かつ特異でないことを保証する。
 
 RotationはQuaternionを使う。STEPは一定Quaternion、LINEARは最短弧Slerp、CUBICSPLINEはglTF Hermite QuaternionをComponentごとに評価後normalizeする。CUBICSPLINEの未正規化Quaternionをr(t)、q=r/|r|とすると、
 
