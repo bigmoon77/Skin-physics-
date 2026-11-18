@@ -538,7 +538,8 @@
     "commit": "36dab21d16ac3298d56a86d10a9d07262fae6d21",
     "workflow_run_id": 44327398017,
     "configuration": "Release x64",
-    "result": "success"
+    "result": "success",
+    "note": "This successful run verifies commit 36dab21 only. Later design-document commits require their own CI verification."
   },
   "design_review_regressions": {
     "status": "specified_not_implemented",
@@ -568,7 +569,35 @@
       {
         "id": "DCR_34_WORLD_ABSOLUTE_EVENT_TIME",
         "test_case": 34
+      },
+      {
+        "id": "DCR_35_GPU_ANIMATION_TRAJECTORY_PACKET",
+        "test_case": 35
+      },
+      {
+        "id": "DCR_36_NON_RESPONSIVE_CONTACT",
+        "test_case": 36
+      },
+      {
+        "id": "DCR_37_COUPLED_CONTACT_IMPULSE",
+        "test_case": 37
+      },
+      {
+        "id": "DCR_38_CONTACT_TEMPORAL_QUALITY_LIMIT",
+        "test_case": 38
+      },
+      {
+        "id": "DCR_39_BLEND_VELOCITY",
+        "test_case": 39
       }
     ]
+  },
+  "latest_ci_attempt": {
+    "commit": "d9ab9dd480398d25839b50e5e6c6394e4a5378ba",
+    "workflow_run_id": 44327798378,
+    "configuration": "Release x64",
+    "build": "success",
+    "tests": "failure",
+    "failing_test": "Completed WARP timestamp queries must become available through non-blocking collection."
   }
 }
