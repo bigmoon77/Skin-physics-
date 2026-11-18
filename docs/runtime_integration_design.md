@@ -544,7 +544,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
    - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill / Sort / Pair Dedup。
    - VT / EE Narrowphase、Contact Patch Reduction、CCD Conservative Advancement / Minimum TOI Reduction。
    - TOIなし: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
-   - TOIあり: Endpoint Contactを確定せず、detailed_design.md §11.4のDynamic / Kinematic certified chord pathに従ってTOI prefixを構成し、非接触内部Constraintをtau時間で解く。
+   - TOIあり: Endpoint Contactを確定せず、Dynamicの離散pathとKinematicのtau時刻実TrajectoryでTOI prefixを構成し、非接触内部Constraintをtau時間で解く。
    - Contact Position Constraint前にDynamic VertexのContact前Velocityを保存する。通常Segmentはdt_segment、TOI prefixはtauで速度再構築する。Fixed / Kinematic VelocityはAnimation Trajectory微分を維持する。
    - Discrete / TOI Contact Position XPBDを解く。Contact位置補正はPositionだけを変更し、保存済みContact前Velocityへ反映しない。
    - 保存したContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを計算し、Contact ContributionをVertex Gatherで一度だけ適用する。TOI Contactにimpact_resolvedを設定する。
@@ -561,7 +561,7 @@ Soft Body内部力は各World Integration Segment開始状態で再評価する�
 
 既存のPoint-Triangle CCDは初期Fixtureとして維持する。Production Runtimeでは変形Mesh間の高速接触を満たすため、VTとEEの双方に対してSwept BroadphaseとConservative Advancementを接続する。Triangle-Triangleの交差候補はVT / EEイベントへ分解して扱い、Primitive Pair / Contact Keyの重複を除去する。
 
-TOIは現在Integration Segment開始からの秒単位で管理する。Dynamic Vertex CCD pathはdetailed_design.md §11.4のSemi-implicit Euler離散pathを使用し、TOI prefixでdt=tauの再Predictionを行わない。Kinematic Vertex / Colliderの幾何PathはSegment endpoint chordを使うが、Animation / Rigid Transform Evaluatorから区間全体に対する保守的なDeviation Boundを取得し、Swept AABBをそのBound分膨張させる。有限個の中間サンプルだけでChord誤差を保証しない。CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角と最大半径のSagitta Boundを用いる。Boundを取得できない場合はSegmentを最大深度8まで分割し、それでも証明できなければCCDUnresolvedとする。
+TOIは現在Integration Segment開始からの秒単位で管理する。Dynamic Vertex CCD pathはdetailed_design.md §11.4のSemi-implicit Euler離散pathを使用し、TOI prefixでdt=tauの再Predictionを行わない。Kinematic Vertex / ColliderのTOI geometryはtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint Chordは保守的Deviation Boundで膨張したSwept AABB構築に限って使う。Conservative Advancementの距離も実Trajectory位置で評価し、v_boundにkinematic_path_speed_boundを含める。有限個の中間サンプルだけでDeviation / Speed Boundを保証しない。CUBICSPLINE TranslationはBezier Control Hull、Bone Hierarchy / Skinningは区間演算または保守的導関数Bound、Slerp Rigid Colliderは回転角・最大半径のSagitta Boundを用いる。Deviation / Speed Boundを取得できない場合はSegmentを最大深度8まで分割し、それでも証明できなければCCDUnresolvedとする。
 
 Kinematic接触相対Velocityはtau時刻のAnimation Target Trajectory微分、またはv_linear + omega cross radiusを使用し、Chord Path Velocityへ置換しない。TOI prefixでは非接触内部Constraintを先に解き、Contact前Dynamic Velocityを再構築して保存する。次にContact Position XPBDを解き、Contact位置補正後のVelocity再構築は禁止する。保存済みContact前VelocityからFriction / Restitution Impulseを一度適用し、Impact後状態から残Segmentを進める。
 
