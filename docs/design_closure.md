@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v1.4）
+# Skin Physics 設計閉鎖書（v1.5）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.3
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.4
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md)
+- 基本設計: [basic_design.md](basic_design.md) v1.4
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.5
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.2
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -66,10 +66,20 @@ Corotational Linear Elasticityの保証領域は解析Fixtureで定義する。�
 - Stretch: XPBD Graph Coloring。
 - Shear / Bend: XPBD Gather Jacobi。
 - Animation Tracking: 頂点単位Vector XPBD Attachment。
+- Cloth予測はSubstep開始位置・速度から行い、予測速度は外力Impulseと指数減衰、予測位置は同じSubstep Delta Timeで更新する。
+- Force / Impulseは共通Mass-weighted Wendland C2 FalloffでPhysics Vertexへ分配する。ForceはN、ImpulseはN*s。Force開始・終了とImpulse event時刻でWorld共通Segmentを分割し、Impulseのみ一度適用する。
 - XPBD Complianceは各Constraint Functionの単位と整合する物理剛性から生成する。
-- Lambdaは各Substep開始時に0へ初期化し、同一Substepの反復中は保持する。初期v1はSubstep間Warm Startを行わない。
+- LambdaはWorld共通Substep開始時に0へ初期化し、同一Substepの反復中は保持する。初期v1はSubstep間Warm Startを行わない。
 
 Cloth / Contact Gatherの比較候補は omega={0.5, 0.75, 1.0}。初期比較値は0.5とし、収束・誤差・最大貫通・GPU時間をFixture単位で比較する。Clampや平均化でSolverの物理重みを暗黙に変えない。
+
+Cloth予測式:
+
+    v_i_star = exp(-damping_rate_i * dt_segment)
+             * (v_i + inverse_mass_i * (F_i * dt_segment + J_i))
+    x_i_star = x_i + dt_segment * v_i_star
+
+位置制約解決後はsegment startから速度を再構築し、Impact / Friction / Restitution Impulseを一度だけ適用する。ForceはF_i*dt_segment、ImpulseはJ_iのみに現れ、同じ入力を二重積分しない。
 
 ### 2.3 Contact / Impact
 
@@ -82,18 +92,26 @@ Cloth / Contact Gatherの比較候補は omega={0.5, 0.75, 1.0}。初期比較�
 
 ### 2.4 Contact Patch Manifold
 
-局所Patchの初期クラスタ判定:
-- cluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)
-- 法線内積 >= cos(10度)
-- 同一Mesh Pairかつ同じ連結Surface Patchの範囲だけで統合する。
+- local_min_edge_lengthはVT対象三角形3辺、EE対象2辺のRest Edge Length中の最小正値。候補がない場合はL_ref。
+- Surface Patch IDはPhysics Surface Triangleの共有Edge adjacencyからAsset Build時に付与する。EEは隣接FaceのStable Primitive ID最小値を代表Faceとする。
+- 初期クラスタ条件はcluster_radius以下、法線内積cos(10度)以上。同一Mesh Pair / Surface Patch IDの組み合わせに限定する。
+- Candidateは(Mesh Pair, Patch ID A/B, Contact Key)順に処理するSeed-based deterministic clustering。連鎖的近傍連結で無制限に広げない。複数Seed候補は最短距離、同距離ならSeed Contact Keyで決める。
 
 1 Patchあたり最大4 Support Contactを保持する。選択順は次の通りとする。
 1. 最深接触。
 2. 最深接触から最も遠い接触。
-3. 既存2点の線分から最も遠い接触。
-4. 既存3点の三角形から最大面積を形成する接触。
+3. 既存2点の線分から最遠の接触。
+4. 既存3点の三角形から最大面積の接触。
 
-距離・面積同値はCanonical Contact Key順で決定する。候補集合が点 / 線状の場合、独立なSupport Point数だけ保持する。最深1点だけへ縮約する方式は禁止する。縮約前後の最大貫通、法線分布、Support Regionを比較し、接触品質が悪化する場合はPatchを分割する。Contact KeyまたはPatch Generationが変わったらlambdaをResetする。
+距離・面積同値はCanonical Contact Key順で決定する。点 / 線状候補は独立Support Point数だけ保持し、最深1点だけへの縮約は禁止する。
+
+初期Engineering Threshold:
+- 縮約Manifoldを規定反復回数で解いた後の最大残存貫通増加 <= 0.05 * contact_thickness。
+- 入力Candidate法線から最近傍保持法線への最大角度誤差 <= 5度。
+- 平面Support Hull面積の保持率 >= 0.90。Support HullはCandidate / Retained Contact Positionを平均Contact法線の直交2D基底へ射影して算出する。
+- 線状PatchはSupport Hull長さ保持率 >= 0.90、点状Patchは独立Support Point数一致。
+
+基準を満たさないPatchは、相互距離が最大のContact Pairを決定的な2つのSeedとし、各Candidateを近いSeedへ割り当てる。同距離はContact Key順。Child Patchへ同じReduction / Quality Testを再帰適用する。分割深度上限は8。上限到達時も基準を満たさない場合はContact Manifold Reduction FailureとしてTickをRejectする。Patch総数 / Contact数はCapacity Check対象。これらは初期値でありRun Manifestへ保存し、Fixture / Hardware試験で校正する。Contact KeyまたはPatch Generationが変わったらlambdaをResetする。
 
 ### 2.5 Broadphase / Self Collision
 
@@ -103,7 +121,11 @@ Hierarchical Spatial Hash初期値:
 - max_hash_levels = 24。
 - cell_width(level) = base_cell_width * 2^level。
 - cell_width_floor = max(1e-6 m, 1e-3 * L_ref)。
-- 64セルを超えるPrimitiveはLarge Primitive Bucketへ登録する。BucketはMorton-sort GPU Binary BVHで索引し、通常PrimitiveのAABB QueryとLarge-Large BVH Self-TraversalでPairを生成する。Count / Capacity / Dedupを適用し、全Primitive総当たりへ移行しない。
+- 64セルを超えるPrimitiveはLarge Primitive Bucketへ登録する。
+- Bucketの索引は30-bit Morton Code（各空間軸10-bit）+ Stable Primitive IDの辞書順Keyを用いるGPU Linear BVH。Karras方式で構築し、同Morton CodeもStable Primitive IDで一意化する。
+- Node LayoutはAABB min/max、left/right child、parent、escape_index、leaf primitive ID。TraversalはStackless depth-firstとし、逃避先はそのNodeのSubtree直後のDFS Node。Traversal Stackは使用しない。
+- 各Large PrimitiveのAABB QueryをBVH全体へ行い、Regular-LargeとLarge-Largeを生成してCanonical Pair Keyで重複排除する。全Large Primitiveの相互総当たりを実行しない。
+- Node Countは2*N-1。Node / Pair / Dedup BufferにCount / Capacity Checkを適用し、uint32 / ByteWidth超過はCapacity Error。
 - 全Primitive総当たりへのFallbackは禁止。
 - Hash一致だけでセル一致を判定せず、levelと元の整数Cell座標を比較する。
 
@@ -119,14 +141,33 @@ Additional 2-ring / 3-ring除外は既定0。折り畳み部の接触見逃し�
 
 - CCD適用候補の初期選別: relative_displacement > eta * contact_thickness、eta=0.5。
 - Swept AABBが候補化したPairを、低速という理由だけで候補から落とさない。Initial Contact / Persistent Contact / Initial Penetrationは速度による選別の対象外。
-- Conservative Advancement safety=0.8。
-- CA最大32 Iterations。
-- tau_tolerance = max(1e-7 s, 1e-5 * delta_t_substep)。
-- distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)。L_refは対象Physics Meshのmedian positive rest-edge length。
+- Conservative Advancement safety=0.8、最大32 Iterations。
+- tau_tolerance = max(1e-7 s, 1e-5 * dt_world_segment)。
+- distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)。
 - tau_toleranceに到達しただけでNo-Hitにしない。距離条件または保守的区間No-Hitを証明できない場合はUnresolved。
-- Positive-Time TOI splitは最大2回 / Substep。
-- 同時TOI Group tolerance = max(1e-7 s, 1e-5 * delta_t_substep)。ImpactはContact Key順に一度だけ適用。
-- 分割上限超過 / UnresolvedはTickをCommitせず、Internal Substepを増やしてTick開始SnapshotからRetryする。Retry上限到達時はBlockedByCCD / Failed。
+- Positive-Time TOI splitは最大2回 / World共通Substep。TOI時刻は全Soft Body / Cloth / Contactを含むWorld全体へ適用する。
+- 同時TOI Group tolerance = max(1e-7 s, 1e-5 * dt_world_segment)。ImpactはContact Key順に一度だけ適用。
+- 分割上限超過 / UnresolvedはTickをCommitせず、World共通Substep数を増やしてTick開始SnapshotからRetryする。Retry上限到達時はBlockedByCCD / Failed。
+
+### 2.7 World共通Substep / 外力イベント
+
+v1ではWorld内のSoft Body / Cloth / Contact / Animation Trackingが同一時刻を進む。Solver別Subcyclingは禁止する。Logical Tick開始時に、
+
+    dt_limit_world = min(all FEM CFL limits,
+                         all Animation Tracking limits,
+                         world_max_substep_delta_time if > 0 else +infinity)
+    N_world = max(minimum_substeps, ceil(fixed_delta_time / dt_limit_world))
+    dt_world = fixed_delta_time / N_world
+
+を算出する。制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。N_worldが上限を超えた場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitせずReservationを保持する。Cloth / Contact XPBDのComplianceは同じdt_worldを使う。TOIはWorld共通Substep内のSegment分割とし、全参加Solverを同じSegment時間だけ進める。
+
+Force / Impulseの空間分配:
+- phi(s)=(1-s)^4(4s+1), s=r/R, 0<=s<1。
+- q_i = rest_lumped_mass_i * phi(s_i)、w_i=q_i/sum(q)。
+- Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Mass。Fixed Vertexにも分配し、逆質量0で拘束反力を表す。
+- ForceはN単位のF_i=w_i*F_totalとしてSegment全体へ作用。Force start/endでWorld Segmentを分割し、F_i*dt_segmentだけ運動量へ加える。
+- ImpulseはN*s単位のJ_i=w_i*J_eventとしてSegment開始で一度だけ適用。Event IDでRetry中の二重処理を防ぐ。
+- radiusは正の有限値。サポート対象0または重み総和epsilon以下はNO_FORCE_TARGET。
 
 ## 3. Asset / Material / Animation
 
@@ -154,6 +195,8 @@ FBX / Morph Target / Draco / Meshoptは未対応。Importerは未対応Feature�
 
 Animation ClipのSTEP / LINEAR / CUBICSPLINE補間をImporter契約に従って保持する。CPUはBone Hierarchy / Skin Matrixを評価し、GPUはPhysics Mesh Skinning Target / Target Velocityを生成する。Root TransformとKinematic Colliderは時刻付きSampleからTick / Substep境界へ補間する。
 
+Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformとし、ScaleはIdentity固定。非一様・負・ゼロScaleや実行中のRoot Scale変更は拒否する。Static Mesh / Mesh Node ScaleはOffline Build時にGeometry / Rest Data / Mass / BindingへBakeする。Bone Scale Animationは正値かつ特異でない成分のみ許可し、負値・ゼロ・符号反転をImport Errorとする。
+
 必要時刻をbracketできるだけのSample履歴がない場合、Runtimeは直前Poseの延長で速度を捏造しない。対象TickをBLOCKED_BY_INPUTとして保留し、欠落時間範囲をDiagnosticへ返す。Teleport / Reset / Time Rewindは明示Discontinuityとし、PreserveVelocity / ResetVelocity / BlendVelocityのPolicyを適用する。
 
 ## 4. Runtime / GPU Resource契約
@@ -173,10 +216,13 @@ Animation ClipのSTEP / LINEAR / CUBICSPLINE補間をImporter契約に従って�
 
 - Fixed Delta Time初期値=1/60 s。Test Environmentで正のFinite値へ変更可能。
 - Time ScaleはFrame elapsedをAccumulatorへ加える倍率のみ。Fixed Delta Timeは変更しない。
-- Fixed Delta Timeの変更はPaused、in-flight=0、pending whole ticks=0、pending Step request=0でのみ許可する。
+- advanceで供給された時間はrequested_simulation_timeへ累積する。未割当時間はAccumulatorが保持し、TickをSubmissionする際にFixed DeltaをTick Reservationへ一度だけ移す。
+- 各Tick ReservationはTick Sequence、固定時間区間、Input Snapshot、time_source（Accumulator / single_step）を保持する。GPU Commit成功時だけReservedをCommittedへ移す。CPU ObservationはAccumulatorを変更しない。
+- Capacity / CCD / PredecessorによるBlock / Retryでは同一Reservation / Tick Sequenceを維持する。Retry時に時間をAccumulatorへ再加算したり、二重に消費したりしない。
+- Fixed Delta Timeの変更はPaused、in-flight=0、未Submission Reservation=0、Accumulatorのwhole ticks=0、pending Step request=0でのみ許可する。
 - fractional remainderは秒単位の実時間として保持し、新しいdtでwhole tick数を再計算する。
 - 変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。旧dtのwhole tickを新dtで再解釈しない。
-- Step要求はPause / Stop中に1 Fixed Tickだけ要求する。未実行Step要求はQueueで管理し、Stop / Resetの明示Policyに従う。
+- Step要求はwall-clock Accumulatorを変更せず、Pause / Stop中に独立Step Queueへ1 Fixed Tickを追加する。未実行Step要求はQueueで管理し、Stop / Resetの明示Policyに従う。
 - 最大Step / Substep / Iteration予算超過時に時間をdrop / clampしない。
 
 ### 4.3 Capacity Growth / Memory
@@ -203,22 +249,32 @@ Memory budget:
 
 ### 4.4 Render Candidate / Binding Lease
 
-Render Candidate SlotはTickごとにReservationする。SlotがなければTickをSubmissionせずAccumulatorに時間を保持する。
+Render Candidate SlotはTick Reservationごとに確保する。Slotがなければ新規Reservation / Submissionを停止し、未割当時間をAccumulatorへ、発行済み時間をReservationへ保持する。
 
 各TickはSolver全Substep後に専用Render Candidate SlotへPosition / Normal / Tangentを生成し、Binding / Geometry / NonFinite Validationを実行する。すべてのPhysics GateとRender Candidate Validationが通過した場合だけ、GPU Commit ControlがCommitted Physics State Set / GenerationとRender Slot ID / Generationを同一Controlで切り替える。Reject時は両方を維持し、Working State / Candidate SlotをHostへ公開しない。
 
 Render Candidate Ring:
 - Slot数 = world_desc.maximum_in_flight_ticks + 1。
-- 既定in-flight 2の場合は3 Slots。うち1つはCPU-observedの直前Committed Slot、最大2つはin-flight Candidateとして使う。
+- 既定in-flight 2の場合は3 Slots。CPU-observed直前Committed Slot 1つと、最大2件のin-flight / 未観測Candidateを保持する。
 - Query / Status未回収、in-flight Tick、Host Leaseが存在するSlotは上書きしない。
-- get_render_bindingはEvent Query完了、COMMITTED Status Readback、連続Tick Prefixを確認した最新CPU-observed Render Slotだけを返す。
-- WorldあたりHost Render Leaseは同時に1つ。各MeshのBindingは同じLease Generationに属する。
-- HostはDraw後、Position / Normal / Tangent SRVをVS / HS / DS / GS / PS / CS全StageからUnbindし、release_render_bindings(world)を呼ぶ。
-- Release後は該当Pointerを使わない。COM AddRefはCOM objectの生存期間を延ばすだけで、Slot内容のLeaseは延長しない。
-- Render Lease未解放で次Submissionを要求した場合はBUSY / render_binding_busyでBackpressureし、Accumulator時間を保持する。
+- get_render_bindingの最初の成功呼出しでWorld単位のLeaseを取得し、返すlease_generationを全Mesh共通にする。
+- release_render_bindings(world, lease_generation)は現在Leaseと一致する世代だけを解放する。古い / 二重ReleaseはSTALE_HANDLE。
+- Hostは全MeshのDrawコマンドをImmediate Contextへ発行し、公開SRVをVS / HS / DS / GS / PS / CS全StageからUnbindする。Deferred Contextを使った場合は該当Command ListをImmediate ContextへExecuteCommandListしてからReleaseする。
+- Release後はSRV Pointerと未実行Command List内の参照を使用しない。COM AddRefはCOM Objectの寿命だけを延ばし、Slot内容のLeaseは延長しない。
+- Render Lease未解放で次Submissionを要求した場合はBUSY / render_binding_busyでBackpressureし、Accumulator / Reservation時間を保持する。
 - Copy / Publish Pass / Render Candidate Validation / Ring Slot VRAM・GPU時間をPerformance Runへ含める。
 
 この方式はCPU-observed commitとRendererのBuffer内容を一致させるためのv1契約であり、GPUでCommit済みでもCPUが観測していない新しいRender Slotを直接公開しない。
+
+### 4.5 Model / World / Runtime Resource Lifecycle
+
+- destroy_model / destroy_colliderは対象Worldのin-flight Tickが0件、Host Render Leaseがない場合だけ成功する。条件不足はBUSY。成功するまでHandle / Resourceは有効。
+- reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功する。Pending Reservation / Accumulator / Step Queue / Contact Cache / Lambda / DiagnosticをResetし、保存済みInitial Stateへ戻る。
+- destroy_worldはPaused / Stopped、in-flight Query / Tick = 0、Host Lease = 0、Pending Step Request = 0でのみ成功する。条件不足はBUSY。
+- GPU Command / Queryが参照したResourceはCompletion QueryまでDeferred Release Listで保持する。
+- drain()は明示的な非Frame API。新規Submissionを停止し、既にSubmission済みGPU Tick / Queryの完了とDeferred Releaseを待つ。未割当Accumulator whole tick、未Submission Reservation、Step Request、Host Leaseがある場合はBUSYを返す。Host Leaseを強制Releaseしない。
+- shutdown()は全WorldがDestroy済み、Query Ring Idle、Deferred Release List空、Host Lease=0の時だけCOM Resourceを解放してOK。条件不足ならBUSYを返し、Runtime状態を壊さない。Runtime Destructor前にshutdown成功が必要。
+- 通常Frame PathにFlush / 同期Waitを入れない。明示drainのみGPU Query完了待ちを許可する。
 
 ## 5. Validation / Acceptance
 
@@ -240,6 +296,14 @@ Render Candidate Ring:
 ### 5.3 次段階へ進むためのReview Checklist
 
 - [ ] Requirements v1.1の全必須項目がBasic / Detailed / Runtime / Test Gateへ追跡されている。
+- [ ] Soft Body / Cloth / Contact / Animation Tracking / TOIがWorld共通Substep / Segmentで同じ時刻を進む。
+- [ ] Cloth予測・Force / Impulse分配の式とイベント境界が確定している。
+- [ ] Tick ReservationがAccumulator、Retry、GPU Commit、CPU Observation間で二重消費・時間欠落を起こさない。
+- [ ] Render LeaseはGeneration付きReleaseで stale / double releaseを拒否する。
+- [ ] Model / Collider / World / RuntimeのDestroy / Reset / Drain / ShutdownにBUSY条件がある。
+- [ ] BVHのKey順、Node Layout、Stackless traversal、Capacity failureが定義済み。
+- [ ] Contact Patch品質閾値と退化法線のUnresolved経路が数値・状態として確定している。
+- [ ] Runtime Root TransformのScale制約とAsset Build Bake規則が確定している。
 - [ ] Soft Body Corotational FEMとCloth XPBDを混同していない。
 - [ ] Multi-World / Multi-Model / Multi-Mesh / Self Collision / Mixed CollisionのID・Filter・Ownershipが一貫している。
 - [ ] Contact Patchが複数Support Pointを保持し、縮約前後の品質を比較可能。
