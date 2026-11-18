@@ -1,10 +1,10 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.4
+- 文書バージョン: 1.5
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.3
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.1
+- 対応基本設計: basic_design.md 1.4
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.2
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
 - 前版: 1.2
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
@@ -344,7 +344,20 @@ Clip Blendはブレンド比率を連続更新し、通常はvelocity resetを�
     delta_t_limit = cfl_factor * min_t(h_t / c_p_t)
     cfl_factor = 0.2  // 初期評価値。実測で検証する
 
-これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。上限超過時は警告し、設定に応じてサブステップを増やす。最大サブステップ数を超えたら明示的にエラーとし、時間刻みを黙って無視しない。
+これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。上限超過時は警告し、設定に応じてWorld共通Substep数を増やす。最大World Substep数を超えたらWORK_BUDGET_EXCEEDEDとしてLogical TickをCommitせず、時間を保持する。Soft Bodyだけを細かく進めてCloth / Contactを旧時刻に残す独立Subcyclingはv1で禁止する。
+
+World共通Substep数はLogical Tick開始時に一度だけ決定する。全参加Soft Body MeshのFEM / Animation Tracking制限と、World設定のminimum_substeps / maximum_substepsを集約し、
+
+    dt_limit_world = min(all_mesh_dt_limit_fem,
+                         all_mesh_dt_limit_tracking,
+                         world_max_substep_delta_time)
+
+    N_world = max(minimum_substeps,
+                  ceil(fixed_delta_time / dt_limit_world))
+
+とする。該当する制限がない項は無限大として扱い、全項が無制限ならN_worldはminimum_substepsとなる。N_world > maximum_substeps、整数オーバーフロー、または非有限値はTickを拒否する。実際のSubstep時間はdt_world = fixed_delta_time / N_worldとし、全Soft Body / Cloth / Contact / Animation Trackingへ同一値を渡す。ClothのXPBD ComplianceとContact Complianceは必ずこのdt_worldから算出する。
+
+TOI分割はWorld共通Substepの内部Segmentとして扱う。TOI以前・TOI以後の双方でSoft Body、Cloth、Animation Tracking、Contact対象の全てを同じSegment時間だけ進める。v1ではSoft BodyだけをTOIまで進めてClothを固定するようなソルバー別時間進行を行わない。minimum_substeps、maximum_substeps、world_max_substep_delta_timeはWorld Descriptor / Scenarioに保存し、Run Manifestへ記録する。
 
 ### 6.9 体積・せん断評価
 
@@ -370,7 +383,32 @@ Compliance alphaは制約関数の単位に依存する。エディタで扱う�
 
 初期版のCloth材料入力は面内引張剛性E_2D (N/m)、面内せん断剛性G_2D (N/m)、曲げ剛性D (N*m)とする。Stretch辺のdual width wは内部辺では隣接2三角形の辺直交高度の平均、境界辺では隣接三角形の高度の半分とし、Rest LengthをL0とするとk_stretch=E_2D*w/L0。Shear三角形はk_shear=G_2D*area。Bend hingeのdual width wは隣接2三角形の辺直交高度の平均とし、共有辺長lを使いk_bend=D*w/lとする。これらは離散化の初期モデルであり、解像度変更時のエネルギー一致を試験する。
 
-分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。λは各サブステップ開始時に0へ初期化し、同一サブステップの反復中は保持する。初期版ではサブステップ間Warm Startを行わない。
+分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。λは各World共通Substep開始時に0へ初期化し、同一Substepの反復中は保持する。初期版ではSubstep間Warm Startを行わない。
+
+### 7.1.1 Cloth動力学予測・外力適用
+
+Clothの予測は各World共通Substepの開始状態から1回だけ行う。全外力はワールド空間の力として扱い、Soft Body / ClothのPhysics Vertexへ同じ空間Falloff規則で分配する。Vertex iのRest Lumped Massをm_i、作用点からの距離をr_i、Force半径をRとする。Rは正の有限値を必須とし、サポート内頂点に対して、
+
+    s_i = r_i / R
+    phi(s_i) = (1 - s_i)^4 * (4 * s_i + 1)   // 0 <= s_i < 1
+    q_i = m_i * phi(s_i)
+    w_i = q_i / sum_j(q_j)
+
+とする。s_i >= 1の頂点はq_i=0。質量はSoft Bodyの四面体Lumped Mass、Clothの三角形Lumped Massから得る。sum_j(q_j)は同じForce Descriptorの対象World / Model / Mesh範囲内で動的・固定を含む全サポート頂点について求める。これによりForce / Impulseの合計量を頂点数やメッシュ解像度によらず保存し、固定頂点に配分された分は拘束反力として扱う。サポート頂点が0、または重み総和が閾値以下の場合はNO_FORCE_TARGETを記録し、そのイベントを適用しない。
+
+ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Forceイベントの開始・終了時刻とSubstep区間の重なり時間をdt_overlapとし、一定Forceの合計ImpulseはJ_total = direction * magnitude * dt_overlapとする。Impulseイベントは指定時刻を含むSubstep Segment境界で一度だけ適用する。SegmentはWorld共通で分割し、イベントを次Substepまで遅延・重複適用しない。
+
+各Vertexへ分配されたImpulseをJ_i = w_i * J_total、Substep内の継続ForceをF_iとする。Clothの予測速度・位置は次で求める。
+
+    v_i_star = exp(-damping_rate_i * dt_segment)
+             * (v_i + inverse_mass_i * (F_i * dt_segment + J_i))
+    x_i_star = x_i + dt_segment * v_i_star
+
+固定頂点はx_i_star = animation_target_i、v_i_star = animation_velocity_iとする。XPBD Stretch / Shear / Bend / Animation Tracking / Contactの位置解決後に、
+
+    v_i_reconstructed = (x_i_solved - x_i_segment_start) / dt_segment
+
+で速度を再構築し、TOI Impact / Coulomb Friction / Restitution Impulseを一度だけ適用する。TOI Impactを適用したSegmentの速度をLogical Tick全体の始点・終点差分で上書きしない。dt_segmentはWorld共通Substep内の通常SegmentまたはTOI分割後Segmentであり、全参加Solverに同じ値を渡す。
 
 ### 7.2 Stretch
 
@@ -523,7 +561,11 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     effective_inverse_mass =
         wp + beta0^2 * wb0 + beta1^2 * wb1 + beta2^2 * wb2
 
-各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一メッシュペア・同じ連結Surface Patch内でContact Patchを形成する。初期重複判定は、接触点距離が`cluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)`以下、かつ法線内積がcos(10度)以上の場合とする。v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする決定的なManifold Reductionを行い、(1)最深点、(2)最深点から最遠点、(3)既存2点が作る線分から最遠点、(4)既存3点が作る三角形から最大面積となる点を順次残す。候補が線状・点状の場合は独立したSupport Point数だけを残す。最深1点だけに縮約する方式は禁止する。縮約前後の最大貫通・法線分布・支持範囲を計測し、縮約によって接触品質が悪化する場合はPatchを分割する。閾値・最大点数は試験設定で変更可能にし、Run Manifestへ記録する。λは同一サブステップの同一Contact Keyで保持し、Contact KeyまたはPatch Generationが変わった場合は初期化する。
+各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一Mesh Pair・同じ連結Surface Patch内でContact Patchを形成する。local_min_edge_lengthは、VTでは対象三角形の3辺、EEでは対象2辺のRest Edge Lengthのうち正かつ非退化な値の最小値とする。該当値がない場合はL_refを使う。Same Connected Surface PatchはPhysics Surface Triangleの共有Edge adjacencyからAsset Build時に割り当てたSurface Patch IDで判定する。EEは各辺に隣接するFaceのうちStable Primitive IDが最小のものを代表Faceとする。
+
+初期クラスタ判定は接触点距離がcluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)以下、かつ法線内積がcos(10度)以上の場合とする。候補は(Mesh Pair, Surface Patch ID A/B, Contact Key)順に処理し、最初のContactをSeedとして、Seed距離・Seed法線条件を満たす候補だけを追加する。複数Seedに入る候補は距離が最小のSeedへ割り当て、同距離はSeed Contact Key順で決める。連鎖的な近傍判定でPatch全体が無制限に拡大しないよう、候補同士の推移的連結だけで統合しない。
+
+v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする決定的なManifold Reductionを行い、(1)最深点、(2)最深点から最遠点、(3)既存2点が作る線分から最遠点、(4)既存3点が作る三角形から最大面積となる点を順次残す。候補が線状・点状の場合は独立したSupport Point数だけを残す。縮約の許容差は、最大貫通増加<=0.05*contact_thickness、最大法線角度差の増加<=5度、投影Support Hull面積保持率>=0.90を初期Engineering Thresholdとする。線状Patchでは面積を使わずSupport Hull長さ保持率>=0.90を用い、点状PatchではSupport Point数を比較する。いずれかを満たさない場合は、縮約で最も大きく表現誤差を生じた候補を基準にPatchを2分割する。分割Seedは相互距離が最大のContact Pairとし、候補は近いSeedへ割り当て、同距離はContact Key順とする。両Child Patchが単一Contactになるまで再帰できる。分割深度上限は8、上限到達後も品質条件を満たさない場合はContact Manifold Reduction FailureとしてTickをRejectする。Patch総数・Contact数はCapacity Check対象とする。上記閾値は初期Engineering Thresholdであり、Run Manifestへ記録してFixture / Hardware試験で校正する。λは同一Substepの同一Contact Keyで保持し、Contact KeyまたはPatch Generationが変わった場合は初期化する。
 
 ### 8.4 Edge-Edge
 
@@ -536,7 +578,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     gradient_b0 = -(1 - t) * n
     gradient_b1 = -t * n
 
-有効逆質量は4頂点のinverse_mass * gradient_coefficient^2の総和とする。平行・退化辺では区間最近接点の安定分岐を用い、有限値を保証する。
+有効逆質量は4頂点のinverse_mass * gradient_coefficient^2の総和とする。平行・退化辺では区間最近接点の安定分岐を用いる。最近接距離が幾何epsilon以下のときは§8.6の法線決定規則を適用し、法線を一意に決定できない候補を有限値保証の名目で任意方向へ補正しない。
 
 ### 8.5 摩擦・反発
 
@@ -555,6 +597,19 @@ Discrete contactでは位置解決後にvelocity = (position_after - previous_po
 
 接触の4頂点へ、接触勾配係数と逆質量でImpulseを配分する。摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。接触前の相対速度を保存し、同一接触で複数反復するたびに反発を重複適用しない。TOI contactはimpact_resolvedフラグにより同じImpulseをStep終端で二重適用しない。
 
+### 8.6 退化接触の法線決定
+
+長さepsilonはmax(1e-7 * L_ref, 1e-9 m)、面積epsilonはepsilon_length^2を初期値とする。候補ごとに以下の優先順位で法線を選ぶ。
+
+1. 同一Contact Keyで前SubstepのPersistent Contact Cacheに存在し、有限かつ正規化済みの前回法線。
+2. 現在形状から算出した非退化幾何法線。VTでは三角形法線、EEでは2辺の外積方向を使う。両面衝突の符号は前Substepの符号付き分離方向で整合させる。
+3. Rest Poseの面法線 / Hinge Binormalを現在の局所変形基底で写した参照方向。
+4. 相対速度ベクトル。速度がepsilon以下の場合は利用しない。
+
+候補法線はContactの正規向き（VTは三角形Bから頂点A、EEはCanonical PairのAからB）へ符号を統一する。候補間で向きが矛盾する場合は前回法線との内積で連続性を優先する。上記を適用しても法線が定まらない、または退化幾何によりNarrowphaseの距離・勾配が有限に計算できない場合はCONTACT_GEOMETRY_UNRESOLVEDとしてLogical TickをCommitしない。Stable IDから任意軸を生成して押し出す処理は禁止する。
+
+Contact Cacheに法線があってもMesh Topology / Contact Key / Patch Generationが変化した場合は流用しない。無効Cacheを検出した場合は再評価し、失敗すればUnresolvedとする。
+
 ## 9. Broadphase Spatial Hash
 
 ### 9.1 多段階セル
@@ -563,7 +618,7 @@ Discrete contactでは位置解決後にvelocity = (position_after - previous_po
 
     cell_width(level) = base_cell_width * 2^level
 
-base_cell_widthは、Point Primitiveを除いたCollision Primitive（Edge / Triangle）の正のAABB最大辺長中央値、最大Contact Thicknessの2倍、cell_width_floorの最大値とする。cell_width_floor=max(1e-6 m, 1e-3 * L_ref)、L_refはMeshのmedian positive rest-edge length。v1初期値はmax_cells_per_primitive=64、max_hash_levels=24。cell_width(level)=base_cell_width*2^levelとし、各Primitiveは接触厚みで膨張させたAABBが64セル以下となる最も細かいlevelへ登録する。最大levelでも64セルを超えるPrimitiveはLarge Primitiveとして別Bucketへ登録する。Large Primitive BucketはMorton Code Sortで構築するGPU Binary BVHで索引し、通常PrimitiveからのAABB QueryとLarge-LargeのTree Self-Traversalで候補を生成する。BVH Node / PairのCount / Capacity Check / Dedupを適用し、容量不足はBlock / Retryする。Large Primitive間も含め全Primitive総当たりへフォールバックしない。
+base_cell_widthは、Point Primitiveを除いたCollision Primitive（Edge / Triangle）の正のAABB最大辺長中央値、最大Contact Thicknessの2倍、cell_width_floorの最大値とする。cell_width_floor=max(1e-6 m, 1e-3 * L_ref)、L_refはMeshのmedian positive rest-edge length。v1初期値はmax_cells_per_primitive=64、max_hash_levels=24。cell_width(level)=base_cell_width*2^levelとし、各Primitiveは接触厚みで膨張させたAABBが64セル以下となる最も細かいlevelへ登録する。最大levelでも64セルを超えるPrimitiveはLarge Primitiveとして別Bucketへ登録する。Large Primitive BucketのBVHは30-bit Morton Code（空間各軸10-bit）とStable Primitive IDの辞書順KeyでsortするGPU Linear BVHとし、Karras方式でBinary Nodeを構築する。Morton量子化BoundsはLarge Primitive全AABBのUnion Boundsとし、ゼロExtent軸は量子化値0に固定する。NodeはAABB min/max、left/right child、parent、escape_index、leaf primitive IDを持つ。Stable Primitive IDをTie-breakに含め、Morton Codeが同一でもLeaf順・Node構築順を一意にする。TraversalはStackless depth-firstとし、AABB不一致またはLeaf処理後はescape_indexへ進む。Node数は2*N-1として事前Count / Capacity Checkし、uint32 / ByteWidth上限を検査する。各Large PrimitiveがBVH全体へAABB Queryを行い、Large-LargeとRegular-Largeの双方を生成する。Canonical Pair Keyで重複を除く。これにより専用StackとStack Overflow経路を持たず、BVH Node / Pair / Dedup Capacity不足だけをBlock / Retry対象とする。BVH Build / Queryの全結果は通常Hash候補とUnionしてからNarrowphaseへ渡し、総当たりFallbackは禁止する。
 
 各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。大きいPrimitiveがLarge Primitive Bucketへ入った場合、通常PrimitiveはLarge Bucket GPU BVHをAABB Queryし、Large Primitive同士はBVH Self-Traversalで候補化する。候補は通常Hash由来Pairと同一のCanonical Pair Keyで重複排除する。
 
@@ -747,10 +802,16 @@ Test Environmentは次の操作を提供する。
 - Time Scale: 実時間DeltaをAccumulatorへ加える倍率。固定物理時間刻み自体は変更しない。
 - Fixed Delta Time: シミュレーションの基本時間刻み。
 - Gravity: 重力ベクトルを変更する。
-- Impulse / Force: kind（instant impulse / sustained force）、位置（m）、方向（正規化ベクトル）、強度、半径（m）、継続時間（s）、開始時刻または開始Stepを指定する。Impulseの強度単位はN*s、ForceはNとし、Impulseは瞬間的な運動量変化、Forceは指定時間だけ作用する力として扱う。
+- Impulse / Force: kind（instant impulse / sustained force）、位置（m）、方向（正規化ベクトル）、強度、正の半径（m）、継続時間（s）、開始時刻または開始Stepを指定する。Impulseの強度単位はN*s、ForceはNとし、Impulseは指定時刻のWorld共通Segment境界で一度だけ適用し、Forceは指定時間と各Substep Segmentの重なり時間に応じて積分する。空間分配は§7.1.1の質量測度付きFalloffで行い、対象World / Model / Mesh範囲をDescriptorで明示する。
 - Animation: Clip、再生時刻、速度、Blend、Discontinuity Policyを指定する。
 
-Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。
+Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。World内のSubstep数はLogical Tick開始時に一度決定し、Soft Body / Cloth / Contactが同一Substep時刻・同一dtを使う。§6.8で定義したWorld共通Substepをv1の唯一の時間分割方式とする。
+
+#### 14.3.1 Force / Impulseの適用契約
+
+Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。
+
+一定ForceはSubstep / TOI Segmentとの重なり時間からJ_total=F*dt_overlapを計算し、頂点Impulseへ分配する。瞬間Impulseはevent_timeを含む共通Segment境界で1回だけ適用する。イベントIDと適用済みTick / Segmentを記録し、Retry時は同一イベントを同じ時刻に再適用する。対象頂点が存在しない、Falloff重み総和がepsilon以下、イベント時刻が過去でTimelineへ反映できない場合は診断を返し、イベントを黙って捨てない。
 
 ### 14.4 JSON
 
@@ -783,37 +844,33 @@ v1のGPU Runtime初期値はpolar iteration最大8回、polar orthogonality resi
 
 ### 15.1 Logical Tick / Substep transaction
 
-Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Substep / CCD Segment開始状態は専用scratchへ保存し、TOI retime時はinactive_state_bankをそのscratchから復元する。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
+Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Substep / CCD Segment開始状態は専用scratchへ保存し、TOI retime時はinactive_state_bankをそのscratchから復元する。Substep scheduleはLogical Tick Begin時にWorld全体の参加Meshから一度だけ計算し、全Soft Body / Cloth / Contact / Animation Trackingへ共通dt_worldを割り当てる。独立したSolver別Subcyclingは禁止する。Force / Impulse Eventの時刻がSegment内部にある場合もWorld共通Segmentを分割し、全参加Solverを同じ時間だけ進める。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
 
 基本Pass順序:
 
 1. Logical Tick Begin / Dispatch Plan Gate / Terminal Status Reset
-2. Animation Target / Animation Velocity Update
-3. Physics Vertex Previous State Snapshot
-4. Soft Body Tet Deformation Gradient
-5. Soft Body Rotation / Stress / Inversion Penalty
-6. Soft Body Tet Force Contribution
-7. Soft Body Vertex Force Gather
-8. Soft Body Velocity / Position Prediction
-9. Cloth Velocity / Position Prediction
-10. Broadphase Count / Scan / Fill / Sort / Group
-11. Candidate Generation / Deduplication
-12. 各ソルバー反復
+2. World Substep Schedule Build / Validate
+3. Substep境界のAnimation Target / Root / Kinematic Pose Sample
+4. External Force / Impulse Event Gather（Event ID重複適用防止）
+5. Soft Body FEM Force Evaluation / Gather
+6. Soft Body Velocity / Position Prediction
+7. Cloth Velocity / Position Prediction
+8. Swept AABB / Broadphase Count / Scan / Fill / Sort / Group
+9. Candidate Generation / Deduplication / Narrowphase
+10. Contact Patch Build / Manifold Reduction
+11. Solver Iterations
+    - Soft Body内部力の必要な再評価
     - Cloth Stretch Graph Color Passes
-    - Cloth Animation Tracking Constraint Output / Gather / Apply
-    - Cloth Shear Constraint Output / Gather / Apply
-    - Cloth Bend Constraint Output / Gather / Apply
-    - Contact Narrowphase Refresh
-    - Contact Patch Reduction / Merge
+    - Cloth Animation Tracking / Shear / Bend Gather / Apply
     - Contact XPBD Output / Gather / Apply
     - Broadphase Envelope Exceeded Check; 必要時Rebuild
-12. TOI検出・TOI分割処理（CCD対象のみ）
-13. Velocity Reconstruction
-14. Coulomb Friction / Restitution Impulse
-15. Substep / Logical Tick Validation
-16. Render Feedback Candidate Prepare（Working Physics Stateから専用Render Candidate SlotへPosition / Normal / Tangentを生成）
+12. CCD TOI Detection / World-wide Segment Retiming / Impact (CCD対象のみ)
+13. 速度再構築 / Coulomb Friction / Restitution Impulse
+14. Substep Validation
+15. Logical Tick内の次World共通Substepへ進む
+16. 全Substep完了後のRender Feedback Candidate Prepare（Position / Normal / Tangent）
 17. Render Candidate finite / Binding Validation
-18. Logical Tick Commit Control（全SubstepとRender Candidateが成功した場合だけ、Physics State GenerationとRender Candidate Slotを同時にCOMMITTEDへ切替）
+18. Logical Tick Commit Control（全Physics GateとRender Candidateが成功した場合だけPhysics State GenerationとRender Slotを同時にCOMMITTEDへ切替）
 19. Diagnostic Timestamp / Counter / Status Copy + Event Query
 
 ### 15.2 同期・リソースhazard
@@ -863,6 +920,9 @@ GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはEvent Query�
 - CCDIterationLimit
 - InitialPenetrationLimit
 - NonFiniteState
+- ContactGeometryUnresolved
+- ContactManifoldReductionFailure
+- NoForceTarget
 - GpuResourceAllocationFailure
 
 警告はWorld ID、Model ID、Mesh ID、Element ID、Logical Tick Sequence、Substep、Pass名、関連カウンタを含む。NonFiniteState発生時は該当TickをCommitしない。GPU StatusのREJECTED / BLOCKED状態は非同期Readbackで回収し、CPU APIはSubmission受付成功とGPU成功を混同しない。
@@ -970,12 +1030,13 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 ## 21. バージョン履歴
 
 - 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
+- 1.5: World共通Substep、Cloth予測・Force / Impulse分配、Contact Patch品質閾値、退化Contact法線決定、Stackless Morton LBVH構築を明文化。
 - 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 
 
-## 22. GPU Runtime / Library Integration（v1.4）
+## 22. GPU Runtime / Library Integration（v1.5）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
