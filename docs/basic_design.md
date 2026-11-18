@@ -228,7 +228,7 @@ Animation Interfaceは各物理頂点へ、World Integration Segment境界時刻
 
 Fixed / Kinematic VertexはSegment終端TargetとTrajectory Velocityを維持する。Dynamic Vertexは非接触内部Constraintを解いた後、Contact Position Constraintを解く前にContact前Velocityを再構築して保存する。Contact位置補正後のPosition差分からVelocityを再構築しない。Teleport / Reset / Clip Discontinuity / Time Rewindでは明示Discontinuity Policyが決めたTarget / Velocityを渡し、不連続を跨ぐ有限差分で速度を生成しない。詳細規則はdetailed_design.md §5.3 / §6.6 / §8.5 / §11.4を正とする。
 
-Kinematic Animation / ColliderのCCD幾何PathはSegment端点を結ぶChordを使用する。Chord偏差はAnimation / Rigid Transform Evaluatorから得るSegment全体の保守的Boundで判定し、Boundを得られない場合はSegment細分化またはCCDUnresolvedとする。Kinematic接触相対VelocityにはTrajectory微分を使う。
+Kinematic Animation / ColliderのSwept AABBはSegment端点を結ぶChordを基準とし、Chord偏差の保守的Boundで膨張させる。Conservative Advancement / TOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、区間Speed Boundを使う。Deviation / Speed Boundを得られない場合はSegment細分化またはCCDUnresolvedとする。Kinematic接触相対VelocityにはTrajectory微分を使う。
 
 Hair Cards / Hair BundlesはClothとして扱う。Strand Hairの伸縮・曲げ・ねじりを表す専用モデルは将来拡張とする。
 
