@@ -355,6 +355,39 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
 
 animation_span_gpu_record is exactly 80 bytes, animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start. After every positive-time Segment advance within the same Span, GPU updates it by `u_segment_start += dt_segment * inverse_span_duration`; a TOI prefix uses `tau` in place of `dt_segment`. If the next Segment begins at a Span boundary, Scheduler selects the next immutable Span Record and initializes its `u_segment_start=0`. GPU verifies that every positive-time advance makes u_segment_start strictly increase; failure returns `ANIMATION_TIME_PRECISION_UNRESOLVED` and prevents Commit. No CPU Readback is used to update the normalized cursor.
 
+GPU Shared Float TypeはC++側で次のPODを使い、DirectXMath / SIMD型を直接使わない。
+
+    struct gpu_float4
+    {
+        float x;
+        float y;
+        float z;
+        float w;
+    };
+
+    struct gpu_matrix4x4
+    {
+        gpu_float4 row0;
+        gpu_float4 row1;
+        gpu_float4 row2;
+        gpu_float4 row3;
+    };
+
+gpu_float4はsizeof=16 / alignof=4、gpu_matrix4x4はsizeof=64 / alignof=4とする。MatrixはAsset / HLSLで統一したColumn-Major Storageを使い、CPUからUploadする直前に既定のAsset Matrix Conventionへ変換する。逆Bind MatrixはImmutable Asset Buffer内のgpu_matrix4x4として保存し、inverse_bind_record_indexはこのStructuredBuffer内の絶対Element Indexを参照する。非Joint NodeはUINT32_MAXとする。Record Structは標準レイアウト / Trivially Copyable / alignof=4とし、#pragma packでField Alignmentを暗黙に変えない。
+
+#### Channel / Track / Blend Flagsと係数の意味
+
+- channel_mask: bit0=Translation、bit1=Rotation、bit2=Scale。未設定ChannelはAsset Rest Local Transformの定数値を使い、PacketへRest Valueを定数係数として含める。
+- interpolation_flags: Translationはbit0..1、Rotationはbit2..3、Scaleはbit4..5。各2-bit値は0=STEP、1=LINEAR、2=CUBICSPLINE、3=Invalid。Reserved bitは0固定。
+- node_role_flags: bit0=Joint、bit1=Mesh Node、bit2=Model Root、bit3=Required Joint Ancestor。複数Roleを同時に持つことを許可する。
+- Track flags: bit0=Loop、bit1=Reverse Playback、他bitは0。clip_time_deltaはSpan開始 / 終了のClip Local Time差。playback_speedはclip_time_delta/span_durationと一致することを検証する。
+- Span flags: bit0=Has Blend、bit1=Has Kinematic Collider、bit2=Has Root Motion。Reserved bitは0。
+- weight_curve_flags: bit0=Enabled。Blend RecordのSource / Target IndexはSpan Track Range内のIndexとし、Track Range外参照はPacket Invalid。
+- Collider flags: bit0=Kinematic、bit1=Shortest Arc Slerp、他bitは0。
+
+ChannelのTranslation / Scale係数はp(u)=c0+c1*u+c2*u²+c3*u³とする。rotation_parameter0..3はQuaternion Channel専用で、STEPではqをparameter0へ格納し残りを0、LINEARではHemisphere整合済みq0 / q1をparameter0 / parameter1へ格納しAnalytic Slerpで評価する。CUBICSPLINEでは正規化前Raw Quaternionの4次元成分ごとのCubic Coefficient c0..c3をparameter0..3へ格納する。評価時はq=r/|r|、q_dot=(r_dot-q*dot(q,r_dot))/|r|を使用する。Quaternion Normalization Lower BoundはSpan Recordのquaternion_normalization_lower_boundで保証し、閾値以下となる入力はSpan細分化またはInvalid Animation Inputとする。
+
+Colliderのrotation_start / rotation_endはLocal-to-World Quaternion。angular_axis_and_angle.xyzはShortest-Arc SlerpのWorld Space回転軸、wは角度[rad]。角度がrotation_epsilon以下ならaxis=(0,0,0)、omega=0とする。その他はomega_world=axis_world*angle/span_duration。Contact Point Velocityはv_linear+cross(omega_world, x_contact-transform_origin)とする。
 固定RecordのByte Offsetは次の通りとする。first_track / first_channel / first_blend / first_collider Record RangeとTrack Recordのfirst_channel_recordは各StructuredBuffer内の絶対Element Index / Count。Blendのsource_track_index / target_track_indexのみSpanのTrack Range先頭からの相対Indexとする。OffsetはBuffer先頭からのbyte単位であり、全Fieldは4-byte alignmentとする。
 
 | Record | Field Offset |
