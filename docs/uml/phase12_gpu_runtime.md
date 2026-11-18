@@ -60,6 +60,7 @@ sequenceDiagram
     Note over S,G: Over cap -> WORK_BUDGET_EXCEEDED; keep same Reservation / Packet Version, no Physics Dispatch
     G->>D: predecessor / State Generation gate
     G->>D: upload immutable Animation Trajectory Span Packets / Collider Records + Bounds
+    G->>D: initialize per-World Mutable Span Cursor Buffer from Tick Reservation
     loop each World Integration Segment
         G->>D: evaluate Animation Packet at Segment start/end
         G->>D: evaluate exact Animation / Kinematic Trajectory at every CA tau
