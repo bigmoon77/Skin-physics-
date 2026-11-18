@@ -484,18 +484,18 @@ ClothはXPBDであるため、ここでの時間刻み上限はFEM CFLのよう�
 World共通Substep ScheduleはFEM CFL、Animation Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限の最小値を集約する。Cloth品質LimitをScenarioで無効にした場合はその項を無限大として扱う。Contact Compliance 0のContactに固有振動数を割り当てず、contact_max_substep_delta_timeを独立した時間品質上限として使用する。初期値は1/120 s、0は明示無効とする。0を指定しworld_max_substep_delta_timeも0ならContact固有のdt上限を適用しない。
 上限超過時は警告し、設定に応じてWorld共通Substep数を増やす。最大World Substep数を超えたらWORK_BUDGET_EXCEEDEDとしてLogical TickをCommitせず、時間を保持する。Soft Bodyだけを細かく進めてCloth / Contactを旧時刻に残す独立Subcyclingはv1で禁止する。
 
-World共通Substep数はLogical Tick開始時に一度だけ決定する。全参加Soft Body MeshのFEM / Animation Tracking制限、全参加Cloth MeshのTemporal Quality Limit、World設定のminimum_substeps / maximum_substepsを集約し、
+World共通Substep数はLogical Tick開始時に一度だけ決定する。全参加Soft Body MeshのFEM / Animation Tracking制限、全参加Cloth MeshのTemporal Quality Limit、Contact Temporal Quality Limit、World設定のminimum_substeps / maximum_substepsを集約し、
 
     dt_limit_world = min(all_mesh_dt_limit_fem,
                          all_mesh_dt_limit_tracking,
                          all_mesh_dt_limit_cloth_quality,
-                         contact_max_substep_delta_time,
+                         contact_max_substep_delta_time if > 0 else +infinity,
                          world_max_substep_delta_time if > 0 else +infinity)
 
     N_world = max(minimum_substeps,
                   ceil(fixed_delta_time / dt_limit_world))
 
-とする。該当する制限がない項は無限大として扱い、全項が無制限ならN_worldはminimum_substepsとなる。N_world > maximum_substeps、整数オーバーフロー、または非有限値はTickを拒否する。実際のSubstep時間はdt_world = fixed_delta_time / N_worldとし、全Soft Body / Cloth / Contact / Animation Trackingへ同一値を渡す。ClothのXPBD ComplianceとContact Complianceは必ずこのdt_worldから算出する。
+とする。contact_max_substep_delta_time=0は+infinityとして扱い、world_max_substep_delta_time=0も+infinityとする。全項が無制限ならN_worldはminimum_substepsとなる。N_world > maximum_substeps、整数オーバーフロー、または非有限値はTickを拒否する。実際のSubstep時間はdt_world = fixed_delta_time / N_worldとし、全Soft Body / Cloth / Contact / Animation Trackingへ同一値を渡す。ClothのXPBD ComplianceとContact Complianceは必ずこのdt_worldから算出する。
 
 TOI分割はWorld共通Substepの内部Segmentとして扱う。TOI以前・TOI以後の双方でSoft Body、Cloth、Animation Tracking、Contact対象の全てを同じSegment時間だけ進める。v1ではSoft BodyだけをTOIまで進めてClothを固定するようなソルバー別時間進行を行わない。minimum_substeps、maximum_substeps、world_max_substep_delta_timeはWorld Descriptor / Scenarioに保存し、Run Manifestへ記録する。
 
@@ -560,14 +560,14 @@ Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraint
 
 ### 7.1.2 World Integration Segmentの処理順
 
-1. Logical Tick内のWorld Substep境界、Animation Span Key境界、Force開始 / 終了、Impulse時刻を昇順に統合する。TOIが検出された場合は現在SegmentをTOI時刻で分割する。等しい時刻のEventはEvent ID順でまとめ、重複境界を除去する。隣接する境界時刻が同一または数値的に逆転した場合は同一境界へ統合し、dt_segment <= 0のSegmentを発行しない。
+1. Logical Tick内のWorld Substep境界、Animation Span Key境界、Force開始 / 終了、Impulse時刻を昇順に統合する。TOIが検出された場合は現在SegmentをTOI時刻で分割する。等しい時刻のEventはEvent ID順でまとめ、重複境界を除去する。隣接する境界時刻が同一または数値的に逆転した場合は同一境界へ統合し、dt_segment <= 0のSegmentを発行しない。Animation / Force / Impulseの確定境界から算出したLogical Tick内Segment数がmaximum_integration_segments_per_tickを超える場合、GPU Physics Pass開始前にWORK_BUDGET_EXCEEDEDとしてTick Reservationを保持する。Key境界や異なる時刻のEvent境界を結合・省略して上限内へ丸めない。
 2. Segment開始時にPhysics Position / Velocity、Animation Input Version、Impulse Event Cursor / 適用済みEvent ID状態をSnapshotする。Segment境界でXPBD Lambda / Contact Lambda / Impact Scratchを初期化する。
 3. Animation Span PacketをSegment開始前に固定し、Segment開始・終了時刻およびTOI任意時刻のTarget / Velocityを同じGPU Trajectory Evaluatorで取得する。Span Key境界はSegment境界へ追加済みとする。必要なSample Bracket / Packet / Boundが揃わない場合はBLOCKED_BY_INPUTとし、予測へ進まない。
 4. Segment開始位置から各Force DescriptorのFalloff Weightを計算する。Gravity / ForceはSegment内で一定とし、ImpulseはSegment開始時刻のEvent IDを確認して一度だけ消費する。RetryはSnapshotと同じEvent Cursorから再生し、破棄されたWorking Stateへの適用を重複累積させない。
 5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
 7. TOIがない場合は、Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを規定反復数だけ解く。
-8. Positive-Time TOIがある場合は、§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexはtau時刻のAnimation Target Trajectory位置を直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準とし、Deviation Boundで膨張させる。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
+8. Positive-Time TOIがある場合は、次の残Segmentを含む実行済み / 予定Segment数がmaximum_integration_segments_per_tick以下であることを先に確認する。上限を超える場合は同じTickをCommitせずReservationを保持する。§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexはtau時刻のAnimation Target Trajectory位置を直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準とし、Deviation Boundで膨張させる。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
 9. Discrete / TOIの双方で、非接触内部Constraint後・Contact Position Constraint前にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、TOI prefixではtauを使う。次にContact候補を現在の内部Constraint後Positionで再検査し、接触が成立しているものだけContact Position XPBDを解く。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
 10. 保存済みContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを一度適用する。TOI Impactはimpact_resolvedに記録し、Impact後Velocityから残時間の新Segmentを開始する。Contact位置補正後またはImpact後に同じSegmentのVelocity Reconstructionを実行しない。TOI候補がprefix再検査で成立しない場合はImpactを発生させず、tau位置から残時間を継続し、必要ならCCD候補を再構築する。
 
