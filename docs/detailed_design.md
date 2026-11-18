@@ -6,7 +6,7 @@
 - 対応基本設計: basic_design.md 1.8
 - Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.7
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
-- 前版: 1.7
+- 前版: 1.9
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
