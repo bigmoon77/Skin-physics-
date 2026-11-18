@@ -798,17 +798,17 @@ etaの初期値は0.5。これは候補の選別値であり、CCD自体の正�
 
 ### 11.3 Conservative Advancement
 
-Dynamic Physics VertexのCCD pathはSemi-implicit Eulerが生成したSegment開始 / 終端状態を結ぶ離散線形軌道とする。Kinematic Vertex / ColliderのNarrowphase / Conservative Advancementは各tau時刻でAnimation / Rigid Transform Trajectoryを直接評価した幾何位置を使う。KinematicのEndpoint ChordはSwept AABBの基準形状として使い、全区間の保守的Chord偏差BoundでAABBを膨張させる。CAの距離d(tau)は実Trajectory位置から計算し、速度上限v_boundはDynamic path速度上限とKinematic Trajectoryの区間速度Boundを合成する。秒単位の時刻tauにおける距離をd(tau)、実接触厚みをr、相対速度上限をv_boundとする。
+Dynamic Physics VertexのCCD pathはSemi-implicit Eulerが生成したSegment開始 / 終端状態を結ぶ離散線形軌道とする。各候補のDynamic path速度上限はlength(path_velocity)、Kinematic Vertex / Colliderの速度上限はkinematic_path_speed_boundとする。 VT / EEのv_bound式に使うpath_speed_bound(primitive)は、Dynamic primitiveではlength(path_velocity)、Kinematic primitiveではAnimation / Rigid Transform Evaluatorが返す保守的なkinematic_path_speed_boundである。Kinematic Vertex / ColliderのNarrowphase / Conservative Advancementは各tau時刻でAnimation / Rigid Transform Trajectoryを直接評価した幾何位置を使う。KinematicのEndpoint ChordはSwept AABBの基準形状として使い、全区間の保守的Chord偏差BoundでAABBを膨張させる。CAの距離d(tau)は実Trajectory位置から計算し、速度上限v_boundはDynamic path速度上限とKinematic Trajectoryの区間速度Boundを合成する。秒単位の時刻tauにおける距離をd(tau)、実接触厚みをr、相対速度上限をv_boundとする。
 
 VT:
 
-    v_bound = length(path_velocity_vertex)
-             + max(length(path_velocity_tri0), length(path_velocity_tri1), length(path_velocity_tri2))
+    v_bound = path_speed_bound(vertex)
+             + max(path_speed_bound(tri0), path_speed_bound(tri1), path_speed_bound(tri2))
 
 EE:
 
-    v_bound = max(length(path_velocity_edgeA0), length(path_velocity_edgeA1))
-             + max(length(path_velocity_edgeB0), length(path_velocity_edgeB1))
+    v_bound = max(path_speed_bound(edgeA0), path_speed_bound(edgeA1))
+             + max(path_speed_bound(edgeB0), path_speed_bound(edgeB1))
 
 保守的な進行量:
 
