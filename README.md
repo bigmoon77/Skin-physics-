@@ -97,6 +97,7 @@ The current integration proposal is documented in:
 - [Basic design](docs/basic_design.md) 1.3
 - [Detailed design](docs/detailed_design.md) 1.4
 - [Design closure / v1 decisions](docs/design_closure.md)
+- [Requirements](docs/requirements.md) 1.1
 - [GPU Runtime / Library integration](docs/runtime_integration_design.md)
 - [GPU Runtime UML](docs/uml/phase12_gpu_runtime.md)
 - [Numerical acceptance profile](docs/numerical_acceptance_profile_v1.json)
