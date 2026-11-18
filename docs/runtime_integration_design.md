@@ -403,7 +403,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | render_binding | resource_generation / device_generation / committed_tick_sequence | Stale Binding検出と描画状態の追跡 |
 | render_binding | render_slot_id / render_slot_generation / lease_generation | Runtime-owned Render Candidate Ring内のSlot識別とHost lease検証。Releaseには同じlease_generationを必須指定 |
 
-Animation Playback APIの状態遷移は次の通りとする。set_animation_playbackは単一Trackを有効にし、存在するClip Blendを次のTick Reservation境界で解除する。set_animation_blendはSource / Targetの2 TrackとBlend Weight Curveを同じ境界で一括置換する。Blend期間外はweight_start / weight_endを保持し、区間内だけCubic Hermiteを評価する。API呼出しの途中でGPU Packetを変更しない。Clip / Weight / Root Sampleの更新はTick Reservation開始前に採用され、そのTickのPacket Versionへ固定される。Discontinuity Policyは明示されたTeleport / Reset / Time Rewind / Clip Switch Eventにだけ適用する。通常BlendはTrajectory微分へw_dotを含め、Velocity Resetしない。
+Animation Playback APIの状態遷移は次の通りとする。set_animation_playbackは単一Trackを有効にし、存在するClip Blendを次のTick Reservation境界で解除する。set_animation_blendはSource / Targetの2 TrackとBlend Weight Curveを同じ境界で一括置換する。Blend期間外はweight_start / weight_endを保持し、区間内だけCubic Hermiteを評価する。API呼出しの途中でGPU Packetを変更しない。Clip / Weight / Root / Collider Sampleの更新はTick Reservation開始前に採用され、そのTickのPacket Versionへ固定される。Span RecordはTrack / Channel / Blend / Collider Buffer Rangeを参照し、Blend Source / Target Track IndexはSpan-relative Track Record Index。Discontinuity Policyは明示されたTeleport / Reset / Time Rewind / Clip Switch Eventにだけ適用する。通常BlendはTrajectory微分へw_dotを含め、Velocity Resetしない。
 
 `model_desc`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
 
@@ -522,7 +522,7 @@ CPU Animation EvaluatorはLogical Tick候補の有効なClip Key / Loop / Blend 
 
 絶対World Simulation Time、Tick Reservation時刻、Clip Local Time、Span境界はCPU上でdouble管理する。GPU Shader Model 5へ渡すPacketはdoubleを含まず、uint32 / floatのみの固定幅Recordとする。GPUは絶対World TimeをfloatへCastしない。各Spanの開始時点の正規化座標u_segment_startとSegment開始からの相対秒tau [s]から、u_tau = clamp(u_segment_start + tau * inverse_span_duration, 0, 1)を算出する。TOIで残Segmentを始める場合はGPU上でu_segment_startをu_tauへ更新し、CPU Readback / 再Uploadを挟まない。
 
-GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 64 bytes、animation_channel_gpu_record 208 bytes、animation_blend_gpu_record 48 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。Span / Channel / Blend / Colliderの全Field Byte Offsetも§5.3のABI表で固定する。CPU Absolute Timeはdouble、GPUはSpan-local normalized time / Segment-relative tauのみfloatで扱う。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
+GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 80 bytes、animation_track_gpu_record 32 bytes、animation_channel_gpu_record 208 bytes、animation_blend_gpu_record 48 bytes、kinematic_collider_gpu_record 128 bytesを正本とする。Recordは4-byte packing / alignment、uint32 / float / float4のみ。Span / Channel / Blend / Colliderの全Field Byte Offsetも§5.3のABI表で固定する。CPU Absolute Timeはdouble、GPUはSpan-local normalized time / Segment-relative tauのみfloatで扱う。C++ sizeof / alignof / offsetof Static Assertion、HLSL StructuredBuffer stride、WARP ABI ReadbackをR5 Gateの必須検証にする。Boundをfloatへ変換するときは外向き丸めを行う。floatへ変換したSpanでu_tauの単調進行または境界判定が保証できない場合はSpanを細分化し、最大深度8で解決しなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。
 
 
 - STEP / LINEAR / CUBICSPLINEの係数化、Quaternion Slerp / normalized Hermite微分、最大2 Track Blend、Hierarchy / Skinning微分はdetailed_design.md §5.3を正とする。
@@ -805,7 +805,8 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 ### Gate R5 — Animation / Render Integration
 
 - Multi-key glTF Clip / Skeleton / Mesh Node Matrix。
-- GPU Animation Span Packet / 任意tauのSkinning Position / Velocity / Bounds。
+- GPU Animation Span / Track / Channel / Blend Packet、任意tauのSkinning Position / Velocity / Bounds。
+- Fixed SM5 Packet ABI / Span-local normalized cursor monotonicity / float precision gate (Span 80 B / Track 32 B / Channel 208 B / Blend 48 B / Collider 128 B)。
 - 2 Track Clip Blend / w_dot / BlendVelocity Discontinuity。
 - Substepped target position / velocity。
 - Animation Discontinuity / Teleport Policy。
