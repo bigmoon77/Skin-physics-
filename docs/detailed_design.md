@@ -252,6 +252,65 @@ CPU Animation Evaluatorは各Spanについて不変のanimation_trajectory_packe
 
 GPUはCAの各Iterationで指定されたtauを受け取り、同じPacketを用いてAnimation / Kinematic Transformを評価する。独立Kinematic Colliderはset_kinematic_pose_sampleで受け取った時刻付きTransform SampleをCPUでSpan化し、Translation Linear Interpolation + Shortest-Arc Slerpで評価可能なCollider Trajectory Recordへ変換する。Collider Spanは両端Sampleでbracketし、Span内の位置 / Quaternion / Linear Velocity / Angular Velocityを解析的に算出する。GPU Skinning / Trajectory EvaluatorはBone Local Transform、Bone Global Transform、Skin Matrix、Physics Vertex Target Position / Velocityを同一tauで算出し、Collider Transform Evaluatorは同じtauからCollider Position / Contact Point Velocityを算出する。TOI位置、Contact Relative Velocity、Tracking Targetが異なるPose Sampleを参照してはならない。Animation PacketはTick ReservationへVersion固定し、Retryでは同一Packetを再利用する。
 
+#### CPU Metadata / GPU Packet ABIと時刻精度
+
+CPU SchedulerはWorld Simulation Timeの絶対時刻、Tick Reservation、Animation Span境界をdoubleで保持する。GPU Trajectory PacketはShader Model 5で利用できるuint32 / floatのみを使い、double、bool、Pointer、std::string、std::vectorを含めない。
+
+GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う。
+
+    struct animation_span_gpu_record
+    {
+        uint32_t span_id;
+        uint32_t animation_input_version_low;
+        uint32_t animation_input_version_high;
+        uint32_t first_channel_record;
+        uint32_t channel_record_count;
+        uint32_t first_collider_record;
+        uint32_t collider_record_count;
+        uint32_t flags;
+        float span_duration_seconds;
+        float inverse_span_duration;
+        float speed_bound;
+        float acceleration_bound;
+        float chord_deviation_bound;
+        float quaternion_normalization_lower_bound;
+        float reserved0;
+        float reserved1;
+    };
+
+    struct animation_channel_gpu_record
+    {
+        uint32_t bone_index;
+        uint32_t parent_index;
+        uint32_t interpolation_flags;
+        uint32_t channel_mask;
+        float4 translation_c0;
+        float4 translation_c1;
+        float4 translation_c2;
+        float4 translation_c3;
+        float4 rotation_parameter0;
+        float4 rotation_parameter1;
+        float4 rotation_parameter2;
+        float4 rotation_parameter3;
+        float4 scale_c0;
+        float4 scale_c1;
+        float4 scale_c2;
+        float4 scale_c3;
+    };
+
+Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
+
+CPUはdoubleのSpan開始・終了時刻とSegment開始時刻から、正規化Span座標u_segment_startを計算してfloatへ変換する。GPUへの時間入力はAbsolute World Timeを含めず、Segment開始からの相対時間tau [s]だけを渡す。
+
+    u_tau = u_segment_start + tau * inverse_span_duration
+    u_tau = clamp(u_tau, 0, 1)
+
+TOIが確定して残Segmentを開始するときは、GPUがu_segment_start = u_tauへ更新し、同じAnimation Span / Packet Versionを継続使用する。CPUへTOI時刻Readbackして再Uploadする同期経路は作らない。Animation Key / Loop / Blend / Root / Collider Sample境界をSpan終端としているため、u_tauが1へ到達する前に次Spanへ跨がない。
+
+CPUはdouble→float変換後のSpan Duration / inverse duration / u_segment_start / Speed Boundを検査する。正の有効Segment時間をGPU floatで表現できない、u_tauがtau増加に対して単調に進まない、または境界判定誤差がSpan内許容値を超える場合はAnimation Spanを決定的に細分化する。細分化深度8でも表現できなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。絶対World Timeをfloatへ直接CastしてShaderへ渡す実装は禁止する。
+
+Speed / Acceleration / Deviation BoundをfloatへUploadする場合は外向きに丸め、Boundを小さくしない。Boundの量子化後も同じNo-Miss条件を維持できない場合はSpanを分割し、それでも証明できない入力を拒否する。
+
 #### Channel補間と時間微分
 
 Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / Scaleの各Componentは次の多項式で表す。
