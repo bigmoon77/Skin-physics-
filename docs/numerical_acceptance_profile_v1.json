@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "profile_id": "skin_physics_numerical_acceptance_v1",
+  "profile_version": "1.0",
+  "status": "proposed_initial_engineering_thresholds",
+  "applies_to": {
+    "runtime": "SkinPhysics",
+    "api": "Direct3D 11 Compute Shader Model 5",
+    "precision_under_test": "GPU float32",
+    "reference_precision": "CPU double",
+    "reference_rule": "The CPU reference must use the same algorithm, equations, operation ordering, substep boundaries, solver iteration ordering, and input snapshots as the GPU path. Different algorithms are compared using analytic fixtures and physical invariants, not frame-by-frame trajectory equality."
+  },
+  "normalization": {
+    "per_mesh": true,
+    "length_reference": "median positive rest-edge length in the Physics Mesh",
+    "mass_reference": "median positive dynamic Physics Vertex mass",
+    "time_reference": "actual internal substep duration used by the compared update",
+    "velocity_reference": "length_reference / time_reference",
+    "force_reference": "mass_reference * length_reference / (time_reference * time_reference)",
+    "stress_reference": "max(absolute(mu), absolute(K), 1 Pa)",
+    "energy_reference": "max(stress_reference * tet_rest_volume, 1e-12 J)",
+    "xpbd_lambda_reference": {
+      "length_constraint": "mass_reference * length_reference",
+      "dimensionless_constraint": "mass_reference * length_reference * length_reference"
+    },
+    "normalization_is_computed_per_mesh_and_substep": true
+  },
+  "gpu_float32_vs_cpu_double": {
+    "position": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "length_reference"
+    },
+    "velocity": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "velocity_reference"
+    },
+    "soft_body_force_contribution": {
+      "relative_rms_max": 0.00001,
+      "relative_max_max": 0.0001,
+      "normalization": "force_reference"
+    },
+    "soft_body_first_piola_stress": {
+      "relative_rms_max": 0.00001,
+      "relative_max_max": 0.0001,
+      "normalization": "stress_reference"
+    },
+    "soft_body_energy": {
+      "relative_error_max": 0.00001,
+      "normalization": "energy_reference"
+    },
+    "cloth_xpbd_lambda": {
+      "relative_rms_max": 0.0001,
+      "relative_max_max": 0.001,
+      "normalization": "xpbd_lambda_reference_by_constraint_dimension"
+    },
+    "contact_xpbd_lambda": {
+      "relative_rms_max": 0.0001,
+      "relative_max_max": 0.001,
+      "normalization": "xpbd_lambda_reference_by_constraint_dimension"
+    },
+    "constraint_residual": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "rest_length_for_length_constraints; dimensionless_for_shear; radians_for_bend; rest_length_for_contact"
+    }
+  },
+  "local_operator_validation": {
+    "deformation_gradient_determinant": {
+      "absolute_error_max": 0.000001,
+      "relative_error_max": 0.00001
+    },
+    "polar_rotation_orthogonality_frobenius": {
+      "max": 0.00001
+    },
+    "polar_rotation_determinant_error": {
+      "max": 0.00001
+    },
+    "first_piola_stress": {
+      "relative_error_max": 0.00001,
+      "normalization": "stress_reference"
+    },
+    "tet_vertex_force_gradient": {
+      "relative_error_max": 0.0001,
+      "normalization": "force_reference"
+    },
+    "cloth_bend_analytic_gradient_vs_central_difference": {
+      "relative_error_max": 0.001,
+      "step_size_policy": "scale perturbation from per-mesh length_reference and avoid degenerate hinge configurations"
+    },
+    "xpbd_projected_lambda_delta_consistency": {
+      "max_absolute_identity_error": 0.000001,
+      "identity": "lambda_next - lambda_old equals applied_delta_lambda; position correction uses that same applied delta"
+    }
+  },
+  "physical_invariants": {
+    "rest_mass_conservation_relative_error_max": 0.000001,
+    "rest_state_force_normalized_max": 0.000001,
+    "fixed_vertex_position_error_normalized_max": 0.000001,
+    "normalized_weights": {
+      "sum_absolute_error_max": 0.0001,
+      "minimum_weight": 0.0
+    },
+    "contact_penetration_after_solve": {
+      "maximum_fraction_of_combined_contact_thickness": 0.25,
+      "applies_to": "fixtures whose configured solver iteration and substep budget is expected to converge"
+    },
+    "initial_repair": {
+      "maximum_vertex_displacement": "must not exceed max_initial_repair_distance",
+      "unresolved_penetration": "must reject initial-state commit"
+    },
+    "candidate_completeness": {
+      "small_scene_reference": "broadphase candidates must contain every VT / EE pair found by exhaustive CPU reference",
+      "missing_pair_count": 0
+    },
+    "ccd": {
+      "toi_absolute_error_max": "max(1e-6 seconds, 1e-4 * actual_substep_duration)",
+      "resolved_distance_gap_max": "configured distance_tolerance",
+      "false_no_hit_count": 0,
+      "unresolved_candidate_policy": "reject logical step; never reinterpret unresolved as no-hit"
+    },
+    "invalid_state": {
+      "nan_count": 0,
+      "infinity_count": 0,
+      "out_of_range_index_count": 0,
+      "undetected_capacity_overflow_count": 0,
+      "silent_candidate_drop_count": 0
+    }
+  },
+  "reproducibility": {
+    "same_gpu_same_driver_same_build": {
+      "position_rms_max_normalized": 0.0001,
+      "pair_set_comparison": "exact",
+      "topology_and_id_comparison": "exact"
+    },
+    "cross_gpu": {
+      "bitwise_identity_required": false,
+      "use_gpu_float32_vs_cpu_double_and_physical_invariant_gates": true
+    }
+  },
+  "benchmark_policy": {
+    "profiles": {
+      "tet_counts": [2000, 8000, 32000],
+      "cloth_triangle_counts": [2000, 8000, 32000],
+      "mixed_mesh_pairs": "include Soft Body / Soft Body, Cloth / Cloth, Soft Body / Cloth and self-collision cases"
+    },
+    "hardware": "NVIDIA GeForce GTX 1660 SUPER 6GB",
+    "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
+    "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
+    "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result."
+  },
+  "governance": {
+    "thresholds_are_initial_engineering_candidates": true,
+    "must_be_checked_against_existing_golden_fixtures": true,
+    "threshold_changes_require": [
+      "documented false-reject or false-accept evidence",
+      "profile version increment",
+      "independent review",
+      "rerun of all analytical, numerical, physical and integration tests"
+    ],
+    "not_a_claim_of_measured_gpu_accuracy_or_performance": true
+  }
+}
