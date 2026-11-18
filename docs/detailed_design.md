@@ -115,6 +115,7 @@ GPUはRuntime Physics Stateの唯一の正とする。HostからGPU内部Solver 
 | rest_position | StructuredBuffer<float4> | 初期化時 | Rest Pose |
 | animation_target | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始・終了境界 | Skinning目標位置。CCD prefix時刻は同じTrajectory Evaluatorから取得 |
 | animation_trajectory_packet | SRV StructuredBuffer<AnimationTrajectoryRecord> | Logical Tick / Animation Spanごと | Bone単位のTranslation / Rotation / Scale補間係数、Parent、Blend、Root Transform。TOI任意時刻評価の入力 |
+| animation_span_cursor_gpu_record | WorldごとのRWStructuredBuffer / UAV | Logical Tick / Working Segmentごと | Immutable Span Packetを参照するMutable Cursor。Span Record Index / Packet Version / normalized u。Segment Snapshotへ含め、TOI / RetryでRollback |
 | animation_trajectory_bound | SRV StructuredBuffer<AnimationTrajectoryBound> | Animation Spanごと | Mesh単位の保守的な最大速度・最大加速度・Chord Deviation Bound。Swept AABB / CAに使用 |
 | animation_velocity | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始・終了境界 / TOI時刻 | Skinning済みTarget Trajectoryの時間微分 |
 | animation_lambda | RWStructuredBuffer<float4> | Segment反復 | Cloth追従制約の3軸λ Scratch |
