@@ -242,7 +242,7 @@ Logical Tick内のAnimation入力を、次の境界でAnimation Spanへ分割す
 CPU Animation Evaluatorは各Spanについて不変のanimation_trajectory_packetを作成し、GPUへUploadする。Packetは次を含む。
 
 - SpanのWorld Simulation Time [t0,t1]、Animation Input Version、Span ID。
-- BoneごとのParent Index、Inverse Bind Matrix、Mesh Node参照。
+- Skinningに必要なBone / Mesh Node / Root / 祖先NodeごとのNode Index・Parent Index・Inverse Bind Matrix参照・Node Typeを保持する。Transform RecordはSkeletonのJointだけでなくMesh Node Global Matrixと全Joint Ancestorも含む。Inverse Bind Matrix自体はAssetのImmutable GPU Bufferへ置き、PacketからStatic Record Indexで参照する。
 - 最大2本のAnimation Track。各TrackのClip Time区間、Playback Speed、Loop状態、補間種別、Channel有無。
 - BoneごとのTranslation / Scale補間係数c0..c3、Rotation補間パラメータ、Key境界情報。
 - Blend Weight Curveの係数w0..w3、Discontinuity EventとPolicy。
@@ -314,7 +314,7 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
 
     struct animation_channel_gpu_record
     {
-        uint32_t bone_index;
+        uint32_t node_index;
         uint32_t parent_index;
         uint32_t interpolation_flags;
         uint32_t channel_mask;
@@ -339,7 +339,7 @@ animation_span_gpu_record is exactly 64 bytes, animation_channel_gpu_record is e
 | Record | Field Offset |
 |---|---|
 | animation_span_gpu_record (64 B) | span_id=0, version_low=4, version_high=8, first_channel=12, channel_count=16, first_collider=20, collider_count=24, flags=28, span_duration=32, inverse_span_duration=36, u_segment_start=40, speed_bound=44, acceleration_bound=48, chord_deviation_bound=52, quaternion_normalization_lower_bound=56, reserved0=60 |
-| animation_channel_gpu_record (208 B) | bone_index=0, parent_index=4, interpolation_flags=8, channel_mask=12, translation_c0=16, translation_c1=32, translation_c2=48, translation_c3=64, rotation_parameter0=80, rotation_parameter1=96, rotation_parameter2=112, rotation_parameter3=128, scale_c0=144, scale_c1=160, scale_c2=176, scale_c3=192 |
+| animation_channel_gpu_record (208 B) | node_index=0, parent_index=4, interpolation_flags=8, channel_mask=12, translation_c0=16, translation_c1=32, translation_c2=48, translation_c3=64, rotation_parameter0=80, rotation_parameter1=96, rotation_parameter2=112, rotation_parameter3=128, scale_c0=144, scale_c1=160, scale_c2=176, scale_c3=192 |
 | animation_blend_gpu_record (48 B) | source_track_index=0, target_track_index=4, weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, reserved1=40, reserved2=44 |
 | kinematic_collider_gpu_record (128 B) | stable_id_low=0, stable_id_high=4, span_sample_pair_id=8, flags=12, translation_start=16, translation_end=32, rotation_start=48, rotation_end=64, angular_axis_and_angle=80, duration=96, inverse_duration=100, linear_speed_bound=104, angular_speed_bound=108, maximum_local_radius=112, sagitta_bound=116, reserved0=120, reserved1=124 |
 
@@ -403,7 +403,7 @@ Skin Matrixの微分には逆行列の微分を含める。
     S_j_dot = A_dot * joint_global[j] * inverse_bind[j]
               + A * joint_global_dot[j] * inverse_bind[j]
 
-Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivativeを合成し、Physics Vertex Rest Positionへ適用してTarget Position / Velocityを得る。
+Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivativeを合成し、Physics Vertex Rest Positionへ適用してTarget Position / Velocityを得る。animation_channel_gpu_recordは各必要Node（Bone / Mesh Node / Root / Joint Ancestor）をnode_indexで識別し、Skeleton JointのInverse Bind MatrixはAsset Immutable BufferのStatic Indexから参照する。Mesh Node Global Matrix / Derivativeも同じHierarchy Passで評価して、skin_matrix = inverse(mesh_node_global) * joint_global * inverse_bindを構成する。
 
 #### Conservative Trajectory Bounds
 
