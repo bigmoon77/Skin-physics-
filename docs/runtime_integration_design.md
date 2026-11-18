@@ -38,7 +38,7 @@ Runtimeは複数の独立Simulation Worldを作成できる。World間のCollisi
 - Static / Kinematic Triangle Mesh Collider。
 - Mesh単位のSelf Collision設定とMesh Pair除外設定。
 
-同一Model内のBody、Shirt、Pants、Hair Cards / Hair Bundles等は共通Worldで接触できる。Soft BodyはPhysics Mesh境界面、ClothはPhysics表面三角形を接触対象とする。Soft Body内部Tet面は外部接触プリミティブへ登録しない。
+同一Model内のBody、Shirt、Pants、Hair Cards / Hair Bundles等は共通Worldで接触できる。Soft BodyはPhysics Mesh境界面、ClothはPhysics表面三角形を接触対象とする。Soft Body内部Tet面は外部接触プリミティブへ登録しない。World共通Substep Scheduleを採用し、v1ではSolver別Subcyclingを行わない。
 
 v1では独立した動的Rigid Body、Strand Hair専用線状モデル、GPU上での四面体化、GPU上での任意Topology編集、変形Collision ProxyからPhysics Meshへの汎用応答写像を対象外とする。
 
@@ -106,6 +106,9 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             busy,
             submission_thread_violation,
             blocked_by_input,
+            blocked_by_capacity,
+            blocked_by_ccd,
+            blocked_by_predecessor,
             render_binding_busy,
             stale_handle,
             unsupported_feature,
@@ -114,7 +117,11 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             out_of_memory,
             device_removed,
             gpu_execution_failed,
-            step_rejected
+            step_rejected,
+            work_budget_exceeded,
+            contact_geometry_unresolved,
+            contact_manifold_reduction_failure,
+            no_force_target
         };
 
         enum class playback_state : uint8_t
@@ -270,7 +277,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
 
 Resource Lifecycleの破棄契約は次の通りとする。destroy_model / destroy_colliderは対象Worldのin-flight Tickが0件で、Host Render Leaseが存在しない場合のみ成功する。該当条件を満たさなければBUSYを返し、HandleとResourceを維持する。reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功し、Accumulator / Pending Reservation / Step Queue / Contact Cache / Lambda / DiagnosticをInitial Stateへ戻す。destroy_worldはPaused / Stoppedで、in-flight Tick / Query未回収 / Host Lease / Pending Step Requestが全て0のときのみ成功し、条件不足ではBUSYを返す。destroy操作の成功後、GPU QueryやCommand Streamが参照するResourceはそのCompletion Queryが完了するまでDeferred Release Listに保持する。
 
-drain()は明示的な非Frame APIである。新規Tick Submissionを停止し、全既存GPU Query / TickのCompletionとDeferred Releaseを待つ。未割当Accumulatorのwhole Tick、Pending Reservation、Step RequestまたはHost Render Leaseがある場合はBUSYを返す。DrainはHost Leaseを強制Releaseせず、HostにUnbind / Releaseを要求する。shutdown()は全WorldがDestroy済み、Query RingがIdle、Deferred Release Listが空、Host Leaseが0のときだけOKを返してCOM参照・Library Resourceを解放する。それ以外はBUSYを返し、状態を破壊しない。Runtime Destructorはshutdown成功後に呼び出す契約とする。通常Frame PathにFlush / 同期Waitを入れない。明示drain()のみGPU Event Queryの完了待ちを許可する。
+drain()は明示的な非Frame APIである。新規Tick Submissionを停止し、既にSubmission済みのGPU Query / TickのCompletionとDeferred Releaseを待つ。未割当Accumulatorのwhole Tick、未Submission Reservation、Step RequestまたはHost Render Leaseがある場合はBUSYを返す。DrainはHost Leaseを強制Releaseせず、HostにUnbind / Releaseを要求する。shutdown()は全WorldがDestroy済み、Query RingがIdle、Deferred Release Listが空、Host Leaseが0のときだけOKを返してCOM参照・Library Resourceを解放する。それ以外はBUSYを返し、状態を破壊しない。Runtime Destructorはshutdown成功後に呼び出す契約とする。通常Frame PathにFlush / 同期Waitを入れない。明示drain()のみGPU Event Queryの完了待ちを許可する。
 
 Handleはindex + generationで識別し、Destroy後のHandle再利用を拒否する。APIからGPU内部Buffer、Solver Scratch、Writable UAVを公開しない。Statusのdiagnosticは呼び出し結果が保持するstd::stringとし、Runtime内部の一時文字列ポインタを返さない。Public APIはC++静的Library向けであり、異なるCompiler / CRT間の安定ABIは保証しない。Asset / DescriptorはVersioned Schemaを使い、ロード時に既存Asset Cacheのhash・coordinate_system_version・material_layout_version・generator identityを検証する。v1のRuntime ImporterはOBJ（呼出元が明示するunit scale必須）とglTF 2.0 / GLBを対象とする。ASCII Gmsh MSH 2.2はSoft Body Physics MeshのOffline中間入力として扱う。FBX、Morph Target / Morph Weight Animation、Draco圧縮、Meshopt圧縮はv1で未対応とし、Import時に明示Errorを返す。
 
@@ -297,7 +304,9 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | model_desc | source_model | validated asset::model。mesh physics_mode、nodes、materials、skin、animationを含む |
 | model_desc | mesh_physics_assets | Soft Body用physics_meshとmesh index / cache identityの対応。Cloth / Noneはphysics_modeに従う |
 | model_desc | render_bindings | mesh indexごとのvalidated render_vertex_binding array。Rest Pose誤差上限を満たす |
-| model_desc | world_transform | 初期World Transform。既存asset::mat4のcolumn-major規約に従う |
+| model_desc | world_transform | 初期World Transform。既存asset::mat4のcolumn-major規約に従う。Runtime RootはTranslation + Rotationのみ。ScaleはIdentity固定 |
+| asset node transform | static scale | Offline BuildでGeometry / Rest Data / Mass / BindingへBake。負・ゼロScaleは禁止 |
+| bone animation | scale channel | 正値かつ特異でないScaleのみ許可。負値・ゼロ・符号反転はImport Error |
 | model transform sample | sample_time / world_transform / is_teleport | 時刻付きRoot Transform履歴。Clip連続移動とTeleportを区別し、Tick / Substep時刻へ補間 |
 | mesh_physics_parameters | material channels | physics_modeに有効な単位付きSoft Body / Cloth Material。無効チャンネルの入力は拒否 |
 | attribute_edit_desc | operation / channel / brush / target / strength | Paint / Smooth / Average / Erase。Render Mesh側の編集値をCPUで更新し、Runtimeへ不変のversioned editとして反映 |
@@ -307,7 +316,8 @@ v1のPublic Descriptorは次の意味を持つ。型名は概念宣言であり�
 | collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
 | animation_playback_desc | clip_index / time / speed / weight / loop | asset::model内animation_clipの選択、再生時刻、倍率、Blend重み、Loop |
 | animation_playback_desc | discontinuity_policy | PreserveVelocity / ResetVelocity / BlendVelocityの選択 |
-| force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。対象World / Model / Mesh範囲を明示 |
+| force_desc | position / direction / magnitude / radius / duration / start_time | ForceはN、半径m、継続時間s。対象World / Model / Mesh範囲を明示。正のRadius必須。Mass-weighted Falloffで分配 |
+| impulse_desc | event_id / target_filter | Retryを含む同一Eventの重複適用を防ぐStable IDと対象範囲 |
 | impulse_desc | position / direction / impulse_magnitude / radius / event_time | ImpulseはN·s。瞬間イベントとして一度だけ適用 |
 | advance_report | submitted_tick_count / pending_tick_count / in_flight_tick_count | 今回の受付・未送信・GPU未完了を分離 |
 | advance_report | render_binding_backpressure / capacity_blocked | Render Slot leaseまたはGPU Capacityに起因するSubmission停止理由 |
