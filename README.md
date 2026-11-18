@@ -94,11 +94,11 @@ WARP is a software D3D11 device. These tests establish shader compilation, dispa
 
 The current integration proposal is documented in:
 
-- [Basic design](docs/basic_design.md) 1.6
-- [Detailed design](docs/detailed_design.md) 1.8
-- [Design closure / v1 decisions](docs/design_closure.md) v1.8
+- [Basic design](docs/basic_design.md) 1.7
+- [Detailed design](docs/detailed_design.md) 1.9
+- [Design closure / v1 decisions](docs/design_closure.md) v1.9
 - [Requirements](docs/requirements.md) 1.1
-- [GPU Runtime / Library integration](docs/runtime_integration_design.md) 1.5
+- [GPU Runtime / Library integration](docs/runtime_integration_design.md) 1.6
 - [GPU Runtime UML](docs/uml/phase12_gpu_runtime.md)
 - [Numerical acceptance profile](docs/numerical_acceptance_profile_v1.json)
 - [Runtime test gates](docs/testing_strategy.md), R0-R6
@@ -107,4 +107,4 @@ The v1 Runtime preserves the Skin Physics model: multiple Mesh Components per Wo
 
 This proposal intentionally does not import another project's single-body / 200k-particle / 40-FPS / fixed-1/120-second requirements. Skin Physics keeps its configurable Fixed Delta Time and workload-dependent 3-40 FPS evaluation range.
 
-**Status: design closure candidate / independent critical review required.** The v1 support scope, World-common Integration Segment schedule, Contact pre-solve Velocity / Impulse separation, Animation Trajectory derivatives, conservative Kinematic CCD path bounds, GPU Memory Budget accounting, collision manifold / BVH rules, Tick Reservation ledger, multi-World scheduling, Render Lease Generation, and Resource Lifecycle are consolidated in docs/design_closure.md. This is documentation only: the production GPU Runtime, common Substep scheduler, global Force / Impulse dispatch, full multi-iteration solver execution, moving VT / EE CCD and physical-GPU performance measurements remain unimplemented or unverified. WARP validates correctness only; it is not physical-GPU performance evidence.
+**Status: design closure candidate / independent critical review required.** The v1 support scope, World-common Integration Segment schedule, GPU Animation Trajectory Packet / arbitrary-TOI evaluation, non-responsive Contact guard, coupled Projected Jacobi Impulse, Contact Temporal Quality Limit, conservative Kinematic CCD path bounds, GPU Memory Budget accounting, collision manifold / BVH rules, Tick Reservation ledger, multi-World scheduling, Render Lease Generation, and Resource Lifecycle are consolidated in docs/design_closure.md. This is documentation only: the production GPU Runtime, common Substep scheduler, global Force / Impulse dispatch, full multi-iteration solver execution, moving VT / EE CCD and physical-GPU performance measurements remain unimplemented or unverified. WARP validates correctness only; it is not physical-GPU performance evidence.
