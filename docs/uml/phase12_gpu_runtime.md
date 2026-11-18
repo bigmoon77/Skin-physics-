@@ -55,9 +55,11 @@ sequenceDiagram
     S->>G: submit reserved sequence + immutable input snapshot
     G->>G: reserve per-tick Render Candidate Slot
     G->>D: predecessor / State Generation gate
-    G->>D: calculate World common Substep schedule + event boundaries
+    G->>D: build / upload immutable Animation Trajectory Span Packets + Bounds
+    G->>D: calculate World common Substep schedule + key / force / impulse boundaries
     loop each World Integration Segment
-        G->>D: sample Animation / Root / Kinematic poses
+        G->>D: evaluate Animation Packet at Segment start/end
+        G->>D: evaluate exact Animation / Kinematic Trajectory at every CA tau
         G->>D: distribute Force / Impulse events once
         G->>D: Soft Body FEM + Cloth prediction
         G->>D: broadphase / narrowphase / CCD candidate discovery
@@ -65,7 +67,9 @@ sequenceDiagram
         G->>D: solve non-contact internal constraints
         G->>D: save Dynamic v_pre_contact before Contact XPBD
         G->>D: Contact positional projection (position only)
-        G->>D: friction / restitution impulse gather once
+        G->>D: non-responsive W_eff guard
+        G->>D: coupled Projected Jacobi impulse iterations + CSR Gather
+        G->>D: validate Normal / Coulomb Cone Residual
     end
     G->>D: prepare Render Candidate (Position / Normal / Tangent)
     G->>D: validate Render Candidate + Physics State
@@ -87,7 +91,7 @@ sequenceDiagram
     H->>API: release_render_bindings(world, lease_generation)
 ```
 
-The loop body is executed per World Integration Segment, not once per Solver independently. For CCD, the TOI prefix state must be sampled from the same semi-implicit discrete path used by Conservative Advancement; do not re-predict the prefix using dt=tau, because that changes the path. Kinematic endpoint chords are used only as conservative Swept AABB reference shapes expanded by the full-interval deviation bound. Conservative Advancement / TOI positions evaluate the exact Animation / Rigid Transform Trajectory at tau and use its conservative interval speed bound; Contact Relative Velocity uses the exact trajectory derivative. A World Substep is split at each Force start/end, one-shot Impulse time, and TOI. At Segment Begin the Runtime captures the shared start state, evaluates animation target / target velocity at both segment boundaries, distributes constant Force for the interval, and consumes any Impulse Event at the start exactly once. Soft Body evaluates FEM / Kelvin-Voigt forces from that Segment start state; Cloth evaluates its external force input. Both use the common Segment integration rule in detailed_design.md §6.6. After non-contact internal XPBD constraints and before Contact Position XPBD, only Dynamic Vertex velocity is reconstructed from segment displacement and saved as v_pre_contact. Contact Position correction changes Position only and never participates in velocity reconstruction; friction / restitution use the saved v_pre_contact plus the exact Kinematic Trajectory Velocity. Fixed / Kinematic Vertex retains the Animation Interface's prescribed derivative and is never modified by contact impulses. An Impact-updated Dynamic Velocity becomes the next Segment's start velocity.
+The loop body is executed per World Integration Segment, not once per Solver independently. For CCD, the TOI prefix state must be sampled from the same semi-implicit discrete path used by Conservative Advancement; do not re-predict the prefix using dt=tau, because that changes the path. Kinematic endpoint chords are used only as conservative Swept AABB reference shapes expanded by the full-interval deviation bound. Conservative Advancement / TOI positions evaluate the exact Animation / Rigid Transform Trajectory at tau and use its conservative interval speed bound; Contact Relative Velocity uses the exact trajectory derivative. A World Substep is split at Animation Span Key / Loop / Blend Weight boundaries, Force start/end, one-shot Impulse time, and TOI. At Segment Begin the Runtime captures the shared start state, selects the immutable Animation Trajectory Packet / Bound Version, evaluates target / velocity at boundaries, and distributes constant Force for the interval. The GPU evaluator also evaluates the exact packet at arbitrary TOI tau. Impulse Event at the start is consumed exactly once. Soft Body evaluates FEM / Kelvin-Voigt forces from that Segment start state; Cloth evaluates its external force input. Both use the common Segment integration rule in detailed_design.md §6.6. After non-contact internal XPBD constraints and before Contact Position XPBD, only Dynamic Vertex velocity is reconstructed from segment displacement and saved as v_pre_contact. Contact Position correction changes Position only and never participates in velocity reconstruction; friction / restitution use the saved v_pre_contact plus the exact Kinematic Trajectory Velocity. Contacts with W_eff <= epsilon_inverse_mass are skipped as non-responsive; all other contacts are solved together by Projected Jacobi iterations and Gather, with Commit gated on residual convergence. Fixed / Kinematic Vertex retains the Animation Interface's prescribed derivative and is never modified by contact impulses. An Impact-updated Dynamic Velocity becomes the next Segment's start velocity.
 
 GPU command submission and CPU observation are separate events. Event Query completion proves command completion; the GPU Status Buffer determines whether a Logical Tick committed. Render Candidate is produced before Commit, but its slot becomes visible only when the same GPU Commit Control atomically selects the committed Physics State and Render Slot. The Host receives only the latest CPU-observed committed prefix. A World has one active Render Lease, and its ring contains maximum_in_flight_ticks + 1 slots; a slot cannot be reused until it is no longer in flight / unobserved and its Host lease has been released.
 
