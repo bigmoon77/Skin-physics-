@@ -175,7 +175,7 @@ v1ではWorld内のSoft Body / Cloth / Contact / Animation Trackingが同一時�
     N_world = max(minimum_substeps, ceil(fixed_delta_time / dt_limit_world))
     dt_world = fixed_delta_time / N_world
 
-を算出する。Cloth Temporal Quality LimitはXPBDの安定保証ではなく、拘束振動数omega_c = sqrt(k_c * sum_i(inverse_mass_i * |gradient_i|^2))に基づく品質上限である。dt_limit_cloth_quality = c_cloth / max(omega_cloth_max, epsilon_omega)、初期c_cloth=0.2とし、解像度・反復収束試験で校正する。無効化時はその項を無限大とする。Contact Compliance 0の時間品質はworld_max_substep_delta_timeまたは明示されたContact Quality Limitで管理する。
+を算出する。Cloth Temporal Quality LimitはXPBDの安定保証ではなく、拘束振動数omega_c = sqrt(k_c * sum_i(inverse_mass_i * |gradient_i|^2))に基づく品質上限である。Runtime Descriptorのenable_cloth_temporal_quality_limitは初期値true、cloth_temporal_quality_factorは初期値0.2とする。dt_limit_cloth_quality = cloth_temporal_quality_factor / max(omega_cloth_max, epsilon_omega)とし、解像度・反復収束試験で校正する。enable_cloth_temporal_quality_limit=falseの場合だけその項を無限大とする。Contact Compliance 0の時間品質はworld_max_substep_delta_timeまたは明示されたContact Quality Limitで管理する。
 
 制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。world_max_substep_delta_timeは全Solverへ適用する共通dt上限とする。N_worldが上限を超えた場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitせずReservationを保持する。Cloth / Contact XPBD Complianceは各Integration Segmentのdt_segmentを使う。Force / Impulse Event境界とTOIでWorld全体をSegment分割し、全参加Solverを同じSegment時間だけ進める。XPBD LambdaはSegmentごとにResetし、Segment内だけ累積する。
 
