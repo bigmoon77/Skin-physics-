@@ -421,8 +421,8 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - SchedulerはAccumulatorにfixed_delta_time以上があり、必要Pose / Kinematic Sampleが揃い、in-flight / query / render candidateのSlotが確保できる場合にTickをSubmission対象とする。これらの前提条件が揃う前はReservationを作らず、時間はAccumulatorに残す。前提条件が揃ったSubmission直前に一意のTick Sequence / Input Snapshotを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。GPU Commit時に再度差し引かない。
 - Capacity / CCD / predecessorの一時RejectはReservationを同じSequenceで保持してRetryする。Tick N+1がPredecessor Gateで停止した場合はN+1のReservationを破棄せず、NがReplay / Commitした後に新しいSource Generationで再Submissionする。
 - 回復不能なFailureでWorldがFailedになった場合、当該Reservationおよび後続Pending Reservationは診断用に保持する。ResetはAccumulator、Reservation、Step Queueを明示的に破棄してInitial Stateへ戻す。
-- single_stepはPaused / Stopped中のみ受け付ける。受理時にrequested_simulation_timeへfixed_delta_timeを加算し、wall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Pose / Render Slot / Query Slotが揃うまではStep Requestのまま保持し、GPU Submission直前にtime_source=single_stepのTick Reservationへ移す。Commit時にGPU committed timeを1 Fixed Delta進める。
-- Stop / Resetが未Reservation Step Requestを破棄する場合、その固定時間をcancelled_requested_timeへ加算し、破棄数・時間をDiagnosticへ残す。既にTick ReservationとなったStepは通常のin-flight / Retry契約に従い、取消し・二重要求を行わない。
+- single_stepはPaused / Stopped中のみ受け付ける。受理時にrequested_simulation_timeへfixed_delta_timeを加算し、wall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Pause / Stop中はStep Request Queueをwall-clock Accumulatorより優先し、Accumulatorにwhole tick / fractional remainderが残っていてもStep Requestを先に処理してAccmulatorは変更しない。Pose / Render Slot / Query Slotが揃うまではStep Requestのまま保持し、GPU Submission直前にtime_source=single_stepのTick Reservationへ移す。Commit時にGPU committed timeを1 Fixed Delta進める。
+- Pauseはwall-clock Accumulatorを保持し、in-flight Tickだけを完了させる。Stopは時間進行を停止し、未Reservation Step Requestだけを取消してcancelled_requested_timeへ加算する。Stopはwall-clock AccumulatorとPhysics Stateを保持する。ResetはInitial Stateへ戻し、Accumulator全体、Step Queue、Reservation / Sequence、Solver Cache、Timeline Counterを初期化する。既にTick ReservationとなったStepは通常のin-flight / Retry契約に従い、取消し・二重要求を行わない。
 - D3D11 Immediate Contextは単一の順序付きCommand Streamである。PhysicsとRenderが独立GPU Queueで同時に動く前提を置かない。
 - 1 PhysicsSubmissionBatchは1 Logical Tickを含む。
 - 各Worldの初期上限はin-flight logical tick 2件、設定可能値は1 / 2 / 4件とする。Status Query RingはRuntime内の全Worldの上限合計以上のSlotを持ち、World追加時に不足すれば拡張する。未回収Slotを上書きしない。
@@ -435,8 +435,9 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。
 - Accumulatorが長時間増加する場合はsimulation_backlogとして警告・計測する。Skin Physicsの要件にない100ms Failureや40FPS必須条件を追加しない。
-- Pauseは新規Logical Tick生成を止め、in-flight GPU Tickは安全に完了させる。Pause時間をactive elapsedへ加算しない。
-- StepはPause / Stop中に固定時間刻みを正確に1回だけ要求する。GPU Capacity / CCD Block中は実行待ちとする。
+- Pauseは新規wall-clock時間供給とAccumulator由来の新規Reservationを止め、in-flight GPU Tickは安全に完了させる。Pause時間をactive elapsedへ加算しない。未割当Accumulatorは保持する。
+- StopはPause状態へ移行し、未Reservation Step Requestを取消してrequested / cancelled時間を記録する。wall-clock AccumulatorとPhysics Stateは保持する。ResetだけがInitial State・Accumulator・Timeline Counterを初期化する。
+- StepはPause / Stop中に固定時間刻みを正確に1回だけ要求する。Pause / Stop中のStep Requestはwall-clock Accumulatorより優先する。GPU Capacity / CCD / Input / Render Backpressure中は実行待ちとする。
 
 初期in-flight上限2はWorldごとの資源・Query管理を単純化する初期値であり、2件が最適性能を保証する値ではない。1 / 2 / 4件と複数Worldの混在Submissionを比較し、Runtime全体のQuery Ring遅延・Memory・公平性を測定する。
 
