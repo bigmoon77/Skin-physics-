@@ -5,7 +5,7 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.0
+- 文書バージョン: 1.1
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.3
@@ -446,10 +446,10 @@ Logical Tickは次の条件を全て満たした場合だけCOMMITTEDとする�
 
 ### 6.3 Rollback / Retry
 
-Capacity Overflow、CCD Unresolved、NonFinite、物理品質Gate失敗時は、現在のLogical TickをREJECTED / BLOCKEDにする。作業状態をCommitしない。GPU上のtick_start_snapshotから再実行する。
+Capacity Overflow、CCD Unresolved、物理品質Gate失敗時は、現在のLogical TickをREJECTED / BLOCKEDにする。GPU Commit前のactive_state_bankは変更されていないため、Retryは同じactive source bankと同じTick Inputからinactive destination bankを再構築する。NonFinite / Invalid Asset / ABI mismatchは自動Retryしない。Substep / CCD Segmentの再計算はsubstep_start_snapshotからinactive destination bankを復元する。
 
-- Capacity Overflow: Count / Scan / Capacity Checkで必要数を記録し、Fill / Consumerの範囲外アクセスを禁止する。Event Query / Status Readback後にCPUがRequired Capacityを回収し、該当Resource GroupのCapacityを next_power_of_two(max(required_count, ceil(current_capacity * 1.5))) へ拡張する。0容量からの初回確保はnext_power_of_two(required_count)とする。uint32 / D3D11 ByteWidth / Dispatch上限を超える要求は成長で解決できないCapacity Errorとする。Resource Group全体を新規確保できるMemory Budgetを先に確認し、割当・Copy / Rebuildが完了してから新Resource Setへ切り替える。旧Resource Setは参照中の全Query / Tick / Render Leaseが解放されるまで退役させない。Capacity Growth中は新規Tick Submissionを停止し、影響する全in-flight TickのQuery完了と状態判定をnon-blockingで待つ。後続Tickは先行状態が確定するまでBLOCKED_BY_PREDECESSORを維持し、先行Tickを同一Snapshot / Inputで再実行してCommitした後、新Generationに基づいて再Submissionする。最大GPU Resource Budgetを超える場合はBlockedByCapacityを維持し、候補を捨てない。
-- CCD Unresolved: Internal Substep数またはCCD分割上限を上げて同じTickを再実行する。No Hitへ置き換えない。
+- Capacity Overflow: Count / Scan / Capacity Checkで必要数を記録し、Fill / Consumerの範囲外アクセスを禁止する。Capacity Growth後のRetryはactive source bankを不変のまま読み、inactive destination bankを先頭から再構築する。Event Query / Status Readback後にCPUがRequired Capacityを回収し、該当Resource GroupのCapacityを next_power_of_two(max(required_count, ceil(current_capacity * 1.5))) へ拡張する。0容量からの初回確保はnext_power_of_two(required_count)とする。uint32 / D3D11 ByteWidth / Dispatch上限を超える要求は成長で解決できないCapacity Errorとする。Resource Group全体を新規確保できるMemory Budgetを先に確認し、割当・Copy / Rebuildが完了してから新Resource Setへ切り替える。旧Resource Setは参照中の全Query / Tick / Render Leaseが解放されるまで退役させない。Capacity Growth中は新規Tick Submissionを停止し、影響する全in-flight TickのQuery完了と状態判定をnon-blockingで待つ。後続Tickは先行状態が確定するまでBLOCKED_BY_PREDECESSORを維持し、先行Tickを同一Snapshot / Inputで再実行してCommitした後、新Generationに基づいて再Submissionする。最大GPU Resource Budgetを超える場合はBlockedByCapacityを維持し、候補を捨てない。
+- CCD Unresolved: Internal Substep数またはCCD分割上限を上げて、同じactive source bank / Tick Inputからinactive destination bankを再構築する。TOI retime / Segment再計算は該当substep_start_snapshotから復元する。No Hitへ置き換えない。
 - NonFinite / Invalid Asset / ABI mismatch: 自動的な低品質再試行をしない。Failureを報告する。
 - Retry上限到達: TickをCommitせず、Simulation WorldをBlockedByCCD / BlockedByCapacity / Failedへ遷移する。
 
@@ -691,10 +691,16 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 以下を満たした時点でGPU Runtime実装に進める。
 
-- 基本設計1.2 / 詳細設計1.3 / 本書1.0の独立Critical Reviewで重大な設計矛盾が0件。
+- 基本設計1.3 / 詳細設計1.4 / 本書1.1の独立Critical Reviewで重大な設計矛盾が0件。
 - Gate R0-R6の責務、入力、出力、失敗状態、検証Fixtureが追跡可能。
 - Corotational FEM / XPBD Cloth / Contactの式とCPU Double Oracleが一致している。
 - Runtime APIとDevice / Context / Render Bindingの所有権が確定。
 - Async GPU Tick Schedulerの状態遷移とRollback / RetryがUML・テストケースで定義済み。
 
 **本書は独立レビューへ提出可能な設計改訂案であり、レビュー合格・実装完了・GTX 1660 SUPER性能達成を意味しない。**
+
+
+## 14. バージョン履歴
+
+- 1.1: 複数WorldのQuery Ring集約、Model Transform / Material / Paint API、Pose履歴不足時のBLOCKED_BY_INPUT、Fixed Delta fractional remainder、Capacity Growth / Memory Budget、Render Candidate Ring / Host Lease、Physics State Bank 2枚とSubstep Snapshotの分離を明文化。
+- 1.0: Runtime / Library境界、Public API、D3D11 Device / Context所有権、Fixed Step Scheduler、GPU Commit / Rollback、Render Binding、Device Loss、R0-R6 Gateの初版。
