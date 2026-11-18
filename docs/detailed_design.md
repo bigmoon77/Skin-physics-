@@ -981,6 +981,9 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 既存fixed_step_controllerとsimulation_step_pipelineはCPU Reference / Test Environment用に保持する。非同期GPU Commitの判定やProduction GPU Stateの所有には流用しない。
 - GPUがRuntime Physics Stateの唯一の正。Commit済みRender BindingだけをHostへRead-only公開し、通常FrameでPhysics Vertex / Contact / Lambdaを全量Readbackしない。
 - GPU StatusはLogical Tick単位でPENDING / SUBMITTED / GPU_COMMITTED / REJECTEDを管理する。CPU completed timeはEvent Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を満たした範囲だけ進める。
+- 最大2件のin-flight Tickはexpected_predecessor_tick_sequence / expected_source_state_generation / expected_source_state_set / dispatch_idを持つImmutable Dispatch Planで連結する。Tick Commit ControlだけがCommitted State Generation / Active State Setを更新し、Rejectでは更新しない。
+- 後続Tickのtick_begin_controlと全Budgeted Physics Passは先行TickのCommit Sequence / State Generationを確認する。先行Tickが失敗した場合、後続TickはPhysics StateのRead / Write前にBLOCKED_BY_PREDECESSORとして停止する。先行TickをRetryしてCommitした後、後続Tickを新しいGenerationで再Submissionする。
+- get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した最後のCPU-observed committed State Generationを返す。未確認GPU CommitやWorking BufferをRendererへ公開しない。
 - Capacity Overflow / CCD Unresolved / NonFinite / Physical Quality Gate失敗はTickをCommitしない。再試行は同一Tick InputとInitial Snapshotから行い、候補を黙って捨てない。
 - Render Feedback / Publishは成功Commit後に行い、追加Buffer / Copy / Dispatch / VRAM / GPU時間をPerformance Runへ含める。
 - Device Loss時は新規Submissionを停止し、Asset / Initial StateからWorldを再構築してTimelineをResetする。毎Frameの全State Readbackで復旧しない。
