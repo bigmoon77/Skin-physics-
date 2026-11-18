@@ -102,7 +102,8 @@ Hierarchical Spatial Hash初期値:
 - max_cells_per_primitive = 64。
 - max_hash_levels = 24。
 - cell_width(level) = base_cell_width * 2^level。
-- 64セルを超えるPrimitiveはLarge Primitive Bucketへ登録する。Large Bucketと通常CellのAABB Pair生成もCount / Capacity / Dedupで管理する。
+- cell_width_floor = max(1e-6 m, 1e-3 * L_ref)。
+- 64セルを超えるPrimitiveはLarge Primitive Bucketへ登録する。BucketはMorton-sort GPU Binary BVHで索引し、通常PrimitiveのAABB QueryとLarge-Large BVH Self-TraversalでPairを生成する。Count / Capacity / Dedupを適用し、全Primitive総当たりへ移行しない。
 - 全Primitive総当たりへのFallbackは禁止。
 - Hash一致だけでセル一致を判定せず、levelと元の整数Cell座標を比較する。
 
@@ -163,6 +164,8 @@ Animation ClipのSTEP / LINEAR / CUBICSPLINE補間をImporter契約に従って�
 - 1 Worldに複数Model Instance / Mesh Component / Colliderを登録できる。
 - Worldごとのmaximum_in_flight_ticksの既定値は2、設定可能値は1 / 2 / 4。
 - 1 PhysicsSubmissionBatch = 1 Logical Tick。
+- 各Worldは2つのPersistent Physics State Bankを持つ。active bankはTick中immutable、inactive bankへ全Physics結果を書き、全Gate成功時にCommit Controlでactive bankとGenerationを切り替える。
+- Reject / Blockではactive bank / Generationを維持し、inactive bankを再利用する。Substep / CCD Segment用SnapshotはWorldごとの再利用Scratchであり、3つ目のPersistent State Bankではない。
 - Runtime全体のQuery Ringは、全Worldのmaximum_in_flight_ticks合計以上のSlotを持つ。
 - Immutable Dispatch Planはpredecessor tick sequence、source state generation / set、dispatch identityを持つ。後続Tickは先行Tick Commit Gateを通過しなければPhysics Stateへアクセスしない。
 
