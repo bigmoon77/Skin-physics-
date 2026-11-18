@@ -400,8 +400,8 @@ ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済�
 
 各外部イベントeは対象Filter内で独立にw_i,eを正規化する。Substep開始状態でのVertex iの合計入力は、
 
-    F_i = m_i * gravity + sum_e(w_i,e * F_total_e)
-    J_i = sum_e(w_i,e * J_event_e)
+    F_i = m_i * gravity + sum_e(w_i,e * direction_force_e * magnitude_force_e)
+    J_i = sum_e(w_i,e * direction_impulse_e * magnitude_impulse_e)
 
 とする。Force開始・終了境界でWorld共通Segmentを分割するため、ForceはSegment全体へ適用する。ForceはF_i * dt_segmentだけ運動量へ加え、ImpulseはJ_iだけ一度加える。両者を同じForceへ変換して二重加算しない。Clothの予測速度・位置は次で求める。
 
@@ -822,7 +822,7 @@ Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物�
 
 #### 14.3.1 Force / Impulseの適用契約
 
-Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。分配Weightは各World共通Segmentの開始状態で評価し、Segment途中では変化させない。
+Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。各Eventのw_i,eは、そのEventの対象Filter内で独立に総和1へ正規化する。分配Weightは各World共通Segmentの開始位置で距離r_iを評価し、Segment途中では変化させない。directionは単位ベクトル、magnitudeはForceならN、ImpulseならN*sである。
 
 ForceはF_i=w_i*F_totalとして連続的に作用し、Force開始・終了時刻でWorld共通Segmentを分割する。各Segment内のForce積分量はF_i*dt_segmentであり、別途Impulseへ変換して重複加算しない。ImpulseだけをJ_i=w_i*J_eventとしてSegment開始時に一度適用する。イベントIDと適用済みTick / Segmentを記録し、Retry時は同じSource State / Input Snapshot / Segment時刻から同じイベントを再適用する。対象頂点が存在しない、Falloff重み総和がepsilon以下、イベント時刻が既にCommit済みTimelineより前に到着して反映できない場合はDiagnosticを返し、イベントを黙って捨てない。
 
