@@ -345,7 +345,7 @@ Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Dire
 - GPU Submission、GPU Logical Tick Commit、CPU-observed completed prefixを分離する。Event QueryはGPU Command完了を示し、Tick成功はGPU Status Bufferで判定する。
 - Capacity Overflow、CCD Unresolved、NonFinite、Physical Quality Gate FailureはWorking StateをCommitしない。必要に応じて同じTick開始Snapshot・入力でRetryし、解決不能ならWorldをBlock / Failedとする。
 - Hostが利用できるGPUデータはCommitted State専用のRead-only Render Bindingとする。Render BindingはPosition / Normal / TangentのSRV、Stride / Count / Resource Generationを持つ。内部Solver Buffer / Scratch / Writable UAVを公開しない。
-- Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking安定条件からWorld共通Substep数を決定し、Soft Body / Cloth / Contact / Animation Trackingへ同一Substep時間を適用する。Force / Impulse Event境界とTOIでIntegration Segmentへ分割し、全参加Solverを同じSegment時間で進める。v1ではSolverごとの独立Subcyclingを行わない。
+- Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限を集約してWorld共通Substep数を決定し、Soft Body / Cloth / Contact / Animation Trackingへ同一Substep時間を適用する。Contact capの初期値は1/120秒、0は明示無効。Animation Span Key / Loop / Blend / Root、Force / Impulse Event境界とTOIでIntegration Segmentへ分割し、maximum_integration_segments_per_tick（初期値512）を超える場合はReservationを保持してBlockする。全参加Solverを同じSegment時間で進め、v1ではSolverごとの独立Subcyclingを行わない。
 - in-flight GPU Tickは既定2件、設定可能範囲1 / 2 / 4件とする。各TickのImmutable Dispatch Planと先行Tick Gateを必須とし、Status Query Ring容量は設定上限以上とする。性能比較で変更する場合は同じR0 Gateを再実行する。
 - GTX 1660 SUPER 6GBで3～40 FPSをWorkloadごとに測定する。全Asset規模に対する固定保証値を設けない。品質・衝突範囲・Iteration・Substep・時間を黙って削減しない。
 - CPU Reference / Analytical Fixture / WARPはCorrectness検証、物理GPUは性能・Memory検証と明確に分離する。
