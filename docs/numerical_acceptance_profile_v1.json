@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.2",
+  "profile_version": "1.3",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -112,7 +112,8 @@
     "animation_packet_derivative": {
       "normalized_position_derivative_max": 0.00001,
       "normalization": "velocity_reference",
-      "reference": "central difference of independent CPU-double trajectory at interior tau; do not sample across STEP / Span discontinuities"
+      "reference": "central difference of independent CPU-double trajectory at interior tau; do not sample across STEP / Span discontinuities",
+      "normalized_time_mapping_max_absolute_error": 0.000001
     }
   },
   "physical_invariants": {
@@ -200,6 +201,21 @@
       "boundary_coalescing_count_for_distinct_times": 0,
       "undercounted_dynamic_toi_split_count": 0,
       "overflow_policy": "WORK_BUDGET_EXCEEDED preserves the Tick Reservation; never merge distinct Animation / Force / Impulse / TOI boundaries"
+    },
+    "animation_gpu_packet_time": {
+      "absolute_world_time_float_cast_count": 0,
+      "normalized_span_cursor_monotonicity_violation_count": 0,
+      "record_stride_mismatch_count": 0,
+      "expected_record_bytes": {
+        "animation_span_gpu_record": 64,
+        "animation_channel_gpu_record": 208,
+        "animation_blend_gpu_record": 48,
+        "kinematic_collider_gpu_record": 128
+      },
+      "normalized_time_absolute_error_max": 0.000001,
+      "reference": "CPU-double absolute timeline mapped to Span-local normalized u and Segment-relative tau; compare GPU u_tau against an independent CPU-double evaluator at both early and large absolute World Times",
+      "residual_segment_rule": "u_segment_start advances after every positive-duration Segment by dt_segment / span_duration; TOI uses tau / span_duration; at the next Animation Span boundary switch Record and initialize u_segment_start=0",
+      "precision_failure_policy": "split deterministically up to depth 8; then ANIMATION_TIME_PRECISION_UNRESOLVED and no Commit"
     }
   },
   "reproducibility": {
@@ -231,7 +247,7 @@
     "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
     "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
     "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
-    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries."
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from the CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries. D3D11 SM5 Animation Packet uses float / uint32 only. Absolute World Time stays CPU double; GPU uses Span-local normalized u and Segment-relative tau. Verify fixed Record strides (64 / 208 / 48 / 128 bytes) and monotonic u_segment_start across Substep / Force / Impulse / TOI Segment boundaries."
   },
   "governance": {
     "thresholds_are_initial_engineering_candidates": true,
