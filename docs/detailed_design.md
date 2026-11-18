@@ -1,10 +1,10 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.6
+- 文書バージョン: 1.7
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.5
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.3
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.4
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
 - 前版: 1.5
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
@@ -463,10 +463,10 @@ XPBD Stretch / Shear / Bend / Animation Tracking / Contactの位置解決後、D
 4. Segment開始位置から各Force DescriptorのFalloff Weightを計算する。Gravity / ForceはSegment内で一定とし、ImpulseはSegment開始時刻のEvent IDを確認して一度だけ消費する。RetryはSnapshotと同じEvent Cursorから再生し、破棄されたWorking Stateへの適用を重複累積させない。
 5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
-7. XPBD Stretch / Shear / Bend / Animation Tracking / Contactを規定反復数だけ解く。Soft Body FEMはSegment開始時評価力に基づく予測状態を使い、Contact位置補正は同じ参加頂点へ双方向に作用させる。
-8. TOIがSegment内部にある場合は予測Destinationを破棄し、Segment開始Snapshotと同じImpulse Event Cursorへ戻して、TOIまでのprefixを同じ共通積分規則で再実行する。TOI位置でContact Constraintを解き、Dynamic VertexのVelocityを区間変位から再構築した後、摩擦 / 反発Impulseを一度だけ適用する。Fixed / Kinematic VertexはTOI時刻のAnimation Velocityを維持する。
-9. TOI後の残時間がある場合、Impact後のPosition / Velocityを次Segment開始状態にして処理を繰り返す。TOI分割上限または予算を超えた場合はLogical Tick全体を未Commitにし、同じTick Input / Source StateからRetryする。
-10. TOIがないSegmentはContact位置解決後にDynamic Vertex Velocityを区間変位から再構築し、Fixed / Kinematic VelocityはAnimation Interfaceの指定値のままにする。摩擦 / 反発Impulseを適用した後のVelocityは次Segmentへ保持する。
+7. CCD / CAでPositive-Time TOIを検出した場合、EndpointのXPBD / Discrete Contact solveは実行しない。TOIがない場合だけEndpointのCloth Stretch / Shear / Bend / Animation Tracking / Discrete Contactを規定反復数だけ解き、Contact位置補正は双方の頂点へ作用させる。
+8. Positive-Time TOIがある場合は、§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexはtau時刻のAnimation Target / Velocityを使う。tauをXPBD Integration Segment時間として内部Constraint / TOI Contactを解き、Dynamic VertexのVelocityを位置補正後の区間変位から再構築して、摩擦 / 反発Impulseを一度だけ適用する。
+9. TOI後の残時間がある場合、Impact後のPosition / Velocityを次Segment開始状態にして新しいSegmentを開始する。Force / Internal Force / Animation Trackingを新しい開始状態で再評価し、Impulse Event Cursorから未消費Eventだけを適用する。TOI分割上限または予算を超えた場合はLogical Tick全体を未Commitにし、同じTick Input / Source StateからRetryする。
+10. Positive-Time TOIがないSegmentはEndpointの位置解決後にDynamic Vertex Velocityを区間変位から再構築し、Fixed / Kinematic VelocityはAnimation Interfaceの指定値のままにする。摩擦 / 反発Impulseを適用した後のVelocityは次Segmentへ保持する。
 
 Soft BodyとClothの内部解法は異なるが、時間境界・Force / Impulse Eventの意味・Kinematic Velocity所有者はWorld共通である。各Substepの単純な1回更新へ戻す実装、Solverごとの異なるSegment時間、固定頂点への差分Velocity上書きは禁止する。
 
@@ -782,7 +782,17 @@ d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
 
-接触が確定したら、予測状態をそのまま部分更新しない。現在Segment開始Snapshotへ戻し、tauまでの区間を再積分する。Soft Body / Clothともに同じSegment積分規則でtauまで再積分し、位置制約解決後はDynamic Vertexの区間変位から接触前Velocityを再構築する。Fixed / Kinematic Vertexはtau時刻のAnimation Velocityを維持する。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度を次Segmentの開始Velocityとして、残時間dt_segment-tauをWorld全体で再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
+TOIが確定したら、検出に使った離散軌道と同一の位置・速度をTOI prefix状態として採用する。§6.6のSemi-implicit EulerはSegmentの予測終端Velocityを使ってPositionを更新するため、Dynamic VertexのSegment内CCD pathは次で定義する。
+
+    path_velocity = (position_predicted - position_segment_start) / dt_segment
+    x_path(tau) = position_segment_start + tau * path_velocity
+    v_path(tau) = path_velocity
+
+このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic Vertexはtau時刻のAnimation Target / Velocityを使用する。
+
+prefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation TrackingおよびTOI Contact Constraintを解く。Soft Bodyはprefix軌道位置を初期状態としてTOI Contactを解き、Contact位置補正を適用する。Dynamic Vertexは位置補正後に(x_solved - x_segment_start) / tauで接触直前Velocityを再構築する。Fixed / Kinematic VertexはAnimation Velocityを維持する。続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。
+
+残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
 
 1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる許容時間は`max(1e-7 s, 1e-5 * dt_segment)`とし、Event内のImpulseはContact Key順に一度だけ適用する。TOI以前の区間とTOI以後の残区間はWorld共通Segmentである。Soft Body / Cloth / Animation Tracking / Contact対象の全てを現在Segment Snapshotから同じtauだけ再積分し、TOI位置でImpactを適用した後、全参加Solverを同じ残時間だけ再積分する。Solverごとに時間を止める・別のtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
@@ -1097,6 +1107,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 ## 21. バージョン履歴
 
 - 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
+- 1.7: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時のXPBD Segment時間、Impact後残Segmentの再評価を明文化。
 - 1.6: Integration Segment単位のSoft Body / Cloth予測、線形粘性減衰の速度積分、Fixed / Kinematic Velocityの維持、TOI時間変数とSegment Snapshotの整合を明文化。
 - 1.5: World共通Substep、Cloth予測・Force / Impulse分配、Contact Patch品質閾値、退化Contact法線決定、Stackless Morton LBVH構築を明文化。
 - 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
@@ -1104,7 +1115,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 
 
-## 22. GPU Runtime / Library Integration（v1.6）
+## 22. GPU Runtime / Library Integration（v1.7）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
