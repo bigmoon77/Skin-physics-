@@ -1,10 +1,10 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.8
+- 文書バージョン: 1.9
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.6
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.5
+- 対応基本設計: basic_design.md 1.7
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.6
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json
 - 前版: 1.7
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
@@ -258,7 +258,7 @@ Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / 
     p(u) = c0 + c1*u + c2*u^2 + c3*u^3
     dp/dt = (c1 + 2*c2*u + 3*c3*u^2) / (t1 - t0)
 
-STEPはc0=value、他係数0。LINEARはc0=p0, c1=p1-p0、c2=c3=0。glTF CUBICSPLINEはHermite係数へ変換し、Clip Time区間幅およびPlayback Speedを反映する。Clip TimeとWorld Timeの向きが逆になるPlayback Speed負値も係数へ含める。ScaleはSpan全域で正かつ特異でないことを保証する。
+STEPはc0=value、他係数0。LINEARはc0=p0, c1=p1-p0、c2=c3=0。glTF CUBICSPLINEは、Span両端の値p0 / p1、Clip TimeでのOutgoing / Incoming Tangent m0 / m1、符号付きClip Time幅Δcを使い、h0=m0*Δc、h1=m1*Δcとして、c0=p0、c1=h0、c2=-3p0+3p1-2h0-h1、c3=2p0-2p1+h0+h1へ変換する。ΔcにはPlayback SpeedとWorld Span時間を含め、負のPlayback Speedも同じ式で扱う。ScaleはSpan全域で正かつ特異でないことを保証する。
 
 RotationはQuaternionを使う。STEPは一定Quaternion、LINEARは最短弧Slerp、CUBICSPLINEはglTF Hermite QuaternionをComponentごとに評価後normalizeする。CUBICSPLINEの未正規化Quaternionをr(t)、q=r/|r|とすると、
 
@@ -280,7 +280,7 @@ v1は同時に2本までのAnimation Trackを許可し、Additive Animationは�
     q_blend = normalize(r)
     q_dot_blend = (r_dot - q_blend * dot(q_blend, r_dot)) / |r|
 
-とする。Blend Weightは0～1のCubic Hermite Curveで、w_dotはWorld Simulation Time微分である。Span PacketにWeight係数と微分係数を保持する。3本以上の同時Blend / Additiveはv1で明示Unsupportedとする。
+とする。Blend Weightは0～1のCubic Hermite Curveで、u=(t-t_blend_start)/T、T=t_blend_end-t_blend_startとして、w(u)=(2u^3-3u^2+1)w0+(u^3-2u^2+u)T*m0+(-2u^3+3u^2)w1+(u^3-u^2)T*m1を使う。m0 / m1はWorld Time微分[1/s]。dw/dtはこの式のu微分をTで除して求める。Curve全域で0<=w<=1を区間検証し、範囲外へOvershootするBlendは入力Errorとする。Rotation Blendはr_dot=(1-w)*q_dot_source+w*q_dot_target+w_dot*(q_target-q_source)を使ってq_dot_blendを計算する。Span PacketにWeight係数と微分係数を保持する。3本以上の同時Blend / Additiveはv1で明示Unsupportedとする。
 
 #### Hierarchy / Skinning微分
 
@@ -481,7 +481,7 @@ ClothはXPBDであるため、ここでの時間刻み上限はFEM CFLのよう�
 
 と推定する。初期係数c_cloth=0.2はEngineering Baselineであり、Stretch / Shear / Bendの解像度収束・反復収束試験で校正する。全頂点固定、Compliance無限大、または拘束剛性0のConstraintは推定対象から除外する。推定値は厳密安定保証と称さず、品質上限として使う。
 
-World共通Substep ScheduleはFEM CFL、Animation Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限の最小値を集約する。Cloth品質LimitをScenarioで無効にした場合はその項を無限大として扱う。Contact Compliance 0のContactに固有振動数を割り当てず、contact_max_substep_delta_timeを独立した時間品質上限として使用する。
+World共通Substep ScheduleはFEM CFL、Animation Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限の最小値を集約する。Cloth品質LimitをScenarioで無効にした場合はその項を無限大として扱う。Contact Compliance 0のContactに固有振動数を割り当てず、contact_max_substep_delta_timeを独立した時間品質上限として使用する。初期値は1/120 s、0は明示無効とする。0を指定しworld_max_substep_delta_timeも0ならContact固有のdt上限を適用しない。
 上限超過時は警告し、設定に応じてWorld共通Substep数を増やす。最大World Substep数を超えたらWORK_BUDGET_EXCEEDEDとしてLogical TickをCommitせず、時間を保持する。Soft Bodyだけを細かく進めてCloth / Contactを旧時刻に残す独立Subcyclingはv1で禁止する。
 
 World共通Substep数はLogical Tick開始時に一度だけ決定する。全参加Soft Body MeshのFEM / Animation Tracking制限、全参加Cloth MeshのTemporal Quality Limit、World設定のminimum_substeps / maximum_substepsを集約し、
@@ -775,7 +775,7 @@ Contact iの頂点係数をc_ik、参加頂点の逆質量をw_kとし、
 
 を有効逆質量とする。VT / EEのNormal / Tangent方向は同じScalar係数を使うため、等方的Particle Massでは同じ対角有効逆質量になる。
 
-W_iiが有限でない場合はNonFinite ErrorとしてTickを拒否する。W_ii <= epsilon_inverse_massの場合、そのContactはNON_RESPONSIVE_CONTACTとしてImpulse対象から除外する。Contact Position XPBDも同じ事前判定でSkipし、Complianceにより0/0や無意味なLambdaを作らない。Static-Static、Kinematic-Kinematic、または接触係数が掛かるDynamic Vertexを持たないContactは正常な非応答Contactであり、CCD応答 / Position / Impulseを生成しない。Diagnostic Countへ記録する。epsilon_inverse_mass=max(32*FLT_MIN, 1e-12/mass_reference)とし、mass_referenceは当該MeshのMedian Positive Dynamic Vertex Mass。Dynamic Massが存在しないMeshは0 inverse massとして扱う。
+W_iiが有限でない場合はNonFinite ErrorとしてTickを拒否する。W_ii <= epsilon_inverse_massの場合、そのContactはNON_RESPONSIVE_CONTACTとしてImpulse対象から除外する。Contact Position XPBDも同じ事前判定でSkipし、Complianceにより0/0や無意味なLambdaを作らない。Static-Static、Kinematic-Kinematic、または接触係数が掛かるDynamic Vertexを持たないContactは正常な非応答Contactであり、CCD応答 / Position / Impulseを生成しない。Diagnostic Countへ記録する。epsilon_inverse_mass=max(32*FLT_MIN, 1e-12/mass_reference_world)とし、mass_reference_worldはWorld内のMedian Positive Dynamic Vertex Mass。Dynamic Massが存在しないWorldは全Contactを非応答とする。
 
 #### Contact Relative Velocity / Normal / Friction
 
@@ -810,7 +810,15 @@ Iteration開始時のWorking Velocityは、v_pre_contactへ前Iterationまでに
 
 としてAccumulated Impulseを更新する。project_to_diskはNormalに直交する2D Tangent Plane上で実行する。Iteration内の全Contactが同一Velocity Snapshotを読むJacobi更新とし、変更量delta_j_n / delta_j_tだけをVertex Contact CSRでDeterministic Gatherする。Gather後のWorking Velocityを次Iteration入力とする。Contact Key順のContribution Reductionにより同一GPU / Driver / Buildで同じ順序を維持する。
 
-初期値はcontact_impulse_iterations=8、omega_impulse=0.5、最大許可Iterationは16。各Iteration後、Normal Complementarity ResidualとTangent Coulomb Cone Residualを正規化して最大値を測定する。contact_impulse_residual_tolerance以下へ収束した場合だけSolverをResolvedとする。16 Iterationでも未収束ならCONTACT_IMPULSE_UNRESOLVEDとしてLogical TickをCommitしない。DescriptorでIteration数を8～16の範囲に設定でき、Relaxationは0より大きく1以下とする。Residual定義と正規化はNumerical Acceptance Profileを正とする。
+初期値はcontact_impulse_iterations=8、omega_impulse=0.5、最大許可Iterationは16。各Iteration後、Normal / TangentのProjected Fixed-Point Residualを次で評価する。
+
+    r_n = abs(j_n - max(0, j_n - (v_n_current - target_normal_velocity) / W_ii))
+    r_t = length(j_t - project_to_disk(j_t - v_t_current / W_ii,
+                                       friction * (j_support + j_n)))
+    J_ref = mass_reference_contact * (length_reference_contact / dt_contact)
+    residual = max(r_n, r_t) / J_ref
+
+mass_reference_contact / length_reference_contactはContact Solverへ参加するDynamic Meshの正値Mass / Rest Edge Length中央値から決める。contact_impulse_residual_tolerance以下へ収束した場合だけSolverをResolvedとする。初期値は1e-4。16 Iterationでも未収束ならCONTACT_IMPULSE_UNRESOLVEDとしてLogical TickをCommitしない。DescriptorでIteration数を1～16の範囲に設定でき、初期値8、Relaxationは0より大きく1以下、初期値0.5とする。Residual定義と正規化はNumerical Acceptance Profileを正とする。
 
 RestitutionはSegment開始時に保存したv_n_i_preから目標分離速度を設定し、Contact Position correction由来のVelocityを入力にしない。v_n_i_pre >= 0では反発Impulseを生成しない。Normal accumulated impulseは常に0以上。摩擦ImpulseはSupport / Restitution Normal Impulse合計のCoulomb Disk内に制限する。摩擦係数は0以上、反発係数は0～1。Initial Restitutionは0。
 
