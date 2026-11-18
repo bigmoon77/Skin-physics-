@@ -46,7 +46,7 @@ Soft Bodyは力ベースFEMとして独立させ、Clothと接触はXPBDとす�
 
 glTFのメートル基準を内部単位へ変換する。OBJは単位情報を保証できないため、インポート時に単位倍率の明示入力を要求する。単位不明のまま物理値を自動推定しない。
 
-内部座標系は右手系Y-upとし、Importerで座標軸・三角形表裏・法線を一度だけ変換する。描画、物理、アニメーションでは同じ内部座標系を用いる。ビルドはVisual Studio .sln / .vcxprojを正規手段とし、CMakeは必須としない。ランタイムの物理計算に外部物理ライブラリをリンクしない。Importer依存は入力変換層に限定し、四面体化器はオフラインAsset Buildでのみ使用する。
+内部座標系は右手系Y-upとし、Importerで座標軸・三角形表裏・法線を一度だけ変換する。描画、物理、アニメーションでは同じ内部座標系を用いる。Static Mesh / Mesh Nodeに含まれる初期ScaleはOffline Asset Build時にPosition / Normal / Tangent / Rest GeometryへBakeし、質量・Rest Volume・制約・Bindingを変換後Geometryから再生成する。Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformとし、非一様Scale・負Scale・ゼロScale・実行中のScale変更を禁止する。Skeleton BoneのScale AnimationはSkin Matrixに含まれる正値成分のみ許可し、特異または符号反転するScaleはImport Errorとする。ビルドはVisual Studio .sln / .vcxprojを正規手段とし、CMakeは必須としない。ランタイムの物理計算に外部物理ライブラリをリンクしない。Importer依存は入力変換層に限定し、四面体化器はオフラインAsset Buildでのみ使用する。
 
 ## 2. 初期対応アセット仕様
 
@@ -350,7 +350,7 @@ World共通Substep数はLogical Tick開始時に一度だけ決定する。全�
 
     dt_limit_world = min(all_mesh_dt_limit_fem,
                          all_mesh_dt_limit_tracking,
-                         world_max_substep_delta_time)
+                         world_max_substep_delta_time if > 0 else +infinity)
 
     N_world = max(minimum_substeps,
                   ceil(fixed_delta_time / dt_limit_world))
@@ -396,9 +396,9 @@ Clothの予測は各World共通Substepの開始状態から1回だけ行う。�
 
 とする。s_i >= 1の頂点はq_i=0。質量はSoft Bodyの四面体Lumped Mass、Clothの三角形Lumped Massから得る。sum_j(q_j)は同じForce Descriptorの対象World / Model / Mesh範囲内で動的・固定を含む全サポート頂点について求める。これによりForce / Impulseの合計量を頂点数やメッシュ解像度によらず保存し、固定頂点に配分された分は拘束反力として扱う。サポート頂点が0、または重み総和が閾値以下の場合はNO_FORCE_TARGETを記録し、そのイベントを適用しない。
 
-ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Forceイベントの開始・終了時刻とSubstep区間の重なり時間をdt_overlapとし、一定Forceの合計ImpulseはJ_total = direction * magnitude * dt_overlapとする。Impulseイベントは指定時刻を含むSubstep Segment境界で一度だけ適用する。SegmentはWorld共通で分割し、イベントを次Substepまで遅延・重複適用しない。
+ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Forceイベントの開始・終了時刻とImpulseイベント時刻はWorld共通Segment境界へ追加し、Segment内ではForceの有効状態が一定になるようにする。Impulseイベントは指定時刻を含むSegment開始境界で一度だけ適用する。SegmentはWorld共通で分割し、イベントを次Substepまで遅延・重複適用しない。
 
-各Vertexへ分配されたImpulseをJ_i = w_i * J_total、Substep内の継続ForceをF_iとする。Clothの予測速度・位置は次で求める。
+各Vertexへ分配された瞬間ImpulseをJ_i = w_i * J_event、Substep内で有効な継続ForceをF_i = w_i * F_totalとする。Force開始・終了境界でSegmentを分割するため、ForceはSegment全体へ適用する。Clothの予測速度・位置は次で求める。
 
     v_i_star = exp(-damping_rate_i * dt_segment)
              * (v_i + inverse_mass_i * (F_i * dt_segment + J_i))
@@ -809,9 +809,9 @@ Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物�
 
 #### 14.3.1 Force / Impulseの適用契約
 
-Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。
+Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。分配Weightは各World共通Segmentの開始状態で評価し、Segment途中では変化させない。
 
-一定ForceはSubstep / TOI Segmentとの重なり時間からJ_total=F*dt_overlapを計算し、頂点Impulseへ分配する。瞬間Impulseはevent_timeを含む共通Segment境界で1回だけ適用する。イベントIDと適用済みTick / Segmentを記録し、Retry時は同一イベントを同じ時刻に再適用する。対象頂点が存在しない、Falloff重み総和がepsilon以下、イベント時刻が過去でTimelineへ反映できない場合は診断を返し、イベントを黙って捨てない。
+ForceはF_i=w_i*F_totalとして連続的に作用し、Force開始・終了時刻でWorld共通Segmentを分割する。各Segment内のForce積分量はF_i*dt_segmentであり、別途Impulseへ変換して重複加算しない。ImpulseだけをJ_i=w_i*J_eventとしてSegment開始時に一度適用する。イベントIDと適用済みTick / Segmentを記録し、Retry時は同じSource State / Input Snapshot / Segment時刻から同じイベントを再適用する。対象頂点が存在しない、Falloff重み総和がepsilon以下、イベント時刻が既にCommit済みTimelineより前に到着して反映できない場合はDiagnosticを返し、イベントを黙って捨てない。
 
 ### 14.4 JSON
 
