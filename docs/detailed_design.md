@@ -333,8 +333,12 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
     {
         uint32_t node_index;
         uint32_t parent_index;
+        uint32_t inverse_bind_record_index; // UINT32_MAX for non-joint nodes
         uint32_t interpolation_flags;
         uint32_t channel_mask;
+        uint32_t node_role_flags; // joint / mesh node / root / required ancestor
+        uint32_t reserved0;
+        uint32_t reserved1;
         float4 translation_c0;
         float4 translation_c1;
         float4 translation_c2;
@@ -349,15 +353,15 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         float4 scale_c3;
     };
 
-animation_span_gpu_record is exactly 80 bytes, animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 208 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start. After every positive-time Segment advance within the same Span, GPU updates it by `u_segment_start += dt_segment * inverse_span_duration`; a TOI prefix uses `tau` in place of `dt_segment`. If the next Segment begins at a Span boundary, Scheduler selects the next immutable Span Record and initializes its `u_segment_start=0`. GPU verifies that every positive-time advance makes u_segment_start strictly increase; failure returns `ANIMATION_TIME_PRECISION_UNRESOLVED` and prevents Commit. No CPU Readback is used to update the normalized cursor.
+animation_span_gpu_record is exactly 80 bytes, animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start. After every positive-time Segment advance within the same Span, GPU updates it by `u_segment_start += dt_segment * inverse_span_duration`; a TOI prefix uses `tau` in place of `dt_segment`. If the next Segment begins at a Span boundary, Scheduler selects the next immutable Span Record and initializes its `u_segment_start=0`. GPU verifies that every positive-time advance makes u_segment_start strictly increase; failure returns `ANIMATION_TIME_PRECISION_UNRESOLVED` and prevents Commit. No CPU Readback is used to update the normalized cursor.
 
-固定RecordのByte Offsetは次の通りとする。OffsetはBuffer先頭からのbyte単位であり、全Fieldは4-byte alignmentとする。
+固定RecordのByte Offsetは次の通りとする。first_track / first_channel / first_blend / first_collider Record RangeとTrack Recordのfirst_channel_recordは各StructuredBuffer内の絶対Element Index / Count。Blendのsource_track_index / target_track_indexのみSpanのTrack Range先頭からの相対Indexとする。OffsetはBuffer先頭からのbyte単位であり、全Fieldは4-byte alignmentとする。
 
 | Record | Field Offset |
 |---|---|
 | animation_span_gpu_record (80 B) | span_id=0, version_low=4, version_high=8, first_track=12, track_count=16, first_channel=20, channel_count=24, first_blend=28, blend_count=32, first_collider=36, collider_count=40, flags=44, span_duration=48, inverse_span_duration=52, u_segment_start=56, speed_bound=60, acceleration_bound=64, chord_deviation_bound=68, quaternion_normalization_lower_bound=72, reserved0=76 |
 | animation_track_gpu_record (32 B) | clip_index=0, first_channel=4, channel_count=8, flags=12, clip_time_start=16, clip_time_delta=20, playback_speed=24, reserved0=28 |
-| animation_channel_gpu_record (208 B) | node_index=0, parent_index=4, interpolation_flags=8, channel_mask=12, translation_c0=16, translation_c1=32, translation_c2=48, translation_c3=64, rotation_parameter0=80, rotation_parameter1=96, rotation_parameter2=112, rotation_parameter3=128, scale_c0=144, scale_c1=160, scale_c2=176, scale_c3=192 |
+| animation_channel_gpu_record (224 B) | node_index=0, parent_index=4, inverse_bind_record_index=8, interpolation_flags=12, channel_mask=16, node_role_flags=20, reserved0=24, reserved1=28, translation_c0=32, translation_c1=48, translation_c2=64, translation_c3=80, rotation_parameter0=96, rotation_parameter1=112, rotation_parameter2=128, rotation_parameter3=144, scale_c0=160, scale_c1=176, scale_c2=192, scale_c3=208 |
 | animation_blend_gpu_record (48 B) | source_track_index=0 (Span-relative), target_track_index=4 (Span-relative), weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, reserved1=40, reserved2=44 |
 | kinematic_collider_gpu_record (128 B) | stable_id_low=0, stable_id_high=4, span_sample_pair_id=8, flags=12, translation_start=16, translation_end=32, rotation_start=48, rotation_end=64, angular_axis_and_angle=80, duration=96, inverse_duration=100, linear_speed_bound=104, angular_speed_bound=108, maximum_local_radius=112, sagitta_bound=116, reserved0=120, reserved1=124 |
 
@@ -421,7 +425,7 @@ Skin Matrixの微分には逆行列の微分を含める。
     S_j_dot = A_dot * joint_global[j] * inverse_bind[j]
               + A * joint_global_dot[j] * inverse_bind[j]
 
-Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivativeを合成し、Physics Vertex Rest Positionへ適用してTarget Position / Velocityを得る。animation_channel_gpu_recordは各必要Node（Bone / Mesh Node / Root / Joint Ancestor）をnode_indexで識別し、Skeleton JointのInverse Bind MatrixはAsset Immutable BufferのStatic Indexから参照する。Mesh Node Global Matrix / Derivativeも同じHierarchy Passで評価して、skin_matrix = inverse(mesh_node_global) * joint_global * inverse_bindを構成する。
+Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivativeを合成し、Physics Vertex Rest Positionへ適用してTarget Position / Velocityを得る。animation_channel_gpu_recordは各必要Node（Bone / Mesh Node / Root / Joint Ancestor）をnode_indexで識別し、Skeleton JointのInverse Bind MatrixはAsset Immutable BufferのStatic Indexから参照し、animation_channel_gpu_record::inverse_bind_record_indexで指定する。非Joint NodeはUINT32_MAX。node_role_flagsはJoint / Mesh Node / Root / Required Ancestorを区別する。Mesh Node Global Matrix / Derivativeも同じHierarchy Passで評価して、skin_matrix = inverse(mesh_node_global) * joint_global * inverse_bindを構成する。
 
 #### Conservative Trajectory Bounds
 
