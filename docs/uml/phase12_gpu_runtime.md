@@ -61,19 +61,23 @@ sequenceDiagram
     G->>D: predecessor / State Generation gate
     G->>D: upload immutable Animation Trajectory Span Packets / Collider Records + Bounds
     G->>D: initialize per-World Mutable Span Cursor Buffer from Tick Reservation
+    Note over D: Immutable Packet Records are SRV-only; normalized u lives in a separate per-World Cursor UAV
     loop each World Integration Segment
         G->>D: evaluate Animation Packet at Segment start/end
         G->>D: evaluate exact Animation / Kinematic Trajectory at every CA tau
+        G->>D: update Mutable Cursor only; keep Packet bytes / Version immutable
         G->>D: distribute Force / Impulse events once
         G->>D: Soft Body FEM + Cloth prediction
         G->>D: broadphase / narrowphase / CCD candidate discovery
         G->>D: CA / TOI prefix path selection
         G->>D: solve non-contact internal constraints
         G->>D: save Dynamic v_pre_contact before Contact XPBD
+        G->>D: snapshot Cursor with Segment start for TOI / Retry rollback
         G->>D: Contact positional projection (position only)
         G->>D: non-responsive W_eff guard
         G->>D: coupled Projected Jacobi impulse iterations + CSR Gather
         G->>D: validate Normal / Coulomb Cone Residual
+        G->>D: advance Cursor after Segment; Span boundary switches Record and resets u=0
     end
     G->>D: prepare Render Candidate (Position / Normal / Tangent)
     G->>D: validate Render Candidate + Physics State
