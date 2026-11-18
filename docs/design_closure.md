@@ -182,6 +182,15 @@ Force / Impulseの空間分配:
 - ImpulseはN*s単位の方向付きVectorをJ_i=w_i*J_eventとしてSegment開始で一度だけ適用。Event IDでRetry中の二重処理を防ぐ。
 - radiusは正の有限値。サポート対象0または重み総和epsilon以下はNO_FORCE_TARGET。
 
+### 2.8 Integration Segment積分・減衰・Kinematic Velocity
+
+- Soft Body / Cloth / Contact / Animation TrackingはWorld共通Integration Segmentを同じdt_segmentで進める。通常SubstepはForce / Impulse Event境界またはTOIで複数Segmentへ分かれ得る。
+- Segment内のForceは区間開始時に評価し、次Segment境界まで一定とする。Soft BodyのF_segmentはExternal + FEM Internal + Kelvin-Voigt Animation Tracking、ClothのF_segmentはExternal Forceとする。Cloth Animation TrackingはXPBD Attachment Constraintとして解く。
+- ImpulseはSegment開始境界で一度だけ適用し、Forceへ変換しない。Event時間区間は半開区間[t_start, t_end)とし、Logical Tick終端上のEventは次Tick開始へ所属させる。Retry / TOI prefix再構成でEvent IDを二重消費しない。
+- Dynamic Vertexの速度更新は線形粘性減衰 dv/dt = inverse_mass * F_segment - damping_rate * v の区間解を使う。decay=exp(-damping_rate*dt_segment)、g=(1-decay)/damping_rate（damping_rate=0の極限はdt_segment）として、v_pred=decay*(v_start+inverse_mass*J_segment)+g*inverse_mass*F_segment、x_pred=x_start+dt_segment*v_predとする。小さいz=damping_rate*dt_segmentでは詳細設計§6.6の級数近似を使用する。速度は区間内一定Force・線形減衰に対する解、位置は半陰的Eulerである。
+- Fixed / Kinematic VertexはDynamic積分式を使わず、Segment終端Animation Targetとその時間微分Animation Velocityを維持する。位置差分によるVelocity再構築やContact Impulseで上書きしない。Kinematic Velocityは相対速度・摩擦・反発・CCDに使う。
+- XPBD LambdaはSegment開始時にResetし、Segment内の反復でのみ保持する。Impact後のDynamic Velocityを次Segmentへ渡し、Logical Tick全体の始点・終点差分で上書きしない。
+
 ### 2.9 CCD離散軌道とTOI prefixの一致
 
 - §6.6のSemi-implicit Eulerで得たSegment終端Velocityをpath_velocityとし、Dynamic VertexのCCD pathをx_path(tau)=x_segment_start+tau*path_velocityと定義する。
@@ -189,15 +198,6 @@ Force / Impulseの空間分配:
 - TOI位置でtauをXPBD Integration Segment時間として内部Constraint / Contact Constraintを解き、Dynamic VertexのVelocityを補正後位置差分から再構築する。Fixed / Kinematic VelocityはAnimation Interface指定値を維持する。
 - Impact後の残時間は新しいIntegration Segmentとして開始し、FEM / Animation Tracking / External Forceを新しい開始状態から評価する。
 - TOI candidate pathとTOI prefix stateの一致、TOI時のCompliance時間、Impact後の残Segment継続をFixtureで検証する。離散軌道近似の精度範囲はNumerical Acceptance Profileで校正する。
-
-### 2.8 Integration Segment積分・減衰・Kinematic Velocity
-
-- Soft Body / Cloth / Contact / Animation TrackingはWorld共通Integration Segmentを同じdt_segmentで進める。通常SubstepはForce / Impulse Event境界またはTOIで複数Segmentへ分かれ得る。
-- Segment内のForceは区間開始時に評価し、次Segment境界まで一定とする。Soft BodyのF_segmentはExternal + FEM Internal + Kelvin-Voigt Animation Tracking、ClothのF_segmentはExternal Forceとする。Cloth Animation TrackingはXPBD Attachment Constraintとして解く。
-- ImpulseはSegment開始境界で一度だけ適用し、Forceへ変換しない。Event時間区間は半開区間[t_start, t_end)とし、Logical Tick終端上のEventは次Tick開始へ所属させる。Retry / TOI再積分でEvent IDを二重消費しない。
-- Dynamic Vertexの速度更新は線形粘性減衰 dv/dt = inverse_mass * F_segment - damping_rate * v の区間解を使う。decay=exp(-damping_rate*dt_segment)、g=(1-decay)/damping_rate（damping_rate=0の極限はdt_segment）として、v_pred=decay*(v_start+inverse_mass*J_segment)+g*inverse_mass*F_segment、x_pred=x_start+dt_segment*v_predとする。小さいz=damping_rate*dt_segmentでは詳細設計§6.6の級数近似を使用する。速度は区間内一定Force・線形減衰に対する解、位置は半陰的Eulerである。
-- Fixed / Kinematic VertexはDynamic積分式を使わず、Segment終端Animation Targetとその時間微分Animation Velocityを維持する。位置差分によるVelocity再構築やContact Impulseで上書きしない。Kinematic Velocityは相対速度・摩擦・反発・CCDに使う。
-- XPBD LambdaはSegment開始時にResetし、Segment内の反復でのみ保持する。Impact後のDynamic Velocityを次Segmentへ渡し、Logical Tick全体の始点・終点差分で上書きしない。
 
 ## 3. Asset / Material / Animation
 
