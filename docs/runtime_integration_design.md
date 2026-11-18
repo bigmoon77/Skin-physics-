@@ -382,7 +382,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | collider_desc | initial_transform | 初期World Transform |
 | collider_desc | thickness / friction / restitution | SI単位・係数範囲は詳細設計のCollision Material定義に従う |
 | collider_desc | collision_filter | Layer / Mask / Mesh Pair除外と一貫するFilter |
-| animation_playback_desc | track.clip_index / time / speed / loop | animation_track_desc。単一TrackのClip Local Time / Playback Speed / Loop。Blendは別Descriptorで指定 |
+| animation_track_desc | clip_index / time / speed / loop | uint32_t / double / double / bool。Clip Local Time / Playback Speed / Loop。speed=0は停止、負値は逆再生 |
 | animation_playback_desc | discontinuity_policy / w_event | enum class / float。PreserveVelocity / ResetVelocity / BlendVelocity。BlendVelocityはDescriptorの0～1 w_eventでDynamic Velocityを補間 |
 | animation_blend_desc | source_track / target_track | 最大2本のanimation_track_desc。Additive / 3本以上はv1 Unsupported |
 | animation_blend_desc | blend_start_time / blend_end_time / weight_start / weight_end / tangent_start / tangent_end | double / float。World Simulation Time上のCubic Hermite Blend Weight Curve。時間は絶対秒、tangentは1/s。区間外は端点Weightを保持し、Curve全域で0<=w<=1を必須とする |
@@ -529,7 +529,7 @@ CPU Animation EvaluatorはLogical Tick内の有効なClip Key / Loop / Blend Wei
 
 ### 5.5 World共通Substep Schedule
 
-詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactの時間上限（contact_max_substep_delta_time > 0の場合だけ適用）を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。contact_max_substep_delta_time=0は+infinityとして扱う。Clip Key / Loop / Blend Weight / Root Transform、Force / Impulse境界を統合したSegment数をGPU Physics Upload前にCountし、maximum_integration_segments_per_tick（初期値512）を超える場合はWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Keyまたは異なるEvent時刻の境界を結合・省略しない。TOIで新たな残Segmentを作成する際も実行済みSegment数へ加算し、上限を超えたら残SegmentをDispatchせずTick全体を未Commitにする。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitとContact Temporal Quality LimitはXPBDの安定保証ではなく品質上限として扱う。各SubstepはAnimation Span / Force / Impulse / TOI境界でIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
+詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactの時間上限（contact_max_substep_delta_time > 0の場合だけ適用）を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。contact_max_substep_delta_time=0は+infinityとして扱う。World Substep / Clip Key / Loop / Blend Weight / Root Transform / Force / Impulse境界を統合したSegment数をGPU Physics Upload前にCountし、maximum_integration_segments_per_tick（初期値512）を超える場合はWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Keyまたは異なるEvent時刻の境界を結合・省略しない。TOIで新たな残Segmentを作成する際も実行済みSegment数へ加算し、上限を超えたら残SegmentをDispatchせずTick全体を未Commitにする。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitとContact Temporal Quality LimitはXPBDの安定保証ではなく品質上限として扱う。各SubstepはAnimation Span / Force / Impulse / TOI境界でIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -598,7 +598,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 
 ### 7.1 World Logical Tick
 
-1. CPU Animation EvaluationでLogical Tick全体のAnimation Trajectory Span Packet / Conservative Boundsを生成し、Kinematic Transform Sampleを収集する。Animation / Force / Impulseの既知境界を統合して予定Segment数をCountし、maximum_integration_segments_per_tickを超えた場合はGPU Physics Passへ進まずWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
+1. CPU Animation EvaluationでLogical Tick全体のAnimation Trajectory Span Packet / Conservative Boundsを生成し、Kinematic Transform Sampleを収集する。World Substep / Animation / Force / Impulseの既知境界を統合して予定Segment数をCountし、maximum_integration_segments_per_tickを超えた場合はGPU Physics Passへ進まずWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。
 2. Render Candidate Slotの空きを確認してReservation。空きがなければGPU Packet Upload / Dispatchを行わず、そのTickをpendingへ残し、Accumulatorの時間を保持する。
 3. GPUへAnimation Trajectory PacketをUploadし、Span Coefficient / Bound / Input VersionをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
 4. Logical Tick開始SnapshotとTerminal Status初期化。
