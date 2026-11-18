@@ -122,6 +122,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
             contact_geometry_unresolved,
             contact_manifold_reduction_failure,
             contact_impulse_unresolved,
+            animation_time_precision_unresolved,
             no_force_target
         };
 
@@ -527,7 +528,7 @@ GPU Record ABIはdetailed_design.md §5.3のanimation_span_gpu_record 64 bytes�
 - STEP / LINEAR / CUBICSPLINEの係数化、Quaternion Slerp / normalized Hermite微分、最大2 Track Blend、Hierarchy / Skinning微分はdetailed_design.md §5.3を正とする。
 - Kinematic Colliderは連続する時刻付きTransform SampleをTranslation Linear + Shortest-Arc Slerpで評価する。CAの任意tauでTransform / Contact Point Velocityを算出し、Speed / Sagitta Boundを同じPacket Versionで提供する。必要なSample Pairがbracketできない場合はBLOCKED_BY_INPUT。
 - CPUは係数区間から保守的なSpeed / Acceleration Boundを生成し、GPU Trajectory Packetと同一Versionで渡す。BoundsはInterval Arithmetic / 外向き丸めを使い、実軌道の上限を過小評価しない。CPUのdouble絶対時刻をGPU floatへ直接渡さず、GPUではSpan内uとSegment相対tauだけを使用する。
-- Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じPacketを使って任意tauの姿勢・速度を評価する。TOI後の残Segmentも同じGPU Packet Versionを使い、u_segment_startだけをGPU上で更新する。
+- Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じPacketを使って任意tauの姿勢・速度を評価する。通常Substep / Force / Impulse / TOIを含む全Segmentの進行後にu_segment_startをGPU上で更新し、TOI prefixではtau、その他はdt_segmentを使う。次SegmentがSpan境界へ到達した場合は次Span Recordへ切り替えてu_segment_start=0とする。正の時間進行でu_segment_startが増加しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。
 - Clip Blendは最大2 Track、非Additiveとする。Blend Weightの時間微分項を必ず含める。
 - Missing Pose / Key / Bound、正規化不能Quaternion、非有限微分はBLOCKED_BY_INPUTまたはInvalid Animation Inputとし、前回Poseや速度の流用・有限差分代用を行わない。
 
