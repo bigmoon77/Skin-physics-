@@ -284,10 +284,7 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         uint32_t target_track_index;
         uint32_t weight_curve_flags;
         uint32_t reserved0;
-        float4 weight_c0;
-        float4 weight_c1;
-        float4 weight_c2;
-        float4 weight_c3;
+        float4 weight_coefficients;  // scalar Cubic Hermite c0..c3
         float duration_seconds;
         float inverse_duration;
         float reserved1;
@@ -335,7 +332,16 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         float4 scale_c3;
     };
 
-animation_span_gpu_record is exactly 64 bytes, animation_channel_gpu_record is exactly 208 bytes, animation_blend_gpu_record is exactly 96 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start; TOI residual Segment updates it by u_tau without CPU Readback.
+animation_span_gpu_record is exactly 64 bytes, animation_channel_gpu_record is exactly 208 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start; TOI residual Segment updates it by u_tau without CPU Readback.
+
+固定RecordのByte Offsetは次の通りとする。OffsetはBuffer先頭からのbyte単位であり、全Fieldは4-byte alignmentとする。
+
+| Record | Field Offset |
+|---|---|
+| animation_span_gpu_record (64 B) | span_id=0, version_low=4, version_high=8, first_channel=12, channel_count=16, first_collider=20, collider_count=24, flags=28, span_duration=32, inverse_span_duration=36, u_segment_start=40, speed_bound=44, acceleration_bound=48, chord_deviation_bound=52, quaternion_normalization_lower_bound=56, reserved0=60 |
+| animation_channel_gpu_record (208 B) | bone_index=0, parent_index=4, interpolation_flags=8, channel_mask=12, translation_c0=16, translation_c1=32, translation_c2=48, translation_c3=64, rotation_parameter0=80, rotation_parameter1=96, rotation_parameter2=112, rotation_parameter3=128, scale_c0=144, scale_c1=160, scale_c2=176, scale_c3=192 |
+| animation_blend_gpu_record (48 B) | source_track_index=0, target_track_index=4, weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, reserved1=40, reserved2=44 |
+| kinematic_collider_gpu_record (128 B) | stable_id_low=0, stable_id_high=4, span_sample_pair_id=8, flags=12, translation_start=16, translation_end=32, rotation_start=48, rotation_end=64, angular_axis_and_angle=80, duration=96, inverse_duration=100, linear_speed_bound=104, angular_speed_bound=108, maximum_local_radius=112, sagitta_bound=116, reserved0=120, reserved1=124 |
 
 Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
 
