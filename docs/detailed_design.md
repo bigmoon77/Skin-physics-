@@ -257,7 +257,7 @@ GPUはCAの各Iterationで指定されたtauを受け取り、同じPacketを用
 
 CPU SchedulerはWorld Simulation Timeの絶対時刻、Tick Reservation、Animation Span境界をdoubleで保持する。GPU Trajectory PacketはShader Model 5で利用できるuint32 / floatのみを使い、double、bool、Pointer、std::string、std::vectorを含めない。
 
-GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う。
+GPU Trajectory PacketはRead-only / Immutableとし、CursorはWorldごとのMutable Working Bufferへ分離する。GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う。
 
     struct gpu_float4
     {
@@ -291,12 +291,20 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         uint32_t flags;
         float span_duration_seconds;
         float inverse_span_duration;
-        float u_segment_start;
         float speed_bound;
         float acceleration_bound;
         float chord_deviation_bound;
         float quaternion_normalization_lower_bound;
         float reserved0;
+        float reserved1;
+    };
+
+    struct animation_span_cursor_gpu_record
+    {
+        uint32_t span_record_index;
+        uint32_t animation_input_version_low;
+        uint32_t animation_input_version_high;
+        float u_segment_start; // Mutable per-World Segment cursor; never embedded in immutable Packet
     };
 
     struct animation_track_gpu_record
@@ -369,7 +377,7 @@ GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う�
         gpu_float4 scale_c3;
     };
 
-animation_span_gpu_record is exactly 80 bytes, animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_gpu_record::u_segment_start` is the normalized Animation Span coordinate at the current Integration Segment start. After every positive-time Segment advance within the same Span, GPU updates it by `u_segment_start += dt_segment * inverse_span_duration`; a TOI prefix uses `tau` in place of `dt_segment`. If the next Segment begins at a Span boundary, Scheduler selects the next immutable Span Record and initializes its `u_segment_start=0`. GPU verifies that every positive-time advance makes u_segment_start strictly increase; failure returns `ANIMATION_TIME_PRECISION_UNRESOLVED` and prevents Commit. No CPU Readback is used to update the normalized cursor.
+animation_span_gpu_record is exactly 80 bytes, animation_span_cursor_gpu_record is exactly 16 bytes (mutable per-World working state, not part of the immutable trajectory Packet), animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_cursor_gpu_record`はimmutableなAnimation Trajectory Packetとは別のWorldごとのMutable UAV Bufferで、Logical TickのWorking State / Segment Snapshotに属する。span_record_indexはimmutable Span Bufferの絶対Element Index、animation_input_version_low/highは参照Packet Version、u_segment_startは現在Segment開始時刻のSpan-local normalized coordinateである。GPU CAはcursor.u_segment_start + tau * span.inverse_span_durationからu_tauを求める。Segment終了時、通常 / Force / Impulse Segmentはdt_segment、TOI prefixはtauを加算してCursorだけを更新し、Packet Recordを書き換えない。次SegmentがSpan境界で開始するときは次Span Record Indexへ切り替え、Cursorを0へ戻す。正の時間進行でCursorが単調増加しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。Segment SnapshotにはCursor Recordも含み、TOI retime / Solver Retryは同じSpan Versionと開始CursorへRollbackする。Logical Tick全体のRejectはTick開始Cursorを再初期化し、Committed Packet / Source Stateを変更しない。Cursor BufferへのCPU Readback / CPU更新は行わない。
 
 GPU Shared Recordは上記gpu_float4 / gpu_matrix4x4を使用する。HLSL側のgpu_float4はfloat4、gpu_matrix4x4は明示的なcolumn_major float4x4として同じColumn-Major Storageへ対応させる。
 
@@ -392,7 +400,8 @@ Colliderのrotation_start / rotation_endはLocal-to-World Quaternion。angular_a
 
 | Record | Field Offset |
 |---|---|
-| animation_span_gpu_record (80 B) | span_id=0, version_low=4, version_high=8, first_track=12, track_count=16, first_channel=20, channel_count=24, first_blend=28, blend_count=32, first_collider=36, collider_count=40, flags=44, span_duration=48, inverse_span_duration=52, u_segment_start=56, speed_bound=60, acceleration_bound=64, chord_deviation_bound=68, quaternion_normalization_lower_bound=72, reserved0=76 |
+| animation_span_gpu_record (80 B) | span_id=0, version_low=4, version_high=8, first_track=12, track_count=16, first_channel=20, channel_count=24, first_blend=28, blend_count=32, first_collider=36, collider_count=40, flags=44, span_duration=48, inverse_span_duration=52, speed_bound=56, acceleration_bound=60, chord_deviation_bound=64, quaternion_normalization_lower_bound=68, reserved0=72, reserved1=76 |
+| animation_span_cursor_gpu_record (16 B, mutable working buffer) | span_record_index=0, version_low=4, version_high=8, u_segment_start=12 |
 | animation_track_gpu_record (32 B) | clip_index=0, first_channel=4, channel_count=8, flags=12, clip_time_start=16, clip_time_delta=20, playback_speed=24, reserved0=28 |
 | animation_channel_gpu_record (224 B) | node_index=0, parent_index=4, inverse_bind_record_index=8, interpolation_flags=12, channel_mask=16, node_role_flags=20, reserved0=24, reserved1=28, translation_c0=32, translation_c1=48, translation_c2=64, translation_c3=80, rotation_parameter0=96, rotation_parameter1=112, rotation_parameter2=128, rotation_parameter3=144, scale_c0=160, scale_c1=176, scale_c2=192, scale_c3=208 |
 | animation_blend_gpu_record (48 B) | source_track_index=0 (Span-relative), target_track_index=4 (Span-relative), weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, blend_start_offset_seconds=40, reserved2=44 |
@@ -422,14 +431,14 @@ Blend Recordのweight_coefficientsはSpanを覆うBlend Curveのnormalized Blend
 gpu_matrix4x4 Inverse Bind MatrixはColumn-Majorの4列gpu_float4で保存する。Skin Matrixはinverse(mesh_node_global) * joint_global * inverse_bind_matrix。Node Global MatrixはParent IndexのTopological Orderで評価し、Mesh Node / Root / 全Joint Ancestorを含めて構築する。
 Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。angular_axis_and_angle.xyzはWorld Space回転軸、wはShortest-Arc角度[rad]。Constant-Speed Slerpのomega_world = axis_world * angle / span_duration。Slerp回転の最大点加速度Boundにはomega_max^2 * maximum_local_radiusを加える。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
 
-CPUはdoubleのSpan開始・終了時刻とSegment開始時刻から、正規化Span座標u_segment_startを計算してfloatへ変換する。GPUへの時間入力はAbsolute World Timeを含めず、Segment開始からの相対時間tau [s]だけを渡す。
+CPUはdoubleのSpan開始・終了時刻とSegment開始時刻から、正規化Span座標u_segment_startを計算してfloatへ変換し、Tick Working Cursor Bufferを初期化する。GPUへの時間入力はAbsolute World Timeを含めず、Segment開始からの相対時間tau [s]だけを渡す。CursorはPacket係数Bufferと別Resourceで、Tick / Segment SnapshotのRollback対象とする。
 
     u_tau = u_segment_start + tau * inverse_span_duration
     u_tau = clamp(u_tau, 0, 1)
 
-通常 / Force / Impulse / TOIの各正時間Segment終了時にGPUがu_segment_startを進行させる。通常Segmentはdt_segment * inverse_span_duration、TOI prefixはtau * inverse_span_durationを加算し、同じSpan Recordを参照する。次のSegmentがSpan境界で開始する場合はSpan Recordを切り替えてu_segment_start=0へ戻す。CPUへTOI時刻Readbackして再Uploadする同期経路は作らない。Animation Key / Loop / Blend / Root / Collider Sample境界をSpan終端としているため、u_tauが1へ到達する前に次Spanへ跨がない。
+通常 / Force / Impulse / TOIの各正時間Segment終了時にGPUがMutable Cursor Bufferのu_segment_startを進行させる。通常Segmentはdt_segment * inverse_span_duration、TOI prefixはtau * inverse_span_durationを加算し、immutable Span Recordは変更しない。次のSegmentがSpan境界で開始する場合はCursorのspan_record_indexを次Spanへ切り替えてu_segment_start=0へ戻す。CPUへTOI時刻Readbackして再Uploadする同期経路は作らない。Animation Key / Loop / Blend / Root / Collider Sample境界をSpan終端としているため、u_tauが1へ到達する前に次Spanへ跨がない。
 
-CPUはdouble→float変換後のSpan Duration / inverse duration / u_segment_start / Speed Boundを検査する。正の有効Segment時間をGPU floatで表現できない、u_tauがtau増加に対して単調に進まない、または境界判定誤差がSpan内許容値を超える場合はAnimation Spanを決定的に細分化する。細分化深度8でも表現できなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。絶対World Timeをfloatへ直接CastしてShaderへ渡す実装は禁止する。
+CPUはdouble→float変換後のSpan Duration / inverse duration / 初期Cursor u_segment_start / Speed Boundを検査する。正の有効Segment時間をGPU floatで表現できない、u_tauがtau増加に対して単調に進まない、または境界判定誤差がSpan内許容値を超える場合はAnimation Spanを決定的に細分化する。細分化深度8でも表現できなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。絶対World Timeをfloatへ直接CastしてShaderへ渡す実装は禁止する。
 
 Speed / Acceleration / Deviation BoundをfloatへUploadする場合は外向きに丸め、Boundを小さくしない。Boundの量子化後も同じNo-Miss条件を維持できない場合はSpanを分割し、それでも証明できない入力を拒否する。
 
