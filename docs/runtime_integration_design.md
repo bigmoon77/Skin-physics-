@@ -409,7 +409,7 @@ requested_simulation_timeは受理した全要求の累積値であり、Pause /
 
 各Logical Tickには固定Delta Timeの時間区間、Tick Sequence、Input Snapshot、時間ソース（Accumulator / single_step）を持つTick Reservationを割り当てる。Submission時にAccumulatorからdtを消費する場合、そのdtはAccumulatorからTick Reservationへ移動したものとして記録し、in-flight / blocked / retry中の予約時間として保持する。GPU Commit成功時だけReservationをCommittedへ移す。CPU Observationは表示・Status更新だけを行い、AccumulatorやSimulation Timeを加減算しない。
 
-Capacity / CCD / Predecessorによる一時Blockは同じTick SequenceとReservationを保持してRetryする。RetryでAccumulatorへ再加算したり、新しいTick Sequenceを発行したりしない。BLOCKED_BY_INPUT / Render Backpressureで未SubmissionのTickはPending Reservationとして同じ時間区間を保持する。回復不能なFailureではReservationを診断情報として残し、Reset / Stopの明示操作で破棄する。
+Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick SequenceとReservationを保持してRetryする。RetryでAccumulatorへ再加算したり、新しいTick Sequenceを発行したりしない。BLOCKED_BY_INPUT / Render BackpressureがSubmission前に発生した場合はTick Reservationを作らず、時間をAccumulatorまたはStep Request Queueに保持する。必要なPose履歴・Render Candidate Slot・Query Slotが揃い、GPU Submission直前にだけReservationを作成する。回復不能なFailureでは発行済みReservationを診断情報として残し、Reset / Stopの明示操作で未Reservation要求を破棄する。
 
 `advance`が成功を返すことは、GPU TickがCOMMITTEDになったことを意味しない。Host側のUIはrequested / reserved / GPU committed / CPU observedを分けて表示する。
 
@@ -417,10 +417,10 @@ Capacity / CCD / Predecessorによる一時Blockは同じTick SequenceとReserva
 
 - Play中のadvanceはmax(frame_delta_time, 0) * time_scaleだけrequested_simulation_time / unassigned_accumulator_secondsを増やす。Paused / Stopped中はGPU QueryのPollだけを行い、Wall TimeをAccumulatorへ追加しない。
 - Tick時間はAccumulatorからTick Reservationへ移動する。各Tick Reservationは一意のSequenceと固定区間を持ち、GPU Commit / Retry / Rejectの結果を記録する。Accumulatorは未割当時間だけを保持し、reserved_tick_timeはin-flight / blocked Tickだけを集計する。
-- SchedulerはAccumulatorにfixed_delta_time以上がある場合、かつin-flight / submission / render slot / input条件が許す場合に限りTick Reservationを作る。Reservation発行時点でAccumulatorからfixed_delta_timeを一度だけ差し引く。GPU Commit時に再度差し引かない。
+- SchedulerはAccumulatorにfixed_delta_time以上があり、必要Pose / Kinematic Sampleが揃い、in-flight / query / render candidateのSlotが確保できる場合にTickをSubmission対象とする。これらの前提条件が揃う前はReservationを作らず、時間はAccumulatorに残す。前提条件が揃ったSubmission直前に一意のTick Sequence / Input Snapshotを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。GPU Commit時に再度差し引かない。
 - Capacity / CCD / predecessorの一時RejectはReservationを同じSequenceで保持してRetryする。Tick N+1がPredecessor Gateで停止した場合はN+1のReservationを破棄せず、NがReplay / Commitした後に新しいSource Generationで再Submissionする。
 - 回復不能なFailureでWorldがFailedになった場合、当該Reservationおよび後続Pending Reservationは診断用に保持する。ResetはAccumulator、Reservation、Step Queueを明示的に破棄してInitial Stateへ戻す。
-- single_stepはPaused / Stopped中のみ受け付ける。受理時にrequested_simulation_timeへfixed_delta_timeを加算し、wall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Reservationにはtime_source=single_stepを記録する。Commit時にGPU committed timeを1 Fixed Delta進める。
+- single_stepはPaused / Stopped中のみ受け付ける。受理時にrequested_simulation_timeへfixed_delta_timeを加算し、wall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Pose / Render Slot / Query Slotが揃うまではStep Requestのまま保持し、GPU Submission直前にtime_source=single_stepのTick Reservationへ移す。Commit時にGPU committed timeを1 Fixed Delta進める。
 - Stop / Resetが未Reservation Step Requestを破棄する場合、その固定時間をcancelled_requested_timeへ加算し、破棄数・時間をDiagnosticへ残す。既にTick ReservationとなったStepは通常のin-flight / Retry契約に従い、取消し・二重要求を行わない。
 - D3D11 Immediate Contextは単一の順序付きCommand Streamである。PhysicsとRenderが独立GPU Queueで同時に動く前提を置かない。
 - 1 PhysicsSubmissionBatchは1 Logical Tickを含む。
@@ -430,7 +430,7 @@ Capacity / CCD / Predecessorによる一時Blockは同じTick SequenceとReserva
 - Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
 - 先行TickがRejectされた場合、既にSubmissionされた後続TickはBLOCKED_BY_PREDECESSORとなり、物理状態を変更しない。先行TickのRetryがGPU上でCommitされた後、CPUは後続TickのPlanを新しいCommitted State Generationに合わせて再発行する。
 - Planのsource / destination State SetはSubmission時点の予測Commit順序に基づいて固定する。GPU Commitが成立しない場合の後続Planは必ずgateで停止する。GPUが成功した場合のみ計画されたState Set遷移が有効になる。
-- in-flight / query / render lease / capacity上限に到達した場合、新規Reservation / Submissionを停止し、未割当時間はAccumulator、既に発行済み時間はTick Reservationへ残す。
+- in-flight / query / render lease / capacity上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。
 - Accumulatorが長時間増加する場合はsimulation_backlogとして警告・計測する。Skin Physicsの要件にない100ms Failureや40FPS必須条件を追加しない。
