@@ -1233,28 +1233,34 @@ namespace
         const ComPtr<ID3D11Buffer> constants =
             create_constant_buffer(device, &parameters, sizeof(parameters));
 
-        ID3D11ShaderResourceView* resources[] = {
-            before_view.Get(), after_view.Get(), primitive_view.Get()
+        const auto execute_correction_pass = [&](ID3D11ShaderResourceView* primitive_input,
+            ID3D11UnorderedAccessView* output_bounds,
+            ID3D11UnorderedAccessView* output_status)
+        {
+            skin_physics::simulation::d3d11_compute_graph graph;
+            skin_physics::simulation::compute_pass_desc pass;
+            pass.name = "correction_swept_aabb";
+            pass.shader = shader;
+            pass.shader_resources = {
+                { 6, before_view.Get() },
+                { 7, after_view.Get() },
+                { 8, primitive_input }
+            };
+            pass.unordered_access_views = {
+                { 4, output_bounds },
+                { 5, output_status }
+            };
+            pass.constant_buffers = { { 1, constants.Get() } };
+            pass.group_count_x = 1;
+            std::string diagnostic;
+            require(graph.add_pass(pass, diagnostic),
+                "Correction AABB pass must register in the D3D11 Compute Pass Graph: " + diagnostic);
+            const auto execution = graph.execute(context);
+            require(execution.success && execution.executed_pass_count == 1,
+                "D3D11 Compute Pass Graph must execute the correction AABB dispatch.");
         };
-        ID3D11UnorderedAccessView* unordered_views[] = {
-            bounds_view.Get(), status_view.Get()
-        };
-        context->CSSetShader(shader, nullptr, 0);
-        context->CSSetShaderResources(6, 3, resources);
-        context->CSSetUnorderedAccessViews(4, 2, unordered_views, nullptr);
-        ID3D11Buffer* constant_buffer = constants.Get();
-        context->CSSetConstantBuffers(1, 1, &constant_buffer);
-        context->Dispatch(1, 1, 1);
-
-        ID3D11ShaderResourceView* null_resources[] = {
-            nullptr, nullptr, nullptr
-        };
-        ID3D11UnorderedAccessView* null_unordered[] = { nullptr, nullptr };
-        ID3D11Buffer* null_constants[] = { nullptr };
-        context->CSSetShaderResources(6, 3, null_resources);
-        context->CSSetUnorderedAccessViews(4, 2, null_unordered, nullptr);
-        context->CSSetConstantBuffers(1, 1, null_constants);
-        context->CSSetShader(nullptr, nullptr, 0);
+        execute_correction_pass(
+            primitive_view.Get(), bounds_view.Get(), status_view.Get());
 
         const std::vector<gpu_aabb> gpu_bounds =
             readback_structured_buffer<gpu_aabb>(
@@ -1320,9 +1326,6 @@ namespace
         const ComPtr<ID3D11ShaderResourceView> invalid_primitive_view =
             create_structured_srv<gpu_correction_primitive_input>(
                 device, invalid_primitive_buffer.Get(), 2);
-        ID3D11ShaderResourceView* invalid_resources[] = {
-            before_view.Get(), after_view.Get(), invalid_primitive_view.Get()
-        };
         const std::vector<gpu_aabb> reset_bounds(2);
         const std::vector<uint32_t> reset_status(2, 0xffffffffu);
         const ComPtr<ID3D11Buffer> invalid_bounds_buffer =
@@ -1333,18 +1336,9 @@ namespace
             create_structured_uav<gpu_aabb>(device, invalid_bounds_buffer.Get(), 2);
         const ComPtr<ID3D11UnorderedAccessView> invalid_status_view =
             create_structured_uav<uint32_t>(device, invalid_status_buffer.Get(), 2);
-        ID3D11UnorderedAccessView* invalid_unordered[] = {
-            invalid_bounds_view.Get(), invalid_status_view.Get()
-        };
-        context->CSSetShader(shader, nullptr, 0);
-        context->CSSetShaderResources(6, 3, invalid_resources);
-        context->CSSetUnorderedAccessViews(4, 2, invalid_unordered, nullptr);
-        context->CSSetConstantBuffers(1, 1, &constant_buffer);
-        context->Dispatch(1, 1, 1);
-        context->CSSetShaderResources(6, 3, null_resources);
-        context->CSSetUnorderedAccessViews(4, 2, null_unordered, nullptr);
-        context->CSSetConstantBuffers(1, 1, null_constants);
-        context->CSSetShader(nullptr, nullptr, 0);
+        execute_correction_pass(
+            invalid_primitive_view.Get(),
+            invalid_bounds_view.Get(), invalid_status_view.Get());
 
         const std::vector<uint32_t> invalid_status =
             readback_structured_buffer<uint32_t>(
