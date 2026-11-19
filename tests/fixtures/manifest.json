@@ -704,9 +704,12 @@
         "segment_side_latch_is_bound_to_ordered_topology_vertex_ids",
         "shared_vertex_and_one_ring_filtering_precedes_candidate_capacity",
         "active_contact_set_capacity_overflow_blocks_epoch_atomically",
-        "vertex_contact_csr_capacity_overflow_blocks_epoch_atomically"
+        "vertex_contact_csr_capacity_overflow_blocks_epoch_atomically",
+        "segment_commit_gate_requires_matching_candidate_contact_and_csr_generations",
+        "segment_commit_gate_validates_csr_contact_indices_and_four_vertex_references",
+        "segment_commit_gate_rejects_non_unit_or_topology_unbound_side_latches"
       ],
-      "status": "CPU reference includes transactional Position-Writer Epoch, immutable per-pair Segment Side Latches bound to topology identity, topology-filtered Candidate generation before capacity accounting, Final Discrete Contact Set and Vertex-to-Contact CSR assertions, and independent Candidate / Contact / CSR capacity rollback. WARP AABB and GPU Candidate Count / Scan / Capacity / Fill / Sort / Dedup pass graphs and parity tests added; Windows shader compilation, build and CI remain unverified",
+      "status": "CPU reference includes transactional Position-Writer Epoch, immutable per-pair topology-bound Segment Side Latches, topology-filtered Candidate generation before capacity accounting, Final Discrete Contact Set and Vertex-to-Contact CSR construction, independent Candidate / Contact / CSR capacity rollback, and a fail-closed CPU Segment Commit Gate. WARP AABB and GPU Candidate Count / Scan / Capacity / Fill / Sort / Dedup pass graphs and parity tests added; Windows shader compilation, build and CI remain unverified",
       "gpu_test_group": "P12_WARP_CORRECTION_SWEPT_AABB",
       "gpu_source_files": [
         "tests/fixtures/phase07_collision/collision_gpu.cs.hlsl",
