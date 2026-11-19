@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v3.9）
+# Skin Physics 設計閉鎖書（v4.0）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.24
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.29
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.26
+- 基本設計: [basic_design.md](basic_design.md) v1.25
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.30
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.27
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 - Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.4
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
@@ -150,6 +150,18 @@ Self Collision既定除外:
 - 明示的なMesh Pair Exclusion。
 
 Additional 2-ring / 3-ring除外は既定0。折り畳み部の接触見逃しを避ける。除外Pairと残存ContactをDebug Viewで確認する。
+
+### 2.5.1 XPBD拘束補正経路のBroadphase完全性
+
+Broadphase Envelopeに経験的な「最大拘束補正余裕」を加える方式は採用しない。物理Segmentの開始→Prediction Sweepに加え、全XPBD Position-Writer Dispatchのbefore→after補正Sweepを実測状態から生成し、そのUnionをEnvelopeとする。Graph Coloringの各Color Dispatch、Gather Jacobiの各Position Iteration、Contact Position XPBDの各Iteration、TOI prefix内の位置書込みもそれぞれ独立Epochとして登録する。
+
+Epoch eの頂点位置をx_before / x_afterとし、補正経路をx(s)=x_before+s*(x_after-x_before), 0<=s<=1とする。Correction Swept AABBは各Primitiveの全頂点のbefore / afterを包含し、§2.5の同じContact Thickness膨張規則を適用する。候補集合はPhysical Swept、全Correction Swept、Final Discrete NarrowphaseのCanonical Pair Unionを保持し、Generation変更時はVertex→Contact CSR / Patchを再構築する。Count / Capacity Checkは各Epochに適用し、候補を切り捨てない。
+
+VT Correction Motion CCDの相対変位Boundは頂点変位Normと三角形3頂点変位Normの最大値の和、EEは両辺の各端点変位Normの最大値同士の和とする。これらはnormalized-s当たりの変位Boundである。距離関数の外向き丸め済み区間値とこのLipschitz Boundを使って[s区間]を決定的に二分し、全区間のNo-Hitを証明できた場合だけNo-Hitにする。既存CCDのdistance_toleranceを使い、最大32区間評価で判定できない場合、Feature / Normal / Distance Boundが非有限または証明不能の場合はCORRECTION_CCD_UNRESOLVEDとしてBLOCKEDにしCommitしない。finite samplesだけでNo-Hitとしない。
+
+Hitは終端Discrete Narrowphaseで再評価する。終端Contactは次の残りContact Position Iterationで解決する。始点から終端まで同じ分離側であることが証明された一過性近接はActive Contactに追加しないがCandidate Unionには残す。安定Normal / Feature Mappingに対するSigned Separationが反対側へ越えたCorrection Path CrossingはREJECTEDとし、位置補正で衝突面を通過させたTickをCommitしない。両側判定を証明できない場合はUnresolvedとしてBLOCKEDにする。規定Contact Position Iteration後に新規有効Contact / Contact Set Generationが残る場合もCONTACT_GEOMETRY_UNRESOLVEDとしてCommitしない。
+
+Correction Motion CCDのnormalized sは物理時間ではなく、World / Segment時間、TOI tau、TOI Split / Segment Count、Force / Impulse Event Cursor、v_pre_contact、Restitution / Friction Impulseを変更しない。Correction HitはPhysical Impactを生成しない。詳細な式・Pass順・Buffer ABIはdetailed_design.md §9.4.1 / §9.4.2 / §11.2 / §15.1、Runtime実行順はruntime_integration_design.md §7.1 / §7.2.1を正とする。
 
 ### 2.6 CCD / TOI
 
@@ -391,6 +403,7 @@ Render Candidate Ring:
 - [ ] Multi-World / Multi-Model / Multi-Mesh / Self Collision / Mixed CollisionのID・Filter・Ownershipが一貫している。
 - [ ] Contact Patchが複数Support Pointを保持し、縮約前後の品質を比較可能。
 - [ ] Broadphase / Large Primitive / Pair Dedupの完全性とCapacity failure pathが定義済み。
+- [ ] XPBD全Position-Writer EpochのCorrection Swept AABB / Candidate Union / VT・EE Correction Motion CCDが定義され、Crossing / Unresolved / Capacity ErrorはNo-HitやCommitへ漏れない。
 - [ ] CCD No-Hit / TOI / Unresolved / Initial Contactの区別がある。
 - [ ] Fixed Delta / Time Scale / Pose History / Step / Pause / Resetの時刻所有者が一意。
 - [ ] GPU CommitとRender Candidate Slotの切替が同一Commit Controlで行われる。
@@ -427,7 +440,7 @@ Render Candidate Ring:
 | §4 物理方式 | Tetrahedral Soft Body、Cloth Stretch / Shear / Bend、混在 | detailed_design §6-7、design_closure §2 | T01-T06、R1-R3 |
 | §5 Import / Convert | Multiple Importers、common asset、independent topology、cache、diagnostics | detailed_design §2 / §4-5、runtime_integration §3、design_closure §3.1 | P01-P03、T12 / T13 / T25 / T26 |
 | §6 Animation | Skeleton pose / velocity、inertia、tracking、discontinuity、render attribute preservation | detailed_design §5 / §6.7 / §12、runtime_integration §5.4 / §9、design_closure §3.3-4.4 | T20 / T21 / T27、R5 |
-| §7 Collision | Mixed collision, self collision, bilateral response, initial repair, CCD, material, filters, no brute-force, overflow safety | detailed_design §8-11、design_closure §2.3-2.6 | T07-T11 / T16 / T17 / T22 / T23、R3 / R4 |
+| §7 Collision | Mixed collision, self collision, bilateral response, initial repair, physical CCD and XPBD Correction Motion CCD, material, filters, no brute-force, overflow safety | detailed_design §8-11、design_closure §2.3-2.6 | T07-T11 / T16 / T17 / T22 / T23 / T49、R3 / R4 |
 | §8 Physics attributes / Paint | per-Mesh base values, per-vertex channels, Paint / Smooth / Average / Erase / transfer / persistence | detailed_design §13、runtime_integration §3.3-3.4、design_closure §3.2 | P10, T04 / T06 / T13 / T19 / T27 |
 | §9 Test Environment | Play / Stop / Pause / Reset / Step / Time Scale / fixed dt / gravity / force / impulse / visualizer / GPU timing | detailed_design §14 / §17、runtime_integration §5 / §7 / §10 | T15 / T24 / T28、R0 / R5 / R6 |
 | §10 JSON | readable versioned Scenario / Run Result / compatibility / deterministic seed | detailed_design §14.3-14.6、runtime_integration §3.4 / §4、existing scenario schema | T24 / T28、R0 |
@@ -441,7 +454,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
-- 3.9: in-flight 1 / 2 / 4のCPU未観測件数定義と直列2-bank実行を統一。Render Candidate Ring容量をN+1へ一般化し、Reset / DrainのStatus観測・Blocked Reservation条件をRuntime契約へ同期。
+- 4.0: XPBD Position-Writer EpochごとのCorrection Swept AABB / Candidate Union / VT・EE Correction Motion CCDを閉鎖契約へ追加。最大拘束補正Marginを廃止し、Crossing / Unresolved / Contact Set未収束時のCommit禁止、Pseudo-Timeと物理TOI / Impulseの分離を定義。Basic v1.25 / Detailed v1.30 / Runtime v1.27 / Test Case 49と同期。
 
 - 3.8: Synchronized Basic / Detailed / Runtime current-version references and repaired the stale Basic Design handoff paragraph.
 - 3.7: Fixed q-compatible Contact Jacobian row order and right-handed contact-frame convention; made scalar inverse-mass and unit-bearing residual fixture inputs reproducible.
