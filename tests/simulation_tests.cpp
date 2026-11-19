@@ -2173,6 +2173,7 @@ namespace
             point.mesh_id = 1;
             point.primitive_id = 0;
             point.role = skin_physics::physics::correction_primitive_role::vertex;
+            point.vertex_stable_ids.push_back(point_stable_id * 10u + 1u);
             point.vertex_motions.push_back({
                 read_vec3(input.at("point_before")),
                 read_vec3(input.at("point_after"))
@@ -2192,6 +2193,8 @@ namespace
             triangle.role = skin_physics::physics::correction_primitive_role::triangle;
             for (std::size_t index = 0; index < 3; ++index)
             {
+                triangle.vertex_stable_ids.push_back(
+                    triangle_stable_id * 10u + static_cast<uint64_t>(index) + 1u);
                 triangle.vertex_motions.push_back({
                     triangle_before[index], triangle_after[index]
                 });
@@ -2255,7 +2258,11 @@ namespace
             transient_epoch_state.candidates.size() == 1 &&
             transient_epoch_state.candidate_generation == 2 &&
             transient_epoch_state.position_writer_epoch_generation == 1 &&
-            !transient_epoch_state.contact_set_current,
+            transient_epoch_state.contact_set_current &&
+            transient_epoch_state.vertex_contact_csr_current &&
+            transient_epoch_state.contact_set.empty() &&
+            transient_epoch_state.vertex_contact_csr.offsets ==
+                std::vector<uint32_t>{ 0u },
             "A same-side transient proximity must remain in the Segment Candidate Union without becoming an endpoint Active Contact.");
 
         const auto endpoint_epoch_primitives = make_vt_epoch_primitives(
@@ -2292,7 +2299,11 @@ namespace
             miss_epoch.state_committed &&
             miss_epoch.correction_ccd_results.empty() &&
             miss_epoch_state.candidates.empty() &&
-            miss_epoch_state.position_writer_epoch_generation == 1,
+            miss_epoch_state.position_writer_epoch_generation == 1 &&
+            miss_epoch_state.contact_set_current &&
+            miss_epoch_state.vertex_contact_csr_current &&
+            miss_epoch_state.vertex_contact_csr.offsets ==
+                std::vector<uint32_t>{ 0u },
             "A certified Broadphase miss must still advance the Position-Writer Epoch while leaving the Candidate Union empty.");
 
         skin_physics::physics::broadphase_settings epoch_capacity_settings =
