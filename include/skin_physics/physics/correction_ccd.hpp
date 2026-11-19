@@ -317,7 +317,9 @@ namespace skin_physics::physics
         uint64_t candidate_generation,
         uint64_t position_writer_epoch_generation,
         const std::vector<correction_discrete_contact_input>& discrete_inputs,
-        float epsilon_length = 1.0e-7f);
+        float epsilon_length = 1.0e-7f,
+        std::size_t contact_set_capacity = 1u << 20,
+        std::size_t vertex_contact_csr_capacity = 1u << 22);
 
     // Input envelope bounds must already include the per-primitive Contact Thickness expansion.
     // settings.contact_thickness must be zero so the existing Broadphase does not expand twice.
