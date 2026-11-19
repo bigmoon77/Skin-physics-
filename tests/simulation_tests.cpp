@@ -1667,6 +1667,70 @@ namespace
         require(settings_result.status == correction_ccd_status::invalid_input,
             "Correction CCD must enforce the specified maximum 32 interval evaluations.");
 
+        std::vector<skin_physics::physics::correction_vertex_motion> swept_vertices(4);
+        swept_vertices[0] = {
+            read_vec3(vt_crossing.at("input").at("point_before")),
+            read_vec3(vt_crossing.at("input").at("point_after"))
+        };
+        const auto swept_triangle_before = read_vec3_triplet(
+            vt_crossing.at("input").at("triangle_vertices_before"));
+        const auto swept_triangle_after = read_vec3_triplet(
+            vt_crossing.at("input").at("triangle_vertices_after"));
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            swept_vertices[index + 1] = {
+                swept_triangle_before[index], swept_triangle_after[index]
+            };
+        }
+        skin_physics::physics::collision_aabb correction_bounds;
+        require(skin_physics::physics::build_correction_swept_aabb(
+            swept_vertices, 0.02f, correction_bounds),
+            "Correction Swept AABB generation must accept finite before/after vertex positions.");
+        require(correction_bounds.minimum.x <= 0.25f &&
+            correction_bounds.maximum.x >= 0.25f &&
+            correction_bounds.minimum.y <= 0.25f &&
+            correction_bounds.maximum.y >= 0.25f &&
+            correction_bounds.minimum.z < -1.0f &&
+            correction_bounds.maximum.z > 1.0f,
+            "Correction Swept AABB must enclose every endpoint and half-thickness expansion.");
+
+        std::vector<skin_physics::physics::correction_vertex_motion> empty_sweep;
+        require(!skin_physics::physics::build_correction_swept_aabb(
+            empty_sweep, 0.02f, correction_bounds),
+            "An empty correction primitive must not produce an AABB.");
+
+        auto non_finite_sweep = swept_vertices;
+        non_finite_sweep[2].after.y =
+            std::numeric_limits<float>::quiet_NaN();
+        require(!skin_physics::physics::build_correction_swept_aabb(
+            non_finite_sweep, 0.02f, correction_bounds),
+            "A non-finite correction vertex must fail AABB construction.");
+
+        using skin_physics::physics::correction_contact_type;
+        const auto candidate_vt = skin_physics::physics::make_canonical_correction_candidate_key(
+            correction_contact_type::vertex_triangle, 7, 12, 2, 4);
+        const auto candidate_vt_reversed =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::vertex_triangle, 2, 4, 7, 12);
+        const auto candidate_ee =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::edge_edge, 7, 12, 2, 4);
+        const auto candidate_union =
+            skin_physics::physics::merge_correction_candidate_union(
+                {}, { candidate_vt, candidate_vt_reversed, candidate_ee }, 2);
+        require(candidate_union.success && !candidate_union.overflow &&
+            candidate_union.required_count == 2 &&
+            candidate_union.candidates.size() == 2,
+            "Canonical Candidate Union must sort, deduplicate reversed pairs, and preserve contact type.");
+
+        const auto candidate_overflow =
+            skin_physics::physics::merge_correction_candidate_union(
+                { candidate_vt }, { candidate_ee }, 1);
+        require(!candidate_overflow.success && candidate_overflow.overflow &&
+            candidate_overflow.required_count == 2 &&
+            candidate_overflow.candidates.empty(),
+            "Candidate Union capacity overflow must return no partial replacement set.");
+
         skin_physics::physics::correction_ccd_settings limited_settings =
             read_correction_ccd_settings(vt_crossing.at("input"));
         limited_settings.maximum_interval_evaluations = 2;
