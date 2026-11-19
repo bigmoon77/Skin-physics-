@@ -613,19 +613,17 @@
     ]
   },
   "latest_ci_attempt": {
-    "commit": "a0b1d39b47e1d13c48a8494869da7cbfe93acc5e",
-    "workflow_run_id": 44437101035,
-    "job_id": 135268607014,
+    "commit": "993ed8f35321ef8ff548c3968d9638c6a0c8232a",
+    "workflow_run_id": 44446678526,
+    "job_id": 135300396854,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
-    "runner_id": 0,
-    "runner_name": "",
     "steps_reported": 0,
-    "build": "not_started",
-    "tests": "not_started",
     "logs_available": false,
-    "classification": "runner_not_assigned",
-    "note": "The latest observed run targets commit a0b1d39. The job completed in approximately four seconds with runner_id 0, an empty runner_name, no reported steps and no logs URL. The Windows runner was not assigned, so compiler and test execution did not start. This is not evidence of a source-code or design-document failure. The last successful verified CI remains commit 36dab21 / run 44327398017. The manifest-only follow-up commit is intentionally skipped by CI."
+    "build": "not_verified",
+    "tests": "not_started_or_unreported",
+    "classification": "failed_before_reported_build_steps",
+    "note": "The workflow run completed shortly after creation. The available job summary reports no steps and no logs URL; the step endpoint returns an empty list and the logs endpoint has no log artifact. The available metadata does not establish whether the cause was runner allocation or another pre-step failure. No compiler or test result is available, so this run is not evidence of a source-code regression. The manifest-only follow-up commit is intentionally skipped by CI."
   }
 }
