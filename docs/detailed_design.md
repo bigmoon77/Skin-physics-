@@ -1159,9 +1159,9 @@ Candidate tauとSnap先時刻t_bの差をdelta_t=abs(tau-t_b)とする。Snap可
 XPBDのSnap誤差Boundは、次の有限反復Solver写像をCandidate時刻とBoundary時刻で比較して求める。写像は実装が実行するConstraint順序、反復数、Relaxation、Projection、Clamp、Lambda更新規則を完全に固定したものとする。
 
     G_p(z, dt) = finite_iteration_xpbd_position_solver(z, dt)
-    G_v(z, dt) = finite_iteration_xpbd_velocity_response(z, dt)
+    G_v(z, dt) = velocity_response_from_xpbd_state(G_p(z, dt), x_segment_start, dt, trajectory_derivative)
 
-ここでzはSolver入力全体を表し、少なくともSegment開始Position / Velocity、Candidate / BoundaryのTrajectory入力、Constraint Gradient、Effective Inverse Mass、Compliance、Rest Data、Constraint Active Set、Projection / Clamp Branch、Iteration設定を含む。dtは各評価時刻の実際のXPBD Segment時間であり、alpha_tilde = compliance / dt^2をSolverと同じ演算順で再計算する。UはCandidateとBoundary双方の入力区間を包含する不確かさ集合、z_bはBoundary入力とする。
+ここでzはSolver入力全体を表し、少なくともSegment開始Position / Velocity、Candidate / BoundaryのTrajectory入力、Constraint Gradient、Effective Inverse Mass、Compliance、Rest Data、Constraint Active Set、Projection / Clamp Branch、Iteration設定を含む。Dynamic VertexのG_vは実装規則どおり`(G_p(z,dt) - x_segment_start) / dt`から構成し、追加の速度応答がある場合はその決定的な写像も含める。Fixed / Kinematic VertexのG_vは同時刻の解析的Trajectory Derivativeを使い、その区間誤差を別途包含する。dt=0のDynamic Velocity再構築は定義せず、tau=0はSegment-start Dynamic Velocityをそのまま使う。dtは各評価時刻の実際のXPBD Segment時間であり、alpha_tilde = compliance / dt^2をSolverと同じ演算順で再計算する。UはCandidateとBoundary双方の入力区間を包含する不確かさ集合、z_bはBoundary入力とする。
 
     E_Gp = sup { ||G_p(z, dt) - G_p(z_b, dt_b)||_2 : z in U }
     E_Gv = sup { ||G_v(z, dt) - G_v(z_b, dt_b)||_2 : z in U }
