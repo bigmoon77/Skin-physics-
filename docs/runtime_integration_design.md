@@ -373,8 +373,8 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | world_desc | time_scale | 0以上の有限値。Frame elapsedへ適用 |
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
-| world_desc | minimum_substeps / maximum_substeps | World共通Substep数の下限 / 上限。初期値1 / 128。超過時はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
-| world_desc / world_execution_budget | maximum_substeps / maximum_integration_segments_per_tick | uint32_t。初期値128 / 512。Admission Limitのみを表し、必要なSubstep / Segment数や物理品質を変更しない。上限超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
+| world_desc | minimum_substeps | World共通Substep数の下限。初期値1。必要数が実行予算上限を超える場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
+| world_desc / world_execution_budget | maximum_substeps / maximum_integration_segments_per_tick | uint32_t。初期値128 / 512。world_descで初期化し、`set_world_execution_budget`で更新するAdmission Limit。必要Work量・物理品質・時間境界は変更しない。上限超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
 | world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。全Solverへ適用する共通上限 |
 | world_desc | contact_max_substep_delta_time | double [s]。初期値1/120 s、有限値かつ0以上。0は明示無効（Substep式では+infinity） |
 | world_desc | contact_impulse_iterations | uint32_t。Coupled Projected JacobiのIteration数。初期値8、許容範囲1～16 |
@@ -429,7 +429,7 @@ Model / ColliderのCreate / Destroy、Model Transform Sample、Mesh Physics Para
 
 `get_render_binding`の最初の成功呼出しはWorldのHost Render Leaseを取得し、以降の各Mesh取得は同じlease_generationを返す。Releaseは取得時に返されたuint64 lease_generationを必須とし、現在Leaseと一致しない世代はSTALE_HANDLEとして拒否する。GPU Commit済みでもCPUがEvent Query / Status Readbackを確認していないTickのSlotは公開しない。Worldごとに同時に有効なHost Render Leaseは1つ。Hostは全MeshのDrawコマンド（Deferred Contextを使った場合はExecuteCommandListも）をImmediate Contextへ発行し、Position / Normal / Tangent SRVをVS / HS / DS / GS / PS / CS全StageからUnbindしてからrelease_render_bindings(world, lease_generation)を呼ぶ。Release後はSRV PointerもCommand List内の参照も使用しない。COM AddRefはCOM Objectの寿命だけを延長し、Slot内容のLeaseは延長しない。
 
-Execution BudgetはWorld生成時に`world_execution_budget`として設定し、その後の変更は`set_world_execution_budget`だけで行う。World内のAdmission LimitはBasic / Detailed / Runtimeの各設計で重複保持せず、このRecordを唯一の実行上限とする。
+World生成時の初期Admission Limitは`world_desc.maximum_substeps` / `world_desc.maximum_integration_segments_per_tick`から取り込み、Runtime内部では`world_execution_budget`として一組で保持する。以後の変更は`set_world_execution_budget`だけで行う。Descriptorの初期値とAPI更新値は同一の2フィールド契約を共有し、Basic / Detailed / Runtimeで別の実行上限を保持しない。
 
 ### 3.5 WorldとMesh Instanceの配置
 
