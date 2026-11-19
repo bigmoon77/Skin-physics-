@@ -1,10 +1,10 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.11
+- 文書バージョン: 1.12
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.9
+- 前版: 1.11
 - Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md)
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 

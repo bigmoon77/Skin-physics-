@@ -1,11 +1,11 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.13
+- 文書バージョン: 1.14
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.11
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.10
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.5
+- 対応基本設計: basic_design.md 1.12
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.11
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.6
 - 前版: 1.12
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
@@ -1329,7 +1329,7 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 
 ## 16. 容量・エラー・ステップ状態
 
-WORK_BUDGET_EXCEEDEDは、World共通Substep数またはIntegration Segment数が設定上限を超え、Tick全体をCommitできない状態を表す。Runtimeは必要な実行数をDiagnosticへ記録し、同じTick Reservationを保持する。復旧API・設定変更可能範囲・Query完了条件・Retry時のSnapshot / Packet / Event固定規則は [runtime_integration_design.md](runtime_integration_design.md) §5.6を正とする。実行上限の変更は既に確定した物理条件を変更せず、要求済みSubstep / Segmentを実行可能にするAdmission Limitだけを更新する。
+`WORK_BUDGET_EXCEEDED`はAdmission Limit超過を示す再試行可能な状態であり、Logical Tick Stateは必ず`BLOCKED`とする。TickはCommitせず、同じTick Reservation / Sequence / Input Snapshotを保持する。CPU Preflightで判定した場合は`CPU_PREFLIGHT`、GPU実行中のTOI分割で判定した場合は`GPU_DYNAMIC_TOI`をStatusへ記録する。TOIで報告する`minimum_required_integration_segments`は発見済み分割だけから証明できる下限値であり、未発見の後続TOIを含む最終総数とは解釈しない。Status Field、Poll、Retry、Hard Limitの詳細は [runtime_integration_design.md](runtime_integration_design.md) §3.4 / §5.6を正とする。
 
 シミュレーションインスタンスとGPU Logical Tickは状態を分けて管理する。
 
@@ -1338,6 +1338,7 @@ World Playback State:
 - Running
 - Paused
 - Stopped
+- BlockedByWorkBudget
 - BlockedByCapacity
 - BlockedByCCD
 - DeviceLost
@@ -1347,32 +1348,36 @@ Logical Tick State:
 - Pending
 - Submitted
 - GpuExecuting
+- BLOCKED
 - GpuCommitted
 - CpuObserved
-- Rejected
+- REJECTED
+- FAILED
 
-GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはEvent Query完了・COMMITTED Status Readback・連続Tick Prefixの3条件をCPUが確認した状態である。CPU observed completed timeはCpuObserved Prefixから算出する。GPU StatusがCOMMITTEDでもEvent Query未完了または先行Tick未完了ならCPU completed timeを進めない。
+状態の意味:
+- `BLOCKED`: Runtimeが定義する回復手順で同一Tickを再実行できる状態。Reservation / Sequence / Input Snapshotを保持し、Committed Stateを変更しない。
+- `REJECTED`: 入力・Asset・物理品質Gate等の不成立により、そのTick Planを自動再試行しない状態。Committed Stateを変更しない。
+- `FAILED`: Device Loss、回復不能なWork Count Overflow、内部実行不能などWorldの継続を止める終端状態。
+
+Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDEDは回復可能な間は`BLOCKED`とし、`REJECTED`へ分類しない。NonFinite / Invalid Asset / ABI mismatchは自動Retryせず`REJECTED`またはLoad Errorとする。DeviceRemovedおよびuint32範囲を超えるWork Countは`FAILED`とする。
+
+GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはGPU Event Query完了・COMMITTED Status Readback・連続Tick Prefixの3条件をCPUが確認した状態である。CPU Preflight BlockはGPU Submissionを行わないためEvent Queryを必要とせず、CPU Scheduler Status Queueへ同期記録され、`poll()`が同じ呼出しで観測可能な`BLOCKED`状態として返す。GPU Dynamic TOI BlockはGPU Status BufferとEvent Queryで非同期に回収する。CPU observed completed timeはCpuObserved Prefixから算出し、BlockされたTickでは進めない。
 
 予測位置と確定位置を分離する。Broadphase/Contact/Contributionのoverflowや非有限状態が検出されたStepはCommitしない。Broadphase envelopeはサブステップ開始位置から予測位置までのSwept AABBを基本とし、設定した最大拘束補正余裕を加える。位置反復後に頂点がこのenvelope外へ移動した場合は、次の反復前にBroadphaseを再構築する。再構築時に容量超過が起きた場合も同じStepをBlock / Retryする。容量を増やして同じStepを再実行するか、Failureとしてユーザーへ通知する。
 
 診断コード:
-
 - InvalidAsset / InvalidTopology
 - DegenerateTetrahedron / InvertedTetrahedron
 - InvalidMaterialParameter
-- SkinWeightTransferError
-- RenderBindingError
+- SkinWeightTransferError / RenderBindingError
 - BroadphaseOverflow / ContactOverflow / ContributionOverflow
-- CCDIterationLimit
-- InitialPenetrationLimit
-- NonFiniteState
-- ContactGeometryUnresolved
-- ContactManifoldReductionFailure
-- AnimationTimePrecisionUnresolved
-- NoForceTarget
-- GpuResourceAllocationFailure
+- CCDIterationLimit / WorkBudgetExceeded
+- InitialPenetrationLimit / NonFiniteState
+- ContactGeometryUnresolved / ContactManifoldReductionFailure
+- AnimationTimePrecisionUnresolved / NoForceTarget
+- GpuResourceAllocationFailure / DeviceRemoved
 
-警告はWorld ID、Model ID、Mesh ID、Element ID、Logical Tick Sequence、Substep、Pass名、関連カウンタを含む。NonFiniteState発生時は該当TickをCommitしない。GPU StatusのREJECTED / BLOCKED状態は非同期Readbackで回収し、CPU APIはSubmission受付成功とGPU成功を混同しない。
+警告・Block StatusはWorld ID、Model ID、Mesh ID、Element ID、Logical Tick Sequence、Substep、Pass名、関連カウンタ、Block Originを含む。GPU StatusのBLOCKED / REJECTED / FAILEDはSubmission受付成功と混同しない。`WORK_BUDGET_EXCEEDED`は専用Admission Limit更新後に同じReservationを再Planし、実行予算を上げても解決しない他のFailure条件へ状態を混在させない。
 
 ## 17. 初期試験・受け入れ基準案
 
@@ -1476,6 +1481,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.14: Work Budget超過をBLOCKEDへ統一し、TOI時Segment要求を下限値として定義。CPU Preflight / GPU Dynamic TOIのStatus経路とRuntime Hard Limitを追加。Profile v1.6へ同期。
 - 1.13: WORK_BUDGET_EXCEEDEDからの復旧をRuntime契約へ分離し、実行予算変更と物理入力Snapshotの不変性を明記。Numerical Acceptance Profile v1.5のABI正本参照と同期。
 - 1.12: Immutable Span / Track / Channel / Blend / Collider Packetと16-byte Mutable World Cursorを分離。Segment Cursor Advance / TOI Retiming / Snapshot Rollbackを確定。
 - 1.11: Span / Track / Channel / Blend / Colliderの完全なSM5 ABI、Byte Offset / Flags / Node Role / Inverse Bind Index、gpu_float4 / Column-Major Matrix Layout、Rotation / Blend係数の意味、Hierarchy Channel Rangeを確定。
