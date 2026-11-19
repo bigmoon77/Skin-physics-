@@ -98,6 +98,7 @@
     <ClCompile Include="src\physics\soft_body_fem.cpp" />
     <ClCompile Include="src\physics\collision.cpp" />
     <ClCompile Include="src\physics\ccd.cpp" />
+    <ClCompile Include="src\physics\correction_ccd.cpp" />
     <ClCompile Include="src\physics\animation_track.cpp" />
     <ClCompile Include="src\physics\attribute_paint.cpp" />
     <ClCompile Include="src\physics\performance_metrics.cpp" />
