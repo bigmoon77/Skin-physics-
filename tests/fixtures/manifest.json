@@ -645,6 +645,6 @@
     "build": "not_verified",
     "tests": "not_started",
     "classification": "failed_before_any_reported_job_step",
-    "note": "The workflow run for this exact design branch head failed before reporting any job steps. The job-step endpoint returned an empty steps array; runner identity and the underlying pre-step cause are unavailable. No compiler or test result exists, so this run is not evidence of a source-code regression."
+    "note": "This workflow run covers design commit 622192638945e3b81eb7aa2644e0b9d7245b1f4e, immediately before this manifest-only CI metadata update. The job failed before reporting any steps; the job-step endpoint returned an empty steps array, and runner identity / pre-step cause are unavailable. No compiler or test result exists, so this is not evidence of a source-code regression. The metadata-only manifest update is marked [skip ci]."
   }
 }
