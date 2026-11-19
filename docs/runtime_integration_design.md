@@ -5,13 +5,13 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.14
+- 文書バージョン: 1.15
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.14
-- 対応詳細設計: detailed_design.md 1.17
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.9
-- Deployment Capability Profile形式: deployment_capability_profile_template.json v1.2
+- 対応詳細設計: detailed_design.md 1.18
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.10
+- Deployment Capability Profile形式: deployment_capability_profile_template.json v1.3
 - 前版: 1.12
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
@@ -921,7 +921,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - GTX 1660 SUPER上で2k / 8k / 32k Tet、2k / 8k / 32k Clothの組合せを計測。
 - Pass別GPU時間、CPU Submission時間、Frame時間、GPU Memory、Candidate / Contact / CCD / Retry数を別々に保存。
 - WARP時間を物理GPU性能値として使用しない。
-- 3～40 FPSは開発評価値として報告し、未指定Workloadの固定合否値に変えない。Deployment Capability ProfileごとにHostは対象Workloadの`target_fps`（3～40）、`target_gpu_tick_time_ms_max`、`target_cpu_submission_time_ms_p95_max`、Performance / Memory Headroom、最小測定Run数を測定開始前に宣言する。`target_frame_time_ms = 1000 / target_fps`とし、選択Trialのp95 Frame Time / 最大GPU Tick Time / p95 CPU Submission Timeは各Target BudgetにHeadroomを適用した値以下でなければならない。GPU Memoryは`peak_skin_physics_gpu_bytes + host_reserved_gpu_bytes <= dxgi_local_memory_budget_bytes * (1 - required_memory_headroom_fraction)`を満たすこと。Headroomは`0 < required_performance_headroom_fraction < 1`かつ`0 < required_memory_headroom_fraction < 1`とし、最小測定Run数は正整数で測定前に固定する。
+- 3～40 FPSは開発評価値として報告し、未指定Workloadの固定合否値に変えない。Deployment Capability ProfileごとにHostは対象Workloadの`target_fps`（3～40）、`target_gpu_tick_time_ms_max`、`target_cpu_submission_time_ms_p95_max`、Performance / Memory Headroom、最小測定Run数（5以上）を測定開始前に宣言する。選択Trialは最低5回の独立Runを含み、各RunはWarm-up後に最低1000件ずつのFrame / GPU Tick / CPU Submission Raw Sampleを持つ。`target_frame_time_ms = 1000 / target_fps`とし、選択Trialのp95 Frame Time / 最大GPU Tick Time / p95 CPU Submission Timeは各Target BudgetにHeadroomを適用した値以下でなければならない。p95は全独立RunのRaw Sampleを一つの母集団へPoolして算出し、Run単位p95の平均・中央値・最大値から再集約してはならない。GPU Memoryは`peak_skin_physics_gpu_bytes + host_reserved_gpu_bytes <= dxgi_local_memory_budget_bytes * (1 - required_memory_headroom_fraction)`を満たすこと。Headroomは`0 < required_performance_headroom_fraction < 1`かつ`0 < required_memory_headroom_fraction < 1`とし、最小測定Run数は正整数で測定前に固定する。
 - 性能を理由に品質・Collision Pair・Step Time・Iterationを黙って減らさない。
 - 各測定セットにDeployment Capability Profileを作成し、Adapter LUID / Vendor ID / Device ID / Driver Version / Windows Build / Runtime Build / Shader Package SHA-256、完全なWorkload Tuple、Hard Limit値、Peak Library GPU Bytes / DXGI Budget、Pass別GPU時間、CPU Submission時間、Frame時間、試行回数・測定日時を記録する。Target FPS / GPU Tick / CPU Submission / Memory Budget、Headroom、最小Run数は測定前に宣言し、測定後に合否都合で変更しない。
 - Qualificationでは、同一`selected_source_trial_id`の測定結果だけを使用する。Top-level Workload Envelope / Timing Summary / selected Hard Limitsは全て同一Trialから採用し、異なるTrialの各Dimension最大値を合成しない。Target Workload Envelopeを全次元で包含し、Timing / Memory BudgetをHeadroom適用後に満たし、必要な測定回数・Correctness Gateを全て通過したTrialだけを`qualified`とする。selected Runtime Hard Limitsは、そのTrialで同時に測定したSubstep / Integration Segment値以下とする。Geometry / Constraint / Candidate / Contact / Iteration / Memory上限も同じTrialの測定値以下とし、Hostはモデル生成・World作成・Resource CapacityのAdmissionで強制する。条件を一つでも満たさないProfileは`not_qualified`とし、HostはRuntimeへ数値Hard Limitを渡さない。
