@@ -5,11 +5,11 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.25
+- 文書バージョン: 1.26
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.23
-- 対応詳細設計: detailed_design.md 1.28
+- 対応基本設計: basic_design.md 1.24
+- 対応詳細設計: detailed_design.md 1.29
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
 - Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
 - 前版: 1.24
@@ -544,7 +544,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - Pauseはwall-clock Accumulatorを保持し、in-flight Tickだけを完了させる。Blocked Reservationはin-flight Tickに含めず、RetryまたはReset待ちの未Commit Reservationとして保持する。Stopは時間進行を停止し、未Reservation Step Requestだけを取消してcancelled_requested_timeへ加算する。Stopはwall-clock AccumulatorとPhysics Stateを保持する。ResetはInitial Stateへ戻し、Accumulator全体、Step Queue、Reservation / Sequence、Solver Cache、Timeline Counterを初期化する。既にTick ReservationとなったStepは通常のin-flight / Retry契約に従い、取消し・二重要求を行わない。
 - D3D11 Immediate Contextは単一の順序付きCommand Streamである。PhysicsとRenderが独立GPU Queueで同時に動く前提を置かない。
 - 1 PhysicsSubmissionBatchは1 Logical Tickを含む。
-- 各Worldの初期上限はin-flight logical tick 2件、設定可能値は1 / 2 / 4件とする。Status Query RingはRuntime内の全Worldの上限合計以上のSlotを持ち、World追加時に不足すれば拡張する。未回収Slotを上書きしない。
+- 各Worldの初期上限はin-flight logical tick 2件、設定可能値は1 / 2 / 4件とする。ここでのin-flightはGPU Submission済みかつCPU Status未観測の件数であり、GPU上で同時にPhysics Stateを更新する件数ではない。全Tickは単一Immediate Contextの順序付きCommand Streamで直列実行し、先行Commit Gate通過後に2つのPersistent State Bankを交互に再利用する。Status Query RingはRuntime内の全Worldの上限合計以上のSlotを持ち、World追加時に不足すれば拡張する。未回収Slotを上書きしない。
 - 各TickのDispatch Planはexpected_predecessor_tick_sequence、expected_source_state_generation、expected_source_state_set、dispatch_idを持つ不変Recordとする。
 - Tick NのCommit Controlは成功時だけcommitted_tick_sequenceとcommitted_state_generation / active_state_setを更新する。Reject / BlockではCommitted Stateの参照先を変更しない。
 - Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
@@ -689,7 +689,7 @@ CPU completed_timeは、(1) Event Query完了、(2) Status=COMMITTED、(3) 先�
 
 ### 6.5 複数in-flight Tickの依存関係
 
-Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhysicsSubmissionBatchをGPU完了前に発行できる。後続Tickの安全性はCPUのQuery Pollタイミングに依存させない。
+Immediate ContextのCommand Streamは順序付きである。CPUは各Worldの`maximum_in_flight_ticks`（1 / 2 / 4）までPhysicsSubmissionBatchをGPU完了・CPU Status観測前に発行できる。これはGPU上の並列Physics State更新を意味せず、全BatchはCommand Stream順に実行される。後続Tickの安全性はCPUのQuery Pollタイミングに依存させない。
 
 - BatchはTick Begin時にImmutable Dispatch Planを検査する。
 - Tick NがGPU Commit Controlで成功した場合だけ、Committed Sequence / State Generation / Active State Setを更新する。
@@ -853,7 +853,7 @@ Render BindingはPosition / Normal / TangentのSRV、Format、Stride、Vertex Co
 
 get_render_bindingはCPUがEvent Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を確認した最後のTickに対応するRender Slotを返す。GPU上でCOMMITTEDになっていてもCPU-observed prefixへまだ入っていないTickのSlotは返さない。最初の成功呼出しがWorldごとのHost Leaseを取得し、すべてのMesh Bindingは同じlease_generationに属する。release_render_bindings(world, lease_generation)は現在のGenerationと一致する場合だけ成功し、古い / 二重ReleaseはSTALE_HANDLEを返す。
 
-Host Rendererは全MeshのDraw commandをImmediate Contextへ発行し、公開SRVをVS / HS / DS / GS / PS / CSの全Graphics / Compute StageからUnbindしてから、release_render_bindings(world, lease_generation)を呼ぶ。Deferred Contextを使用するHostは、Leaseに属するSRVを参照する全Command ListをImmediate ContextへExecuteCommandListした後にReleaseしなければならない。未実行Command Listを残したままReleaseすることは禁止する。Release後はSRV PointerとCommand List内の参照を使用しない。RuntimeはLease解放を確認するまで当該Render Slotを再利用しない。Render Candidate RingのSlot数はmaximum_in_flight_ticks + 1とする（既定in-flight 2なら3 Slot）。これによりCPU-observedな直前Committed Slot 1つと最大2件のin-flight Candidateを保持できる。HostがLeaseをreleaseせず次のSubmissionを要求した場合、RuntimeはBUSY / render_binding_busyで追加Reservation / Submissionを止め、時間をAccumulator / Step Request Queueに保持する。Render Candidate生成・検証・Ring Memory / Publish CostをPerformance Runへ含める。
+Host Rendererは全MeshのDraw commandをImmediate Contextへ発行し、公開SRVをVS / HS / DS / GS / PS / CSの全Graphics / Compute StageからUnbindしてから、release_render_bindings(world, lease_generation)を呼ぶ。Deferred Contextを使用するHostは、Leaseに属するSRVを参照する全Command ListをImmediate ContextへExecuteCommandListした後にReleaseしなければならない。未実行Command Listを残したままReleaseすることは禁止する。Release後はSRV PointerとCommand List内の参照を使用しない。RuntimeはLease解放を確認するまで当該Render Slotを再利用しない。Render Candidate RingのSlot数はmaximum_in_flight_ticks + 1とする（既定in-flight 2なら3 Slot、上限4なら5 Slot）。これによりCPU-observedな直前Committed Slot 1つと設定上限までのin-flight Candidateを保持できる。HostがLeaseをreleaseせず次のSubmissionを要求した場合、RuntimeはBUSY / render_binding_busyで追加Reservation / Submissionを止め、時間をAccumulator / Step Request Queueに保持する。Render Candidate生成・検証・Ring Memory / Publish CostをPerformance Runへ含める。
 
 ### 9.3 Device Loss
 
@@ -976,7 +976,8 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
-- 1.25: Basic Design v1.23 / Detailed Design v1.28との相互参照を同期。Runtime実行契約に変更なし。
+- 1.26: Basic Design v1.24 / Detailed Design v1.29との相互参照を同期。in-flight 1 / 2 / 4のCPU未観測件数定義、単一Command Streamでの2-bank再利用、Render Candidate Ring N+1容量を明確化。
+- 1.25: Basic Design v1.23 / Detailed Design v1.28との相互参照を同期。Runtime実行契約に変更なし.
 - 1.24: Basic Design v1.22 / Detailed Design v1.27 / Numerical Acceptance Profile v1.19の相互参照を同期。Runtime実行契約に変更なし。
 - 1.23: Basic Design v1.21 / Detailed Design v1.26 / Numerical Acceptance Profile v1.18の相互参照を同期。Runtime実行契約に変更なし。
 - 1.22: Basic Design v1.20 / Detailed Design v1.25 / Numerical Acceptance Profile v1.17との相互参照を同期。Runtime実行契約に変更なし。
