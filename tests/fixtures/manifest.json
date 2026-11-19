@@ -720,6 +720,25 @@
         "before_after_point_and_triangle_swept_bounds",
         "outward_rounded_cpu_aabb_enclosure",
         "invalid_primitive_vertex_index_status"
+      ],
+      "additional_gpu_test_groups": [
+        {
+          "test_group": "P12_WARP_CORRECTION_CANDIDATE_PIPELINE",
+          "gpu_source_files": [
+            "tests/fixtures/phase12_correction/correction_candidate_pipeline.cs.hlsl",
+            "tests/gpu_solver_tests.cpp"
+          ],
+          "gpu_assertions": [
+            "primitive_validation_runs_before_pair_count",
+            "zero_pair_seed_input_still_validates_primitives",
+            "pair_seed_count_fill_use_matching_srv_registers",
+            "duplicate_pair_seeds_do_not_consume_candidate_capacity",
+            "canonical_vt_ee_candidate_pair_cpu_parity",
+            "shared_vertex_and_one_ring_filters_precede_capacity",
+            "candidate_capacity_overflow_publishes_no_partial_set"
+          ],
+          "status": "source and WARP readback test added; Windows shader compilation and execution not verified"
+        }
       ]
     }
   },
