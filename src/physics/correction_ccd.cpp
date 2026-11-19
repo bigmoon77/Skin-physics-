@@ -1384,7 +1384,7 @@ namespace skin_physics::physics
 
         result.state.base_integration_segment_id = base_integration_segment_id;
         result.state.candidates = merged.candidates;
-        result.state.candidate_generation = merged.candidates.empty() ? 0u : 1u;
+        result.state.candidate_generation = 1u;
         result.state.contact_set_candidate_generation = 0u;
         result.state.vertex_contact_csr_candidate_generation = 0u;
         result.state.contact_set_current = false;
