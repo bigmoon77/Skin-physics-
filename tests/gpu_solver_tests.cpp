@@ -1399,6 +1399,7 @@ namespace
     void test_phase12_warp_correction_candidate_pipeline(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
+        ID3D11ComputeShader* validate_shader,
         ID3D11ComputeShader* count_shader,
         ID3D11ComputeShader* scan_shader,
         ID3D11ComputeShader* initialize_shader,
@@ -1528,6 +1529,16 @@ namespace
 
         const std::vector<uint32_t> mesh_pair_filter = { 1u };
         const std::vector<gpu_uint2> excluded_pairs = { { 5u, 6u } };
+        std::vector<gpu_uint2> candidate_pair_seeds;
+        for (uint32_t primitive_a = 0;
+            primitive_a < gpu_primitives.size(); ++primitive_a)
+        {
+            for (uint32_t primitive_b = primitive_a + 1u;
+                primitive_b < gpu_primitives.size(); ++primitive_b)
+            {
+                candidate_pair_seeds.push_back({ primitive_a, primitive_b });
+            }
+        }
 
         struct gpu_pipeline_readback
         {
@@ -1537,15 +1548,22 @@ namespace
 
         const auto run_pipeline = [&](
             const std::vector<gpu_correction_candidate_primitive>& input_primitives,
+            const std::vector<gpu_uint2>& input_pair_seeds,
             uint32_t candidate_capacity,
             uint32_t sort_capacity) -> gpu_pipeline_readback
         {
             const uint32_t primitive_count =
                 static_cast<uint32_t>(input_primitives.size());
             const uint32_t pair_count =
-                primitive_count * primitive_count;
-            const std::vector<uint32_t> initial_flags(pair_count, 0u);
-            const std::vector<uint32_t> initial_prefix(pair_count, 0u);
+                static_cast<uint32_t>(input_pair_seeds.size());
+            const uint32_t pair_buffer_count = std::max(1u, pair_count);
+            std::vector<gpu_uint2> pair_seed_storage = input_pair_seeds;
+            if (pair_seed_storage.empty())
+            {
+                pair_seed_storage.push_back({ 0u, 0u });
+            }
+            const std::vector<uint32_t> initial_flags(pair_buffer_count, 0u);
+            const std::vector<uint32_t> initial_prefix(pair_buffer_count, 0u);
             const std::vector<uint32_t> initial_totals = { 0u, 0u };
             const gpu_correction_candidate_pair sentinel = {
                 { 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu },
@@ -1567,6 +1585,9 @@ namespace
             const ComPtr<ID3D11Buffer> exclusion_buffer =
                 create_structured_buffer(
                     device, excluded_pairs, D3D11_BIND_SHADER_RESOURCE);
+            const ComPtr<ID3D11Buffer> pair_seed_buffer =
+                create_structured_buffer(
+                    device, pair_seed_storage, D3D11_BIND_SHADER_RESOURCE);
             const ComPtr<ID3D11Buffer> flags_buffer =
                 create_structured_buffer(
                     device, initial_flags, D3D11_BIND_UNORDERED_ACCESS);
@@ -1592,12 +1613,15 @@ namespace
             const ComPtr<ID3D11ShaderResourceView> exclusion_view =
                 create_structured_srv<gpu_uint2>(
                     device, exclusion_buffer.Get(), 1);
+            const ComPtr<ID3D11ShaderResourceView> pair_seed_view =
+                create_structured_srv<gpu_uint2>(
+                    device, pair_seed_buffer.Get(), pair_buffer_count);
             const ComPtr<ID3D11UnorderedAccessView> flags_uav =
                 create_structured_uav<uint32_t>(
-                    device, flags_buffer.Get(), pair_count);
+                    device, flags_buffer.Get(), pair_buffer_count);
             const ComPtr<ID3D11UnorderedAccessView> prefix_uav =
                 create_structured_uav<uint32_t>(
-                    device, prefix_buffer.Get(), pair_count);
+                    device, prefix_buffer.Get(), pair_buffer_count);
             const ComPtr<ID3D11UnorderedAccessView> output_uav =
                 create_structured_uav<gpu_correction_candidate_pair>(
                     device, output_buffer.Get(), sort_capacity);
@@ -1607,10 +1631,10 @@ namespace
 
             const ComPtr<ID3D11ShaderResourceView> flags_srv =
                 create_structured_srv<uint32_t>(
-                    device, flags_buffer.Get(), pair_count);
+                    device, flags_buffer.Get(), pair_buffer_count);
             const ComPtr<ID3D11ShaderResourceView> prefix_srv =
                 create_structured_srv<uint32_t>(
-                    device, prefix_buffer.Get(), pair_count);
+                    device, prefix_buffer.Get(), pair_buffer_count);
 
             gpu_correction_candidate_parameters candidate_parameters;
             candidate_parameters.primitive_count = primitive_count;
@@ -1645,10 +1669,23 @@ namespace
                         diagnostic);
             };
 
-            const uint32_t pair_group_count = (pair_count + 63u) / 64u;
+            const uint32_t pair_group_count =
+                std::max(1u, (pair_count + 63u) / 64u);
+            const uint32_t primitive_group_count =
+                std::max(1u, (primitive_count + 63u) / 64u);
             const uint32_t sort_group_count = (sort_capacity + 63u) / 64u;
             const std::vector<skin_physics::simulation::compute_constant_buffer_binding>
                 candidate_cb = { { 0, candidate_constants.Get() } };
+
+            add_pass("correction_candidate_validate_primitives",
+                validate_shader,
+                {
+                    { 0, primitive_view.Get() },
+                    { 1, bounds_view.Get() }
+                },
+                { { 3, totals_uav.Get() } },
+                candidate_cb,
+                primitive_group_count);
 
             add_pass("correction_candidate_count",
                 count_shader,
@@ -1656,7 +1693,8 @@ namespace
                     { 0, primitive_view.Get() },
                     { 1, bounds_view.Get() },
                     { 2, mesh_filter_view.Get() },
-                    { 3, exclusion_view.Get() }
+                    { 3, pair_seed_view.Get() },
+                    { 4, exclusion_view.Get() }
                 },
                 {
                     { 0, flags_uav.Get() },
@@ -1686,8 +1724,9 @@ namespace
                 fill_shader,
                 {
                     { 0, primitive_view.Get() },
-                    { 4, flags_srv.Get() },
-                    { 5, prefix_srv.Get() }
+                    { 3, pair_seed_view.Get() },
+                    { 5, flags_srv.Get() },
+                    { 6, prefix_srv.Get() }
                 },
                 {
                     { 2, output_uav.Get() },
@@ -1752,7 +1791,8 @@ namespace
             return readback;
         };
 
-        const gpu_pipeline_readback normal = run_pipeline(gpu_primitives, 2, 2);
+        const gpu_pipeline_readback normal =
+            run_pipeline(gpu_primitives, candidate_pair_seeds, 2, 2);
         require(normal.totals[0] == cpu_reference.candidates.size() &&
             normal.totals[1] == 0u,
             "WARP Candidate Count / Scan / Capacity / Fill / Sort / Dedup must match the CPU required count without overflow.");
@@ -1794,7 +1834,8 @@ namespace
             normal.candidates[1].identity_b[0] == 400u,
             "GPU Candidate output must exclude shared-vertex and explicitly excluded one-ring pairs before sorting.");
 
-        const gpu_pipeline_readback overflow = run_pipeline(gpu_primitives, 1, 1);
+        const gpu_pipeline_readback overflow =
+            run_pipeline(gpu_primitives, candidate_pair_seeds, 1, 1);
         require(overflow.totals[0] == 2u && overflow.totals[1] == 1u,
             "GPU Candidate Capacity Check must report the full required count and overflow status.");
         require(overflow.candidates.size() == 1 &&
@@ -1810,7 +1851,7 @@ namespace
         duplicate_vertex_ids[1].vertex_id_high[2] =
             duplicate_vertex_ids[1].vertex_id_high[1];
         const gpu_pipeline_readback invalid_vertex_topology =
-            run_pipeline(duplicate_vertex_ids, 2, 2);
+            run_pipeline(duplicate_vertex_ids, candidate_pair_seeds, 2, 2);
         require(invalid_vertex_topology.totals[1] == 2u &&
             invalid_vertex_topology.candidates[0].identity_a[0] == 0xffffffffu,
             "GPU Candidate Count must fail closed on duplicate Stable Vertex IDs inside one Primitive.");
@@ -1826,7 +1867,7 @@ namespace
         duplicate_primitive_identity[1].primitive_id =
             duplicate_primitive_identity[0].primitive_id;
         const gpu_pipeline_readback invalid_primitive_identity =
-            run_pipeline(duplicate_primitive_identity, 2, 2);
+            run_pipeline(duplicate_primitive_identity, candidate_pair_seeds, 2, 2);
         require(invalid_primitive_identity.totals[1] == 2u &&
             invalid_primitive_identity.candidates[0].identity_a[0] == 0xffffffffu,
             "GPU Candidate Count must reject duplicate Stable / Mesh / Primitive identities without publishing a partial Candidate Set.");
