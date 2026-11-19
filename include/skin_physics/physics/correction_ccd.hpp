@@ -88,6 +88,44 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    struct correction_discrete_contact_input
+    {
+        correction_candidate_pair_key key;
+        std::array<uint64_t, 4> vertex_stable_ids = {};
+        std::array<asset::vec3, 4> positions = {};
+        float contact_thickness = 0.0f;
+    };
+
+    struct correction_discrete_contact
+    {
+        correction_candidate_pair_key key;
+        vertex_triangle_contact vertex_triangle;
+        edge_edge_contact edge_edge;
+        bool active = false;
+    };
+
+    struct correction_vertex_contact_csr
+    {
+        std::vector<uint64_t> vertex_stable_ids;
+        std::vector<uint32_t> offsets;
+        std::vector<uint32_t> contact_indices;
+        uint64_t candidate_generation = 0;
+        uint64_t position_writer_epoch_generation = 0;
+        bool current = false;
+    };
+
+    struct correction_contact_set_refresh_result
+    {
+        std::size_t candidate_count = 0;
+        std::size_t active_contact_count = 0;
+        uint64_t candidate_generation = 0;
+        uint64_t position_writer_epoch_generation = 0;
+        bool generation_mismatch = false;
+        bool invalid_input = false;
+        bool success = false;
+        std::string diagnostic;
+    };
+
     struct correction_segment_candidate_state
     {
         uint64_t base_integration_segment_id = 0;
@@ -101,6 +139,8 @@ namespace skin_physics::physics
         bool contact_set_current = false;
         bool vertex_contact_csr_current = false;
         std::vector<correction_candidate_pair_key> candidates;
+        std::vector<correction_discrete_contact> contact_set;
+        correction_vertex_contact_csr vertex_contact_csr;
     };
 
     struct correction_segment_candidate_state_result
@@ -197,10 +237,12 @@ namespace skin_physics::physics
         uint64_t base_integration_segment_id,
         uint32_t position_writer_epoch_id);
 
-    bool mark_correction_segment_contact_set_and_csr_current(
+    correction_contact_set_refresh_result refresh_correction_segment_contact_set_and_csr(
         correction_segment_candidate_state& state,
         uint64_t candidate_generation,
-        uint64_t position_writer_epoch_generation);
+        uint64_t position_writer_epoch_generation,
+        const std::vector<correction_discrete_contact_input>& discrete_inputs,
+        float epsilon_length = 1.0e-7f);
 
     // Input envelope bounds must already include the per-primitive Contact Thickness expansion.
     // settings.contact_thickness must be zero so the existing Broadphase does not expand twice.
