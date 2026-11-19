@@ -350,7 +350,8 @@ namespace
             "phase10_paint/paint.input.json",
             "phase10_paint/paint.expected.json",
             "phase11_performance/scale_profiles.input.json",
-            "phase11_performance/scale_profiles.expected.json"
+            "phase11_performance/scale_profiles.expected.json",
+            "design_review/correction_sweep_broadphase.json"
         };
 
         for (const char* relative_path : fixture_files)
