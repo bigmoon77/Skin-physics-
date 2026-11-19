@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.25
+- 文書バージョン: 1.26
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.20
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.22
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.17
-- 前版: 1.24
+- 対応基本設計: basic_design.md 1.21
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.23
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.18
+- 前版: 1.25
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1220,7 +1220,7 @@ Contact-level World-space impulse comparison alone does not prove that the same 
 
     P_applied(z) = J(z)^T * q(z)
 
-J(z) is the complete sparse Contact Jacobian in canonical Contact Key and stable Physics Vertex ID order. Its rows use the same local Normal / Tangent coordinate order as q, and its columns use fixed World-space XYZ components for every responsive Physics Vertex. Candidate / Boundary must use the same responsive Physics Vertex ID set and ordering. The applied-impulse error is:
+J(z) is the complete sparse Contact Jacobian in canonical Contact Key and stable Physics Vertex ID order. Its rows use the exact q order: all Contact Normal rows in Canonical Contact Key order, followed by each Contact's tangent_u and tangent_v rows in the same order. Its columns use fixed World-space XYZ components for every responsive Physics Vertex. Each Contact frame is orthonormal and right-handed: normal cross tangent_u = tangent_v (equivalently tangent_u cross tangent_v = normal). Candidate and Boundary use the same stable row / column IDs. Candidate / Boundary must use the same responsive Physics Vertex ID set and ordering. The applied-impulse error is:
 
     E_applied_impulse = sup { || J(z)^T*q(z) - J(z_boundary)^T*q(z_boundary) ||_2 : z in U }
 
@@ -1631,6 +1631,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.26: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.25: Contact-level error notationをE_contact_impulseへ統一し、Applied Generalized Impulse E_applied_impulseとは別ゲートとして扱う。Delassus対角係数の差分単位をEffective Inverse Mass [1/kg]へ明確化。
 - 1.24: Contact-level World-space ImpulseとJ^T*q Generalized Applied Impulseを分離。SnapにApplied Impulse toleranceを追加し、Sparse Contact Jacobianとstable Physics Vertex ID集合の区間評価を必須化。
 - 1.23: Impulse Errorの比較空間をWorld-space 3N Vectorへ統一。Delassus Solverの局所係数qと物理Impulse出力Fを分離し、Tangent Basis回転誤差をE_friction_vectorへ追加。
@@ -1657,7 +1658,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
-## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.17）
+## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.23）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～47は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
