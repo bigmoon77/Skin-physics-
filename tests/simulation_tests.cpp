@@ -2472,6 +2472,39 @@ namespace
                 std::vector<uint32_t>{ 0u },
             "A same-side transient Correction Hit must remain a Candidate without creating an endpoint Contact.");
 
+        auto latched_state_result =
+            create_correction_segment_candidate_state(7010, {}, 16);
+        auto latched_state = latched_state_result.state;
+        const correction_writer_epoch_result latch_epoch_1 =
+            process_correction_position_writer_epoch(
+                latched_state, 7010, 1,
+                make_vt_position_writer_epoch_primitives(transient_case.at("input")),
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(latch_epoch_1.status == correction_writer_epoch_status::accepted &&
+            latched_state.side_latches.size() == 1 &&
+            latched_state.side_latches[0].allowed_side_sign == 1 &&
+            latched_state.side_latches[0].reference_normal.z > 0.99f,
+            "The first accepted Position-Writer Epoch must latch one positive Segment-side normal for its Canonical Pair.");
+
+        auto mismatched_segment_start =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        mismatched_segment_start[0].segment_start_positions[0].z = -0.01f;
+        const correction_writer_epoch_result latch_epoch_2 =
+            process_correction_position_writer_epoch(
+                latched_state, 7010, 2, mismatched_segment_start,
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(latch_epoch_2.status == correction_writer_epoch_status::rejected &&
+            !latch_epoch_2.state_committed &&
+            latch_epoch_2.correction_ccd_results.size() == 1 &&
+            latch_epoch_2.correction_ccd_results[0].result.status ==
+                correction_ccd_status::unresolved &&
+            latched_state.side_latches.size() == 1 &&
+            latched_state.side_latches[0].allowed_side_sign == 1 &&
+            latched_state.position_writer_epoch_generation == 1,
+            "A later Epoch must reuse the original Segment-side latch and reject a mismatched Segment-start side instead of relatching it.");
+
         const test_json::value& crossing_case = find_correction_fixture_case(
             fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE");
         correction_ccd_settings crossing_settings =
