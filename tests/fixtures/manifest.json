@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 now have persistent deterministic input vectors under tests/fixtures/design_review/toi_snap_and_profile.json. They remain specified_not_implemented until executable assertions consume the fixtures and pass CI.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 now have persistent deterministic input vectors under tests/fixtures/design_review/toi_snap_and_profile.json, including scalar and coupled-island Snap cases and tau=0 continuation-segment semantics. They remain specified_not_implemented until executable assertions consume the fixtures and pass CI.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -620,7 +620,8 @@
         "test_case": 46,
         "fixture_ids": [
           "DCR_46_BOUNDARY_IDENTITY",
-          "DCR_46_SNAP_ERROR_BUDGET"
+          "DCR_46_SNAP_ERROR_BUDGET_SCALAR_UNCOUPLED",
+          "DCR_46_COUPLED_CONTACT_ISLAND_INTERVAL"
         ]
       },
       {
