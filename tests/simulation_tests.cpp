@@ -5,6 +5,7 @@
 #include "skin_physics/physics/soft_body_fem.hpp"
 #include "skin_physics/physics/collision.hpp"
 #include "skin_physics/physics/ccd.hpp"
+#include "skin_physics/physics/correction_ccd.hpp"
 #include "skin_physics/physics/animation_track.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
 #include "skin_physics/physics/performance_metrics.hpp"
@@ -1427,6 +1428,228 @@ namespace
             controller.accumulator() == accumulator_before_failure,
             "A rejected physics step must not commit time or consume the accumulator.");
     }
+
+    const test_json::value& find_correction_fixture_case(
+        const test_json::value& fixture,
+        const std::string& case_id)
+    {
+        for (const test_json::value& item : fixture.at("cases").as_array())
+        {
+            if (item.at("id").as_string() == case_id)
+            {
+                return item;
+            }
+        }
+        throw std::runtime_error("Missing correction CCD fixture case: " + case_id);
+    }
+
+    std::array<skin_physics::asset::vec3, 3> read_vec3_triplet(
+        const test_json::value& value)
+    {
+        std::array<skin_physics::asset::vec3, 3> result = {};
+        for (std::size_t index = 0; index < result.size(); ++index)
+        {
+            result[index] = read_vec3(value.at(index));
+        }
+        return result;
+    }
+
+    std::array<skin_physics::asset::vec3, 2> read_vec3_pair(
+        const test_json::value& value)
+    {
+        return { read_vec3(value.at(0)), read_vec3(value.at(1)) };
+    }
+
+    skin_physics::physics::vertex_triangle_correction_motion make_vt_correction_motion(
+        const test_json::value& input)
+    {
+        using skin_physics::physics::vertex_triangle_correction_motion;
+
+        vertex_triangle_correction_motion motion;
+        motion.point.before = read_vec3(input.at("point_before"));
+        motion.point.after = read_vec3(input.at("point_after"));
+        const auto triangle_before = read_vec3_triplet(
+            input.at("triangle_vertices_before"));
+        const auto triangle_after = read_vec3_triplet(
+            input.at("triangle_vertices_after"));
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            motion.triangle[index].before = triangle_before[index];
+            motion.triangle[index].after = triangle_after[index];
+        }
+
+        const auto& fields = input.as_object();
+        const auto segment_point = fields.find("segment_start_point");
+        motion.segment_start_point = segment_point != fields.end()
+            ? read_vec3(segment_point->second) : motion.point.before;
+        const auto segment_triangle = fields.find("triangle_vertices_segment_start");
+        motion.segment_start_triangle = segment_triangle != fields.end()
+            ? read_vec3_triplet(segment_triangle->second) : triangle_before;
+
+        const auto cache_flag = fields.find("has_persistent_contact_cache");
+        motion.has_persistent_contact_cache = cache_flag != fields.end() &&
+            cache_flag->second.as_bool();
+        const auto cache_normal = fields.find("persistent_contact_normal");
+        if (cache_normal != fields.end())
+        {
+            motion.persistent_contact_normal = read_vec3(cache_normal->second);
+        }
+        return motion;
+    }
+
+    skin_physics::physics::edge_edge_correction_motion make_ee_correction_motion(
+        const test_json::value& input)
+    {
+        using skin_physics::physics::edge_edge_correction_motion;
+
+        edge_edge_correction_motion motion;
+        const auto edge_a_before = read_vec3_pair(input.at("edge_a_before"));
+        const auto edge_a_after = read_vec3_pair(input.at("edge_a_after"));
+        const auto edge_b_before = read_vec3_pair(input.at("edge_b_before"));
+        const auto edge_b_after = read_vec3_pair(input.at("edge_b_after"));
+        for (std::size_t index = 0; index < 2; ++index)
+        {
+            motion.edge_a[index].before = edge_a_before[index];
+            motion.edge_a[index].after = edge_a_after[index];
+            motion.edge_b[index].before = edge_b_before[index];
+            motion.edge_b[index].after = edge_b_after[index];
+        }
+        motion.segment_start_edge_a = edge_a_before;
+        motion.segment_start_edge_b = edge_b_before;
+        const auto& fields = input.as_object();
+        const auto cache_flag = fields.find("has_persistent_contact_cache");
+        motion.has_persistent_contact_cache = cache_flag != fields.end() &&
+            cache_flag->second.as_bool();
+        const auto cache_normal = fields.find("persistent_contact_normal");
+        if (cache_normal != fields.end())
+        {
+            motion.persistent_contact_normal = read_vec3(cache_normal->second);
+        }
+        return motion;
+    }
+
+    skin_physics::physics::correction_ccd_settings read_correction_ccd_settings(
+        const test_json::value& input)
+    {
+        skin_physics::physics::correction_ccd_settings settings;
+        settings.contact_thickness = static_cast<float>(
+            input.at("contact_thickness_m").as_number());
+        return settings;
+    }
+
+    void test_phase12_correction_motion_ccd_reference()
+    {
+        using skin_physics::physics::correction_ccd_status;
+
+        const test_json::value fixture = test_json::load(
+            test_support::fixture_path(
+                "design_review/correction_sweep_broadphase.json"));
+
+        const auto& vt_crossing = find_correction_fixture_case(
+            fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE");
+        const auto vt_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_crossing.at("input")),
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(vt_result.status == correction_ccd_status::path_crossing &&
+            vt_result.hit_witness_valid,
+            "Correction VT path crossing must produce a hit witness and REJECTED crossing status.");
+
+        const auto& vt_negative = find_correction_fixture_case(
+            fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE");
+        const auto vt_negative_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_negative.at("input")),
+                read_correction_ccd_settings(vt_negative.at("input")));
+        require(vt_negative_result.status == correction_ccd_status::path_crossing &&
+            vt_negative_result.allowed_side_sign == -1,
+            "Negative initial separation must latch sigma=-1 and detect the reverse crossing.");
+
+        const auto& ee_crossing = find_correction_fixture_case(
+            fixture, "DCR_49_EE_EDGE_THROUGH_EDGE");
+        const auto ee_result =
+            skin_physics::physics::detect_edge_edge_correction_motion(
+                make_ee_correction_motion(ee_crossing.at("input")),
+                read_correction_ccd_settings(ee_crossing.at("input")));
+        require(ee_result.status == correction_ccd_status::path_crossing &&
+            ee_result.hit_witness_valid,
+            "Correction EE crossing must produce a hit witness and REJECTED crossing status.");
+
+        const auto& transient = find_correction_fixture_case(
+            fixture, "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY");
+        const auto transient_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(transient.at("input")),
+                read_correction_ccd_settings(transient.at("input")));
+        require(transient_result.status == correction_ccd_status::hit &&
+            transient_result.hit_witness_valid,
+            "Same-side transient proximity must be detected as a hit without crossing.");
+
+        const auto& endpoint = find_correction_fixture_case(
+            fixture, "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT");
+        const auto endpoint_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(endpoint.at("input")),
+                read_correction_ccd_settings(endpoint.at("input")));
+        require(endpoint_result.status == correction_ccd_status::hit &&
+            endpoint_result.hit_witness_valid &&
+            endpoint_result.witness_s > 0.0f &&
+            endpoint_result.witness_s <= 1.0f,
+            "An endpoint-active VT contact must be discovered along the correction path.");
+
+        const auto& miss = find_correction_fixture_case(
+            fixture, "DCR_49_VT_CERTIFIED_MISS");
+        const auto miss_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(miss.at("input")),
+                read_correction_ccd_settings(miss.at("input")));
+        require(miss_result.status == correction_ccd_status::no_hit &&
+            !miss_result.hit_witness_valid,
+            "A certified VT miss must be returned only after all intervals are clear.");
+
+        const auto& side_latch = find_correction_fixture_case(
+            fixture, "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE");
+        const auto& side_input = side_latch.at("input");
+        const auto& epoch = side_input.at("position_writer_epochs").at(0);
+        const auto side_triangle = read_vec3_triplet(
+            side_input.at("triangle_vertices_segment_start"));
+        skin_physics::physics::vertex_triangle_correction_motion side_motion;
+        side_motion.point.before = read_vec3(epoch.at("point_before"));
+        side_motion.point.after = read_vec3(epoch.at("point_after"));
+        side_motion.segment_start_point = read_vec3(
+            side_input.at("segment_start_point"));
+        side_motion.segment_start_triangle = side_triangle;
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            side_motion.triangle[index].before = side_triangle[index];
+            side_motion.triangle[index].after = side_triangle[index];
+        }
+        skin_physics::physics::correction_ccd_settings side_settings;
+        side_settings.contact_thickness = static_cast<float>(
+            side_input.at("contact_thickness_m").as_number());
+        const auto side_latch_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                side_motion, side_settings);
+        require(side_latch_result.status == correction_ccd_status::path_crossing &&
+            side_latch_result.allowed_side_sign == 1,
+            "A later Position-Writer Epoch must retain the Integration Segment-start side latch.");
+
+        auto invalid_motion = make_vt_correction_motion(vt_crossing.at("input"));
+        invalid_motion.point.after.x = std::numeric_limits<float>::infinity();
+        const auto invalid_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                invalid_motion, read_correction_ccd_settings(vt_crossing.at("input")));
+        require(invalid_result.status == correction_ccd_status::invalid_input,
+            "Non-finite correction displacements must never be classified as No-Hit.");
+
+        skin_physics::physics::correction_ccd_settings invalid_settings;
+        invalid_settings.maximum_interval_evaluations = 33;
+        const auto settings_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_crossing.at("input")), invalid_settings);
+        require(settings_result.status == correction_ccd_status::invalid_input,
+            "Correction CCD must enforce the specified maximum 32 interval evaluations.");
+    }
 }
 
 int run_simulation_tests()
@@ -1461,6 +1684,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P10_ATTRIBUTE_PAINT\n";
     test_phase11_performance_profile_and_invariant_collector();
     std::cout << "[PASS] P11_PERFORMANCE_PROFILE\n";
+    test_phase12_correction_motion_ccd_reference();
+    std::cout << "[PASS] P12_CORRECTION_MOTION_CCD_REFERENCE\n";
     require(run_environment_tests() == 0, "Environment tests failed.");
     require(run_gpu_solver_tests() == 0, "GPU solver tests failed.");
     std::cout << "SimulationCoreTests passed.\n";
