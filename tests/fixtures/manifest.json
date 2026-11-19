@@ -542,9 +542,9 @@
     "note": "This successful run verifies commit 36dab21 only. Later design-document commits require their own CI verification."
   },
   "design_review_regressions": {
-    "status": "specified_not_implemented",
+    "status": "partially_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 cover TOI boundary identity / snap bounds / deployment qualification; Case 48 covers ordered in-flight submissions and two-bank reuse; Case 49 covers XPBD correction-sweep Broadphase completeness, VT / EE Correction Motion CCD, Contact Set refresh, fail-closed unresolved / crossing behavior, signed-side interval arithmetic, and Integration-Segment-latched collision side. Cases 45-49 remain specified_not_implemented until executable assertions consume the corresponding fixtures and CI passes.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-48 remain specification-only. Case 49 has an initial CPU Reference subset for correction-motion VT / EE hit and side-crossing classification; end-to-end Broadphase / Contact Set / GPU Runtime assertions remain pending.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -656,15 +656,39 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; positive_and_negative_signed_side_interval_vectors_added; Segment_side_latch_vector_added; missing_correction_interval_certificates_fail_closed",
+    "fixture_status": "persistent_input_vectors_added; Case49_CPU_reference_subset_implemented_for_7_geometry_vectors; Cases45_to_48_executable_assertions_not_implemented; remaining_Case49_ContactSet_Capacity_PseudoTime_and_GPU_integration_assertions_pending",
     "fixture_version": "1.9",
     "additional_fixture_bundles": [
       {
         "path": "design_review/correction_sweep_broadphase.json",
         "fixture_version": "1.2",
-        "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
+        "fixture_status": "persistent_input_vectors_added; 7_geometry_vectors_consumed_by_CPU_reference_tests; remaining_vectors_and_runtime_integration_assertions_not_implemented"
       }
-    ]
+    ],
+    "executable_subset": {
+      "test_group": "P12_CORRECTION_MOTION_CCD_REFERENCE",
+      "source_files": [
+        "include/skin_physics/physics/correction_ccd.hpp",
+        "src/physics/correction_ccd.cpp",
+        "tests/simulation_tests.cpp"
+      ],
+      "fixture_ids": [
+        "DCR_49_VT_POINT_THROUGH_TRIANGLE",
+        "DCR_49_EE_EDGE_THROUGH_EDGE",
+        "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE",
+        "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY",
+        "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT",
+        "DCR_49_VT_CERTIFIED_MISS",
+        "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE"
+      ],
+      "additional_assertions": [
+        "non_finite_correction_input_is_invalid",
+        "maximum_interval_evaluations_above_32_is_invalid",
+        "interval_budget_exhaustion_is_unresolved",
+        "ambiguous_segment_start_side_is_unresolved"
+      ],
+      "status": "implemented_in_source; Windows build and CI not yet verified"
+    }
   },
   "latest_ci_attempt": {
     "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
