@@ -3080,6 +3080,15 @@ namespace skin_physics::physics
             next_state.position_writer_epoch_generation;
         result.required_candidates = next_state.candidates.size();
 
+        const correction_segment_commit_gate_result commit_gate =
+            validate_correction_segment_commit_gate(next_state);
+        if (!commit_gate.commit_allowed)
+        {
+            result.status = correction_writer_epoch_status::rejected;
+            result.diagnostic = commit_gate.diagnostic;
+            return result;
+        }
+
         state = std::move(next_state);
         result.status = correction_writer_epoch_status::accepted;
         result.state_committed = true;
