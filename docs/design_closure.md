@@ -1,11 +1,11 @@
-# Skin Physics 設計閉鎖書（v2.9）
+# Skin Physics 設計閉鎖書（v3.0）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.14
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.19
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.16
-- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.11
+- 基本設計: [basic_design.md](basic_design.md) v1.15
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.20
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.17
+- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.12
 - Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.4
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -440,6 +440,10 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
+- 3.0: XPBD mapをG_internal / G_contact / G_vへ分離し、Pre-contact Velocityと最終Contact Positionの評価順序を同期。Snap許可Fixtureを証明未添付時にFail-closedとし、Coupled Contact IslandのTangential / Cross Delassus、Tangent Basis、XPBD Support Impulse入力を追加。tau=0 / tau=dt両端点と文書間の版参照・履歴を統合。
+- 2.9: TOI時間Boundary SnapとContact Group Formationを分離。XPBD / Coupled Impulseを含む全Snap条件を参照し、tau=0 Continuation SegmentとWork Budget Countを定義。
+- 2.8: XPBD有限反復Solver応答とCandidate / Boundary不確かさ集合、Solver Residual / 分岐網羅をSnap誤差Boundへ統合。Coupled Contact Islandは完全Solver区間評価を必須とし、未証明時はSnapを禁止。
+- 2.7: TOI Boundaryの幾何Path誤差に加え、Contact-relative VelocityとRestitution / Friction Impulseの誤差予算を導入。Scalar Impulse式の適用範囲をUncoupled特殊ケースに限定。
 - 2.6: Logical Reservation / Transient Submission Lease所有権、Reset / Drain条件、TOI端点Snapの幾何誤差Guard、Contact Groupと時間Boundary Countの分離、CPU-only advance_report、同一Trial / Budget / Headroom選定によるDeployment Profile qualificationを反映。Profile v1.8 / Template v1.1と各設計書の版番号を同期.
 - 2.5: Retry Resource Re-Admission、Unique TOI Split Count、Hard Limit Unsatisfiable / Reset、API戻り値とTick Statusの分離、Host-configured Guardと測定Profileの責務を統一。Profile v1.7と各設計書の版番号を同期。
 - 2.4: Work BudgetのBLOCKED状態、CPU Preflight / GPU Dynamic TOIのStatus観測、TOI要求下限値、Runtime Hard Limit、BUSY no-mutationを統一。Numerical Acceptance Profile v1.6と各設計書の版番号を同期。
@@ -449,8 +453,3 @@ Render Candidate Ring:
 - 2.0: SM5固定幅Animation / Collider Packet ABI、CPU double / GPU Span-local float Time Mapping、各Segmentでのnormalized cursor更新、ABI Readback / Time Precision Gateを追加。
 - 1.9: GPU Animation Trajectory Packet / Span、非応答Contact、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limit、Segment Budgetを閉鎖候補へ追加。
 
-
-
-## 改訂履歴
-
-- v2.9: TOI時間Boundary SnapとContact Group Formationを分離。XPBD / Coupled Impulseを含む全Snap条件を参照し、tau=0 Continuation SegmentとWork Budget Countを定義。
