@@ -1826,17 +1826,28 @@ namespace
                 1001, { candidate_vt }, 2);
         require(segment_state_result.success &&
             segment_state_result.state.candidate_generation == 1 &&
+            segment_state_result.state.position_writer_epoch_generation == 0 &&
             segment_state_result.state.candidates.size() == 1 &&
             !segment_state_result.state.contact_set_current &&
             !segment_state_result.state.vertex_contact_csr_current,
-            "A new Integration Segment must begin with its physical candidate set and stale Contact/CSR generations.");
+            "A new Integration Segment must begin with its physical candidates and unbuilt Contact/CSR generations.");
 
         auto segment_state = segment_state_result.state;
         require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 1) &&
+            segment_state, 1, 0) &&
             segment_state.contact_set_current &&
             segment_state.vertex_contact_csr_current,
-            "Contact Set and Vertex-to-Contact CSR may be marked current only for the observed Candidate Generation.");
+            "The initial Contact Set / CSR must be bound to both the Candidate and Position-Writer generations.");
+
+        const auto begin_epoch_1 =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 1);
+        require(begin_epoch_1.success && begin_epoch_1.changed &&
+            segment_state.last_position_writer_epoch_id == 1 &&
+            segment_state.position_writer_epoch_generation == 1 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "Every Position-Writer Epoch must invalidate Contact Set and CSR freshness even when its candidate set is unchanged.");
 
         const auto duplicate_epoch_update =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
@@ -1844,9 +1855,31 @@ namespace
         require(duplicate_epoch_update.success &&
             !duplicate_epoch_update.changed &&
             segment_state.candidate_generation == 1 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "An Epoch that adds only duplicate canonical pairs must not advance Candidate Generation or falsely mark geometry-dependent data current.");
+
+        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
+            segment_state, 1, 0),
+            "A Contact Set / CSR completion from the pre-Epoch Position Generation must be rejected.");
+        require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
+            segment_state, 1, 1) &&
             segment_state.contact_set_current &&
             segment_state.vertex_contact_csr_current,
-            "An Epoch that adds only duplicate canonical pairs must not invalidate the current Contact Set or CSR.");
+            "Contact Set and CSR refresh must acknowledge the latest Position-Writer Epoch.");
+
+        const auto begin_epoch_2 =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 2);
+        require(begin_epoch_2.success &&
+            segment_state.position_writer_epoch_generation == 2 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "A later position write must invalidate Contact Set / CSR even when no new broadphase pair is emitted.");
+
+        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
+            segment_state, 1, 1),
+            "A stale Position-Writer Epoch rebuild completion must not clear a newer geometry generation.");
 
         const auto new_epoch_update =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
@@ -1856,24 +1889,41 @@ namespace
             segment_state.candidates.size() == 2 &&
             !segment_state.contact_set_current &&
             !segment_state.vertex_contact_csr_current,
-            "A newly discovered Epoch candidate must advance the Generation and invalidate Contact Set / CSR freshness.");
+            "A newly discovered Epoch candidate must advance the Candidate Generation and invalidate Contact Set / CSR.");
 
-        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 1),
-            "A stale Contact Set / CSR rebuild completion must not clear a newer Candidate Generation.");
         require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 2) &&
+            segment_state, 2, 2) &&
             segment_state.contact_set_current &&
             segment_state.vertex_contact_csr_current,
-            "Contact Set and CSR refresh must succeed for the latest Candidate Generation.");
+            "Contact Set and CSR refresh must acknowledge both current Segment generations.");
 
+        const auto wrong_segment_begin =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1002, 3);
         const auto wrong_segment_update =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
                 segment_state, 1002, {}, 2);
-        require(!wrong_segment_update.success && wrong_segment_update.wrong_segment &&
+        require(!wrong_segment_begin.success && wrong_segment_begin.wrong_segment &&
+            !wrong_segment_update.success && wrong_segment_update.wrong_segment &&
             segment_state.base_integration_segment_id == 1001 &&
-            segment_state.candidate_generation == 2,
-            "Candidates from a different base_integration_segment_id must not enter this Segment State.");
+            segment_state.candidate_generation == 2 &&
+            segment_state.position_writer_epoch_generation == 2,
+            "Position-Writer Epochs and Candidate Pairs from another base_integration_segment_id must be rejected.");
+
+        const auto duplicate_epoch_id =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 2);
+        require(!duplicate_epoch_id.success && duplicate_epoch_id.invalid_epoch_order &&
+            segment_state.position_writer_epoch_generation == 2,
+            "A repeated or out-of-order Position-Writer Epoch ID must not mutate Segment State.");
+
+        const auto begin_epoch_3 =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 3);
+        require(begin_epoch_3.success &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "Starting the next Position-Writer Epoch must mark prior Contact Set / CSR data stale.");
 
         const auto new_capacity_candidate =
             skin_physics::physics::make_canonical_correction_candidate_key(
@@ -1885,9 +1935,10 @@ namespace
             state_capacity_overflow.capacity_overflow &&
             segment_state.candidates.size() == 2 &&
             segment_state.candidate_generation == 2 &&
-            segment_state.contact_set_current &&
-            segment_state.vertex_contact_csr_current,
-            "Candidate Capacity Retry must preserve the entire prior Segment Candidate / Contact / CSR state.");
+            segment_state.position_writer_epoch_generation == 3 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "Candidate Capacity Retry must preserve the previous Candidate Set while keeping geometry-dependent Contact/CSR data stale for the active Epoch.");
 
         const auto candidate_overflow =
             skin_physics::physics::merge_correction_candidate_union(
