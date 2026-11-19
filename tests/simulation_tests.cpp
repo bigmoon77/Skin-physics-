@@ -1851,7 +1851,7 @@ namespace
 
         const auto duplicate_epoch_update =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
-                segment_state, 1001, { candidate_vt_reversed }, 2);
+                segment_state, 1001, 1, { candidate_vt_reversed }, 2);
         require(duplicate_epoch_update.success &&
             !duplicate_epoch_update.changed &&
             segment_state.candidate_generation == 1 &&
@@ -1883,7 +1883,7 @@ namespace
 
         const auto new_epoch_update =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
-                segment_state, 1001, { candidate_ee }, 2);
+                segment_state, 1001, 2, { candidate_ee }, 2);
         require(new_epoch_update.success && new_epoch_update.changed &&
             segment_state.candidate_generation == 2 &&
             segment_state.candidates.size() == 2 &&
@@ -1905,7 +1905,7 @@ namespace
                 segment_state, 1002, 3);
         const auto wrong_segment_update =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
-                segment_state, 1002, {}, 2);
+                segment_state, 1002, 3, {}, 2);
         require(!wrong_segment_begin.success && wrong_segment_begin.wrong_segment &&
             !wrong_segment_update.success && wrong_segment_update.wrong_segment &&
             segment_state.base_integration_segment_id == 1001 &&
@@ -1933,7 +1933,7 @@ namespace
                 correction_contact_type::vertex_triangle, 900, 9, 90, 800, 8, 80);
         const auto state_capacity_overflow =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
-                segment_state, 1001, { new_capacity_candidate }, 2);
+                segment_state, 1001, 3, { new_capacity_candidate }, 2);
         require(!state_capacity_overflow.success &&
             state_capacity_overflow.capacity_overflow &&
             segment_state.candidates.size() == 2 &&
@@ -1948,7 +1948,7 @@ namespace
             std::numeric_limits<uint64_t>::max();
         const auto generation_overflow =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
-                generation_exhausted_state, 1001, { new_capacity_candidate }, 4);
+                generation_exhausted_state, 1001, 3, { new_capacity_candidate }, 4);
         require(!generation_overflow.success &&
             generation_overflow.generation_overflow &&
             generation_exhausted_state.candidates.size() == 2 &&
