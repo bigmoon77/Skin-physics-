@@ -1,5 +1,5 @@
 {
-  "fixture_version": "1.2",
+  "fixture_version": "1.3",
   "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Scalar impulse formulas are tested as isolated algebraic special cases and never authorize TOI Snap without certified G_internal / G_contact / G_v interval outputs.",
   "cases": [
     {
@@ -208,16 +208,6 @@
           "contact_A",
           "contact_B"
         ],
-        "delassus_matrix_candidate": [
-          [
-            2,
-            0.25
-          ],
-          [
-            0.25,
-            1.5
-          ]
-        ],
         "delassus_matrix_boundary_intervals": [
           [
             [
@@ -240,7 +230,7 @@
             ]
           ]
         ],
-        "responsive_subspace_min_eigenvalue_lower_bound_required": "strictly_positive_and_certified",
+        "responsive_subspace_min_eigenvalue_lower_bound_required": "strictly_positive_and_certified_for_the_full_6x6_generalized_delassus_matrix_over_the_entire_candidate_boundary_interval_set",
         "normal_relative_velocity_intervals_candidate": [
           [
             -1.01,
@@ -259,26 +249,6 @@
           [
             -0.8,
             -0.78
-          ]
-        ],
-        "restitution_intervals": [
-          [
-            0,
-            0.02
-          ],
-          [
-            0,
-            0.02
-          ]
-        ],
-        "friction_coefficient_intervals": [
-          [
-            0.39,
-            0.41
-          ],
-          [
-            0.39,
-            0.41
           ]
         ],
         "projection_branch_inputs": {
@@ -310,7 +280,18 @@
             0,
             0.002
           ],
-          "iteration_controls_ref": "iteration_controls"
+          "iteration_controls": {
+            "relaxation_factor": 0.75,
+            "warm_start_enabled": false,
+            "normal_projection": "max(0, unconstrained_normal_impulse)",
+            "tangential_projection": "euclidean_coulomb_disk",
+            "coulomb_radius_formula": "mu * (j_n + lambda_n / dt_contact)",
+            "fixed_iteration_order": [
+              "contact_A",
+              "contact_B"
+            ],
+            "iteration_count": 8
+          }
         },
         "required_interval_outputs": [
           "finite_positive_responsive_delassus_eigenvalue_lower_bound",
@@ -687,18 +668,6 @@
             0.00105
           ]
         ],
-        "iteration_controls": {
-          "relaxation_factor": 0.75,
-          "warm_start_enabled": false,
-          "normal_projection": "max(0, unconstrained_normal_impulse)",
-          "tangential_projection": "euclidean_coulomb_disk",
-          "coulomb_radius_formula": "mu * (j_n + lambda_n / dt_contact)",
-          "fixed_iteration_order": [
-            "contact_A",
-            "contact_B"
-          ],
-          "iteration_count": 8
-        },
         "required_certified_input_blocks": [
           "normal Delassus block and positive responsive eigenvalue lower bound",
           "tangential Delassus block",
@@ -772,14 +741,258 @@
         ],
         "full_generalized_delassus_interval_certificate": {
           "status": "not_provided",
-          "required_block_order": [
-            "normal_normal",
-            "normal_tangent",
-            "tangent_normal_transpose",
-            "tangent_tangent"
+          "required_proof": "finite positive lower eigenvalue bound over the complete Candidate / Boundary 6x6 interval matrix, including normal-tangent cross coupling"
+        },
+        "normal_delassus_matrix_candidate": [
+          [
+            2,
+            0.25
           ],
-          "required_proof": "finite_positive_lower_eigenvalue_bound over the complete Candidate / Boundary 6x6 interval matrix"
-        }
+          [
+            0.25,
+            1.5
+          ]
+        ],
+        "normal_delassus_matrix_boundary_intervals": [
+          [
+            [
+              1.99,
+              2.01
+            ],
+            [
+              0.24,
+              0.26
+            ]
+          ],
+          [
+            [
+              0.24,
+              0.26
+            ],
+            [
+              1.49,
+              1.51
+            ]
+          ]
+        ],
+        "generalized_delassus_matrix_candidate": [
+          [
+            2,
+            0.25,
+            0.05,
+            0.01,
+            0.02,
+            0
+          ],
+          [
+            0.25,
+            1.5,
+            0.01,
+            0.04,
+            0,
+            0.02
+          ],
+          [
+            0.05,
+            0.01,
+            1.2,
+            0.1,
+            0.02,
+            0
+          ],
+          [
+            0.01,
+            0.04,
+            0.1,
+            1.1,
+            0,
+            0.02
+          ],
+          [
+            0.02,
+            0,
+            0.02,
+            0,
+            1.3,
+            0.12
+          ],
+          [
+            0,
+            0.02,
+            0,
+            0.02,
+            0.12,
+            1.25
+          ]
+        ],
+        "generalized_delassus_matrix_boundary_intervals": [
+          [
+            [
+              1.99,
+              2.01
+            ],
+            [
+              0.24,
+              0.26
+            ],
+            [
+              0.045,
+              0.055
+            ],
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.015,
+              0.025
+            ],
+            [
+              -0.005,
+              0.005
+            ]
+          ],
+          [
+            [
+              0.24,
+              0.26
+            ],
+            [
+              1.49,
+              1.51
+            ],
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.035,
+              0.045
+            ],
+            [
+              -0.005,
+              0.005
+            ],
+            [
+              0.015,
+              0.025
+            ]
+          ],
+          [
+            [
+              0.045,
+              0.055
+            ],
+            [
+              0.005,
+              0.015
+            ],
+            [
+              1.19,
+              1.21
+            ],
+            [
+              0.09,
+              0.11
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              -0.01,
+              0.01
+            ]
+          ],
+          [
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.035,
+              0.045
+            ],
+            [
+              0.09,
+              0.11
+            ],
+            [
+              1.09,
+              1.11
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              0.01,
+              0.03
+            ]
+          ],
+          [
+            [
+              0.015,
+              0.025
+            ],
+            [
+              -0.005,
+              0.005
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              1.29,
+              1.31
+            ],
+            [
+              0.11,
+              0.13
+            ]
+          ],
+          [
+            [
+              -0.005,
+              0.005
+            ],
+            [
+              0.015,
+              0.025
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              0.11,
+              0.13
+            ],
+            [
+              1.24,
+              1.26
+            ]
+          ]
+        ],
+        "generalized_delassus_matrix_block_order": [
+          "normal_normal (2x2)",
+          "normal_tangent (2x4)",
+          "tangent_normal = transpose(normal_tangent) (4x2)",
+          "tangent_tangent (4x4)"
+        ],
+        "generalized_delassus_symmetry_rule": "The full 6x6 matrix is symmetric by construction. The lower-left 4x2 block is the exact transpose of the upper-right 2x4 block for candidate data and the interval transpose for boundary data.",
+        "normal_subblock_gershgorin_lower_bound_reference": 1.23,
+        "normal_subblock_gershgorin_scope": "Normal 2x2 block only; it is not a positive-eigenvalue certificate for the full 6x6 coupled matrix.",
+        "boundary_contact_frame_rule": "For each contact, the Boundary normal/tangent frame ranges over every right-handed orthonormal frame within the declared angular-deviation interval of the Candidate frame; the interval evaluator must include the complete frame set."
       },
       "expected": {
         "interval_evaluation_required": true,
@@ -807,13 +1020,26 @@
           "normal_tangential_cross_transpose_inconsistent",
           "candidate_or_boundary_restitution_interval_missing",
           "candidate_or_boundary_friction_coefficient_interval_missing",
-          "full_generalized_delassus_positive_eigenvalue_certificate_missing"
+          "full_generalized_delassus_positive_eigenvalue_certificate_missing",
+          "full_6x6_generalized_delassus_interval_missing",
+          "full_6x6_positive_eigenvalue_lower_bound_missing",
+          "candidate_boundary_frame_set_not_enclosed"
         ],
         "all_normal_tangential_projection_inputs_present": true,
         "generalized_delassus_blocks_must_be_evaluated_together": true,
         "normal_subblock_conservative_gershgorin_eigenvalue_lower_bound": 1.23,
         "full_generalized_delassus_positive_eigenvalue_proven": false,
-        "full_matrix_positivity_must_not_be_inferred_from_normal_subblock": true
+        "full_matrix_positivity_must_not_be_inferred_from_normal_subblock": true,
+        "required_interval_outputs": [
+          "full_6x6_generalized_delassus_interval_enclosure",
+          "finite_positive_responsive_eigenvalue_lower_bound_for_full_6x6_interval_matrix",
+          "all_iteration_intermediate_state_intervals",
+          "all_reachable_normal_active_set_branches",
+          "all_reachable_stick_slip_and_coulomb_projection_branches",
+          "candidate_and_boundary_solver_residual_bounds_in_impulse_units",
+          "complete_contact_island_impulse_error_upper_bound_ns"
+        ],
+        "normal_subblock_eigenvalue_reference_is_not_full_matrix_certificate": true
       }
     },
     {
