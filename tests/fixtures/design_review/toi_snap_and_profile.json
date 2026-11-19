@@ -1,6 +1,6 @@
 {
-  "fixture_version": "1.5",
-  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Scalar formulas are algebra-only special cases with Effective Inverse Mass units and fixed-frame rotation bounds; they do not authorize Snap without certified XPBD maps. The coupled fixture has a full 6x6 local-coordinate Delassus matrix, but Snap compares transformed World-space per-contact Impulse vectors and remains disabled until full solver, basis-rotation, residual and responsive-subspace interval certificates are provided.",
+  "fixture_version": "1.6",
+  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Case 46 separates contact-level World-space impulse error from the generalized applied impulse J^T*q over stable responsive Physics Vertex IDs. The scalar fixture supplies a simple Candidate / Boundary Contact Jacobian pair but intentionally lacks a certified J^T*q interval result; the coupled fixture lacks a complete Jacobian interval. Both remain Snap-disabled until all XPBD, contact-impulse and applied-impulse certificates are supplied.",
   "cases": [
     {
       "id": "DCR_45_TAU_ZERO",
@@ -179,7 +179,82 @@
         "contact_count": 1,
         "contact_order": [
           "contact_A"
-        ]
+        ],
+        "applied_impulse_tolerance_ns": 0.1,
+        "responsive_physics_vertex_ids": [
+          "vertex_A",
+          "vertex_B"
+        ],
+        "contact_jacobian_candidate": [
+          [
+            0,
+            1,
+            0,
+            0,
+            -1,
+            0
+          ],
+          [
+            1,
+            0,
+            0,
+            -1,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            0,
+            0,
+            -1
+          ]
+        ],
+        "contact_jacobian_boundary": [
+          [
+            0.009999833334166664,
+            0.9999500004166653,
+            0,
+            -0.009999833334166664,
+            -0.9999500004166653,
+            0
+          ],
+          [
+            0.9999500004166653,
+            -0.009999833334166664,
+            0,
+            -0.9999500004166653,
+            0.009999833334166664,
+            0
+          ],
+          [
+            0,
+            0,
+            1,
+            0,
+            0,
+            -1
+          ]
+        ],
+        "contact_jacobian_row_order": [
+          "contact_A.normal",
+          "contact_A.tangent_u",
+          "contact_A.tangent_v"
+        ],
+        "contact_jacobian_column_order": [
+          "vertex_A.x",
+          "vertex_A.y",
+          "vertex_A.z",
+          "vertex_B.x",
+          "vertex_B.y",
+          "vertex_B.z"
+        ],
+        "contact_jacobian_units": "dimensionless; maps World-space vertex velocity to local contact-coordinate velocity",
+        "applied_impulse_interval_certificate": {
+          "status": "not_provided",
+          "required_output": "L2 upper bound for J^T*q Candidate / Boundary difference in World-space responsive Physics Vertex DOF order"
+        }
       },
       "expected": {
         "normal_direction_error_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
@@ -195,7 +270,11 @@
           "effective_mass_lower_eigenvalue_not_proven_positive",
           "active_set_or_friction_projection_branch_not_enclosed",
           "solver_residual_bound_missing",
-          "any_bound_non_finite"
+          "any_bound_non_finite",
+          "contact_jacobian_candidate_or_boundary_missing",
+          "responsive_physics_vertex_id_set_mismatch",
+          "applied_impulse_tolerance_missing",
+          "applied_impulse_interval_certificate_missing"
         ],
         "scalar_formula_outputs": {
           "E_normal_scalar_ns": 0.02,
@@ -203,7 +282,7 @@
           "E_solver_residual_ns": 0.005,
           "full_E_impulse_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 0.005"
         },
-        "snap_disabled_reason": "complete_G_internal_G_contact_G_v_interval_certificates_missing",
+        "snap_disabled_reason": "complete_G_internal_G_contact_G_v_and_J_transpose_q_interval_certificates_missing",
         "scalar_impulse_formula_is_independently_verified": true,
         "scalar_formula_outputs_are_not_snap_authorization": true,
         "impulse_error_decomposition_world_space": {
@@ -211,7 +290,8 @@
           "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.0 / 2)",
           "friction_coordinate_error_ns": 0.015,
           "world_space_friction_vector_error_ns": 0.015
-        }
+        },
+        "applied_impulse_error_must_be_checked_independently": true
       }
     },
     {
@@ -1010,7 +1090,22 @@
           ]
         ],
         "world_space_impulse_residual_units": "N*s",
-        "tangent_basis_rotation_bound_required": true
+        "tangent_basis_rotation_bound_required": true,
+        "applied_impulse_tolerance_ns": 0.1,
+        "responsive_physics_vertex_ids_candidate": [
+          "vertex_A",
+          "vertex_shared",
+          "vertex_B"
+        ],
+        "responsive_physics_vertex_ids_boundary": [
+          "vertex_A",
+          "vertex_shared",
+          "vertex_B"
+        ],
+        "contact_jacobian_interval_certificate": {
+          "status": "not_provided",
+          "required": "Candidate / Boundary sparse J rows in the generalized local contact coordinate order and columns in stable responsive Physics Vertex ID / World XYZ order"
+        }
       },
       "expected": {
         "interval_evaluation_required": true,
@@ -1047,7 +1142,11 @@
           "per_contact_error_bounds_aggregated_by_max_instead_of_l2",
           "world_space_impulse_transform_missing",
           "tangent_basis_rotation_bound_missing",
-          "world_space_impulse_residual_bound_missing"
+          "world_space_impulse_residual_bound_missing",
+          "applied_impulse_tolerance_missing",
+          "candidate_or_boundary_contact_jacobian_interval_missing",
+          "responsive_physics_vertex_id_set_mismatch",
+          "J_transpose_q_applied_impulse_bound_non_finite"
         ],
         "all_normal_tangential_projection_inputs_present": true,
         "generalized_delassus_blocks_must_be_evaluated_together": true,
@@ -1066,10 +1165,13 @@
           "canonical_contact_key_l2_impulse_error_aggregation",
           "world_space_3N_impulse_output_interval",
           "tangent_basis_world_space_rotation_error_bound",
-          "candidate_and_boundary_world_space_impulse_residual_l2_bounds"
+          "candidate_and_boundary_world_space_impulse_residual_l2_bounds",
+          "J_transpose_q_generalized_applied_impulse_interval",
+          "applied_impulse_l2_error_upper_bound_ns_over_stable_physics_vertex_ids"
         ],
         "normal_subblock_eigenvalue_reference_is_not_full_matrix_certificate": true,
-        "local_generalized_impulse_coefficients_are_not_snap_error_output": true
+        "local_generalized_impulse_coefficients_are_not_snap_error_output": true,
+        "applied_impulse_certificate_present": false
       }
     },
     {
