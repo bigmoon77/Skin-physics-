@@ -1,13 +1,13 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.20
+- 文書バージョン: 1.21
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.19
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.25
-- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.22
-- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.17
+- 前版: 1.20
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.26
+- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.23
+- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.18
 
 ## 1. 設計方針
 
@@ -327,6 +327,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.21: Detailed Design v1.26 / Runtime Integration Design v1.23 / Numerical Acceptance Profile v1.18を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を明確化。
 - 1.20: Detailed Design v1.25 / Runtime Integration Design v1.22 / Numerical Acceptance Profile v1.17を参照し、Contact-level E_contact_impulseとApplied E_applied_impulseの名称・役割を統一。
 - 1.19: 詳細設計 v1.24 / Runtime統合設計 v1.21 / Numerical Acceptance Profile v1.16を参照し、Contact Jacobianを介したApplied Impulse誤差条件を追加。
 - 1.18: 詳細設計 v1.23 / Runtime統合設計 v1.20 / Numerical Acceptance Profile v1.15を参照し、TOI Impulse誤差をWorld-space Vectorへ統一。
@@ -347,7 +348,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 
-## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.17）
+## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.23）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
