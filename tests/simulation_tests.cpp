@@ -1537,6 +1537,80 @@ namespace
         return settings;
     }
 
+    std::vector<skin_physics::physics::correction_primitive_epoch_input>
+    make_vt_position_writer_epoch_primitives(const test_json::value& input)
+    {
+        using namespace skin_physics::physics;
+        const vertex_triangle_correction_motion motion =
+            make_vt_correction_motion(input);
+
+        correction_primitive_epoch_input point;
+        point.stable_id = 101;
+        point.mesh_id = 1;
+        point.primitive_id = 0;
+        point.role = correction_primitive_role::vertex;
+        point.vertex_stable_ids = { 1001 };
+        point.vertex_motions = { motion.point };
+        point.segment_start_positions = { motion.segment_start_point };
+
+        correction_primitive_epoch_input triangle;
+        triangle.stable_id = 102;
+        triangle.mesh_id = 1;
+        triangle.primitive_id = 1;
+        triangle.role = correction_primitive_role::triangle;
+        triangle.vertex_stable_ids = { 1002, 1003, 1004 };
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            triangle.vertex_motions.push_back(motion.triangle[index]);
+            triangle.segment_start_positions.push_back(
+                motion.segment_start_triangle[index]);
+        }
+        return { point, triangle };
+    }
+
+    std::vector<skin_physics::physics::correction_primitive_epoch_input>
+    make_ee_position_writer_epoch_primitives(const test_json::value& input)
+    {
+        using namespace skin_physics::physics;
+        const edge_edge_correction_motion motion =
+            make_ee_correction_motion(input);
+
+        correction_primitive_epoch_input edge_a;
+        edge_a.stable_id = 201;
+        edge_a.mesh_id = 1;
+        edge_a.primitive_id = 2;
+        edge_a.role = correction_primitive_role::edge;
+        edge_a.vertex_stable_ids = { 2001, 2002 };
+        correction_primitive_epoch_input edge_b;
+        edge_b.stable_id = 202;
+        edge_b.mesh_id = 1;
+        edge_b.primitive_id = 3;
+        edge_b.role = correction_primitive_role::edge;
+        edge_b.vertex_stable_ids = { 2003, 2004 };
+        for (std::size_t endpoint = 0; endpoint < 2; ++endpoint)
+        {
+            edge_a.vertex_motions.push_back(motion.edge_a[endpoint]);
+            edge_a.segment_start_positions.push_back(
+                motion.segment_start_edge_a[endpoint]);
+            edge_b.vertex_motions.push_back(motion.edge_b[endpoint]);
+            edge_b.segment_start_positions.push_back(
+                motion.segment_start_edge_b[endpoint]);
+        }
+        return { edge_a, edge_b };
+    }
+
+    skin_physics::physics::broadphase_settings make_correction_epoch_broadphase_settings()
+    {
+        skin_physics::physics::broadphase_settings settings;
+        settings.cell_size = 0.25f;
+        settings.contact_thickness = 0.0f;
+        settings.cell_record_capacity = 4096;
+        settings.candidate_capacity = 16;
+        settings.max_cells_per_primitive = 4096;
+        settings.self_collision_enabled = true;
+        return settings;
+    }
+
     void test_phase12_correction_motion_ccd_reference()
     {
         using skin_physics::physics::correction_ccd_status;
@@ -2259,6 +2333,131 @@ namespace
         require(ambiguous_side_result.status == correction_ccd_status::unresolved,
             "A Segment-start Pair exactly on the separating plane must not invent an allowed side.");
     }
+
+    void test_phase12_correction_position_writer_epoch_pipeline()
+    {
+        using namespace skin_physics::physics;
+        const test_json::value fixture = test_json::load(
+            test_support::fixture_path(
+                "design_review/correction_sweep_broadphase.json"));
+
+        const test_json::value& endpoint_case = find_correction_fixture_case(
+            fixture, "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT");
+        correction_ccd_settings endpoint_settings =
+            read_correction_ccd_settings(endpoint_case.at("input"));
+        auto endpoint_state_result =
+            create_correction_segment_candidate_state(7001, {}, 16);
+        require(endpoint_state_result.success,
+            "Position-Writer Epoch endpoint test must initialize its Segment Candidate State.");
+        auto endpoint_state = endpoint_state_result.state;
+        const correction_writer_epoch_result endpoint_epoch =
+            process_correction_position_writer_epoch(
+                endpoint_state, 7001, 1,
+                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                {}, make_correction_epoch_broadphase_settings(),
+                endpoint_settings);
+        require(endpoint_epoch.status == correction_writer_epoch_status::accepted &&
+            endpoint_epoch.state_committed &&
+            endpoint_state.last_position_writer_epoch_id == 1 &&
+            endpoint_state.position_writer_epoch_generation == 1 &&
+            endpoint_state.candidate_generation == 1 &&
+            endpoint_state.candidates.size() == 1,
+            "A valid VT Position-Writer Epoch must atomically commit its correction and endpoint candidate union.");
+        require(endpoint_epoch.correction_ccd_results.size() == 1 &&
+            endpoint_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::hit,
+            "The Epoch pipeline must execute Correction Motion CCD for the correction-swept VT pair.");
+        require(endpoint_epoch.active_contacts.size() == 1 &&
+            endpoint_state.contact_set.size() == 1 &&
+            endpoint_state.contact_set_current &&
+            endpoint_state.vertex_contact_csr_current,
+            "An endpoint-active VT pair must enter the rebuilt Contact Set and Vertex-to-Contact CSR.");
+        require(endpoint_state.vertex_contact_csr.vertex_stable_ids.size() == 4 &&
+            endpoint_state.vertex_contact_csr.offsets.size() == 5 &&
+            endpoint_state.vertex_contact_csr.contact_indices.size() == 4 &&
+            endpoint_state.vertex_contact_csr.current,
+            "The Epoch pipeline must produce a complete CSR for the active VT Contact.");
+
+        const test_json::value& transient_case = find_correction_fixture_case(
+            fixture, "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY");
+        correction_ccd_settings transient_settings =
+            read_correction_ccd_settings(transient_case.at("input"));
+        auto transient_state_result =
+            create_correction_segment_candidate_state(7002, {}, 16);
+        auto transient_state = transient_state_result.state;
+        const correction_writer_epoch_result transient_epoch =
+            process_correction_position_writer_epoch(
+                transient_state, 7002, 1,
+                make_vt_position_writer_epoch_primitives(transient_case.at("input")),
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(transient_epoch.status == correction_writer_epoch_status::accepted &&
+            transient_epoch.correction_ccd_results.size() == 1 &&
+            transient_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::hit &&
+            transient_epoch.active_contacts.empty() &&
+            transient_state.contact_set.empty() &&
+            transient_state.vertex_contact_csr.current &&
+            transient_state.vertex_contact_csr.offsets ==
+                std::vector<uint32_t>{ 0u },
+            "A same-side transient Correction Hit must remain a Candidate without creating an endpoint Contact.");
+
+        const test_json::value& crossing_case = find_correction_fixture_case(
+            fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE");
+        correction_ccd_settings crossing_settings =
+            read_correction_ccd_settings(crossing_case.at("input"));
+        auto crossing_state_result =
+            create_correction_segment_candidate_state(7003, {}, 16);
+        auto crossing_state = crossing_state_result.state;
+        const correction_writer_epoch_result crossing_epoch =
+            process_correction_position_writer_epoch(
+                crossing_state, 7003, 1,
+                make_vt_position_writer_epoch_primitives(crossing_case.at("input")),
+                {}, make_correction_epoch_broadphase_settings(),
+                crossing_settings);
+        require(crossing_epoch.status == correction_writer_epoch_status::rejected &&
+            !crossing_epoch.state_committed &&
+            crossing_state.candidates.empty() &&
+            crossing_state.position_writer_epoch_generation == 0,
+            "A Correction Path Crossing must reject the entire Epoch without committing Candidate or Contact state.");
+
+        const test_json::value& ee_case = find_correction_fixture_case(
+            fixture, "DCR_49_EE_EDGE_THROUGH_EDGE");
+        correction_ccd_settings ee_settings =
+            read_correction_ccd_settings(ee_case.at("input"));
+        auto ee_state_result =
+            create_correction_segment_candidate_state(7004, {}, 16);
+        auto ee_state = ee_state_result.state;
+        const correction_writer_epoch_result ee_epoch =
+            process_correction_position_writer_epoch(
+                ee_state, 7004, 1,
+                make_ee_position_writer_epoch_primitives(ee_case.at("input")),
+                {}, make_correction_epoch_broadphase_settings(),
+                ee_settings);
+        require(ee_epoch.status == correction_writer_epoch_status::rejected &&
+            !ee_epoch.state_committed &&
+            ee_state.candidates.empty() &&
+            ee_state.position_writer_epoch_generation == 0,
+            "An EE correction crossing must reject the entire Epoch before Contact Set or CSR publication.");
+
+        auto blocked_state_result =
+            create_correction_segment_candidate_state(7005, {}, 16);
+        auto blocked_state = blocked_state_result.state;
+        broadphase_settings blocked_broadphase =
+            make_correction_epoch_broadphase_settings();
+        blocked_broadphase.candidate_capacity = 0;
+        const correction_writer_epoch_result blocked_epoch =
+            process_correction_position_writer_epoch(
+                blocked_state, 7005, 1,
+                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                {}, blocked_broadphase, endpoint_settings);
+        require(blocked_epoch.status == correction_writer_epoch_status::blocked &&
+            blocked_epoch.capacity_overflow &&
+            !blocked_epoch.state_committed &&
+            blocked_state.candidates.empty() &&
+            blocked_state.position_writer_epoch_generation == 0,
+            "Broadphase Capacity overflow must BLOCK the Epoch and preserve the prior Candidate / Contact / CSR State.");
+    }
 }
 
 int run_simulation_tests()
@@ -2295,6 +2494,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P11_PERFORMANCE_PROFILE\n";
     test_phase12_correction_motion_ccd_reference();
     std::cout << "[PASS] P12_CORRECTION_MOTION_CCD_REFERENCE\n";
+    test_phase12_correction_position_writer_epoch_pipeline();
+    std::cout << "[PASS] P12_CORRECTION_POSITION_WRITER_EPOCH\n";
     require(run_environment_tests() == 0, "Environment tests failed.");
     require(run_gpu_solver_tests() == 0, "GPU solver tests failed.");
     std::cout << "SimulationCoreTests passed.\n";
