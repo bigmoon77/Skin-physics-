@@ -1,6 +1,6 @@
 {
-  "fixture_version": "1.8",
-  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Case 46 scalar coefficients now include all effective-inverse-mass inputs needed to recompute the normal and friction bounds; its Candidate / Boundary contact Jacobians use a right-handed frame and consistent rotation bounds. Contact-level E_contact_impulse is numerically below tolerance, but E_applied_impulse remains uncertified, so Snap is still denied. The coupled fixture declares full generalized matrix and Jacobian row-order contracts, but lacks full certificates and remains Snap-disabled.",
+  "fixture_version": "1.9",
+  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Case 46 scalar coefficients include all Effective Inverse Mass inputs needed to reproduce normal and friction bounds; its Candidate / Boundary Jacobians use a right-handed frame and q-compatible row order. E_contact_impulse is independently checked against tolerance, but E_applied_impulse remains uncertified, so Snap is denied. The coupled fixture declares full generalized matrix and Jacobian row-order contracts but remains Snap-disabled pending full certificates.",
   "cases": [
     {
       "id": "DCR_45_TAU_ZERO",
@@ -130,8 +130,8 @@
           "normal_direction_max_impulse_ns": 4,
           "normal_direction_angle_bound_radians": 0.01,
           "friction_vector_bound": 0.024999958333385416,
-          "coupled_solver_residual_bound": 0.005,
-          "normal_scalar_effective_inverse_mass_restitution_bound": 0.02
+          "normal_scalar_effective_inverse_mass_restitution_bound": 0.02,
+          "coupled_solver_residual_bound_ns": 0.005
         },
         "impulse_tolerance_ns": 0.1,
         "impulse_error_formula_inputs": {
