@@ -112,7 +112,33 @@
           "friction_vector_bound": 0.015,
           "coupled_solver_residual_bound": 0.005
         },
-        "impulse_tolerance_ns": 0.1
+        "impulse_tolerance_ns": 0.1,
+        "impulse_error_formula_inputs": {
+          "normal_scalar_uncoupled": {
+            "restitution_max": 1,
+            "normal_relative_velocity_max": 1,
+            "delta_normal_relative_velocity": 0.01,
+            "delta_restitution": 0.01,
+            "effective_mass_min": 2,
+            "delta_effective_mass": 0.01,
+            "expected_E_normal_scalar_ns": 0.02
+          },
+          "friction_isotropic_uncoupled": {
+            "tangent_relative_velocity_max": 1,
+            "delta_tangent_relative_velocity": 0.005,
+            "tangent_effective_mass_min": 2,
+            "delta_tangent_effective_mass": 0,
+            "friction_max": 0.5,
+            "friction_delta": 0.001,
+            "support_impulse_plus_lambda_over_dt_max": 1,
+            "normal_impulse_error_ns": 0.02,
+            "delta_lambda_n": 0.002,
+            "contact_dt_min": 1,
+            "lambda_n_max": 0.1,
+            "delta_inverse_contact_dt": 0.01,
+            "expected_E_friction_vector_ns": 0.015
+          }
+        }
       },
       "expected": {
         "normal_direction_error_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
@@ -127,7 +153,13 @@
           "active_set_or_friction_projection_branch_not_enclosed",
           "solver_residual_bound_missing",
           "any_bound_non_finite"
-        ]
+        ],
+        "scalar_formula_outputs": {
+          "E_normal_scalar_ns": 0.02,
+          "E_friction_vector_ns": 0.015,
+          "E_solver_residual_ns": 0.005,
+          "full_E_impulse_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 0.005"
+        }
       }
     },
     {
