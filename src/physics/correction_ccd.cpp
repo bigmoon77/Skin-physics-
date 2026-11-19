@@ -445,7 +445,7 @@ namespace skin_physics::physics
                     return false;
                 }
             }
-            return !motion.has_persistent_contact_cache ||
+            return !motion.has_valid_persistent_contact_cache ||
                 finite(motion.persistent_contact_normal);
         }
 
@@ -463,7 +463,7 @@ namespace skin_physics::physics
                     return false;
                 }
             }
-            return !motion.has_persistent_contact_cache ||
+            return !motion.has_valid_persistent_contact_cache ||
                 finite(motion.persistent_contact_normal);
         }
 
@@ -1156,7 +1156,7 @@ namespace skin_physics::physics
             const vector3 initial_normal = cross(subtract(b, a), subtract(c, a));
             return latch_reference_side(
                 initial_normal, subtract(point, a),
-                motion.has_persistent_contact_cache,
+                motion.has_valid_persistent_contact_cache,
                 motion.persistent_contact_normal,
                 settings.epsilon_length,
                 reference_normal, side_sign, orientation_sign);
@@ -1197,7 +1197,7 @@ namespace skin_physics::physics
             const vector3 initial_normal = cross(direction_a, direction_b);
             return latch_reference_side(
                 initial_normal, subtract(closest_a, closest_b),
-                motion.has_persistent_contact_cache,
+                motion.has_valid_persistent_contact_cache,
                 motion.persistent_contact_normal,
                 settings.epsilon_length,
                 reference_normal, side_sign, orientation_sign);
