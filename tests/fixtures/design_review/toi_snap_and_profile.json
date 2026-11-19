@@ -729,7 +729,57 @@
             8.585858585858587
           ]
         ],
-        "normal_tangential_cross_matrix_symmetry_rule": "The lower-left block of the 6x6 generalized Delassus matrix is the transpose of normal_tangential_delassus_cross_matrix; evaluate the full symmetric matrix enclosure."
+        "normal_tangential_cross_matrix_symmetry_rule": "The lower-left block of the 6x6 generalized Delassus matrix is the transpose of normal_tangential_delassus_cross_matrix; evaluate the full symmetric matrix enclosure.",
+        "restitution_coefficients_candidate_intervals": [
+          [
+            0,
+            0.02
+          ],
+          [
+            0,
+            0.02
+          ]
+        ],
+        "restitution_coefficients_boundary_intervals": [
+          [
+            0,
+            0.02
+          ],
+          [
+            0,
+            0.02
+          ]
+        ],
+        "friction_coefficients_candidate_intervals": [
+          [
+            0.39,
+            0.41
+          ],
+          [
+            0.39,
+            0.41
+          ]
+        ],
+        "friction_coefficients_boundary_intervals": [
+          [
+            0.39,
+            0.41
+          ],
+          [
+            0.39,
+            0.41
+          ]
+        ],
+        "full_generalized_delassus_interval_certificate": {
+          "status": "not_provided",
+          "required_block_order": [
+            "normal_normal",
+            "normal_tangent",
+            "tangent_normal_transpose",
+            "tangent_tangent"
+          ],
+          "required_proof": "finite_positive_lower_eigenvalue_bound over the complete Candidate / Boundary 6x6 interval matrix"
+        }
       },
       "expected": {
         "interval_evaluation_required": true,
@@ -754,11 +804,16 @@
           "xpbd_compliance_interval_missing",
           "initial_tangent_impulse_interval_missing",
           "lambda_n_over_contact_dt_interval_missing",
-          "normal_tangential_cross_transpose_inconsistent"
+          "normal_tangential_cross_transpose_inconsistent",
+          "candidate_or_boundary_restitution_interval_missing",
+          "candidate_or_boundary_friction_coefficient_interval_missing",
+          "full_generalized_delassus_positive_eigenvalue_certificate_missing"
         ],
-        "conservative_gershgorin_eigenvalue_lower_bound": 1.23,
         "all_normal_tangential_projection_inputs_present": true,
-        "generalized_delassus_blocks_must_be_evaluated_together": true
+        "generalized_delassus_blocks_must_be_evaluated_together": true,
+        "normal_subblock_conservative_gershgorin_eigenvalue_lower_bound": 1.23,
+        "full_generalized_delassus_positive_eigenvalue_proven": false,
+        "full_matrix_positivity_must_not_be_inferred_from_normal_subblock": true
       }
     },
     {
