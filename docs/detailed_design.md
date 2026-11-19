@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.24
+- 文書バージョン: 1.25
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.19
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.21
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.16
-- 前版: 1.23
+- 対応基本設計: basic_design.md 1.20
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.22
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.17
+- 前版: 1.24
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1212,7 +1212,7 @@ F(z)はCanonical Contact Key順に並べたWorld-space Vectorを返す。
 
     F(z) = [I_0.x, I_0.y, I_0.z, ..., I_N-1.x, I_N-1.y, I_N-1.z]
 
-したがってF(z)は固定World座標系で表現された3N次元ベクトルであり、E_impulseはそのEuclidean L2 normで評価する。Normal / Tangent Basisの回転による物理Impulse方向の変化もこの出力へ反映する。Contact数がCandidate / Boundaryで異なる、Canonical Contact Key集合が一致しない、または同じBoundaryへSnapするContact Island集合が確定しない場合はImpulse Boundをunknownとし、Snapを禁止する。
+したがってF(z)は固定World座標系で表現された3N次元ベクトルであり、E_contact_impulseはそのEuclidean L2 normで評価する。Normal / Tangent Basisの回転による物理Impulse方向の変化もこの出力へ反映する。Contact数がCandidate / Boundaryで異なる、Canonical Contact Key集合が一致しない、または同じBoundaryへSnapするContact Island集合が確定しない場合はImpulse Boundをunknownとし、Snapを禁止する。
 
     E_contact_impulse = sup { || F_contact_world(z) - F_contact_world(z_boundary) ||_2 : z in U }
 
@@ -1240,7 +1240,7 @@ Uは少なくとも次の変数を包含する。
 
 診断可能な上界分解を使う実装では、少なくとも次を満たす。
 
-    E_impulse <= E_normal_scalar
+    E_contact_impulse <= E_normal_scalar
                 + 2 * J_normal_max * sin(theta_normal_max / 2)
                 + E_friction_vector
                 + E_solver_residual
@@ -1260,7 +1260,7 @@ CouplingがなくNormal / Tangential Effective Inverse Massがスカラー（ま
                        + (1 + e_max) * v_n_max * Delta_K_n / (K_n_min * K_n_min)
 
 
-を使える。ここで`Delta_K_n`はEffective Massの絶対差上限、`Delta_v_n`はCandidate / Boundary双方のNormal Basisで射影した相対Velocity差を包含する上限である。
+を使える。ここで`Delta_K_n`はEffective Inverse Massの絶対差上限、`Delta_v_n`はCandidate / Boundary双方のNormal Basisで射影した相対Velocity差を包含する上限である。
 
 摩擦の等方スカラーEffective Mass特殊ケースでは、
 
@@ -1631,6 +1631,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.25: Contact-level error notationをE_contact_impulseへ統一し、Applied Generalized Impulse E_applied_impulseとは別ゲートとして扱う。Delassus対角係数の差分単位をEffective Inverse Mass [1/kg]へ明確化。
 - 1.24: Contact-level World-space ImpulseとJ^T*q Generalized Applied Impulseを分離。SnapにApplied Impulse toleranceを追加し、Sparse Contact Jacobianとstable Physics Vertex ID集合の区間評価を必須化。
 - 1.23: Impulse Errorの比較空間をWorld-space 3N Vectorへ統一。Delassus Solverの局所係数qと物理Impulse出力Fを分離し、Tangent Basis回転誤差をE_friction_vectorへ追加。
 - 1.22: TOI誤差式のImpulse出力ベクトル順・Contact Island L2集約・Normal方向回転Boundを定義。DelassusをEffective Inverse Mass [1/kg]と明示し、Responsive Subspaceのrank / basis安定性をSnap証明条件に追加。
