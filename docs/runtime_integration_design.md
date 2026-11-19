@@ -524,7 +524,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - Play中のadvanceはmax(frame_delta_time, 0) * time_scaleだけrequested_simulation_time / unassigned_accumulator_secondsを増やす。Paused / Stopped中はGPU QueryのPollだけを行い、Wall TimeをAccumulatorへ追加しない。
 - Tick時間はAccumulatorからTick Reservationへ移動する。各Tick Reservationは一意のSequenceと固定区間を持ち、GPU Commit / Retry / Rejectの結果を記録する。Accumulatorは未割当時間だけを保持し、reserved_tick_timeはin-flight / blocked Tickだけを集計する。
 - SchedulerはAccumulatorにfixed_delta_time以上があり、必要Pose / Kinematic Sample、暫定Animation Packet / Event Boundary Tableが揃い、in-flight / Query / Render Candidate Slotが確保できる場合にTickをSubmission対象とする。これらの前提条件が揃う前はReservationを作らず、時間はAccumulatorに残す。全Resource Slotが確保できたSubmission直前に一意のTick Sequence / Input Snapshot / Animation Packet Versionを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。GPU Commit時に再度差し引かない。
-- Capacity / CCD / predecessorの一時RejectはReservationを同じSequenceで保持してRetryする。Tick N+1がPredecessor Gateで停止した場合はN+1のReservationを破棄せず、NがReplay / Commitした後に新しいSource Generationで再Submissionする。
+- Capacity / CCD / Work Budgetの回復可能な超過はBLOCKEDとし、Reservationを同じSequenceで保持してRetryする。非回復の入力・数値・ABI違反はREJECTED、Device Loss / Work Count OverflowはFAILEDとする。Tick N+1がPredecessor Gateで停止した場合はN+1のReservationを破棄せず、NがReplay / Commitした後に新しいSource Generationで再Submissionする。
 - 回復不能なFailureでWorldがFailedになった場合、当該Reservationおよび後続Pending Reservationは診断用に保持する。ResetはAccumulator、Reservation、Step Queueを明示的に破棄してInitial Stateへ戻す。
 - single_stepはPaused / Stopped中のみ受け付ける。受理時にrequested_simulation_timeへfixed_delta_timeを加算し、wall-clock Accumulatorを変更せず、独立したStep Request Queueに1 Tickを追加する。Pause / Stop中はStep Request Queueをwall-clock Accumulatorより優先し、Accumulatorにwhole tick / fractional remainderが残っていてもStep Requestを先に処理してAccumulatorは変更しない。Pose / Render Slot / Query Slotが揃うまではStep Requestのまま保持し、GPU Submission直前にtime_source=single_stepのTick Reservationへ移す。Commit時にGPU committed timeを1 Fixed Delta進める。
 - Pauseはwall-clock Accumulatorを保持し、in-flight Tickだけを完了させる。Stopは時間進行を停止し、未Reservation Step Requestだけを取消してcancelled_requested_timeへ加算する。Stopはwall-clock AccumulatorとPhysics Stateを保持する。ResetはInitial Stateへ戻し、Accumulator全体、Step Queue、Reservation / Sequence、Solver Cache、Timeline Counterを初期化する。既にTick ReservationとなったStepは通常のin-flight / Retry契約に従い、取消し・二重要求を行わない。
@@ -571,28 +571,44 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 
 ### 5.6 WORK_BUDGET_EXCEEDEDからの実行予算回復
 
-`WORK_BUDGET_EXCEEDED`は、正当なTick Inputから算出した必要Work量がWorldのAdmission Limitを超えた状態であり、物理状態の失敗・数値不安定・入力不正とは区別する。Runtime Statusは次を公開する。
+`WORK_BUDGET_EXCEEDED`は、正当なTick Inputに対するWork量がAdmission Limitを超えた状態である。これは再試行可能なRuntime Blockであり、Logical Tick Stateは必ず`BLOCKED`とする。`REJECTED`や`FAILED`へ分類してはならない。Blocked中はGPU Commit / Render Publishを行わず、Tick Reservation、Tick Sequence、Input Snapshotを保持する。
 
-- `execution_budget_revision`: Worldの実行予算設定世代。
-- `work_budget_block_flags`: bit0=`maximum_substeps`超過、bit1=`maximum_integration_segments_per_tick`超過。両方の同時設定を許可する。
-- `required_substeps` / `required_integration_segments`: 当該Tick Inputから必要と判定した正確な数。非該当は0とし、uint32範囲外はWrapせずOverflow DiagnosticとしてWorldをFailedにする。
+#### Status CountとBlock Origin
 
-`set_world_execution_budget(world, budget)`はAdmission Limitだけを変更するCPU Control APIであり、Immediate Contextを呼び出さない。World SchedulerのControl Lock内で更新を直列化し、同一Worldに対する`advance` / `poll` / 他の設定変更とのデータ競合を許さない。
+- `execution_budget_revision`: WorldのAdmission Limit設定世代。
+- `work_budget_block_flags`: bit0=`maximum_substeps`超過、bit1=CPU Preflight時の`maximum_integration_segments_per_tick`超過、bit2=GPU実行中に発見したTOI追加Segmentによる同上限超過。CPU Preflightではbit0 / bit1を、GPU Dynamic TOIではbit2を設定する。
+- `work_budget_block_origin`: `cpu_preflight`または`gpu_dynamic_toi`。Block以外は`none`。
+- `planned_substeps`: CPU Preflightが確定したWorld Substep数。正確値であり、GPU Dispatch前に算出する。
+- `planned_integration_segments`: GPU Dispatch前に確定したWorld Substep / Animation / Force / Impulse境界からなる予定Segment総数。正確値であり、動的TOI分割を含まない。
+- `executed_integration_segments`: 直近のGPU Dynamic TOI Block試行でSegment Endまで完了したSegment数。CPU Preflight Blockでは0。
+- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。予定Segment、発見済みTOI分割、およびBlock時点で必要と判明した未実行の残Segmentを数える。まだ発見されていない将来のTOIは含まないため、最終Tick総数を示す正確値ではない。CPU Preflight Blockでは0。
+- すべてのCountは`std::uint32_t`。uint32範囲を超える算出値はWrapせずWork Count OverflowとしてWorldを`FAILED`にする。
 
-受理条件:
+#### Block発生元ごとの観測契約
 
-1. 対象WorldにGPU実行中Command、未完了Event Query、CPU未観測のSubmissionが存在しない。複数in-flight Tickがあった場合は、対象Tickと後続の`BLOCKED_BY_PREDECESSOR` Statusを全てCPU観測してから変更できる。
-2. 復旧対象が最も古い未Commit Tickで、`WORK_BUDGET_EXCEEDED`としてReservation済みである。未Reservation時間はAccumulator / Step Queueに残す。後続ReservationはPredecessor Block状態で保持し、先行Tickの解決前に新規Physics Submissionを進めない。
-3. `maximum_substeps >= world_desc.minimum_substeps`、`maximum_integration_segments_per_tick >= 1`を満たす。新しいBudgetはStatusに報告された`required_substeps` / `required_integration_segments`以上でなければならない。不足する場合は`invalid_argument`として一切変更しない。
-4. Blocked ReservationがないWorldでは、未Reservation Whole Tick、Step Request、Tick Reservation、GPU SubmissionがないIdle状態でのみ変更できる。この場合は増減を許可する。
+**CPU Preflight (`cpu_preflight`)**:
+1. RuntimeはRender Candidate Slot / Query Slot / Tick Reservationを確保した後、GPU Physics Upload前にSubstep / 予定Segment数を算出する。
+2. 上限超過時はGPU Physics Upload / Dispatch / Event Queryを発行しない。使用しなかったQuery SlotとRender Candidate Slotは直ちに解放し、Tick Reservation / Sequence / Input Snapshotだけを保持する。
+3. SchedulerはCPU Status Queueへ`BLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflight`を同期記録する。`poll()`はEvent Queryを待たず、同じ呼出しでこのStatusを返す。これはGPU完了通知ではなくCPU Preflight判定の観測である。
 
-Budget更新は2フィールドをAtomicに置換し、`execution_budget_revision`を1増やす。Blocked Reservationに対する変更では現在値より小さい上限を指定できない。Substep数・Segment境界・Tick時間区間・Input Snapshot・Animation Packet Version・Cursor開始Snapshot・Force / Impulse Event ID / Cursor・Tick Sequence・Reservation時間は変更しない。既存Dispatch Planは変更せず破棄し、新しい`dispatch_id`とBudget Revisionを持つImmutable Planを同じReservationから再生成する。先行TickがCommit済みなら、そのCommit済みSource State Generationを参照する。後続Reservationは先行TickのCommit後に新しいSource Generationで再Planする。
+**GPU Dynamic TOI (`gpu_dynamic_toi`)**:
+1. GPUはTOIで追加される残SegmentをDispatchする前に累積Segment数を検査する。
+2. 上限超過時は残Segmentと後続Passを停止し、Working State / Render Candidate / Commitを抑止する。GPU Status Bufferへ`BLOCKED / WORK_BUDGET_EXCEEDED`、Block Origin、実行済み数、Segment下限値を書き、Event Queryを発行する。
+3. CPUの`poll()`はEvent Query完了後にStatus Bufferを非同期Mapし、GPU Statusと連続Prefix条件を確認して初めてこのBlockをCPU観測済みにする。
 
-`set_world_execution_budget`成功後、Schedulerは次の通常Pumpで同じReservationをPreflightから再評価する。API呼出し自体はGPU Dispatch / Flush / Waitを行わない。再評価後も上限を超える場合は同じReservationを保持したまま`WORK_BUDGET_EXCEEDED`を報告する。予算引上げ時に異なるAnimation / Force / Impulse / TOI境界を結合・省略したり、Substep・Iteration・Contact品質を減らしたりしてはならない。
+#### set_world_execution_budget受理条件
 
-GPU実行中にTOIで追加された残Segmentが上限を超えた場合も、GPUはWorking State / Render CandidateをCommitせず、Tick開始SnapshotへRollback可能な状態でStatusを返す。CPUがQuery完了と`WORK_BUDGET_EXCEEDED`を観測し、後続TickのPredecessor Blockも観測した後に同じAPIで上限を更新する。RetryはTick開始Stateから全Tickを再実行し、Impact / Force / Impulseを破棄済みWorking Stateへ二重適用しない。
+`set_world_execution_budget(world, budget)`はAdmission Limitだけを更新するCPU Control APIであり、Immediate Context / Dispatch / Flush / Waitを呼ばない。Scheduler Control Lockで`advance` / `poll` / 他の設定変更と直列化する。
 
-不正なBudgetは`invalid_argument`、GPU / Queryが未完了の場合は`busy`を返し、どちらもWorld Budget・Revision・Reservation・Timelineを変更しない。復旧不能なWork Count Overflowは無限Retryせず、明示的なTerminal Errorとする。
+1. GPU Dynamic TOI Blockでは、対象GPU Command / Event Query / CPU未観測Submissionがすべて完了し、先行Tickと後続`BLOCKED_BY_PREDECESSOR`のStatusもCPU観測済みでなければならない。CPU Preflight Blockには対象TickのGPU Queryは存在しないが、Preflight Statusを`poll()`で観測済みでなければならない。
+2. 更新対象が最も古い未CommitのBlocked Reservationであること。未Reservation時間はAccumulator / Step Queueに残し、後続ReservationはPredecessor Blockのまま保持する。
+3. `maximum_substeps >= world_desc.minimum_substeps`、`maximum_integration_segments_per_tick >= 1`を満たし、両値がRuntime初期化時に固定したHard Limit以下であること。Hard Limit超過は`invalid_argument`であり、全状態を変更しない。
+4. Blocked Reservationの更新では、Admission Limitを現在値より下げてはならない。新しいSubstep Limitは`planned_substeps`以上、Segment LimitはCPU Preflightでは`planned_integration_segments`以上、GPU Dynamic TOIでは`minimum_required_integration_segments`以上でなければならない。TOI下限値で再実行しても、さらに未発見TOIが生じた場合は同じReservationを再度Blockし、次の下限値を報告する。
+5. Blocked ReservationがないWorldでは、未Reservation Whole Tick、Step Request、Tick Reservation、GPU Submissionが一つもないIdle状態でのみ変更できる。この状態では増減を許可する。Pending Whole Tick Demand / Step Request / Reservationがある場合は`busy`を返し、予算・Revision・時間・Reservationを変更しない。
+
+有効な2フィールドはAtomicに置換し、`execution_budget_revision`を1増やす。Blocked Reservationに対する変更では、超過していない方のLimitを維持してよいが、現在値より小さくしてはならない。Substep数・予定Segment境界・Tick時間区間・Input Snapshot・Animation Packet Version・Cursor開始Snapshot・Force / Impulse Event ID / Cursor・Tick Sequence・Reservation時間は変更しない。既存Dispatch Planは破棄し、新しい`dispatch_id` / Budget Revisionを持つImmutable Planを同じReservationから再生成する。
+
+RetryはTick開始Committed StateからLogical Tick全体を再実行する。失敗したWorking StateのCursor / Impact / Force / Impulse消費状態を引き継がないため、Eventを二重適用しない。Admission Limitを上げても異なるAnimation / Force / Impulse / TOI境界を結合・省略したり、Substep・Iteration・Contact品質を下げたりしてはならない。APIの`busy` / `invalid_argument`はWorld Budget / Revision / Reservation / Timelineを一切変更しない。
 
 ## 6. GPU Tick Transaction / Commit / Rollback
 
@@ -629,14 +645,19 @@ Logical Tickは次の条件を全て満たした場合だけCOMMITTEDとする�
 
 ### 6.3 Rollback / Retry
 
-Capacity Overflow、CCD Unresolved、物理品質Gate失敗時は、現在のLogical TickをREJECTED / BLOCKEDにする。GPU Commit前のactive_state_bankは変更されていないため、Retryは同じactive source bankと同じTick Inputからinactive destination bankを再構築する。NonFinite / Invalid Asset / ABI mismatchは自動Retryしない。Substep / CCD Segmentの再計算はsegment_start_snapshotからinactive destination bankを復元する。
+Logical Tick Stateは`BLOCKED` / `REJECTED` / `FAILED`を区別する。
 
-- Capacity Overflow: Count / Scan / Capacity Checkで必要数を記録し、Fill / Consumerの範囲外アクセスを禁止する。Capacity Growth後のRetryはactive source bankを不変のまま読み、inactive destination bankを先頭から再構築する。Event Query / Status Readback後にCPUがRequired Capacityを回収し、該当Resource GroupのCapacityを next_power_of_two(max(required_count, ceil(current_capacity * 1.5))) へ拡張する。0容量からの初回確保はnext_power_of_two(required_count)とする。uint32 / D3D11 ByteWidth / Dispatch上限を超える要求は成長で解決できないCapacity Errorとする。Resource Group全体を新規確保できるMemory Budgetを先に確認し、割当・Copy / Rebuildが完了してから新Resource Setへ切り替える。旧Resource Setは参照中の全Query / Tick / Render Leaseが解放されるまで退役させない。Capacity Growth中は新規Tick Submissionを停止し、影響する全in-flight TickのQuery完了と状態判定をnon-blockingで待つ。後続Tickは先行状態が確定するまでBLOCKED_BY_PREDECESSORを維持し、先行Tickを同一Snapshot / Inputで再実行してCommitした後、新Generationに基づいて再Submissionする。最大GPU Resource Budgetを超える場合はBlockedByCapacityを維持し、候補を捨てない。
-- CCD Unresolved: Internal Substep数またはCCD分割上限を上げて、同じactive source bank / Tick Inputからinactive destination bankを再構築する。TOI retime / Segment再計算は該当segment_start_snapshotから復元する。No Hitへ置き換えない。
-- NonFinite / Invalid Asset / ABI mismatch: 自動的な低品質再試行をしない。Failureを報告する。
-- Retry上限到達: TickをCommitせず、Simulation WorldをBlockedByCCD / BlockedByCapacity / Failedへ遷移する。
+- `BLOCKED`: Capacity Overflow、CCD Unresolved、WORK_BUDGET_EXCEEDEDなど、Runtimeの明示された復旧手順で同じReservationをRetryできる状態。Committed Stateとgenerationを変えず、Tick Reservation / Sequence / Input Snapshotを保持する。
+- `REJECTED`: NonFinite、Invalid Input、ABI mismatch、物理品質Gate不成立など、自動RetryしないTick結果。Committed Stateを変更せず、原因修正後は明示Resetまたは新規Tickを要求する。
+- `FAILED`: DeviceRemoved、回復不能Work Count Overflow、内部状態破損などWorldの継続を停止する終端状態。
 
-CPU Physics Fallback、Contact候補のDrop、時間のDrop / Clampは禁止する。GPU全状態をCPUへ戻してRollbackする方式にしない。
+WORK_BUDGET_EXCEEDEDは常に`BLOCKED`とする。RejectとしてReservationを消費・破棄してはならない。
+
+Capacity OverflowはCount / Scan / Capacity Checkで必要数を記録し、Fill / Consumerの範囲外アクセスを禁止する。CPUがStatusを回収した後、Resource GroupのCapacityを`next_power_of_two(max(required_count, ceil(current_capacity * 1.5)))`へ拡張する。0容量からの初回確保は`next_power_of_two(required_count)`とする。uint32 / D3D11 ByteWidth / Dispatch上限を超える要求は`FAILED`とする。Resource Group全体を新規確保できるMemory Budgetを先に確認し、割当・Copy / Rebuildが完了してから新Resource Setへ切り替える。旧Resource Setは参照中の全Query / Tick / Render Leaseが解放されるまで退役させない。Capacity Growth中は新規Tick Submissionを停止し、影響する全in-flight TickのQuery完了と状態判定をnon-blockingで待つ。後続Tickは先行状態が確定するまでBLOCKED_BY_PREDECESSORを維持し、先行Tickを同一Snapshot / Inputで再実行してCommitした後、新Generationに基づいて再Submissionする。最大GPU Resource Budgetを超える場合はBlockedByCapacityを維持し、候補を捨てない。
+
+CCD Unresolvedは、Internal Substep数またはCCD分割上限を上げて、同じactive source bank / Tick Inputからinactive destination bankを再構築する。TOI retime / Segment再計算は該当segment_start_snapshotから復元する。No Hitへ置き換えない。WORK_BUDGET_EXCEEDEDでは§5.6に定義したStatus Count / Origin / Hard Limit / Budget更新条件を必ず適用する。
+
+NonFinite / Invalid Asset / ABI mismatchは自動的な低品質再試行をしない。Failureを報告する。Retry回数上限へ達した場合、Capacity / CCDの解決不能状態はWorldをBlocked状態に維持するか、明示されたPolicyでFAILEDへ遷移する。Committed Stateは常に直前Commitを保持する。
 
 ### 6.4 GPU / CPU完了時刻の整合
 
@@ -770,25 +791,26 @@ Peak計測にはPhysics State Banks / Segment Snapshot / Contact・Candidate / R
 
 | Error | Runtime動作 |
 |---|---|
-| InvalidAsset / InvalidTopology | Asset Load拒否 |
-| DegenerateTetrahedron / InvertedTetrahedron | Asset / Step Validationに基づき警告またはReject |
-| InvalidMaterialParameter | 設定変更拒否 |
+| InvalidAsset / InvalidTopology | Asset Load拒否。Logical Tickへ不正Assetを流入させない |
+| DegenerateTetrahedron / InvertedTetrahedron | Asset / Step Validationに基づき警告またはREJECTED |
+| InvalidMaterialParameter | 設定変更拒否。現行World Snapshotを変更しない |
 | SkinWeightTransferError / RenderBindingError | 該当MeshのLoad / FeedbackをReject |
-| SubmissionThreadViolation | 初期化時に登録したSubmission Thread以外からImmediate Context / GPU Resourceを操作しようとしたAPI CallをReject |
-| BlockedByInput | Animation / Kinematic Pose Sample履歴が必要なTick / Substep時刻をbracketできず、入力不足範囲の登録を待つ |
-| RenderBindingBusy | Host Render Leaseが未解放、またはRender Candidate Slot不足により新規Submissionを停止 |
-| BroadphaseOverflow / ContactOverflow / ContributionOverflow | TickをRollbackし、Capacity調整後に再実行 |
-| ContactImpulseUnresolved | Coupled Projected Jacobiが最大IterationでResidualへ収束しない。Tick全体をRollback / Blockし、Iteration / Solver設定を検証してRetry |
-| AnimationTimePrecisionUnresolved | GPU Span-local normalized timeが正のSegment進行を表現できない。Span細分化深度8後も解決しない場合にTick全体をBlock / Reject |
-| NonResponsiveContact | 有効逆質量が閾値以下の正常な非応答Contact。Position / ImpulseをSkipし、Diagnostic Counterへ記録 |
-| CCDIterationLimit / CCDUnresolved | TickをRollbackし、Substep / CCD設定変更後に再実行 |
-| InitialPenetrationLimit | Initial StateをCommitしない |
-| NonFiniteState | TickをReject。自動Fallbackしない |
-| GpuResourceAllocationFailure | Runtime / WorldをFailedまたはBlockedByCapacityへ |
-| DeviceRemoved | 新規Dispatch停止。Asset / Initial Stateから再初期化が必要 |
-| WorkBudgetExceeded | TickをRejectし、原因カウンタを報告 |
+| SubmissionThreadViolation | 登録済みSubmission Thread以外からImmediate Context / GPU Resourceを操作するAPI CallをReject |
+| BlockedByInput | Pose履歴が必要時刻をBracketできない。入力履歴が届くまでReservation前のPendingInputとして保持 |
+| RenderBindingBusy | Host Render Lease / Candidate Slot不足。新規Reservationを停止 |
+| BroadphaseOverflow / ContactOverflow / ContributionOverflow | BLOCKED。TickをRollbackし、Capacity調整後に同じReservation / Inputで再実行 |
+| ContactImpulseUnresolved | BLOCKED。Coupled Projected Jacobi Residual未収束。Solver設定確認後に同じTickをRetry |
+| AnimationTimePrecisionUnresolved | 許容Span細分化で解決しない場合はREJECTED。自動的に時間境界を丸めない |
+| NonResponsiveContact | 正常な非応答Contact。Position / ImpulseをSkipしDiagnostic Counterへ記録 |
+| CCDIterationLimit / CCDUnresolved | 回復設定がある間はBLOCKED。Substep / CCD設定変更後に同じReservationを再実行 |
+| WORK_BUDGET_EXCEEDED | **必ずBLOCKED**。Reservation / Sequence / Inputを保持。CPU PreflightはCPU Status Queueへ同期記録してpoll()で即時観測し、Event Queryを発行しない。GPU Dynamic TOIはGPU Status Buffer + Event Queryで非同期観測。予算更新は§5.6のHard LimitとIdle / Blocked条件に従う |
+| NonFiniteState | REJECTED。Committed Stateを保持し、自動Fallback / Retryをしない |
+| InitialPenetrationLimit / ContactGeometryUnresolved / ContactManifoldReductionFailure | 明示されたRepair / Quality Gateの再実行条件がある場合だけBLOCKED。それ以外はREJECTED |
+| GpuResourceAllocationFailure | 回復可能な容量待ちはBlockedByCapacity。回復不能またはDevice資源喪失はFAILED |
+| DeviceRemoved | FAILED。新規Dispatch停止。Asset / Initial Stateから再初期化が必要 |
+| WorkCountOverflow | FAILED。uint32範囲外のCountをWrap / Saturateして続行しない |
 
-警告・エラーはModel ID、Mesh ID、Primitive ID、Logical Tick、Substep、Pass、Counterを含む。Diagnosticsは小規模かつ非同期で回収する。
+`BLOCKED`はCommitted Stateを維持して同一Tick Reservationを残す。`REJECTED`はTickをCommitせず自動Retryしない。`FAILED`はWorldの通常進行を停止する終端状態である。診断にはModel ID、Mesh ID、Primitive ID、Logical Tick、Substep、Pass、Count、Block Originを含める。
 
 ## 9. D3D11 Render Resource Interop
 
@@ -928,6 +950,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.11: WORK_BUDGET_EXCEEDEDをBLOCKEDへ統一。CPU Preflight / GPU Dynamic TOIのStatus経路、TOI Segment下限値、Runtime初期化時に固定する有限Hard Limit、Pending Demand時のBUSY、BLOCKED / REJECTED / FAILEDを定義。
 - 1.10: `set_world_execution_budget`とWORK_BUDGET_EXCEEDEDのRecovery Contractを追加。Required Work Status、Budget Revision、Reservation / Packet / Event固定、後続Predecessor停止、TOI後Rollback Retryを規定。
 - 1.9: Immutable Trajectory PacketとMutable per-World Span Cursorを分離し、Cursor UAV / Segment Snapshot Rollback / R5 ABI Isolation Gateを追加。
 - 1.8: Span / Track / Channel / Blend / Colliderの固定Byte Offset / Flags / Node / Inverse Bind参照、Blend Curve時刻写像、Collider Angular Axis / Velocity、StructuredBuffer ABI検証を確定。
