@@ -536,7 +536,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
 - 先行TickがRejectされた場合、既にSubmissionされた後続TickはBLOCKED_BY_PREDECESSORとなり、物理状態を変更しない。先行TickのRetryがGPU上でCommitされた後、CPUは後続TickのPlanを新しいCommitted State Generationに合わせて再発行する。
 - Planのsource / destination State SetはSubmission時点の予測Commit順序に基づいて固定する。GPU Commitが成立しない場合の後続Planは必ずgateで停止する。GPUが成功した場合のみ計画されたState Set遷移が有効になる。
-- in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_integration_segments_per_tick超過はQuery / Render Slot確保およびTick Reservation作成後のPreflight Blockとして扱い、同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持する。設定上限を変更して再試行する場合も新しいTickを発行しない。
+- in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_substeps / maximum_integration_segments_per_tick超過はQuery / Render Slot確保およびTick Reservation作成後のCPU Preflight Blockとして扱い、CPU Status Queueからpoll()で観測する。GPU Physics Upload / Dispatch / Event Queryを発行せず、未使用Query / Render Candidate Slotを解放する。同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持し、設定上限を変更して再試行する場合も新しいTickを発行しない。
 - WORK_BUDGET_EXCEEDEDの間は同一Worldで後続Physics Submissionを進めず、未Reservation時間はAccumulator / Step Request Queueへ残す。
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。

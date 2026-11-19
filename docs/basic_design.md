@@ -305,7 +305,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - Animation Target / Velocity、Render Binding、属性保持: detailed_design.md §5-6 / §12-13。
 - GPU Pass、Tick Transaction、Capacity、JSON、再現性、Gate R0-R6: detailed_design.md §14-19、runtime_integration_design.md §5-10。
 - WORK_BUDGET_EXCEEDEDの回復は、Tick Reservationを維持したまま実行上限だけを更新するruntime_integration_design.md §5.6を正とする。Retry途中に物理品質・材料・時間分割条件を変更しない。
-- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.5を正とする。
+- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.6を正とする。
 
 ## 15. 参考OSS・技術資料
 
@@ -348,7 +348,7 @@ Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Dire
 - HostとRuntimeは同じImmediate Contextを単一Submission Threadから操作する。独立Physics GPU Queueを仮定しない。
 - GPU StateはRuntime内部の唯一の正とし、通常FrameでPhysics Vertex / Contact / Lambda全量をCPUへReadbackしない。
 - GPU Submission、GPU Logical Tick Commit、CPU-observed completed prefixを分離する。Event QueryはGPU Command完了を示し、Tick成功はGPU Status Bufferで判定する。
-- Capacity Overflow、CCD Unresolved、WORK_BUDGET_EXCEEDED、NonFinite、Physical Quality Gate FailureはWorking StateをCommitしない。WORK_BUDGET_EXCEEDEDは専用APIで実行予算だけを引き上げ、同じTick Reservation / Snapshot / Input VersionからRetryできる。物理品質条件や異なるEvent境界を黙って変更しない。
+- Capacity Overflow、CCD Unresolved、WORK_BUDGET_EXCEEDED、NonFinite、Physical Quality Gate FailureはWorking StateをCommitしない。Capacity / CCD / WORK_BUDGET_EXCEEDEDの回復可能な超過はBLOCKEDとし、Tick Reservation / Sequence / Input Versionを保持する。Work BudgetはCPU Preflight Status QueueまたはGPU Dynamic TOI Status Buffer + Event Queryから観測し、専用APIでAdmission Limitだけを更新して同じReservationをRetryする。物理品質条件や異なるEvent境界を黙って変更しない。
 - Hostが利用できるGPUデータはCommitted State専用のRead-only Render Bindingとする。Render BindingはPosition / Normal / TangentのSRV、Stride / Count / Resource Generationを持つ。内部Solver Buffer / Scratch / Writable UAVを公開しない。
 - Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限を集約してWorld共通Substep数を決定し、Soft Body / Cloth / Contact / Animation Trackingへ同一Substep時間を適用する。Contact capの初期値は1/120秒、0は明示無効。Animation Span Key / Loop / Blend / Root、Force / Impulse Event境界とTOIでIntegration Segmentへ分割し、maximum_integration_segments_per_tick（初期値512）を超える場合はReservationを保持してBlockする。全参加Solverを同じSegment時間で進め、v1ではSolverごとの独立Subcyclingを行わない。
 - in-flight GPU Tickは既定2件、設定可能範囲1 / 2 / 4件とする。各TickのImmutable Dispatch Planと先行Tick Gateを必須とし、Status Query Ring容量は設定上限以上とする。性能比較で変更する場合は同じR0 Gateを再実行する。
