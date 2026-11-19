@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 now have persistent deterministic input vectors under tests/fixtures/design_review/toi_snap_and_profile.json, including scalar and coupled-island Snap cases and tau=0 continuation-segment semantics. They remain specified_not_implemented until executable assertions consume the fixtures and pass CI.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 have persistent deterministic input vectors. Case 46 separates scalar uncoupled impulse algebra from Snap authorization: without certified G_internal / G_contact / G_v interval outputs, the scalar fixture must keep Snap disabled. The coupled-island fixture includes normal, tangential and cross-Delassus inputs plus candidate/boundary friction and XPBD support-impulse inputs, but remains Snap-disabled until a certified complete finite-iteration interval result is attached. They remain specified_not_implemented until executable assertions consume the fixtures and pass CI.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -613,7 +613,10 @@
       {
         "id": "DCR_45_TOI_ZERO_TIME_RUNTIME_PARITY",
         "test_case": 45,
-        "fixture_id": "DCR_45_TAU_ZERO"
+        "fixture_ids": [
+          "DCR_45_TAU_ZERO",
+          "DCR_45_TAU_AT_SEGMENT_END"
+        ]
       },
       {
         "id": "DCR_46_TOI_BOUNDARY_ID_AND_FULL_SNAP_ERROR_BUDGET",
@@ -631,7 +634,7 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
+    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; Snap_authorization_fixtures_fail_closed"
   },
   "latest_ci_attempt": {
     "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
