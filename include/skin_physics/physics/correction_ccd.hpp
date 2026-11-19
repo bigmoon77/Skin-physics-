@@ -253,7 +253,8 @@ namespace skin_physics::physics
         // Segment-local latch reused unchanged by every Position-Writer Epoch.
         bool has_segment_side_latch = false;
         asset::vec3 segment_reference_normal;
-        int8_t segment_allowed_side_sign = 0;    };
+        int8_t segment_allowed_side_sign = 0;
+    };
 
     struct edge_edge_correction_motion
     {
