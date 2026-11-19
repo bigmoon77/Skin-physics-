@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track newly specified regression cases from senior-engineer design reviews without claiming that fixtures or executable tests already exist. Cases remain specified_not_implemented until persistent fixtures and executable assertions are committed and pass CI.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 now have persistent deterministic input vectors under tests/fixtures/design_review/toi_snap_and_profile.json. They remain specified_not_implemented until executable assertions consume the fixtures and pass CI.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -612,17 +612,25 @@
       },
       {
         "id": "DCR_45_TOI_ZERO_TIME_RUNTIME_PARITY",
-        "test_case": 45
+        "test_case": 45,
+        "fixture_id": "DCR_45_TAU_ZERO"
       },
       {
         "id": "DCR_46_TOI_BOUNDARY_ID_AND_FULL_SNAP_ERROR_BUDGET",
-        "test_case": 46
+        "test_case": 46,
+        "fixture_ids": [
+          "DCR_46_BOUNDARY_IDENTITY",
+          "DCR_46_SNAP_ERROR_BUDGET"
+        ]
       },
       {
         "id": "DCR_47_DEPLOYMENT_PROFILE_SAMPLE_AND_TARGET_LIMIT_QUALIFICATION",
-        "test_case": 47
+        "test_case": 47,
+        "fixture_id": "DCR_47_POOLED_RAW_SAMPLE_PERCENTILE"
       }
-    ]
+    ],
+    "fixture_bundle": "design_review/toi_snap_and_profile.json",
+    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
   },
   "latest_ci_attempt": {
     "commit": "6ab2e1feb9be871004b9e3a51b5821499a76c37c",
