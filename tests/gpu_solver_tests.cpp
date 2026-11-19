@@ -1148,18 +1148,38 @@ namespace
         ID3D11DeviceContext* context,
         ID3D11ComputeShader* shader)
     {
-        const float contact_thickness = 0.02f;
+        const test_json::value correction_fixture = test_json::load(
+            test_support::fixture_path("design_review/correction_sweep_broadphase.json"));
+        const test_json::value* crossing_case = nullptr;
+        for (const test_json::value& fixture_case :
+            correction_fixture.at("cases").as_array())
+        {
+            if (fixture_case.at("id").as_string() ==
+                "DCR_49_VT_POINT_THROUGH_TRIANGLE")
+            {
+                crossing_case = &fixture_case;
+                break;
+            }
+        }
+        require(crossing_case != nullptr,
+            "WARP correction AABB test requires the persistent VT crossing fixture.");
+
+        const test_json::value& input = crossing_case->at("input");
+        const float contact_thickness = static_cast<float>(
+            input.at("contact_thickness_m").as_number());
+        const auto triangle_before = input.at("triangle_vertices_before").as_array();
+        const auto triangle_after = input.at("triangle_vertices_after").as_array();
         const std::vector<vec3> positions_before = {
-            { 0.25f, 0.25f, 1.0f },
-            { 0.0f, 0.0f, 0.0f },
-            { 1.0f, 0.0f, 0.0f },
-            { 0.0f, 1.0f, 0.0f }
+            read_vec3(input.at("point_before")),
+            read_vec3(triangle_before[0]),
+            read_vec3(triangle_before[1]),
+            read_vec3(triangle_before[2])
         };
         const std::vector<vec3> positions_after = {
-            { 0.25f, 0.25f, -1.0f },
-            { 0.0f, 0.0f, 0.0f },
-            { 1.0f, 0.0f, 0.0f },
-            { 0.0f, 1.0f, 0.0f }
+            read_vec3(input.at("point_after")),
+            read_vec3(triangle_after[0]),
+            read_vec3(triangle_after[1]),
+            read_vec3(triangle_after[2])
         };
 
         std::vector<gpu_float4> gpu_before;
