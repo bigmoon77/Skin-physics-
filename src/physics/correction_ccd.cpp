@@ -774,7 +774,7 @@ namespace skin_physics::physics
                 }
                 const real orientation = dot(initial_normal, reference_normal);
                 if (!finite(orientation) ||
-                    std::abs(orientation) <= epsilon_length * initial_normal_length)
+                    std::abs(orientation) <= epsilon_length * epsilon_length)
                 {
                     return false;
                 }
@@ -882,6 +882,7 @@ namespace skin_physics::physics
         side_proof_status prove_correction_side(
             uint32_t& evaluations,
             uint32_t maximum_evaluations,
+            real minimum_normal_magnitude,
             SideIntervalFunction side_interval_function)
         {
             std::vector<segment> pending;
@@ -905,8 +906,8 @@ namespace skin_physics::physics
                     return side_proof_status::unresolved;
                 }
 
-                if (bounds.alignment.upper <= 0.0L ||
-                    bounds.normal_length.upper <= 0.0L)
+                if (bounds.alignment.upper <= minimum_normal_magnitude ||
+                    bounds.normal_length.upper <= minimum_normal_magnitude)
                 {
                     return side_proof_status::unresolved;
                 }
@@ -914,8 +915,8 @@ namespace skin_physics::physics
                 // The signed separation inequalities are meaningful only while
                 // the complete interval proves a non-degenerate Normal in the
                 // reference Normal's positive hemisphere.
-                if (bounds.alignment.lower > 0.0L &&
-                    bounds.normal_length.lower > 0.0L)
+                if (bounds.alignment.lower > minimum_normal_magnitude &&
+                    bounds.normal_length.lower > minimum_normal_magnitude)
                 {
                     if (bounds.phi.upper < 0.0L)
                     {
@@ -1160,6 +1161,8 @@ namespace skin_physics::physics
         const side_proof_status side_status = prove_correction_side(
             result.interval_evaluations,
             settings.maximum_interval_evaluations,
+            static_cast<real>(settings.epsilon_length) *
+                static_cast<real>(settings.epsilon_length),
             [&motion, &reference_normal, side_sign, orientation_sign,
                 &settings](const segment& range)
             {
@@ -1299,6 +1302,8 @@ namespace skin_physics::physics
         const side_proof_status side_status = prove_correction_side(
             result.interval_evaluations,
             settings.maximum_interval_evaluations,
+            static_cast<real>(settings.epsilon_length) *
+                static_cast<real>(settings.epsilon_length),
             [&motion, &reference_normal, side_sign, orientation_sign,
                 &settings](const segment& range)
             {
