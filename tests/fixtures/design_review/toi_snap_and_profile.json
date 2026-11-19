@@ -208,7 +208,7 @@
             ]
           ]
         ],
-        "responsive_subspace_min_eigenvalue_lower_bound_required": 0,
+        "responsive_subspace_min_eigenvalue_lower_bound_required": "strictly_positive_and_certified",
         "normal_relative_velocity_intervals_candidate": [
           [
             -1.01,
@@ -304,7 +304,8 @@
           "candidate_residual_bound_missing",
           "boundary_residual_bound_missing",
           "complete_island_impulse_bound_non_finite"
-        ]
+        ],
+        "conservative_gershgorin_eigenvalue_lower_bound": 1.23
       }
     },
     {
