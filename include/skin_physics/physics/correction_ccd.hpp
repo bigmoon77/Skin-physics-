@@ -1,8 +1,10 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "skin_physics/physics/collision.hpp"
 
