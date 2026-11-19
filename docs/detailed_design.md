@@ -1,10 +1,10 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.28
+- 文書バージョン: 1.29
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.23
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.25
+- 対応基本設計: basic_design.md 1.24
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.26
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
 - 前版: 1.27
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
@@ -1631,6 +1631,8 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.29: Basic Design v1.24 / Runtime Integration Design v1.26とin-flight上限1 / 2 / 4、CPU未観測件数の定義、単一Command Streamでの2-bank再利用契約を同期。
+
 - 1.28: Basic Design v1.23 / Runtime Integration Design v1.25の現行正本参照を同期。Basic Designの責務引継ぎ節とRuntime統合参照の整合を確認。
 - 1.27: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.26: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
@@ -1670,7 +1672,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 既存fixed_step_controllerとsimulation_step_pipelineはCPU Reference / Test Environment用に保持する。非同期GPU Commitの判定やProduction GPU Stateの所有には流用しない。
 - GPUがRuntime Physics Stateの唯一の正。Commit済みRender BindingだけをHostへRead-only公開し、通常FrameでPhysics Vertex / Contact / Lambdaを全量Readbackしない。
 - GPU StatusはLogical Tick単位でPENDING / SUBMITTED / GPU_COMMITTED / BLOCKED / REJECTED / FAILEDを管理する。Capacity / CCD / WORK_BUDGET_EXCEEDEDの回復可能な超過はBLOCKEDとしてReservationを保持する。CPU Preflight BlockはQueryを発行せずCPU Status Queueからpoll()で同期観測し、GPU Dynamic TOI BlockはEvent Query + Status Readbackで観測する。CPU completed timeはGPU Event Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を満たした範囲だけ進める。
-- 最大2件のin-flight Tickはexpected_predecessor_tick_sequence / expected_source_state_generation / expected_source_state_set / dispatch_idを持つImmutable Dispatch Planで連結する。Tick Commit ControlだけがCommitted State Generation / Active State Setを更新し、Rejectでは更新しない。
+- `maximum_in_flight_ticks`（1 / 2 / 4）のin-flight Tickはexpected_predecessor_tick_sequence / expected_source_state_generation / expected_source_state_set / dispatch_idを持つImmutable Dispatch Planで連結する。in-flightはGPU Submission済みかつCPU Status未観測の件数であり、GPU上の同時Physics State更新数ではない。全Tickは単一Immediate Contextの順序付きCommand Streamで直列実行し、先行Commit Gate通過後に2つのPersistent State Bankを交互に再利用する。Tick Commit ControlだけがCommitted State Generation / Active State Setを更新し、Rejectでは更新しない。
 - 後続Tickのtick_begin_controlと全Budgeted Physics Passは先行TickのCommit Sequence / State Generationを確認する。先行Tickが失敗した場合、後続TickはPhysics StateのRead / Write前にBLOCKED_BY_PREDECESSORとして停止する。先行TickをRetryしてCommitした後、後続Tickを新しいGenerationで再Submissionする。
 - get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した最後のCPU-observed committed State Generationを返す。未確認GPU CommitやWorking BufferをRendererへ公開しない。
 - Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDED / NonFinite / Physical Quality Gate失敗はTickをCommitしない。Capacity / CCD / WORK_BUDGET_EXCEEDEDが回復可能な間はBLOCKEDとし、Tick Reservation / Sequence / Input Snapshotを保持する。WORK_BUDGET_EXCEEDEDの回復はRuntime §5.6の専用実行予算APIのみを使い、TOI Dynamic Blockでのminimum_required_integration_segmentsは発見済みTOIに対する下限値として扱い、追加TOIが見つかる場合の複数Retryを許可する。候補や異なる時間境界を黙って捨てない。
