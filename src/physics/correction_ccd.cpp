@@ -929,8 +929,12 @@ namespace skin_physics::physics
                 {
                     return side_proof_status::unresolved;
                 }
-                pending.push_back({ midpoint, current.upper });
+                // Visit the interval away from the Segment-start boundary first.
+                // This allows a crossing exactly at an endpoint to be certified
+                // from the open-side interval instead of exhausting the budget
+                // forever on the subinterval that still contains that boundary.
                 pending.push_back({ current.lower, midpoint });
+                pending.push_back({ midpoint, current.upper });
             }
 
             return side_proof_status::same_side;
