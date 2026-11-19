@@ -1990,6 +1990,40 @@ namespace
             segment_state.vertex_contact_csr.contact_indices.size() == 8,
             "Final Discrete Narrowphase must refresh all active VT / EE Contacts and build the complete Vertex-to-Contact CSR.");
 
+        const auto transient_candidate =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::vertex_triangle, 1500, 15, 150,
+                1600, 16, 160);
+        auto transient_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                2001, { transient_candidate }, 4);
+        require(transient_state_result.success &&
+            transient_state_result.state.candidate_generation == 1,
+            "An initialized Segment Candidate Set must have a non-zero generation even when its input set is empty or non-empty.");
+        auto transient_state = transient_state_result.state;
+        auto transient_input = make_vt_discrete_input(transient_candidate);
+        transient_input.positions[0].z = 0.5f;
+        const auto transient_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                transient_state, 1, 0, { transient_input });
+        require(transient_refresh.success &&
+            transient_refresh.candidate_count == 1 &&
+            transient_refresh.active_contact_count == 0 &&
+            transient_state.candidates.size() == 1 &&
+            transient_state.contact_set.empty() &&
+            transient_state.vertex_contact_csr.vertex_stable_ids.empty() &&
+            transient_state.vertex_contact_csr.offsets.size() == 1 &&
+            transient_state.vertex_contact_csr.offsets[0] == 0,
+            "A same-side or transient Candidate must remain in the Candidate Union while staying out of the Active Contact Set and Vertex CSR.");
+
+        auto empty_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                2002, {}, 0);
+        require(empty_state_result.success &&
+            empty_state_result.state.candidate_generation == 1 &&
+            empty_state_result.state.candidates.empty(),
+            "An empty initial Candidate Set must still carry a valid non-zero generation.");
+
         const auto wrong_segment_begin =
             skin_physics::physics::begin_correction_position_writer_epoch(
                 segment_state, 1002, 3);
