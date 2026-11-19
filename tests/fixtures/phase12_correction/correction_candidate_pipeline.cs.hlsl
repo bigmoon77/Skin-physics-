@@ -252,6 +252,47 @@ CorrectionCandidatePair correction_make_pair(
 }
 
 [numthreads(64, 1, 1)]
+void correction_candidate_validate_primitives(uint3 dispatch_id : SV_DispatchThreadID)
+{
+    uint primitive_index = dispatch_id.x;
+    if (primitive_index >= primitive_count)
+    {
+        return;
+    }
+
+    CorrectionCandidatePrimitive primitive =
+        correction_primitives[primitive_index];
+    CorrectionAabb bounds = correction_bounds[primitive_index];
+    bool valid_bounds =
+        all(isfinite(bounds.minimum.xyz)) &&
+        all(isfinite(bounds.maximum.xyz)) &&
+        all(bounds.minimum.xyz <= bounds.maximum.xyz);
+    if (!correction_primitive_valid(primitive) ||
+        primitive.mesh_id >= mesh_count ||
+        !valid_bounds)
+    {
+        uint previous = 0u;
+        InterlockedOr(correction_candidate_totals[1], 2u, previous);
+        return;
+    }
+
+    [loop]
+    for (uint previous_index = 0u;
+        previous_index < primitive_index; ++previous_index)
+    {
+        CorrectionCandidatePrimitive previous_primitive =
+            correction_primitives[previous_index];
+        if (correction_primitive_identity_equal(
+                primitive, previous_primitive))
+        {
+            uint previous = 0u;
+            InterlockedOr(correction_candidate_totals[1], 2u, previous);
+            return;
+        }
+    }
+}
+
+[numthreads(64, 1, 1)]
 void correction_candidate_count(uint3 dispatch_id : SV_DispatchThreadID)
 {
     uint pair_index = dispatch_id.x;
@@ -270,11 +311,24 @@ void correction_candidate_count(uint3 dispatch_id : SV_DispatchThreadID)
     uint primitive_b_index = seed_pair.y;
     if (primitive_a_index >= primitive_count ||
         primitive_b_index >= primitive_count ||
-        primitive_a_index == primitive_b_index)
+        primitive_a_index >= primitive_b_index)
     {
         uint previous = 0u;
         InterlockedOr(correction_candidate_totals[1], 2u, previous);
         return;
+    }
+
+    [loop]
+    for (uint previous_pair_index = 0u;
+        previous_pair_index < pair_index; ++previous_pair_index)
+    {
+        uint2 previous_pair =
+            correction_candidate_pair_seeds[previous_pair_index];
+        if (previous_pair.x == primitive_a_index &&
+            previous_pair.y == primitive_b_index)
+        {
+            return;
+        }
     }
 
     CorrectionCandidatePrimitive primitive_a =
@@ -371,6 +425,14 @@ void correction_candidate_fill(uint3 dispatch_id : SV_DispatchThreadID)
     uint2 seed_pair = correction_candidate_pair_seeds[pair_index];
     uint primitive_a_index = seed_pair.x;
     uint primitive_b_index = seed_pair.y;
+    if (primitive_a_index >= primitive_count ||
+        primitive_b_index >= primitive_count ||
+        primitive_a_index >= primitive_b_index)
+    {
+        uint previous = 0u;
+        InterlockedOr(correction_candidate_totals[1], 2u, previous);
+        return;
+    }
     CorrectionCandidatePrimitive primitive_a =
         correction_primitives[primitive_a_index];
     CorrectionCandidatePrimitive primitive_b =
