@@ -1692,6 +1692,8 @@ namespace skin_physics::physics
         {
             correction_discrete_contact contact;
             contact.key = input.key;
+            contact.participant_vertex_stable_ids =
+                input.vertex_stable_ids;
 
             if (input.key.contact_type ==
                 correction_contact_type::vertex_triangle)
@@ -1857,6 +1859,195 @@ namespace skin_physics::physics
 
         result.active_contact_count = state.contact_set.size();
         result.success = true;
+        return result;
+    }
+
+    correction_segment_commit_gate_result validate_correction_segment_commit_gate(
+        const correction_segment_candidate_state& state)
+    {
+        correction_segment_commit_gate_result result;
+        result.candidate_generation = state.candidate_generation;
+        result.position_writer_epoch_generation =
+            state.position_writer_epoch_generation;
+
+        const auto reject = [&result](const std::string& diagnostic)
+        {
+            result.status = correction_segment_commit_gate_status::rejected;
+            result.commit_allowed = false;
+            result.diagnostic = diagnostic;
+            return result;
+        };
+
+        if (state.base_integration_segment_id == 0 ||
+            state.candidate_generation == 0)
+        {
+            return reject(
+                "Segment Commit Gate requires a valid Integration Segment and non-zero Candidate Generation.");
+        }
+        if (!state.contact_set_current ||
+            !state.vertex_contact_csr_current ||
+            !state.vertex_contact_csr.current)
+        {
+            return reject(
+                "Segment Commit Gate rejected stale Contact Set or Vertex-to-Contact CSR data.");
+        }
+        if (state.contact_set_candidate_generation !=
+                state.candidate_generation ||
+            state.contact_set_position_writer_epoch_generation !=
+                state.position_writer_epoch_generation ||
+            state.vertex_contact_csr_candidate_generation !=
+                state.candidate_generation ||
+            state.vertex_contact_csr_position_writer_epoch_generation !=
+                state.position_writer_epoch_generation ||
+            state.vertex_contact_csr.candidate_generation !=
+                state.candidate_generation ||
+            state.vertex_contact_csr.position_writer_epoch_generation !=
+                state.position_writer_epoch_generation)
+        {
+            return reject(
+                "Segment Commit Gate detected a Contact / CSR Generation mismatch.");
+        }
+
+        if (!std::is_sorted(
+                state.candidates.begin(), state.candidates.end()) ||
+            std::adjacent_find(
+                state.candidates.begin(), state.candidates.end()) !=
+                state.candidates.end())
+        {
+            return reject(
+                "Segment Candidate Union is not strictly sorted and unique.");
+        }
+
+        if (state.contact_set.size() > state.candidates.size())
+        {
+            return reject(
+                "Active Contact Set contains more Contacts than the Segment Candidate Union.");
+        }
+        for (const correction_discrete_contact& contact : state.contact_set)
+        {
+            if (!std::binary_search(
+                    state.candidates.begin(), state.candidates.end(),
+                    contact.key))
+            {
+                return reject(
+                    "Active Contact Set contains a Pair outside the Segment Candidate Union.");
+            }
+
+            std::array<uint64_t, 4> sorted_vertex_ids =
+                contact.participant_vertex_stable_ids;
+            std::sort(sorted_vertex_ids.begin(), sorted_vertex_ids.end());
+            if (std::adjacent_find(
+                    sorted_vertex_ids.begin(), sorted_vertex_ids.end()) !=
+                sorted_vertex_ids.end())
+            {
+                return reject(
+                    "Active Contact Set contains duplicate participant Vertex Stable IDs.");
+            }
+        }
+
+        const correction_vertex_contact_csr& csr =
+            state.vertex_contact_csr;
+        if (csr.offsets.size() != csr.vertex_stable_ids.size() + 1u ||
+            csr.offsets.empty() ||
+            csr.offsets.front() != 0u ||
+            csr.offsets.back() != csr.contact_indices.size() ||
+            !std::is_sorted(csr.offsets.begin(), csr.offsets.end()) ||
+            !std::is_sorted(
+                csr.vertex_stable_ids.begin(),
+                csr.vertex_stable_ids.end()) ||
+            std::adjacent_find(
+                csr.vertex_stable_ids.begin(),
+                csr.vertex_stable_ids.end()) !=
+                csr.vertex_stable_ids.end())
+        {
+            return reject(
+                "Vertex-to-Contact CSR row offsets or Stable Vertex ordering are invalid.");
+        }
+
+        std::vector<uint32_t> contact_reference_counts(
+            state.contact_set.size(), 0u);
+        for (std::size_t row = 0;
+            row < csr.vertex_stable_ids.size(); ++row)
+        {
+            const uint64_t vertex_id = csr.vertex_stable_ids[row];
+            const uint32_t row_begin = csr.offsets[row];
+            const uint32_t row_end = csr.offsets[row + 1u];
+            if (row_end > csr.contact_indices.size())
+            {
+                return reject(
+                    "Vertex-to-Contact CSR row offset exceeds the Contact Index buffer.");
+            }
+
+            uint32_t previous_contact_index = 0u;
+            bool has_previous_contact_index = false;
+            for (uint32_t entry = row_begin; entry < row_end; ++entry)
+            {
+                const uint32_t contact_index = csr.contact_indices[entry];
+                if (contact_index >= state.contact_set.size() ||
+                    (has_previous_contact_index &&
+                        contact_index <= previous_contact_index))
+                {
+                    return reject(
+                        "Vertex-to-Contact CSR contains an invalid or duplicate Contact Index.");
+                }
+
+                const correction_discrete_contact& contact =
+                    state.contact_set[contact_index];
+                if (std::find(
+                        contact.participant_vertex_stable_ids.begin(),
+                        contact.participant_vertex_stable_ids.end(),
+                        vertex_id) ==
+                    contact.participant_vertex_stable_ids.end())
+                {
+                    return reject(
+                        "Vertex-to-Contact CSR references a Contact that does not contain its row Vertex.");
+                }
+
+                ++contact_reference_counts[contact_index];
+                previous_contact_index = contact_index;
+                has_previous_contact_index = true;
+            }
+        }
+
+        for (uint32_t reference_count : contact_reference_counts)
+        {
+            if (reference_count != 4u)
+            {
+                return reject(
+                    "Vertex-to-Contact CSR does not contain exactly four participant references per active VT / EE Contact.");
+            }
+        }
+
+        if (!std::is_sorted(
+                state.side_latches.begin(), state.side_latches.end(),
+                [](const correction_segment_side_latch& left,
+                    const correction_segment_side_latch& right)
+                {
+                    return left.key < right.key;
+                }))
+        {
+            return reject(
+                "Segment Side Latches are not stored in Canonical Pair order.");
+        }
+        for (std::size_t index = 0;
+            index < state.side_latches.size(); ++index)
+        {
+            const correction_segment_side_latch& latch =
+                state.side_latches[index];
+            if ((latch.allowed_side_sign != -1 &&
+                    latch.allowed_side_sign != 1) ||
+                !finite(latch.reference_normal) ||
+                latch.topology_vertex_stable_ids.empty() ||
+                (index > 0 &&
+                    state.side_latches[index - 1u].key == latch.key))
+            {
+                return reject(
+                    "Segment Side Latch is invalid, duplicated, or missing its topology signature.");
+            }
+        }
+
+        result.status = correction_segment_commit_gate_status::ready;
+        result.commit_allowed = true;
         return result;
     }
 
