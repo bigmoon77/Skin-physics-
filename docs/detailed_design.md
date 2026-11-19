@@ -1590,6 +1590,8 @@ Logical Tick State:
 
 Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDEDは回復可能な間は`BLOCKED`とし、`REJECTED`へ分類しない。NonFinite / Invalid Asset / ABI mismatchは自動Retryせず`REJECTED`またはLoad Errorとする。DeviceRemovedおよびuint32範囲を超えるWork Countは`FAILED`とする。
 
+ただしCorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure / ContactGeometryUnresolvedは上記一般的な回復可能CCD / Geometry Blockの対象外である。現行v1にはCorrection CCD区間予算やContact Position Iterationを同一Reservationで増加するRecovery APIがないためREJECTEDとする。実Buffer Capacity超過はBroadphaseOverflowとしてBLOCKEDにする。
+
 GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはGPU Event Query完了・COMMITTED Status Readback・連続Tick Prefixの3条件をCPUが確認した状態である。CPU Preflight BlockはGPU Submissionを行わないためEvent Queryを必要とせず、CPU Scheduler Status Queueへ同期記録され、`poll()`が同じ呼出しで観測可能な`BLOCKED`状態として返す。GPU Dynamic TOI BlockはGPU Status BufferとEvent Queryで非同期に回収する。CPU observed completed timeはCpuObserved Prefixから算出し、BlockされたTickでは進めない。
 
 予測位置と確定位置を分離する。Broadphase / Candidate / Contact / Contributionのoverflow、非有限状態、Correction Motion CCD Unresolved、Correction Path Crossing、Contact Geometry Unresolvedが検出されたStepはCommitしない。Broadphase Envelopeは§9.4.1のとおり、物理Segment Swept AABBと全XPBD Position-Writer EpochのCorrection Swept AABBのUnionとする。固定の「最大拘束補正余裕」は使用しない。各Epoch後に補正経路のBroadphase / Correction Motion CCDを実行し、Candidate Unionへ追加する。最終Discrete Candidateを含むUnionに対してContact Setを再構築する。CorrectionPathCrossing / CorrectionCcdUnresolved / BroadphaseCompletenessFailure / ContactGeometryUnresolvedはREJECTEDとし、自動Retryしない。実際のBuffer Capacity超過はBroadphaseOverflowとしてBLOCKEDにし、同じReservation / Input Snapshotを保持してCapacity Retryする。未解決の候補・補正を許容してCommitしたり、有限サンプルをNo-Hit証明へ置換したりしない。
@@ -1742,7 +1744,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
-## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.27）
+## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.28）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～49は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
