@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.18
+- 文書バージョン: 1.19
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.14
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.15
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.10
-- 前版: 1.15
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.16
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.11
+- 前版: 1.18
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1159,7 +1159,21 @@ Candidate tauとSnap先時刻t_bの差をdelta_t=abs(tau-t_b)とする。Snap可
                          + xpbd_velocity_response_bound
                          + xpbd_dt_sensitivity_velocity_bound * delta_t
 
-XPBD応答BoundはConstraint Gradient / Effective Inverse Mass / Compliance / Iteration数 / Solver Residualを含む。dt感度Boundはalpha_tilde = compliance / dt_segment^2の変化を含む。Impulse BoundはContact Effective Mass / Normal Variation / Restitution / Frictionを含む応答差を上から抑える。
+XPBDのSnap誤差Boundは、次の有限反復Solver写像をCandidate時刻とBoundary時刻で比較して求める。写像は実装が実行するConstraint順序、反復数、Relaxation、Projection、Clamp、Lambda更新規則を完全に固定したものとする。
+
+    G_p(z, dt) = finite_iteration_xpbd_position_solver(z, dt)
+    G_v(z, dt) = finite_iteration_xpbd_velocity_response(z, dt)
+
+ここでzはSolver入力全体を表し、少なくともSegment開始Position / Velocity、Candidate / BoundaryのTrajectory入力、Constraint Gradient、Effective Inverse Mass、Compliance、Rest Data、Constraint Active Set、Projection / Clamp Branch、Iteration設定を含む。dtは各評価時刻の実際のXPBD Segment時間であり、alpha_tilde = compliance / dt^2をSolverと同じ演算順で再計算する。UはCandidateとBoundary双方の入力区間を包含する不確かさ集合、z_bはBoundary入力とする。
+
+    E_Gp = sup { ||G_p(z, dt) - G_p(z_b, dt_b)||_2 : z in U }
+    E_Gv = sup { ||G_v(z, dt) - G_v(z_b, dt_b)||_2 : z in U }
+    E_xpbd_position = E_Gp + r_p_candidate + r_p_boundary
+    E_xpbd_velocity = E_Gv + r_v_candidate + r_v_boundary
+
+r_p / r_vは各側の有限反復評価・浮動小数点評価に残るSolver Residual / 数値評価誤差をPosition / Velocity単位へ変換した保守上限である。Residualを既にG_p / G_vの区間出力へ包含した場合は二重加算しない。従来式のxpbd_response_lipschitz_bound、xpbd_dt_sensitivity_*は、この完全写像差を証明する分解表現としてのみ使用し、単独の経験係数をBoundとして認めない。
+
+G_p / G_vの区間評価は外向き丸め付きInterval / Affine Arithmetic、または入力全域に対するJacobian / Operator Normと各入力区間幅の伝播で行う。Constraint Gradient / Effective Inverse Mass / Compliance / dtの変動を全反復へ伝播し、Candidate / Boundary双方の全Iteration中間状態を包含する。Active Set、片側Constraintの有効 / 無効、Clamp、Friction / Projection等の分岐がU内で変化し得る場合は、到達可能な全Branchを分割・評価する。全Branchを包含できない、写像が不連続な箇所の有限上界を証明できない、またはResidualを単位変換できない場合は該当Boundをunknownとし、Snapを禁止する。有限個のサンプル最大値や有限差分の観測値は保守Boundとして認めない。
 
 **Impact Impulse Error Bound（Normative）**
 
@@ -1229,7 +1243,7 @@ Snapの最終条件は、時間差・E_total_position・E_relative_velocity・E_
 
 Snapを許可する条件は、時間差 <= tau_snap_tolerance、E_total_position <= distance_tolerance、E_relative_velocity <= relative_velocity_tolerance、impulse_error_bound <= impulse_toleranceの全てである。distance_tolerance [m]、relative_velocity_tolerance [m/s]、impulse_tolerance [N*s]はNumerical Acceptance Profileのtoi_snap_error_budgetにFixture / Workloadごとに必須指定する。いずれか未指定、非有限、または保守Boundを証明できない場合はSnapを禁止し、正確なtauで独立した内部Boundaryを作る。正確なtauのCCDも安全に評価できない場合だけCCDUnresolvedとしてCommitしない。
 
-tau=0はInitial Contact Eventとしてゼロ時間prefix / Velocity Reconstructionを作らない。Dynamic VertexはSegment開始Velocityを保持し、Fixed / Kinematic Vertexはtau=0の解析的Trajectory Derivativeを使う。tau=dt_segmentはSegment終端Contact Eventとして扱い、残時間Segmentを作らない。端点近傍のPositive-Time Candidateも全Snap Boundを満たす場合だけ端点へSnapし、それ以外は正確なtauを保持。
+tau=0はInitial Contact Eventとしてゼロ時間prefix / Velocity Reconstructionを作らない。Dynamic VertexはSegment開始Velocityを保持し、Fixed / Kinematic Vertexはtau=0の解析的Trajectory Derivativeを使う。Impact解決後は残時間dt_segment-tau=dt_segmentの全量を、Impact後Stateを開始Stateとする新しいResidual Integration Segment（新しいbase_integration_segment_id）で一度だけ進める。これはゼロ時間prefixを伴わないContinuation Segmentであり、interior Split Countは増やさないが、追加Segment数とWork Budgetには計上する。tau=dt_segmentはSegment終端Contact Eventとして扱い、残時間Segmentを作らない。端点近傍のPositive-Time Candidateも全Snap Boundを満たす場合だけ端点へSnapし、それ以外は正確なtauを保持。
 
 現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。CA time toleranceは`tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`、Snap / Grouping time toleranceは`tau_snap_tolerance = min(tau_tolerance, 0.25 * dt_segment)`とする。TOI Reductionは最小tau、既存Boundary候補、同時TOI Group候補および各候補のConservative `v_bound` / `kinematic_path_deviation_bound`を返す。Groupに含まれる各Contactを別Splitとして数えてはならない。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算とTOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint ChordはSwept AABBのBroadphase基準形状としてだけ使う。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
 
@@ -1242,15 +1256,15 @@ TOIが確定したら、検出に使った離散軌道と同一の位置・速�
     x_path(tau) = position_segment_start + tau * path_velocity
     v_path(tau) = path_velocity
 
-Endpoint / 既存BoundaryへSnapされなかった内部TOIは、Contact Group化と別に`toi_time_boundary_id`を割り当てる。同じIEEE-754 float32 tauビット列を持つCandidateは、幾何学的位置が異なり別Contact Groupへ分類されても同一時間Boundaryとして扱う。異なるtauのBoundary統合は、§11.4の全Snap条件（時間差、XPBD後位置、dt感度、相対Velocity、Contact Island全体のImpulse誤差）を各Candidateが同時に満たす場合だけ許可する。統合先は最も早いtauとし、誤差Boundは各Candidateから統合先まで個別に評価する。いずれかのCandidate / Contact IslandでBoundまたは許容値が欠落・非有限・証明不能なら統合せず、各Candidateの正確なtauを独立Boundaryとして保持する。`discovered_toi_split_count`は新たに追加された`toi_time_boundary_id`ごとに1回だけ増やす。同一Boundaryに属する複数Contact Group / Contactは追加Splitを増やさない。Contact Event Groupは時間差と各Contactの幾何誤差条件の両方を満たす場合だけ構成し、幾何条件を満たさないContactは別Groupに残す。同一Boundaryの各Groupは同じBoundary Timeで順序付けし、Group内はContact Key順に処理する。TOI候補の並び順によらずBoundary ID / Contact Group / Countを決定的にする。
+Endpoint / 既存BoundaryへSnapされなかった内部TOIは、Contact Group化と別に`toi_time_boundary_id`を割り当てる。同じIEEE-754 float32 tauビット列を持つCandidateは、幾何学的位置が異なり別Contact Groupへ分類されても同一時間Boundaryとして扱う。異なるtauのBoundary統合は、§11.4の全Snap条件（時間差、XPBD後位置、dt感度、相対Velocity、Contact Island全体のImpulse誤差）を各Candidateが同時に満たす場合だけ許可する。統合先は最も早いtauとし、誤差Boundは各Candidateから統合先まで個別に評価する。いずれかのCandidate / Contact IslandでBoundまたは許容値が欠落・非有限・証明不能なら統合せず、各Candidateの正確なtauを独立Boundaryとして保持する。`discovered_toi_split_count`は新たに追加された内部`toi_time_boundary_id`ごとに1回だけ増やす。同一Boundaryに属する複数Contact Group / Contactは追加Splitを増やさない。別途`discovered_toi_segment_count`はTOI処理で新規生成したResidual / Continuation Segmentごとに1回増やし、tau=0の全長Continuation Segmentも含める。tau=0はsplit_countを増やさずsegment_countを1増やす。tau=dt_segmentはどちらも増やさない。Contact Event Groupは時間差と各Contactの幾何誤差条件の両方を満たす場合だけ構成し、幾何条件を満たさないContactは別Groupに残す。同一Boundaryの各Groupは同じBoundary Timeで順序付けし、Group内はContact Key順に処理する。TOI候補の並び順によらずBoundary ID / Contact Group / Countを決定的にする。
 
-tau=0のInitial Contact EventではSegment-start state / velocity / Kinematic Trajectory Derivativeを使用し、ゼロ時間prefixを作らず`(x_internal_solved - x_segment_start) / tau`によるVelocity Reconstructionを実行しない。Positive-Timeの内部TOIではprefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを先に解く。Soft Bodyはprefix軌道状態を維持する。Contact Position Constraintを解く前にDynamic VertexのContact前Velocityを(x_internal_solved - x_segment_start) / tauで再構築して保存する。次にTOI Contact Position Constraintを解くが、Contact位置補正後にVelocityを再構築しない。保存済みContact前VelocityをCoupled Projected Jacobiへ渡し、ResidualがAcceptance範囲へ収束した場合だけImpactを一度Commitする。W_ii <= epsilon_inverse_massの非応答ContactはPosition / ImpulseをSkipする。
+tau=0のInitial Contact EventではSegment-start state / velocity / Kinematic Trajectory Derivativeを使用し、ゼロ時間prefixを作らず`(x_internal_solved - x_segment_start) / tau`によるVelocity Reconstructionを実行しない。Impact解決後はdt_segment全量を新しいResidual Integration Segmentとして一度だけ処理し、そのSegmentに新しいbase_integration_segment_idを割り当てる。Positive-Timeの内部TOIではprefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを先に解く。Soft Bodyはprefix軌道状態を維持する。Contact Position Constraintを解く前にDynamic VertexのContact前Velocityを(x_internal_solved - x_segment_start) / tauで再構築して保存する。次にTOI Contact Position Constraintを解くが、Contact位置補正後にVelocityを再構築しない。保存済みContact前VelocityをCoupled Projected Jacobiへ渡し、ResidualがAcceptance範囲へ収束した場合だけImpactを一度Commitする。W_ii <= epsilon_inverse_massの非応答ContactはPosition / ImpulseをSkipする。
 
 Kinematic Animation CurveとEndpoint Chordの差は、有限個のサンプル最大値で保証しない。Animation Evaluatorは各Kinematic Geometry Primitive / VertexについてSegment内全時刻のChord偏差上限kinematic_path_deviation_boundと、CA用の区間速度上限kinematic_path_speed_boundを返す。CUBICSPLINEのTranslationはHermite曲線をBezier Control Hullへ変換し、Chordとの差分Bezier Control Pointの最大Normを保守的上限とする。Quaternion / Bone Hierarchy / Skinningを含む変換は区間演算または保守的な導関数Boundを階層合成・Skin Weight合成へ伝播する。固定軸Slerpで動く剛体Colliderの回転Chord偏差は、Collider原点からの最大距離r_maxと角度thetaからsagitta_bound = r_max * (1 - cos(theta / 2))で求める（theta <= piとなるまで分割）。Translation Curveの偏差Boundと回転BoundはSwept AABBへ加算膨張する。Kinematic Trajectoryの区間速度上限はTranslation / Skinningの導関数Boundと、剛体Colliderではmax(|v_linear|) + max(|omega|) * r_maxを使う。
 
 kinematic_path_deviation_boundがdistance_tolerance以下になるまで最大分割深度8で決定的にSegment細分化する。深度8でもBoundが許容値を超える、またはDeviation / Speed Evaluatorが保守的Boundを返せない場合はCCDUnresolvedとしてTickをCommitしない。Conservative AdvancementはChord上の距離ではなく実Trajectory位置で評価した距離d(tau)を使い、v_boundへkinematic_path_speed_boundを含める。TOI prefix位置にはtau時刻のAnimation Target / Rigid Transform Trajectoryを直接評価し、Contact Relative Velocityには同時刻のAnimation Target Trajectory微分、Kinematic Colliderではv_linear + omega cross radiusを使う。実サンプル点の偏差は診断・校正用に計測するが、合否は保守的Boundで決める。Run Manifestへ最大Deviation Bound / Speed Bound・分割深度・未解決数を記録する。
 
-残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。Impact後Velocityは残Segment開始Velocityとして固定し、同じTOI Segmentの末尾で再Velocity Reconstructionしない。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
+残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。tau=0では残時間がdt_segment全量となるため、新しい全長Continuation Segmentを必ず1つ生成する。tau=dt_segmentでは残時間0のSegmentを生成しない。Impact後Velocityは残Segment開始Velocityとして固定し、同じTOI Segmentの末尾で再Velocity Reconstructionしない。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
 
 1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる時間許容差は`tau_snap_tolerance`とし、各Contactの代表時刻への位置差Boundが個別`distance_tolerance`以下であることを同時Group化の追加条件とする。Event内のImpulseはContact Key順に一度だけ適用する。TOI以前のprefixは§11.4のx_path(tau) / v_path(tau)からWorld全体で構成する。Positive-Time TOI時はEndpoint Contactを確定せず、同じ離散path上のTOI位置でtauをXPBD時間として内部Constraint / Contact Constraintを解き、Impactを適用する。残時間はImpact後の状態から全参加Solver共通の新Segmentとして進める。Solverごとに異なるtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
@@ -1417,7 +1431,7 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 
 ## 16. 容量・エラー・ステップ状態
 
-`WORK_BUDGET_EXCEEDED`はAdmission Limit超過を示す再試行可能な状態であり、Logical Tick Stateは必ず`BLOCKED`とする。TickはCommitせず、同じTick Reservation / Sequence / Input Snapshotを保持する。CPU Preflightで判定した場合は`CPU_PREFLIGHT`、GPU実行中のTOI分割で判定した場合は`GPU_DYNAMIC_TOI`をStatusへ記録する。TOIで報告する`minimum_required_integration_segments`は発見済み分割だけから証明できる下限値であり、未発見の後続TOIを含む最終総数とは解釈しない。Status Field、Poll、Retry、Hard Limitの詳細は [runtime_integration_design.md](runtime_integration_design.md) §3.4 / §5.6を正とする。
+`WORK_BUDGET_EXCEEDED`はAdmission Limit超過を示す再試行可能な状態であり、Logical Tick Stateは必ず`BLOCKED`とする。TickはCommitせず、同じTick Reservation / Sequence / Input Snapshotを保持する。CPU Preflightで判定した場合は`CPU_PREFLIGHT`、GPU実行中のTOI分割で判定した場合は`GPU_DYNAMIC_TOI`をStatusへ記録する。TOIで報告する`minimum_required_integration_segments`は発見済み追加Segmentだけから証明できる下限値であり、未発見の後続TOIを含む最終総数とは解釈しない。下限は`planned_integration_segments + discovered_toi_segment_count`とし、内部Boundary数を表す`discovered_toi_split_count`とは区別する。Status Field、Poll、Retry、Hard Limitの詳細は [runtime_integration_design.md](runtime_integration_design.md) §3.4 / §5.6を正とする。
 
 シミュレーションインスタンスとGPU Logical Tickは状態を分けて管理する。
 
@@ -1606,3 +1620,8 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - Production Runtimeの実装開始は独立Critical ReviewとGate R0～R6の実装計画承認後とする。採用値とReview Checklistは [design_closure.md](design_closure.md) を正とする。
 
 本改訂は設計追加であり、GPU Production Runtimeの実装・Build・Physical GPU Performanceを意味しない。文書状態はINDEPENDENT REVIEW REQUIREDとする。
+
+
+## 改訂履歴
+
+- v1.19: XPBD Snap誤差を有限反復Solver写像G_p / G_vの不確かさ集合上の差として定義。tau=0の全長Continuation Segmentと、Split Count / 追加Segment Count / Admission下限を分離。
