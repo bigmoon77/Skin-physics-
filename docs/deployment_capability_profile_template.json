@@ -178,6 +178,7 @@
       },
       "count_consistency": "run_count must equal the array length; every array element represents one complete independent run."
     },
-    "p95_method": "Pool every raw per-frame / per-Tick / per-submission sample from all complete independent runs in the selected trial, then compute each p95 once over the pooled population. Never average, pool, or otherwise aggregate per-run p95 summaries. Maximum GPU Tick and Peak Library GPU Memory are maxima over all samples / runs."
+    "percentile_method": "nearest_rank",
+    "p95_method": "Pool every raw per-frame / per-Tick / per-submission sample from all complete independent runs in the selected trial, sort ascending, and select the 1-based observation at rank ceil(0.95 * N), without interpolation. Compute each p95 once over the pooled population. Never aggregate per-run p95 summaries. Maximum GPU Tick and Peak Library GPU Memory are maxima over all samples / runs."
   }
 }
