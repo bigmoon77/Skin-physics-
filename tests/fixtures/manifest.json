@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Case 46 contains an algebra-only scalar uncoupled fixture and a coupled two-contact fixture with an explicitly assembled 6x6 generalized Delassus matrix. Snap remains disabled until full finite-iteration XPBD map certificates, full-matrix responsive-subspace eigenvalue bounds with stable rank / basis, and complete Contact Island L2 impulse error bounds are certified. Cases 45-47 remain specified_not_implemented until executable assertions consume the fixture vectors and pass CI.",
+    "purpose": "Track senior-engineer design-review regression cases. Case 46 separates local generalized Delassus solver coefficients from World-space per-contact impulse vectors used for Snap error. The coupled fixture supplies the full 6x6 local-coordinate Delassus interval, but has no certified World-space output, tangent-basis rotation, residual or responsive-subspace interval bounds; Snap remains disabled. Cases 45-47 remain specified_not_implemented until executable assertions consume the fixture vectors and pass CI.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -634,8 +634,8 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; full_6x6_interval_and_responsive_subspace_certificate_not_provided; Snap_authorization_fixtures_fail_closed",
-    "fixture_version": "1.4"
+    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; world_space_impulse_and_full_6x6_responsive_subspace_certificates_not_provided; Snap_authorization_fixtures_fail_closed",
+    "fixture_version": "1.5"
   },
   "latest_ci_attempt": {
     "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
