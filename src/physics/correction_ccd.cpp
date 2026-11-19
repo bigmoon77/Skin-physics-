@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1248,6 +1249,178 @@ namespace skin_physics::physics
                 interval_scale(value.z, scalar)
             };
         }
+    }
+
+    bool correction_candidate_pair_key::operator==(
+        const correction_candidate_pair_key& other) const
+    {
+        return contact_type == other.contact_type &&
+            mesh_a == other.mesh_a &&
+            primitive_a == other.primitive_a &&
+            mesh_b == other.mesh_b &&
+            primitive_b == other.primitive_b;
+    }
+
+    bool correction_candidate_pair_key::operator<(
+        const correction_candidate_pair_key& other) const
+    {
+        return std::tie(contact_type, mesh_a, primitive_a, mesh_b, primitive_b) <
+            std::tie(other.contact_type, other.mesh_a, other.primitive_a,
+                other.mesh_b, other.primitive_b);
+    }
+
+    correction_candidate_pair_key make_canonical_correction_candidate_key(
+        correction_contact_type contact_type,
+        uint32_t mesh_a,
+        uint32_t primitive_a,
+        uint32_t mesh_b,
+        uint32_t primitive_b)
+    {
+        const std::pair<uint32_t, uint32_t> endpoint_a = {
+            mesh_a, primitive_a
+        };
+        const std::pair<uint32_t, uint32_t> endpoint_b = {
+            mesh_b, primitive_b
+        };
+        if (endpoint_b < endpoint_a)
+        {
+            std::swap(mesh_a, mesh_b);
+            std::swap(primitive_a, primitive_b);
+        }
+
+        correction_candidate_pair_key result;
+        result.contact_type = contact_type;
+        result.mesh_a = mesh_a;
+        result.primitive_a = primitive_a;
+        result.mesh_b = mesh_b;
+        result.primitive_b = primitive_b;
+        return result;
+    }
+
+    correction_candidate_union_result merge_correction_candidate_union(
+        const std::vector<correction_candidate_pair_key>& existing_candidates,
+        const std::vector<correction_candidate_pair_key>& incoming_candidates,
+        std::size_t capacity)
+    {
+        correction_candidate_union_result result;
+        if (existing_candidates.size() >
+            std::numeric_limits<std::size_t>::max() - incoming_candidates.size())
+        {
+            result.overflow = true;
+            return result;
+        }
+
+        std::vector<correction_candidate_pair_key> merged;
+        merged.reserve(existing_candidates.size() + incoming_candidates.size());
+        for (const correction_candidate_pair_key& key : existing_candidates)
+        {
+            merged.push_back(make_canonical_correction_candidate_key(
+                key.contact_type, key.mesh_a, key.primitive_a,
+                key.mesh_b, key.primitive_b));
+        }
+        for (const correction_candidate_pair_key& key : incoming_candidates)
+        {
+            merged.push_back(make_canonical_correction_candidate_key(
+                key.contact_type, key.mesh_a, key.primitive_a,
+                key.mesh_b, key.primitive_b));
+        }
+
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        result.required_count = merged.size();
+        if (result.required_count > capacity)
+        {
+            result.overflow = true;
+            return result;
+        }
+
+        result.candidates = std::move(merged);
+        result.success = true;
+        return result;
+    }
+
+    bool build_correction_swept_aabb(
+        const std::vector<correction_vertex_motion>& vertex_motions,
+        float contact_thickness,
+        collision_aabb& output_bounds)
+    {
+        output_bounds = {};
+        if (vertex_motions.empty() ||
+            !std::isfinite(contact_thickness) ||
+            contact_thickness < 0.0f)
+        {
+            return false;
+        }
+
+        const asset::vec3& first_before = vertex_motions[0].before;
+        const asset::vec3& first_after = vertex_motions[0].after;
+        if (!finite(first_before) || !finite(first_after))
+        {
+            return false;
+        }
+
+        float minimum_x = std::min(first_before.x, first_after.x);
+        float minimum_y = std::min(first_before.y, first_after.y);
+        float minimum_z = std::min(first_before.z, first_after.z);
+        float maximum_x = std::max(first_before.x, first_after.x);
+        float maximum_y = std::max(first_before.y, first_after.y);
+        float maximum_z = std::max(first_before.z, first_after.z);
+
+        for (std::size_t index = 1; index < vertex_motions.size(); ++index)
+        {
+            const correction_vertex_motion& motion = vertex_motions[index];
+            if (!finite(motion.before) || !finite(motion.after))
+            {
+                return false;
+            }
+
+            minimum_x = std::min(minimum_x,
+                std::min(motion.before.x, motion.after.x));
+            minimum_y = std::min(minimum_y,
+                std::min(motion.before.y, motion.after.y));
+            minimum_z = std::min(minimum_z,
+                std::min(motion.before.z, motion.after.z));
+            maximum_x = std::max(maximum_x,
+                std::max(motion.before.x, motion.after.x));
+            maximum_y = std::max(maximum_y,
+                std::max(motion.before.y, motion.after.y));
+            maximum_z = std::max(maximum_z,
+                std::max(motion.before.z, motion.after.z));
+        }
+
+        const float expansion = contact_thickness * 0.5f;
+        if (!std::isfinite(expansion))
+        {
+            return false;
+        }
+
+        const float negative_infinity =
+            -std::numeric_limits<float>::infinity();
+        const float positive_infinity =
+            std::numeric_limits<float>::infinity();
+        const collision_aabb bounds = {
+            {
+                std::nextafter(minimum_x - expansion, negative_infinity),
+                std::nextafter(minimum_y - expansion, negative_infinity),
+                std::nextafter(minimum_z - expansion, negative_infinity)
+            },
+            {
+                std::nextafter(maximum_x + expansion, positive_infinity),
+                std::nextafter(maximum_y + expansion, positive_infinity),
+                std::nextafter(maximum_z + expansion, positive_infinity)
+            }
+        };
+
+        if (!finite(bounds.minimum) || !finite(bounds.maximum) ||
+            bounds.minimum.x > bounds.maximum.x ||
+            bounds.minimum.y > bounds.maximum.y ||
+            bounds.minimum.z > bounds.maximum.z)
+        {
+            return false;
+        }
+
+        output_bounds = bounds;
+        return true;
     }
 
     correction_ccd_result detect_vertex_triangle_correction_motion(
