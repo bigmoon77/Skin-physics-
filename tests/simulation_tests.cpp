@@ -2052,7 +2052,8 @@ namespace
             segment_state.last_position_writer_epoch_id == 1 &&
             segment_state.position_writer_epoch_generation == 1 &&
             !segment_state.contact_set_current &&
-            !segment_state.vertex_contact_csr_current,
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
             "Every Position-Writer Epoch must invalidate Contact Set and CSR freshness even when its candidate set is unchanged.");
 
         const auto duplicate_epoch_update =
@@ -2062,7 +2063,8 @@ namespace
             !duplicate_epoch_update.changed &&
             segment_state.candidate_generation == 1 &&
             !segment_state.contact_set_current &&
-            !segment_state.vertex_contact_csr_current,
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
             "An Epoch that adds only duplicate canonical pairs must not advance Candidate Generation or falsely mark geometry-dependent data current.");
 
         const auto stale_epoch_refresh =
@@ -2088,7 +2090,8 @@ namespace
         require(begin_epoch_2.success &&
             segment_state.position_writer_epoch_generation == 2 &&
             !segment_state.contact_set_current &&
-            !segment_state.vertex_contact_csr_current,
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
             "A later position write must invalidate Contact Set / CSR even when no new broadphase pair is emitted.");
 
         const auto stale_epoch_refresh_2 =
@@ -2115,7 +2118,8 @@ namespace
             segment_state.candidate_generation == 2 &&
             segment_state.candidates.size() == 2 &&
             !segment_state.contact_set_current &&
-            !segment_state.vertex_contact_csr_current,
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
             "A newly discovered Epoch candidate must advance the Candidate Generation and invalidate Contact Set / CSR.");
 
         std::vector<skin_physics::physics::correction_discrete_contact_input>
