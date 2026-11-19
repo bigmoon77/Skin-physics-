@@ -5,13 +5,13 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.13
+- 文書バージョン: 1.14
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.14
-- 対応詳細設計: detailed_design.md 1.16
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.8
-- Deployment Capability Profile形式: deployment_capability_profile_template.json v1.1
+- 対応詳細設計: detailed_design.md 1.17
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.9
+- Deployment Capability Profile形式: deployment_capability_profile_template.json v1.2
 - 前版: 1.12
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
@@ -550,7 +550,7 @@ Capacity / CCD / PredecessorによるSubmission後の一時Blockは、同じTick
 - Tick N+1以降の先行Submissionは、tick_begin_controlでexpected predecessor sequenceとstate generationが一致することを検証する。すべてのBudgeted Physics Passは最初に同じTick Plan / scheduler gateを確認し、前提不一致・先行Tick未Commit・terminal failure時はPhysics Bufferの読み込み・書き込み・Atomicを行わず終了する。
 - 先行TickがRejectされた場合、既にSubmissionされた後続TickはBLOCKED_BY_PREDECESSORとなり、物理状態を変更しない。先行TickのRetryがGPU上でCommitされた後、CPUは後続TickのPlanを新しいCommitted State Generationに合わせて再発行する。
 - Planのsource / destination State SetはSubmission時点の予測Commit順序に基づいて固定する。GPU Commitが成立しない場合の後続Planは必ずgateで停止する。GPUが成功した場合のみ計画されたState Set遷移が有効になる。
-- in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_substeps / maximum_integration_segments_per_tick超過はQuery / Render Slot確保およびTick Reservation作成後のCPU Preflight Blockとして扱い、CPU Status Queueからpoll()で観測する。GPU Physics Upload / Dispatch / Event Queryを発行せず、未使用Query / Render Candidate Slotを解放する。同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持し、設定上限を変更して再試行する場合も新しいTickを発行しない。
+- in-flight / Query / Render Lease上限に到達した場合、新規Reservation / Submissionを停止する。Submission前の時間はAccumulator / Step Request Queue、発行済み時間はTick Reservationへ残す。maximum_substeps / maximum_integration_segments_per_tick超過はQuery / Render Slot確保およびTick Reservation作成後のCPU Preflight Blockとして扱い、CPU Status Queueからpoll()で観測する。GPU Physics Upload / Dispatch / Event Queryを発行せず、未使用Query / Render Candidate Slot / in-flight Submission Leaseを解放する。同じTick Sequence / Snapshot / Packet Version / Reservation時間を保持し、設定上限を変更して再試行する場合も新しいTickを発行しない。
 - WORK_BUDGET_EXCEEDEDの間は同一Worldで後続Physics Submissionを進めず、未Reservation時間はAccumulator / Step Request Queueへ残す。
 - RenderをSkip / ThrottleしてPhysics Submissionを優先することは許可する。
 - Step数、Substep数、Iteration数、Contact候補、時間を性能維持のために黙って減らさない。
@@ -595,7 +595,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 - `planned_substeps`: CPU Preflightが確定したWorld Substep数。正確値であり、GPU Dispatch前に算出する。
 - `planned_integration_segments`: GPU Dispatch前に確定したWorld Substep / Animation / Force / Impulse境界からなる予定Segment総数。正確値であり、動的TOI分割を含まない。
 - `executed_integration_segments`: 直近のGPU Dynamic TOI Block試行でSegment Endまで完了したSegment数。CPU Preflight Blockでは0。
-- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。現在のDispatch Attempt内で発見した一意な内部時間BoundaryとBlock時点で必要な残Segmentを数える。CA `tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`、Snap / Grouping `tau_snap_tolerance = min(tau_tolerance, 0.25 * dt_segment)`とする。TOI Candidateは`(tau, canonical_contact_key)`順で処理する。Endpoint / 既存Substep / Animation / Force / Impulse BoundaryへのSnapは、時間差が`tau_snap_tolerance`以内であり、`v_bound * abs(tau - t_b) + kinematic_path_deviation_bound <= distance_tolerance`の場合だけ許可し、追加Splitに数えない。位置誤差Boundが許容値を超える場合は正確なtauで新しい内部Boundaryを作る。内部BoundaryはContact Event Groupとは別に`toi_time_boundary_id`で識別する。同じIEEE-754 float32 tauビット列のCandidateは異なるContact Groupに属しても同じBoundaryとし、時間差が許容値内でも幾何Boundで安全に代表時刻へ移動できない異なるtauは別Boundaryを維持する。`discovered_toi_split_count`は新しい内部`toi_time_boundary_id`ごとに1回だけ増やし、同一Boundaryに属する複数Contact Groupでは増やさない。Contact Group化は時間差と各Contactの幾何誤差条件で別に決める。Boundを保守的に算出できない場合はCCDUnresolvedとしCommitしない。したがって現時点の下限は`planned_integration_segments + discovered_toi_split_count`であり、未発見の将来TOIを含む最終総数ではない。CPU Preflight Blockでは0。`executed_integration_segments`はSegment Endまで完了したものだけを数え、未完了prefixは含めない。新しいDispatch PlanでRetryを開始すると分割Countと実行済みCountを初期化し、同じ基底Segment Scheduleから再計数する。
+- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となる各CCD対象Segment（TOI後のResidual Segmentを含む）ごとにDispatch Attempt内で一意に割り当てる。canonical_tau_bitsは有限float32 tauのIEEE-754 bit patternで、-0.0を+0.0へ正規化し、NaN / InfinityはInvalid CCD Candidateとする。同一Attempt / 同一Segment / 同一tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentはtau bitsが同じでも別Boundaryとする。Snapは時間差・XPBD後位置応答誤差・接触相対Velocity誤差・Impulse誤差の全Boundを満たす場合だけ許可し、いずれか不明なら正確なtauを維持する。discovered_toi_split_countは一意な内部Boundaryごとに1回だけ増やす。現在の下限はplanned_integration_segments + discovered_toi_split_countであり、未発見TOIを含む最終総数ではない。CPU Preflight Blockでは0。executed_integration_segmentsはSegment Endまで完了したものだけを数え、未完了prefixは含めない。Retryは新しいdispatch_attempt_idでBoundary ID / Split Countを基底Scheduleから再生成する。
 - すべてのCountは`std::uint32_t`。uint32範囲を超える算出値はWrapせずWork Count OverflowとしてWorldを`FAILED`にする。
 
 #### Block発生元ごとの観測契約
@@ -707,7 +707,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 
 1. CPU Animation EvaluationでLogical Tick候補のAnimation Trajectory Span Packet / Conservative Bounds、Kinematic Transform Sample、World Substep / Animation / Force / Impulseの暫定Boundary Tableを生成する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。この段階ではAccumulatorから時間を移動しない。
 2. Render Candidate Slot / Query Slot / in-flight枠を確保する。いずれか不足する場合はPacket / Boundary Tableを破棄可能なPending Inputとして扱い、Accumulator / Step Request Queueに時間を保持する。Slot確保成功後にTick Sequence / Input Snapshot / Animation Packet Versionを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。
-3. CPU Preflightで`planned_substeps`と、確定済みBoundary TableからWorld Substep / Animation / Force / Impulse境界を統合した`planned_integration_segments`をCountする。どちらかがAdmission Limitを超えた場合は`BLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflight`をCPU Status Queueへ同期記録し、同じTick Reservation / Sequence / Input Snapshot / Packet Versionを保持する。GPU Physics Upload / Dispatch / Event Queryは発行せず、使用しなかったQuery Slot / Render Candidate Slotを解放する。`poll()`はEvent Queryを待たず同じ呼出しでこのCPU Statusを返す。異なる時刻のBoundaryを結合・省略して上限内へ丸めない。設定更新後のRetryは同じReservationを使用する。
+3. CPU Preflightで`planned_substeps`と、確定済みBoundary TableからWorld Substep / Animation / Force / Impulse境界を統合した`planned_integration_segments`をCountする。どちらかがAdmission Limitを超えた場合は`BLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflight`をCPU Status Queueへ同期記録し、同じTick Reservation / Sequence / Input Snapshot / Packet Versionを保持する。GPU Physics Upload / Dispatch / Event Queryは発行せず、in-flight token / Query Ring Slot / Render Candidate Slotの3つのTransient Submission Leaseをすべて解放する。Logical Tick Reservation / Sequence / Input Snapshot / Packet Version / Event Cursorは保持する。`poll()`はEvent Queryを待たず同じ呼出しでこのCPU Statusを返す。異なる時刻のBoundaryを結合・省略して上限内へ丸めない。設定更新後のRetryは同じReservationを使用する。
 4. GPUへAnimation Trajectory Packet / Collider RecordをUploadし、Span Coefficient / Bound / Input Version / ABI StrideをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
 5. Logical Tick開始SnapshotとTerminal Status初期化。
 6. 各World Integration Segmentについて次を処理する。
