@@ -1,5 +1,5 @@
 {
-  "fixture_version": "1.6",
+  "fixture_version": "1.7",
   "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Case 46 separates contact-level World-space impulse error from the generalized applied impulse J^T*q over stable responsive Physics Vertex IDs. The scalar fixture supplies a simple Candidate / Boundary Contact Jacobian pair but intentionally lacks a certified J^T*q interval result; the coupled fixture lacks a complete Jacobian interval. Both remain Snap-disabled until all XPBD, contact-impulse and applied-impulse certificates are supplied.",
   "cases": [
     {
@@ -130,7 +130,7 @@
           "normal_scalar_effective_mass_restitution_bound": 0.02,
           "normal_direction_max_impulse_ns": 4,
           "normal_direction_angle_bound_radians": 0.01,
-          "friction_vector_bound": 0.015,
+          "friction_vector_bound": 0.024999958333385416,
           "coupled_solver_residual_bound": 0.005
         },
         "impulse_tolerance_ns": 0.1,
@@ -154,9 +154,11 @@
             "contact_dt_min": 1,
             "lambda_n_max": 0.1,
             "delta_inverse_contact_dt": 0.01,
-            "expected_E_friction_vector_ns": 0.015,
-            "tangent_basis_angle_bound_radians": 0,
-            "tangent_impulse_l2_max_ns": 1
+            "expected_E_friction_vector_ns": 0.024999958333385416,
+            "tangent_basis_angle_bound_radians": 0.01,
+            "tangent_impulse_l2_max_ns": 1,
+            "expected_E_friction_coordinates_ns": 0.015,
+            "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.01 / 2)"
           },
           "units": {
             "normal_and_tangent_effective_inverse_mass": "1/kg",
@@ -258,7 +260,7 @@
       },
       "expected": {
         "normal_direction_error_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
-        "total_impulse_error_bound_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 0.005",
+        "total_impulse_error_bound_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 2*1.0*sin(0.01/2) + 0.005",
         "snap_allowed": false,
         "mutation_variants_that_must_disable_snap": [
           "position_error_exceeds_tolerance",
@@ -287,11 +289,16 @@
         "scalar_formula_outputs_are_not_snap_authorization": true,
         "impulse_error_decomposition_world_space": {
           "normal_direction_rotation_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
-          "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.0 / 2)",
           "friction_coordinate_error_ns": 0.015,
-          "world_space_friction_vector_error_ns": 0.015
+          "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.01 / 2)",
+          "world_space_friction_vector_error_ns": 0.024999958333385416,
+          "solver_residual_l2_upper_ns": 0.005,
+          "total_contact_impulse_error_bound_formula": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 2*1.0*sin(0.01/2) + 0.005"
         },
-        "applied_impulse_error_must_be_checked_independently": true
+        "applied_impulse_error_must_be_checked_independently": true,
+        "contact_impulse_error_numeric_ns": 0.08999979166692709,
+        "contact_impulse_error_within_tolerance": true,
+        "applied_impulse_error_certificate_status": "not_provided"
       }
     },
     {
