@@ -2477,6 +2477,21 @@ namespace skin_physics::physics
                 ? nullptr : &primitives[found->second];
         };
 
+        const auto find_side_latch = [&next_state](
+            const correction_candidate_pair_key& candidate)
+            -> const correction_segment_side_latch*
+        {
+            const auto found = std::find_if(
+                next_state.side_latches.begin(),
+                next_state.side_latches.end(),
+                [&candidate](const correction_segment_side_latch& latch)
+                {
+                    return latch.key == candidate;
+                });
+            return found == next_state.side_latches.end()
+                ? nullptr : &(*found);
+        };
+
         const auto resolve_vt = [](
             const correction_primitive_epoch_input* first,
             const correction_primitive_epoch_input* second,
@@ -2527,6 +2542,16 @@ namespace skin_physics::physics
                 }
 
                 vertex_triangle_correction_motion motion;
+                const correction_segment_side_latch* side_latch =
+                    find_side_latch(candidate);
+                if (side_latch != nullptr)
+                {
+                    motion.has_segment_side_latch = true;
+                    motion.segment_reference_normal =
+                        side_latch->reference_normal;
+                    motion.segment_allowed_side_sign =
+                        side_latch->allowed_side_sign;
+                }
                 motion.point = point->vertex_motions[0];
                 motion.segment_start_point = point->segment_start_positions[0];
                 for (std::size_t index = 0; index < 3; ++index)
@@ -2551,6 +2576,16 @@ namespace skin_physics::physics
                 }
 
                 edge_edge_correction_motion motion;
+                const correction_segment_side_latch* side_latch =
+                    find_side_latch(candidate);
+                if (side_latch != nullptr)
+                {
+                    motion.has_segment_side_latch = true;
+                    motion.segment_reference_normal =
+                        side_latch->reference_normal;
+                    motion.segment_allowed_side_sign =
+                        side_latch->allowed_side_sign;
+                }
                 for (std::size_t endpoint = 0; endpoint < 2; ++endpoint)
                 {
                     motion.edge_a[endpoint] = first->vertex_motions[endpoint];
@@ -2569,6 +2604,37 @@ namespace skin_physics::physics
                 result.diagnostic =
                     "Correction Broadphase returned an unsupported Contact Type.";
                 return result;
+            }
+
+            if (record.result.status == correction_ccd_status::no_hit ||
+                record.result.status == correction_ccd_status::hit)
+            {
+                if ((record.result.allowed_side_sign != -1 &&
+                        record.result.allowed_side_sign != 1) ||
+                    !finite(record.result.reference_normal))
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic =
+                        "Correction Motion CCD returned a missing Segment Side Latch.";
+                    return result;
+                }
+                if (side_latch == nullptr)
+                {
+                    correction_segment_side_latch new_latch;
+                    new_latch.key = candidate;
+                    new_latch.reference_normal =
+                        record.result.reference_normal;
+                    new_latch.allowed_side_sign =
+                        record.result.allowed_side_sign;
+                    next_state.side_latches.push_back(new_latch);
+                    std::sort(next_state.side_latches.begin(),
+                        next_state.side_latches.end(),
+                        [](const correction_segment_side_latch& left,
+                            const correction_segment_side_latch& right)
+                        {
+                            return left.key < right.key;
+                        });
+                }
             }
 
             result.correction_ccd_results.push_back(record);
