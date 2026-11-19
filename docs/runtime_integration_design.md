@@ -725,7 +725,7 @@ Immediate ContextのCommand Streamは順序付きである。CPUは各Worldの`m
    - Candidate Unionを使ったFinal Discrete NarrowphaseでContact Setを確定し、Correction Motion CCDのCrossing / Unresolvedが0、Candidate / Contact Set Generationが確定済みであることを確認してからContact Position Constraint前のDynamic Vertex Contact前Velocityを保存する。通常Segmentはdt_segment、Positive-Time TOI prefixはtauで速度再構築する。tau=0 Initial Contact Eventはゼロ時間prefixを作らず、Segment開始時のDynamic Velocityを保持する。Fixed / Kinematic Vertexはtau=0を含む同時刻のTrajectory Derivativeを使う。tau=0でPosition差分を時間除算してはならない。
    - Discrete / TOI Contact Position XPBDの各位置反復もPosition-Writer Epochとする。反復後にCorrection Swept AABB / Correction Motion CCD / Candidate Union / Final Discrete refreshを実行し、新規終端Contactを残り反復へ渡す。規定反復終了時に新規Contact / 未確定Contact Set Generationが残る場合はCONTACT_GEOMETRY_UNRESOLVEDとしてCommitしない。Contact位置補正はPositionだけを変更し、保存済みContact前Velocityへ反映しない。
    - 保存したContact前VelocityをCoupled Projected Jacobiへ渡す。Contact Contributionを反復Gatherし、Normal / Coulomb Cone Residualが許容範囲へ収束した場合のみv_finalを確定する。W_ii <= epsilon_inverse_massのContactはNON_RESPONSIVE_CONTACTとしてPosition / ImpulseをSkipする。TOI Contactは成功時にimpact_resolvedを設定する。
-   - Broadphase Envelope / Candidate Union / Correction CCD / NonFinite / Capacity / CCD / Physical Quality Gateを検証する。EnvelopeはPhysical Swept AABBと全Position-Writer EpochのCorrection Swept AABBのUnionとする。任意の最大補正Marginは使用しない。Correction Path CrossingはREJECTED、Correction CCD Unresolved / Broadphase Completeness Failure / Contact Geometry Unresolved / Capacity超過はBLOCKEDとし、同じReservationを保持してCommit / Render Publishを停止する。
+   - Broadphase Envelope / Candidate Union / Correction CCD / NonFinite / Capacity / CCD / Physical Quality Gateを検証する。EnvelopeはPhysical Swept AABBと全Position-Writer EpochのCorrection Swept AABBのUnionとする。任意の最大補正Marginは使用しない。CorrectionPathCrossing / CorrectionCcdUnresolved / BroadphaseCompletenessFailure / ContactGeometryUnresolvedは現行v1で同一Reservationの回復手順を定義しないためREJECTEDとし、自動Retryしない。実際のBroadphase / AABB / Candidate Buffer Capacity超過だけをBroadphaseOverflowとしてBLOCKEDにし、同じReservationを保持してCapacity Retryする。すべてのケースでCommit / Render Publishを停止する。
    - TOIありの場合、Impact後Velocityから残時間の新しいIntegration Segmentへ進む。tau=0では残時間はdt_segment全量であり、zero-duration prefixを発行せず全長Continuation Segmentを1回だけ実行する。tau=dt_segmentでは残Segmentを生成しない。Impact後Velocityを同じSegmentの速度再構築で上書きしない。
 6. 全Integration Segment / World Substep成功後にRender Feedback Candidate Prepare（Tick Reservation済みslotへ書き込む）。
 7. Render Candidate Validation。
@@ -751,7 +751,7 @@ RuntimeはDetailed Design §9.4.1 / §9.4.2を実行契約の正とする。Corr
 1. 各XPBD Position Dispatchの直前にDynamic Physics Vertex PositionをSnapshotし、Dispatch完了後に変位delta_x = x_after - x_beforeを出力する。
 2. 各VT / EE Primitiveについてbefore / after全頂点を含むCorrection Swept AABBを生成し、Contact Thicknessで膨張する。Count / Scan / Capacity Check / Fill / Sort / Canonical Pair Dedupを用い、既存Segment Candidate Unionへ追加する。
 3. VT / EEごとにCorrection Motion CCDを実行する。正規化Pseudo-Time s in [0,1]の線形補正経路を評価し、変位Normから得た保守的相対Speed Boundと外向き丸め済みのDistance Intervalを使う。全区間のNo-Hitが証明された場合のみNo-Hitを返し、Hit / No-Hitを最大32区間評価で証明できない場合はCORRECTION_CCD_UNRESOLVEDとする。有限個の通常floatサンプルをNo-Hit証明へ昇格しない。
-4. Hitは終端Discrete Narrowphaseで再評価する。終端Contactを次の残りContact Position反復へ追加し、Correction Path CrossingはTick REJECTED、法線 / Feature / Distance Bound不明はTick BLOCKEDとする。規定反復終了までにContact Setが安定しなければCONTACT_GEOMETRY_UNRESOLVEDとしてCommitしない。
+4. Hitは終端Discrete Narrowphaseで再評価する。終端Contactを次の残りContact Position反復へ追加し、CorrectionPathCrossing / CorrectionCcdUnresolved / BroadphaseCompletenessFailure / ContactGeometryUnresolvedはTick REJECTEDとし、自動Retryしない。実Buffer Capacity超過はBroadphaseOverflowとしてBLOCKEDにし、同じReservationをCapacity Retryする。規定反復終了までにContact Setが安定しない場合もContactGeometryUnresolvedとしてREJECTEDにする。
 5. Contact Position XPBDの各位置反復にも同じEpoch処理を適用する。Contact Candidate / Patch Generationの更新後はVertex→Contact CSRを再構築し、同一Epoch内で参照Generationを混在させない。
 6. Correction Motion CCDのsは無次元であり、World Time / dt_segment / TOI tau / Force・Impulse Event / TOI Split・Segment Count / v_pre_contact / Restitution・Friction Impulseを更新しない。Correction Hit自体はPhysical Impactを発生させない。
 
@@ -840,7 +840,7 @@ Peak計測にはPhysics State Banks / Segment Snapshot / Contact・Candidate / R
 | CCDIterationLimit / CCDUnresolved | 回復設定がある間はBLOCKED。Substep / CCD設定変更後に同じReservationを再実行 |
 | WORK_BUDGET_EXCEEDED | **必ずBLOCKED**。Reservation / Sequence / Inputを保持。CPU PreflightはCPU Status Queueへ同期記録してpoll()で即時観測し、Event Queryを発行しない。GPU Dynamic TOIはGPU Status Buffer + Event Queryで非同期観測。予算更新は§5.6のHard LimitとIdle / Blocked条件に従う |
 | NonFiniteState | REJECTED。Committed Stateを保持し、自動Fallback / Retryをしない |
-| InitialPenetrationLimit / ContactGeometryUnresolved / ContactManifoldReductionFailure | 明示されたRepair / Quality Gateの再実行条件がある場合だけBLOCKED。それ以外はREJECTED |
+| InitialPenetrationLimit / ContactGeometryUnresolved / ContactManifoldReductionFailure / CorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure | 明示されたRepair / Quality Gateの同一Reservation再実行条件がある場合だけBLOCKED。それ以外はREJECTED。現行v1ではCorrection CCD interval budgetやContact Position Iterationを同一Reservationで増加するRecovery APIを定義しないため、これらのCorrection診断はREJECTED |
 | GpuResourceAllocationFailure | 回復可能な容量待ちはBlockedByCapacity。回復不能またはDevice資源喪失はFAILED |
 | DeviceRemoved | FAILED。新規Dispatch停止。Asset / Initial Stateから再初期化が必要 |
 | WorkCountOverflow | FAILED。uint32範囲外のCountをWrap / Saturateして続行しない |
