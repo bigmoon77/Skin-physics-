@@ -109,6 +109,47 @@ bool correction_aabb_overlap(CorrectionAabb left, CorrectionAabb right)
         left.maximum.z >= right.minimum.z;
 }
 
+bool correction_primitive_valid(CorrectionCandidatePrimitive primitive)
+{
+    bool valid_role =
+        (primitive.role == 0u && primitive.vertex_count == 1u) ||
+        (primitive.role == 1u && primitive.vertex_count == 3u) ||
+        (primitive.role == 2u && primitive.vertex_count == 2u);
+    if (!valid_role)
+    {
+        return false;
+    }
+
+    [unroll]
+    for (uint first = 0u; first < 3u; ++first)
+    {
+        if (first >= primitive.vertex_count) break;
+        [unroll]
+        for (uint second = first + 1u; second < 3u; ++second)
+        {
+            if (second >= primitive.vertex_count) break;
+            if (primitive.vertex_id_low[first] ==
+                    primitive.vertex_id_low[second] &&
+                primitive.vertex_id_high[first] ==
+                    primitive.vertex_id_high[second])
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool correction_primitive_identity_equal(
+    CorrectionCandidatePrimitive left,
+    CorrectionCandidatePrimitive right)
+{
+    return left.stable_id_low == right.stable_id_low &&
+        left.stable_id_high == right.stable_id_high &&
+        left.mesh_id == right.mesh_id &&
+        left.primitive_id == right.primitive_id;
+}
+
 bool correction_has_shared_vertex(
     CorrectionCandidatePrimitive left,
     CorrectionCandidatePrimitive right)
@@ -240,22 +281,14 @@ void correction_candidate_count(uint3 dispatch_id : SV_DispatchThreadID)
         correction_primitives[primitive_a_index];
     CorrectionCandidatePrimitive primitive_b =
         correction_primitives[primitive_b_index];
-    if (primitive_a.vertex_count == 0u || primitive_a.vertex_count > 3u ||
-        primitive_b.vertex_count == 0u || primitive_b.vertex_count > 3u)
+    if (!correction_primitive_valid(primitive_a) ||
+        !correction_primitive_valid(primitive_b))
     {
         uint previous = 0u;
         InterlockedOr(correction_candidate_totals[1], 2u, previous);
         return;
     }
-    bool valid_role_a =
-        (primitive_a.role == 0u && primitive_a.vertex_count == 1u) ||
-        (primitive_a.role == 1u && primitive_a.vertex_count == 3u) ||
-        (primitive_a.role == 2u && primitive_a.vertex_count == 2u);
-    bool valid_role_b =
-        (primitive_b.role == 0u && primitive_b.vertex_count == 1u) ||
-        (primitive_b.role == 1u && primitive_b.vertex_count == 3u) ||
-        (primitive_b.role == 2u && primitive_b.vertex_count == 2u);
-    if (!valid_role_a || !valid_role_b)
+    if (correction_primitive_identity_equal(primitive_a, primitive_b))
     {
         uint previous = 0u;
         InterlockedOr(correction_candidate_totals[1], 2u, previous);
