@@ -151,6 +151,13 @@ namespace skin_physics::physics
         std::vector<asset::vec3> segment_start_positions;
     };
 
+    struct correction_segment_side_latch
+    {
+        correction_candidate_pair_key key;
+        asset::vec3 reference_normal;
+        int8_t allowed_side_sign = 0;
+    };
+
     struct correction_segment_candidate_state
     {
         uint64_t base_integration_segment_id = 0;
@@ -164,6 +171,7 @@ namespace skin_physics::physics
         bool contact_set_current = false;
         bool vertex_contact_csr_current = false;
         std::vector<correction_candidate_pair_key> candidates;
+        std::vector<correction_segment_side_latch> side_latches;
         std::vector<correction_discrete_contact> contact_set;
         correction_vertex_contact_csr vertex_contact_csr;
     };
@@ -218,7 +226,11 @@ namespace skin_physics::physics
         // Set true only after Contact Key, Topology and Patch Generation match.
         bool has_valid_persistent_contact_cache = false;
         asset::vec3 persistent_contact_normal;
-    };
+
+        // Segment-local latch reused unchanged by every Position-Writer Epoch.
+        bool has_segment_side_latch = false;
+        asset::vec3 segment_reference_normal;
+        int8_t segment_allowed_side_sign = 0;    };
 
     struct edge_edge_correction_motion
     {
@@ -229,7 +241,11 @@ namespace skin_physics::physics
         // Set true only after Contact Key, Topology and Patch Generation match.
         bool has_valid_persistent_contact_cache = false;
         asset::vec3 persistent_contact_normal;
-    };
+
+        // Segment-local latch reused unchanged by every Position-Writer Epoch.
+        bool has_segment_side_latch = false;
+        asset::vec3 segment_reference_normal;
+        int8_t segment_allowed_side_sign = 0;    };
 
     enum class correction_writer_epoch_status : uint8_t
     {
