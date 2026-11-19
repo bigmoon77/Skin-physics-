@@ -708,7 +708,28 @@
           "initial normal/tangential impulse intervals",
           "XPBD support lambda_n and contact dt intervals",
           "XPBD compliance intervals and fixed finite-iteration controls"
-        ]
+        ],
+        "xpbd_support_impulse_lambda_n_over_contact_dt_candidate_intervals_n": [
+          [
+            8.910891089108912,
+            11.11111111111111
+          ],
+          [
+            6.9306930693069315,
+            9.09090909090909
+          ]
+        ],
+        "xpbd_support_impulse_lambda_n_over_contact_dt_boundary_intervals_n": [
+          [
+            9.405940594059407,
+            10.606060606060606
+          ],
+          [
+            7.425742574257426,
+            8.585858585858587
+          ]
+        ],
+        "normal_tangential_cross_matrix_symmetry_rule": "The lower-left block of the 6x6 generalized Delassus matrix is the transpose of normal_tangential_delassus_cross_matrix; evaluate the full symmetric matrix enclosure."
       },
       "expected": {
         "interval_evaluation_required": true,
@@ -731,7 +752,9 @@
           "tangent_basis_or_angular_deviation_missing",
           "xpbd_support_lambda_or_contact_dt_interval_missing",
           "xpbd_compliance_interval_missing",
-          "initial_tangent_impulse_interval_missing"
+          "initial_tangent_impulse_interval_missing",
+          "lambda_n_over_contact_dt_interval_missing",
+          "normal_tangential_cross_transpose_inconsistent"
         ],
         "conservative_gershgorin_eigenvalue_lower_bound": 1.23,
         "all_normal_tangential_projection_inputs_present": true,
