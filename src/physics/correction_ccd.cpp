@@ -1579,7 +1579,9 @@ namespace skin_physics::physics
         uint64_t candidate_generation,
         uint64_t position_writer_epoch_generation,
         const std::vector<correction_discrete_contact_input>& discrete_inputs,
-        float epsilon_length)
+        float epsilon_length,
+        std::size_t contact_set_capacity,
+        std::size_t vertex_contact_csr_capacity)
     {
         correction_contact_set_refresh_result result;
         result.candidate_count = state.candidates.size();
@@ -1771,6 +1773,15 @@ namespace skin_physics::physics
                 return result;
             }
 
+            result.required_contact_count = next_contact_set.size() + 1u;
+            if (result.required_contact_count > contact_set_capacity)
+            {
+                result.capacity_overflow = true;
+                result.diagnostic =
+                    "Active Contact Set exceeds its configured Contact Buffer Capacity.";
+                return result;
+            }
+
             const uint32_t contact_index =
                 static_cast<uint32_t>(next_contact_set.size());
             for (uint64_t vertex_id : input.vertex_stable_ids)
@@ -1792,6 +1803,18 @@ namespace skin_physics::physics
             result.invalid_input = true;
             result.diagnostic =
                 "Vertex-to-Contact CSR exceeds the 32-bit contact-index range.";
+            return result;
+        }
+
+        result.required_contact_count = next_contact_set.size();
+        result.required_vertex_contact_indices =
+            vertex_contact_entries.size();
+        if (result.required_vertex_contact_indices >
+            vertex_contact_csr_capacity)
+        {
+            result.capacity_overflow = true;
+            result.diagnostic =
+                "Vertex-to-Contact CSR exceeds its configured Contact Index Buffer Capacity.";
             return result;
         }
 
@@ -2820,10 +2843,16 @@ namespace skin_physics::physics
                 next_state.candidate_generation,
                 next_state.position_writer_epoch_generation,
                 discrete_inputs,
-                ccd_settings.epsilon_length);
+                ccd_settings.epsilon_length,
+                ccd_settings.contact_set_capacity,
+                ccd_settings.vertex_contact_csr_capacity);
         if (!refresh.success)
         {
-            result.status = correction_writer_epoch_status::rejected;
+            result.status = refresh.capacity_overflow
+                ? correction_writer_epoch_status::blocked
+                : correction_writer_epoch_status::rejected;
+            result.capacity_overflow = refresh.capacity_overflow;
+            result.required_candidates = refresh.required_contact_count;
             result.diagnostic = refresh.diagnostic;
             return result;
         }
