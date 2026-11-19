@@ -4,8 +4,8 @@
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.14
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.14
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.9
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.15
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.10
 - 前版: 1.15
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
