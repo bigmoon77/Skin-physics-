@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "partially_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Cases 45-48 remain specification-only. Case 49 has an initial CPU Reference subset for correction-motion VT / EE hit and side-crossing classification, per-primitive Correction Swept AABBs, canonical Candidate Union, per-Segment Candidate Generation / Contact-CSR freshness tracking and a WARP per-primitive correction AABB shader/readback test. Production GPU Runtime assertions remain pending.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-48 remain specification-only. Case 49 now has a CPU Reference transaction for per-Primitive Correction Swept AABBs, Spatial Hash Candidate generation, VT / EE correction-path CCD, atomic per-Segment Candidate Union append, Final Discrete Active Contact Set generation and Vertex-to-Contact CSR freshness. The WARP subset covers only per-Primitive correction AABB generation; production GPU Candidate / CCD / Contact / Runtime gates remain pending.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -656,7 +656,7 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; Case49_CPU_reference_subset_implemented_for_7_geometry_vectors_plus_AABB_CandidateUnion_and_SegmentGeneration_state_tests; WARP_correction_swept_aabb_shader_and_ComputeGraph_readback_test_added_unverified; Cases45_to_48_executable_assertions_not_implemented; remaining_Case49_GPU_CCD_ContactSet_Runtime_PseudoTime_assertions_pending",
+    "fixture_status": "persistent_input_vectors_added; Case49_CPU_reference_subset_implemented_for_7_geometry_vectors_plus_AABB_CandidateUnion_SegmentEpoch_transaction_and_FinalDiscreteContactCSR_tests; WARP_correction_swept_aabb_shader_and_ComputeGraph_readback_test_added_unverified; Cases45_to_48_executable_assertions_not_implemented; remaining_Case49_GPU_CandidatePipeline_CCD_ContactPatch_Runtime_PseudoTime_assertions_pending",
     "fixture_version": "1.9",
     "additional_fixture_bundles": [
       {
@@ -690,9 +690,18 @@
         "candidate_generation_invalidates_contact_set_and_vertex_contact_csr",
         "stale_contact_set_rebuild_generation_is_rejected",
         "cross_segment_candidate_merge_is_rejected",
-        "candidate_capacity_overflow_preserves_previous_segment_state"
+        "candidate_capacity_overflow_preserves_previous_segment_state",
+        "position_writer_epoch_executes_aabb_broadphase_and_correction_ccd_transaction",
+        "correction_path_crossing_rejects_without_mutating_segment_state",
+        "same_side_transient_candidate_is_retained_but_not_activated",
+        "endpoint_active_correction_hit_is_returned_to_contact_solve",
+        "broadphase_capacity_overflow_blocks_without_partial_epoch_commit",
+        "final_discrete_narrowphase_builds_vt_ee_active_contact_set",
+        "vertex_to_contact_csr_is_sorted_and_generation_bound",
+        "incomplete_discrete_candidate_geometry_rejects_atomic_refresh",
+        "empty_initial_candidate_set_uses_nonzero_generation"
       ],
-      "status": "CPU reference and unit assertions added; WARP shader and test added; Windows build and CI not yet verified",
+      "status": "CPU reference includes transactional Position-Writer Epoch, Final Discrete Contact Set and Vertex-to-Contact CSR assertions; WARP AABB shader and ComputeGraph test added; Windows build and CI not yet verified",
       "gpu_test_group": "P12_WARP_CORRECTION_SWEPT_AABB",
       "gpu_source_files": [
         "tests/fixtures/phase07_collision/collision_gpu.cs.hlsl",
