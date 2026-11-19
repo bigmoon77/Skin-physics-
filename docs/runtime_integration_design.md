@@ -978,7 +978,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 以下を満たした時点でGPU Runtime実装に進める。
 
-- 基本設計1.24 / 詳細設計1.29 / 本書1.26の独立Critical Reviewで重大な設計矛盾が0件。
+- 基本設計1.26 / 詳細設計1.31 / 本書1.28の独立Critical Reviewで重大な設計矛盾が0件。
 - Gate R0-R6の責務、入力、出力、失敗状態、検証Fixtureが追跡可能。
 - Corotational FEM / XPBD Cloth / Contactの式とCPU Double Oracleが一致している。
 - Runtime APIとDevice / Context / Render Bindingの所有権が確定。
