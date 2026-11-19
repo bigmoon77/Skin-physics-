@@ -5,13 +5,13 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.10
+- 文書バージョン: 1.11
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.11
-- 対応詳細設計: detailed_design.md 1.13
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.5
-- 前版: 1.8
+- 対応基本設計: basic_design.md 1.12
+- 対応詳細設計: detailed_design.md 1.14
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.6
+- 前版: 1.10
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -349,7 +349,14 @@ v1のPublic Descriptorは次の意味を持つ。
 
 | Field | C++17 Type | Validation |
 |---|---|---|
-| maximum_integration_segments_per_tick | std::uint32_t | 1以上。初期値512 |
+| maximum_substeps | std::uint32_t | world_desc / world_execution_budgetのAdmission Limit。minimum_substeps以上、Runtime Hard Limit以下。初期値128 |
+| maximum_integration_segments_per_tick | std::uint32_t | world_desc / world_execution_budgetのAdmission Limit。1以上、Runtime Hard Limit以下。初期値512 |
+| runtime_desc::maximum_world_substeps_hard_limit | std::uint32_t | 必須・0不可。Runtime初期化時に固定し、全Worldのmaximum_substepsを拘束する上限。Deployment Capability Profileの認定値以下 |
+| runtime_desc::maximum_integration_segments_per_tick_hard_limit | std::uint32_t | 必須・0不可。Runtime初期化時に固定し、全Worldのmaximum_integration_segments_per_tickを拘束する上限。Deployment Capability Profileの認定値以下 |
+| world_status::execution_budget_revision | std::uint64_t | 単調増加。Admission LimitのAtomic更新ごとに1増加 |
+| world_status::work_budget_block_flags | std::uint8_t | bit0=Substep、bit1=CPU Preflight Segment、bit2=GPU Dynamic TOI Segment。未知bitは禁止 |
+| world_status::work_budget_block_origin | enum class : std::uint8_t | none / cpu_preflight / gpu_dynamic_toi |
+| world_status::planned_substeps / planned_integration_segments / executed_integration_segments / minimum_required_integration_segments | std::uint32_t | CPU Preflightが確定した予定値、GPU試行で完了した数、TOI検出時点で証明できるSegment下限。非該当値は0 |
 | contact_max_substep_delta_time | double | finite、0以上。0は無効 |
 | contact_impulse_iterations | std::uint32_t | 1～16。初期値8 |
 | contact_impulse_relaxation | float | finite、0より大きく1以下。初期値0.5 |
@@ -366,6 +373,8 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 |---|---|---|
 | runtime_desc | shader_package_root | Shader Bytecode / manifestの絶対またはPackage-relative root。Working Directory依存は禁止 |
 | runtime_desc | maximum_gpu_resource_bytes | SkinPhysics全体のLibrary-owned Resource総量上限。0は明示上限なしとして扱い、DXGI Budget / 他利用者 / Host Reservedから自動算出 |
+| runtime_desc | maximum_world_substeps_hard_limit | 必須の有限Hard Limit。全Worldのmaximum_substepsに適用し、Runtime初期化後は変更不可。0またはDeployment Capability Profileの認定上限超過はinitializeを拒否 |
+| runtime_desc | maximum_integration_segments_per_tick_hard_limit | 必須の有限Hard Limit。全Worldのmaximum_integration_segments_per_tickに適用し、Runtime初期化後は変更不可。0またはDeployment Capability Profileの認定上限超過はinitializeを拒否 |
 | runtime_desc | host_reserved_gpu_bytes | Renderer / OS / 他Subsystem向けにHostが確保するLocal Memory余裕。Libraryはこの領域を使用しない |
 | runtime_desc | query_ring_capacity | すべての作成済みWorldのmaximum_in_flight_ticks合計以上。World追加時に不足すればRingを拡張し、未回収slotを上書きしない |
 | runtime_desc | enable_debug_layer_validation | Debug / validation buildでD3D11 hazard診断を有効化 |
@@ -374,7 +383,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
 | world_desc | minimum_substeps | World共通Substep数の下限。初期値1。必要数が実行予算上限を超える場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
-| world_desc / world_execution_budget | maximum_substeps / maximum_integration_segments_per_tick | uint32_t。初期値128 / 512。world_descで初期化し、`set_world_execution_budget`で更新するAdmission Limit。必要Work量・物理品質・時間境界は変更しない。上限超過時はWORK_BUDGET_EXCEEDEDとしてReservationを保持 |
+| world_desc / world_execution_budget | maximum_substeps / maximum_integration_segments_per_tick | std::uint32_t。初期値128 / 512。world_descで初期化し、`set_world_execution_budget`で更新するAdmission Limit。対応するRuntime Hard Limit以下でなければならない。必要Work量・物理品質・時間境界は変更しない。上限超過時はBLOCKED / WORK_BUDGET_EXCEEDEDとしてReservationを保持 |
 | world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。全Solverへ適用する共通上限 |
 | world_desc | contact_max_substep_delta_time | double [s]。初期値1/120 s、有限値かつ0以上。0は明示無効（Substep式では+infinity） |
 | world_desc | contact_impulse_iterations | uint32_t。Coupled Projected JacobiのIteration数。初期値8、許容範囲1～16 |
@@ -412,7 +421,10 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
 | world_status | submitted_sequence / gpu_committed_sequence / cpu_observed_sequence | GPU CommitとCPU確認済みprefixを別々に保持 |
 | world_status | playback_state / tick_state / terminal_error / simulation_backlog | 状態、最終エラー、遅延・未処理時間を報告 |
-| world_status | execution_budget_revision / work_budget_block_flags / required_substeps / required_integration_segments | Admission Limit世代、超過理由（bit0=Substep / bit1=Segment）、当該Tickに必要な正確な実行数。非該当のRequired Countは0 |
+| world_status | execution_budget_revision / work_budget_block_flags / work_budget_block_origin | Admission Limit世代、超過理由（bit0=Substep / bit1=CPU Preflight Segment / bit2=GPU Dynamic TOI Segment）、Block判定元。Originはnone / cpu_preflight / gpu_dynamic_toi |
+| world_status | planned_substeps / planned_integration_segments | CPU PreflightがGPU Physics Dispatch前に算出する正確な予定数。GPU Dynamic TOIによる追加Segmentは含めない |
+| world_status | executed_integration_segments | 最新のGPU Dynamic TOI Block試行でSegment Endまで処理した数。CPU Preflight Blockでは0。Retryごとに当該Dispatchの値へ更新 |
+| world_status | minimum_required_integration_segments | gpu_dynamic_toi Blockでのみ有効。既知のTOI分割と、超過時点で必要と判明した残Segmentを含む下限値。将来未発見のTOIは含まず、最終総数の正確値とはしない。その他のOriginでは0 |
 | world_status | requested_simulation_time / cancelled_requested_time / effective_requested_time / reserved_tick_time / gpu_committed_simulation_time / cpu_observed_completed_time | 要求時間、未Reservation取消時間、有効要求時間、Tick Reservation時間、GPU Commit時間、CPU確認時間を別々に報告 |
 | render_binding | position_srv / normal_srv / tangent_srv | Commit済みPhysics Stateから生成したRead-only SRV |
 | render_binding | format / stride / vertex_count / index_count | Host RendererがDrawを構成するためのLayout |
