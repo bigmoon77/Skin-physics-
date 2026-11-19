@@ -162,24 +162,30 @@ sequenceDiagram
     C->>C: observe all submitted descendant BLOCKED_BY_PREDECESSOR statuses
     H->>API: set_world_execution_budget(world, raised_limits)
     API->>C: validate Blocked Reservation, observed status, finite Hard Limits
-    alt GPU / Query pending, pending unreserved demand, or invalid / over-hard-limit budget
-        API-->>H: BUSY / invalid_argument; no mutation
+    alt GPU / Query pending, pending unreserved demand, invalid / over-hard-limit update, or Reservation is UNSATISFIABLE
+        API-->>H: BUSY / invalid_argument / invalid_state; no mutation
     else budget accepted
         C->>C: atomically update limits + Budget Revision
         C->>C: retain Reservation / Input / Packet / Cursor / Event Snapshot
-        C->>G: rebuild immutable Plan with new dispatch_id; same Tick Sequence
-        G->>D: replay full Tick from original committed State
-        alt another undiscovered TOI exceeds the new limit
-            G->>D: block again; report a larger proven lower bound
-            G->>Q: Status Copy + Event Query
-        else all admission and solver gates pass
-            D-->>G: Commit exactly once
+        C->>Q: reacquire Query Ring Slot
+        C->>C: reacquire Render Candidate Slot and in-flight Tick capacity
+        alt a required resource is unavailable
+            C->>C: preserve same Reservation; remain BLOCKED; no Plan / dispatch_id / GPU work
+        else all resources admitted
+            C->>G: build immutable Plan and allocate new dispatch_id; same Tick Sequence
+            G->>D: replay full Tick from original committed State
+            alt another undiscovered TOI exceeds the new limit
+                G->>D: block again; report a larger proven lower bound
+                G->>Q: Status Copy + Event Query
+            else all admission and solver gates pass
+                D-->>G: Commit exactly once
+            end
+            G->>C: retry later descendants only after predecessor commit
         end
-        G->>C: retry later descendants only after predecessor commit
     end
 ```
 
-The CPU Preflight result is a Scheduler-owned synchronous Status record; it does not wait for or fabricate an Event Query. The GPU Dynamic TOI result is asynchronous and cannot be changed until its Query and Status have been CPU-observed. `minimum_required_integration_segments` is a lower bound at the current discovery point, not a prediction of undiscovered future TOIs. The API changes admission caps only; it does not change material parameters, solver quality, Fixed Delta, Substep / Segment boundary schedule, or event times. It is CPU-only and does not call the Immediate Context, Flush, or Wait. A successful update uses the same Tick Reservation and Input / Packet / Event identity with a new immutable Dispatch Plan / dispatch_id.
+The CPU Preflight result is a Scheduler-owned synchronous Status record; it does not wait for or fabricate an Event Query. The GPU Dynamic TOI result is asynchronous and cannot be changed until its Query and Status have been CPU-observed. After observation, Query and Render Candidate Slots are released. Every Retry passes through Query / Render Candidate / in-flight Resource Admission again; a missing slot keeps the same Reservation BLOCKED and issues no GPU work. A new Plan and `dispatch_id` are created only after all required slots are reacquired and the retry is actually submitted. `minimum_required_integration_segments` is a lower bound at the current discovery point, not a prediction of undiscovered future TOIs; `discovered_toi_split_count` counts unique new interior boundaries only, excludes endpoints / existing boundaries, and groups simultaneous contacts once. The API changes admission caps only; it does not change material parameters, solver quality, Fixed Delta, Substep / Segment boundary schedule, or event times. It is CPU-only and does not call the Immediate Context, Flush, or Wait. A successful update retains the same Tick Reservation and Input / Packet / Event identity.
 
 ## 4. Submission and completion state
 
@@ -202,7 +208,8 @@ stateDiagram-v2
     GpuExecuting --> BlockedByPredecessor: previous Tick not committed
     GpuExecuting --> Rejected: invalid input / NonFinite / non-retryable physical gate
     GpuExecuting --> Failed: device removed / unrepresentable work count / terminal runtime failure
-    BlockedByWorkBudget --> Preflight: set_world_execution_budget; same Reservation / Input / Event; new dispatch_id
+    BlockedByWorkBudget --> Preflight: set_world_execution_budget; reacquire Query / Render Candidate / in-flight slots; allocate dispatch_id only at submission
+    BlockedByWorkBudget --> BlockedByWorkBudget: required Work > Runtime Hard Limit; resolution=hard_limit_reached; reset_world only
     BlockedByCapacity --> Reserved: capacity grown; same Reservation replay
     BlockedByCCD --> Reserved: common Substep budget raised; same Reservation replay
     BlockedByPredecessor --> Reserved: predecessor committed; rebuild source generation
@@ -213,7 +220,7 @@ stateDiagram-v2
     Failed --> [*]
 ```
 
-CPU Preflight Block is observable through `poll()` immediately and does not consume an Event Query. GPU Dynamic TOI Block requires Event Query completion and Status Readback. BLOCKED always preserves the same Reservation and does not advance committed time. REJECTED does not auto-retry, and FAILED terminates normal World execution. The CPU-observed completed time advances only from the contiguous COMMITTED tick prefix. Render Binding exposes committed data only.
+CPU Preflight Block is observable through `poll()` immediately and does not consume an Event Query. GPU Dynamic TOI Block requires Event Query completion and Status Readback; after observation its Query / Render Candidate Slots are released. `advance()` returns `ok` when the time request is accepted, and `poll()` returns `ok` when the status read succeeds; the Logical Tick result is carried in `advance_report` / `world_status.last_tick_status`. A Hard Limit overrun remains `tick_state=BLOCKED` with `last_tick_status=work_budget_unsatisfiable` and `work_budget_resolution=hard_limit_reached`; no Budget Retry can clear it, and explicit `reset_world` is the only recovery. BLOCKED always preserves the same Reservation and does not advance committed time. REJECTED does not auto-retry, and FAILED terminates normal World execution. The CPU-observed completed time advances only from the contiguous COMMITTED tick prefix. Render Binding exposes committed data only.
 
 ## 5. In-flight predecessor dependency
 

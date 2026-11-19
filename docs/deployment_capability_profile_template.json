@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "profile_id": "REPLACE_WITH_STABLE_PROFILE_ID",
+  "status": "template_not_measured",
+  "created_utc": null,
+  "target_environment": {
+    "adapter": {
+      "description": null,
+      "adapter_luid": null,
+      "vendor_id": null,
+      "device_id": null,
+      "subsystem_id": null,
+      "revision": null,
+      "dedicated_video_memory_bytes": null
+    },
+    "driver_version": null,
+    "windows_build": null,
+    "runtime_build_id": null,
+    "shader_package_sha256": null
+  },
+  "workload_envelope": {
+    "world_count": null,
+    "soft_body_dynamic_vertices": null,
+    "soft_body_tetrahedra": null,
+    "cloth_dynamic_vertices": null,
+    "cloth_triangles": null,
+    "cloth_constraints": null,
+    "broadphase_candidate_pairs_per_tick": null,
+    "contact_constraints_per_tick": null,
+    "maximum_world_substeps_hard_limit": null,
+    "maximum_integration_segments_per_tick_hard_limit": null,
+    "maximum_solver_iterations": null,
+    "maximum_gpu_resource_bytes": null
+  },
+  "measurements": {
+    "run_count": 0,
+    "test_scene_ids": [],
+    "gpu_total_tick_time_ms_p50": null,
+    "gpu_total_tick_time_ms_p95": null,
+    "gpu_total_tick_time_ms_max": null,
+    "cpu_submission_time_ms_p95": null,
+    "frame_time_ms_p95": null,
+    "peak_skin_physics_gpu_bytes": null,
+    "dxgi_local_memory_budget_bytes": null,
+    "dxgi_local_memory_current_usage_bytes": null,
+    "measured_at_utc": null,
+    "measurement_artifact_uri": null
+  },
+  "host_policy": {
+    "selected_maximum_world_substeps_hard_limit": null,
+    "selected_maximum_integration_segments_per_tick_hard_limit": null,
+    "profile_identity_verified_by_host": false,
+    "host_policy_id": null,
+    "notes": null
+  },
+  "limitations": {
+    "substep_and_segment_limits_bound_only_their_named_scheduler_dimensions": true,
+    "total_gpu_workload_is_also_dependent_on_geometry_constraints_contacts_iterations_and_dispatches": true,
+    "tdr_prevention_guaranteed": false,
+    "tdr_guarantee_note": "This profile is measurement provenance and Host policy input. It is not a GPU watchdog/TDR certificate. A measured workload does not guarantee safe execution for workloads outside its recorded envelope."
+  },
+  "completion_requirements": [
+    "Replace every required null with a measured value; do not invent or copy values from another adapter/driver combination.",
+    "Record exact adapter LUID, vendor/device IDs, driver version, Windows build, Runtime build and shader package SHA-256.",
+    "Record the maximum tested workload envelope and exact Runtime Hard Limit values selected by Host policy.",
+    "Attach raw timing and memory artifacts with repeat count and measurement timestamp.",
+    "Host must verify profile identity against the active environment before passing selected limits to runtime_desc.",
+    "Do not describe the profile or the two Hard Limits as a TDR-prevention guarantee."
+  ]
+}

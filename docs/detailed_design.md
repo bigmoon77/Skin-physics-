@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.14
+- 文書バージョン: 1.15
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.12
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.11
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.6
-- 前版: 1.12
+- 対応基本設計: basic_design.md 1.13
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.12
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.7
+- 前版: 1.14
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -760,7 +760,7 @@ Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraint
 5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
 7. TOIがない場合は、Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを規定反復数だけ解く。
-8. Positive-Time TOIがある場合は、基底Segmentをprefix / residualに分割し、`discovered_toi_split_count`を1増やす。残SegmentをDispatchする前に、`minimum_required_integration_segments = planned_integration_segments + discovered_toi_split_count`を算出しAdmission Limitと比較する。上限を超える場合は`BLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toi`とし、`executed_integration_segments`および`minimum_required_integration_segments`をGPU Status Bufferへ記録する。残Segment / 後続Pass / Render Publish / Commitを抑止し、Event QueryでCPUへ通知する。この値は現在のDispatch Attemptで発見済みのTOIによる厳密な下限であり、未発見の将来TOIを含む最終総数ではない。新しいDispatch PlanによるRetryでは分割Countを基底Segment Scheduleから再初期化し、再実行中にTOIが追加される場合は同じReservationを繰り返しBlockして下限値を更新できる。§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexはtau時刻のAnimation Target Trajectory位置を直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準とし、Deviation Boundで膨張させる。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
+8. Positive-Time TOIがある場合、tau=dt_segmentまたは既存境界一致なら追加Splitなしでその境界のContact Eventとして処理し、tau=0はInitial Contact処理へ委譲する。`tau_tolerance < tau < dt_segment - tau_tolerance`を満たす新規内部境界だけで基底Segmentをprefix / residualに分割し、同時TOI Groupごとに`discovered_toi_split_count`を1増やす。Groupに属する複数Contactを個別に数えない。残SegmentをDispatchする前に、`minimum_required_integration_segments = planned_integration_segments + discovered_toi_split_count`を算出しAdmission Limitと比較する。上限を超える場合は`BLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toi`とし、`executed_integration_segments`および`minimum_required_integration_segments`をGPU Status Bufferへ記録する。残Segment / 後続Pass / Render Publish / Commitを抑止し、Event QueryでCPUへ通知する。この値は現在のDispatch Attemptで発見済みのTOIによる厳密な下限であり、未発見の将来TOIを含む最終総数ではない。新しいDispatch PlanによるRetryでは分割Countを基底Segment Scheduleから再初期化し、再実行中にTOIが追加される場合は同じReservationを繰り返しBlockして下限値を更新できる。§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexはtau時刻のAnimation Target Trajectory位置を直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準とし、Deviation Boundで膨張させる。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
 9. Discrete / TOIの双方で、非接触内部Constraint後・Contact Position Constraint前にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、TOI prefixではtauを使う。次にContact候補を現在の内部Constraint後Positionで再検査し、接触が成立しているものだけContact Position XPBDを解く。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
 10. 保存済みContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを一度適用する。TOI Impactはimpact_resolvedに記録し、Impact後Velocityから残時間の新Segmentを開始する。Contact位置補正後またはImpact後に同じSegmentのVelocity Reconstructionを実行しない。TOI候補がprefix再検査で成立しない場合はImpactを発生させず、tau位置から残時間を継続し、必要ならCCD候補を再構築する。
 
@@ -1143,7 +1143,7 @@ d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終
 
 ### 11.4 TOI処理
 
-現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算とTOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint ChordはSwept AABBのBroadphase基準形状としてだけ使う。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
+現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。Split Countに使う一意な内部境界の許容差は`tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`とし、§7.1.2に従って端点・既存境界・同時TOIを分類する。TOI Reductionは最小tauと同時TOI Groupの識別を返し、Groupに含まれる各Contactを別Splitとして数えてはならない。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算とTOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint ChordはSwept AABBのBroadphase基準形状としてだけ使う。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
@@ -1155,6 +1155,8 @@ TOIが確定したら、検出に使った離散軌道と同一の位置・速�
     v_path(tau) = path_velocity
 
 このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic VertexのTOI位置はtau時刻のAnimation Target Trajectoryを直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準だけに使い、kinematic_path_deviation_boundでAABBを保守的に膨張させる。Conservative Advancementは実Trajectory位置の距離d(tau)を使い、v_boundにはAnimation / Skinning Trajectoryの区間速度上限を加える。
+
+TOI Split Countは、新しい時間境界を追加した回数を表す。`tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`を用い、`tau_tolerance < tau < dt_segment - tau_tolerance`で、かつWorld Substep / Animation / Force / Impulse / 既存TOIの境界時刻から`tau_tolerance`より離れた場合だけ新規Splitとする。tau=0はInitial Contact処理へ委譲し、tau=dt_segmentは現Segment終端のContact Eventとして処理して残Segmentを作らず、どちらもSplit Countを増やさない。既存境界と許容差内で一致するTOIはその境界のEventとして扱い、追加Splitとしない。複数ContactのTOI時刻差が`tau_tolerance`以内なら同一TOI Groupへまとめ、Group全体でSplit Countを1増やす。TOI候補の並び順によらずGroup化結果とCountを決定的にする。
 
 prefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを先に解く。Soft Bodyはprefix軌道状態を維持する。Contact Position Constraintを解く前にDynamic VertexのContact前Velocityを(x_internal_solved - x_segment_start) / tauで再構築して保存する。次にTOI Contact Position Constraintを解くが、Contact位置補正後にVelocityを再構築しない。保存済みContact前VelocityをCoupled Projected Jacobiへ渡し、ResidualがAcceptance範囲へ収束した場合だけImpactを一度Commitする。W_ii <= epsilon_inverse_massの非応答ContactはPosition / ImpulseをSkipする。
 
@@ -1482,6 +1484,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.15: TOI Split Countを一意な内部境界の生成数へ厳密化し、端点 / 既存境界 / 同時TOIの過剰計上を防止。Runtime v1.12 / Profile v1.7と同期。
 - 1.14: Work Budget超過をBLOCKEDへ統一し、TOI時Segment要求を下限値として定義。CPU Preflight / GPU Dynamic TOIのStatus経路とRuntime Hard Limitを追加。Profile v1.6へ同期。
 - 1.13: WORK_BUDGET_EXCEEDEDからの復旧をRuntime契約へ分離し、実行予算変更と物理入力Snapshotの不変性を明記。Numerical Acceptance Profile v1.5のABI正本参照と同期。
 - 1.12: Immutable Span / Track / Channel / Blend / Collider Packetと16-byte Mutable World Cursorを分離。Segment Cursor Advance / TOI Retiming / Snapshot Rollbackを確定。

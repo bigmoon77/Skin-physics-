@@ -1,11 +1,11 @@
-# Skin Physics 設計閉鎖書（v2.4）
+# Skin Physics 設計閉鎖書（v2.5）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.12
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.14
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.11
-- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.6
+- 基本設計: [basic_design.md](basic_design.md) v1.13
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.15
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.12
+- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.7
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
 
@@ -337,15 +337,17 @@ Render Candidate Ring:
 
 ### 4.6 WORK_BUDGET_EXCEEDED Recovery
 
-- `WORK_BUDGET_EXCEEDED`はLogical Tick State=`BLOCKED`とし、Reservation / Tick Sequence / Input Snapshotを保持する。`REJECTED`や`FAILED`へ分類しない。
+- `WORK_BUDGET_EXCEEDED`はLogical Tick State=`BLOCKED`とし、Reservation / Tick Sequence / Input Snapshotを保持する。`REJECTED`や`FAILED`へ分類しない。`advance()` / `poll()`の戻り値はAPI操作成否、Logical Tick結果は`advance_report` / `world_status.last_tick_status`で返す。
 - CPU Preflightは正確な`planned_substeps` / `planned_integration_segments`をStatusへ記録し、GPU Physics Dispatch / Event Queryを発行しない。未使用Query / Render Candidate Slotを解放し、CPU Status Queueへ同期記録する。poll()で同じ呼出し中に観測可能とする。
-- GPU Dynamic TOIは`executed_integration_segments`と`minimum_required_integration_segments`をStatusへ記録する。後者は現在のDispatch Attempt内で発見済みTOI分割と残Segmentに対する下限値であり、`planned_integration_segments + discovered_toi_split_count`とする。未知の後続TOIを含む最終総数ではない。新しいRetry Planでは分割Countを初期化し、追加TOIが発見されるたびに同じReservationを再Blockできる。
+- GPU Dynamic TOIは`executed_integration_segments`と`minimum_required_integration_segments`をStatusへ記録する。後者は現在のDispatch Attempt内で発見済みTOI分割と残Segmentに対する下限値であり、`planned_integration_segments + discovered_toi_split_count`とする。Countはtauが内部にあり、既存境界と異なる一意な時間境界を作るTOI Groupごとに1増やす。端点TOI / 既存境界一致は0、時間許容差内の同時Contact Groupは1とする。未知の後続TOIを含む最終総数ではない。新しいRetry Planでは分割Countを初期化し、追加TOIが発見されるたびに同じReservationを再Blockできる。
 - `work_budget_block_origin`はCPU Preflight / GPU Dynamic TOIを明示し、flags bit0/1/2でSubstep / Preflight Segment / Dynamic TOI Segment超過を識別する。
-- Runtime初期化時に`maximum_world_substeps_hard_limit`と`maximum_integration_segments_per_tick_hard_limit`を必須指定し、Runtime lifetime中は変更不可とする。値は対象GPU / DriverのDeployment Capability Profileで実測認定した有限上限とし、普遍的な固定安全値を仮定しない。0、未認定値、上限超過は初期化またはWorld生成を拒否する。
-- `set_world_execution_budget`のBlocked Reservation更新は上限引上げのみとし、報告された予定数 / TOI下限値以上かつHard Limit以下を要求する。いずれかのAdmission Limitを減らす要求は`invalid_argument`で無変更とする。Idle Worldの増減は未Reservation Whole Tick / Step Request / Reservation / GPU Submissionがない場合だけ許可する。Pending Demandがある場合は`BUSY`で無変更とする。
+- Runtime初期化時に`maximum_world_substeps_hard_limit`と`maximum_integration_segments_per_tick_hard_limit`を必須指定し、Runtime lifetime中は変更不可とする。これらはHost-configured Admission Guardであり、Runtimeは0 / World Admission Limit超過を検証する。Deployment Capability Profileは実測環境・Workload・選択値のProvenance Recordであり、認証済みHard LimitやTDR保証を意味しない。HostがProfileのHardware / Driver / OS / Shader identityを実行環境と照合し、採用値を決定する。Substep / Segment数だけではGPU総Work量を上限化できないため、TDR安全性を主張しない。
+- `set_world_execution_budget`のBlocked Reservation更新は上限引上げのみとし、報告された予定数 / TOI下限値以上かつHard Limit以下を要求する。いずれかのAdmission Limitを減らす要求は`invalid_argument`で無変更とする。Work量がHard Limitを超えた場合は`last_tick_status=work_budget_unsatisfiable` / `work_budget_resolution=hard_limit_reached`を報告し、当該ReservationのBudget Retryを禁止する。Hostの明示的`reset_world`のみがReservationを破棄してInitial Stateへ戻す。Idle Worldの増減は未Reservation Whole Tick / Step Request / Reservation / GPU Submissionがない場合だけ許可する。Pending Demandがある場合は`BUSY`で無変更とする。
 - Budget超過でBlockされたTickはTick Sequence / Reservation時間 / Input Snapshot / Animation Packet Version / Cursor開始Snapshot / Event IDを保持する。
-- Retryでは新しい`dispatch_id` / Budget Revisionを持つImmutable Planを再生成し、同じReservationをTick開始Committed Stateから再実行する。後続Tickは先行Commit後に新Source Generationで再Planする。
+- Retryでは同じReservationをTick開始Committed Stateから再実行する。CPU Preflightで解放したQuery / Render Candidate Slot、GPU Dynamic TOIのStatus観測後に解放したQuery / Render Candidate Slot、in-flight枠を標準Submission Admissionで再取得してからPlanを生成する。Slot不足中は同じReservationを保持してBLOCKEDを継続し、Slotが取得できるまで新dispatch_id / GPU Dispatchを発行しない。Planは新しいBudget Revisionと結び付ける。後続Tickは先行Commit後に新Source Generationで再Planする。
 - 更新対象はAdmission Limitだけ。物理材料、Compliance、Contact品質、Fixed Delta、Substep / Segment境界の意味は変更しない。
+- `advance()`は時間要求の受付、`poll()`はStatus観測が成功すれば`ok`を返し、Block理由は`advance_report` / `world_status`へ返す。CPU Preflight Blockは`advance()`が`ok`でも発生し得る。`poll()`は`ok`と`tick_state=BLOCKED`、`last_tick_status=work_budget_exceeded`を同時に表現する。
+- Retry Resource AdmissionでQuery / Render Candidate / in-flight枠を再取得できない場合はReservationを維持する。Hard Limit到達時はRetry不能として明示し、Reset以外で時間・物理状態を暗黙に破棄しない。
 
 ## 5. Validation / Acceptance
 
@@ -390,7 +392,7 @@ Render Candidate Ring:
 - [ ] GPU Animation Trajectory PacketがTOI任意tauのBone / Skinning Position / VelocityとKinematic Collider Transform / Contact Point Velocityを評価し、Clip Key Span / Blend / Collider Sample / Boundが同一Versionである。
 - [ ] WORK_BUDGET_EXCEEDEDはBLOCKEDに統一され、CPU Preflight同期StatusとGPU Dynamic TOI Query Statusが別経路でpoll可能。
 - [ ] TOI時のminimum_required_integration_segmentsは証明可能な下限値として扱い、複数回のTOI再Block / 再Retryを検証する。
-- [ ] Runtime Hard Limitは初期化時に固定され、上限超過設定はinvalid_argumentで無変更。Deployment Capability Profileは対象GPU / DriverごとにGate R6で認定済み。
+- [ ] Host-configured Runtime Hard Limitは初期化時に固定され、0 / 上限超過設定はinvalid_argumentで無変更。Deployment Capability Profileは測定ProvenanceとしてGate R6で作成し、Runtimeによる認証検証・TDR保証を主張しない。
 - [ ] Pending Whole Tick / Step Request / Reservation中の予算更新はBUSYで無変更。Blocked ReservationのRetryは同じTick Reservation / Input / Packet / Eventを保持する。
 - [ ] SM5 GPU PacketはAbsolute World TimeをfloatへCastせず、CPU doubleからSpan-local normalized u / Segment-relative tauへ変換する。Record Byte Size / Offsets / Stridesとu_segment_startの単調進行を検証する。 Immutable PacketのMutation Count=0、CursorのSnapshot Restore Mismatch=0、Rejected TickからのCursor Leak=0も検証する。
 - [ ] Animation Target Velocityは最終Skinning Trajectoryの時間微分とし、STEP / LINEAR / CUBICSPLINE / Blendの規則が一意。
@@ -429,6 +431,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
+- 2.5: Retry Resource Re-Admission、Unique TOI Split Count、Hard Limit Unsatisfiable / Reset、API戻り値とTick Statusの分離、Host-configured Guardと測定Profileの責務を統一。Profile v1.7と各設計書の版番号を同期。
 - 2.4: Work BudgetのBLOCKED状態、CPU Preflight / GPU Dynamic TOIのStatus観測、TOI要求下限値、Runtime Hard Limit、BUSY no-mutationを統一。Numerical Acceptance Profile v1.6と各設計書の版番号を同期。
 - 2.3: WORK_BUDGET_EXCEEDEDのStatus / Required Count / 実行予算再設定 / 同一Reservation RetryをRuntime API・Validation Checklistへ追加。Numerical Acceptance Profile v1.5と各設計書の版番号を同期。
 - 2.2: Immutable Animation Packetと16-byte Mutable World Span Cursorを分離し、Segment / TOI Cursor Advance、Snapshot Rollback、Packet不変性のAcceptance Gateを追加。

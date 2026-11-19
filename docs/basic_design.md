@@ -1,10 +1,10 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.12
+- 文書バージョン: 1.13
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.11
+- 前版: 1.12
 - Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md)
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
 
@@ -304,7 +304,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - CCD / TOI、Segment retime、初期貫通修正: detailed_design.md §10-11。
 - Animation Target / Velocity、Render Binding、属性保持: detailed_design.md §5-6 / §12-13。
 - GPU Pass、Tick Transaction、Capacity、JSON、再現性、Gate R0-R6: detailed_design.md §14-19、runtime_integration_design.md §5-10。
-- WORK_BUDGET_EXCEEDEDの回復は、Tick Reservationを維持したまま実行上限だけを更新するruntime_integration_design.md §5.6を正とする。Retry途中に物理品質・材料・時間分割条件を変更しない。
+- WORK_BUDGET_EXCEEDEDの回復は、Tick Reservationを維持したまま実行上限だけを更新するruntime_integration_design.md §5.6を正とする。Retry前にQuery / Render Candidate / in-flight枠を再Admissionし、Slotが揃うまでGPU Submissionとdispatch_id発行を行わない。Hard Limit到達は`work_budget_unsatisfiable`として明示し、`reset_world`以外で暗黙にReservationを破棄しない。Retry途中に物理品質・材料・時間分割条件を変更しない。
 - 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.6を正とする。
 
 ## 15. 参考OSS・技術資料
@@ -326,7 +326,8 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
-- 1.11: Numerical Acceptance ProfileのGPU Packet ABI参照を単一化し、WORK_BUDGET_EXCEEDEDからのReservation維持・実行予算再設定契約を追加。
+- 1.13: Work Budget RetryのResource Re-Admission、Hard Limit Unsatisfiable / Reset、TOI Unique Split Count、API StatusとTick Statusの分離を反映。
+- 1.12: Numerical Acceptance ProfileのGPU Packet ABI参照を単一化し、WORK_BUDGET_EXCEEDEDからのReservation維持・実行予算再設定契約を追加.
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。

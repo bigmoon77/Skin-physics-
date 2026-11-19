@@ -597,6 +597,10 @@
       {
         "id": "DCR_41_WORK_BUDGET_RECOVERY_RESERVATION_REPLAY",
         "test_case": 41
+      },
+      {
+        "id": "DCR_42_DEPLOYMENT_CAPABILITY_PROFILE_PROVENANCE",
+        "test_case": 42
       }
     ]
   },

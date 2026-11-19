@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.6",
+  "profile_version": "1.7",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -23,10 +23,23 @@
       "required_at_initialize": true,
       "immutable_after_initialize": true,
       "zero_is_invalid": true,
-      "scope": "Runtime-wide upper bounds applied to every World Admission Limit",
-      "calibration": "The two runtime_desc values are the deployment-certified finite upper envelope and must be recorded for the exact GPU adapter, driver, Windows build, shader package and workload profile under Gate R6. The Host supplies these values from the certified deployment profile; initialize validates and freezes them for the Runtime lifetime. No universal safe numeric maximum or TDR guarantee is asserted. All per-Dispatch D3D11 limits and resource-allocation bounds must also be validated.",
-      "acceptance": "World Admission Limits must be <= the immutable runtime_desc Hard Limits supplied by the Host from a Gate R6-certified deployment profile. create_world and set_world_execution_budget validate these limits. A zero, uncertified, or over-hard-limit value returns invalid_argument without mutating Budget, Revision, Reservation or Timeline."
-    }
+      "scope": "Runtime-wide Host-configured admission guards applied to every World Admission Limit",
+      "calibration": "These values are immutable Host policy guards, not Runtime-certified GPU-safe maxima. Gate R6 measurements record the adapter, driver, Windows build, Runtime build, shader package and workload envelope used by the Host to choose the values. The Runtime validates only non-zero uint32 values and World Admission Limits <= these values. It does not authenticate a profile, verify a signature, or claim that these two counts bound total GPU work or prevent TDR.",
+      "host_responsibility": "Before initialize, the Host selects the deployment capability profile, verifies that its adapter LUID / vendor and device IDs / driver version / Windows build / Runtime build / shader package identity match the active environment, and applies its own deployment policy. The Runtime receives the selected numeric limits and freezes them for its lifetime.",
+      "bounded_dimensions": [
+        "world_substeps_per_tick",
+        "integration_segments_per_tick"
+      ],
+      "not_bounded_by_these_two_limits": [
+        "dynamic_vertices_or_tetrahedra",
+        "cloth_constraints_and_solver_iterations",
+        "broadphase_candidate_pairs_and_contact_constraints",
+        "dispatch_count_and_per-dispatch GPU execution time",
+        "total GPU execution time or Windows TDR deadline"
+      ],
+      "acceptance": "initialize rejects zero Hard Limits. create_world and set_world_execution_budget reject zero or over-Hard-Limit World Admission Limits without mutating Budget, Revision, Reservation or Timeline. Values above Hard Limits are invalid_argument. These checks do not imply that a within-limit Workload is TDR-safe."
+    },
+    "deployment_profile_template": "deployment_capability_profile_template.json"
   },
   "normalization": {
     "per_mesh": true,
@@ -305,6 +318,10 @@
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
   },
   "version_history": [
+    {
+      "version": "1.7",
+      "changes": "Clarified Runtime Hard Limits as Host-configured admission guards, added deployment capability profile provenance requirements, removed Runtime-certified/TDR-safe claims, and documented dimensions not bounded by Substep/Segment limits."
+    },
     {
       "version": "1.6",
       "changes": "Added the execution-budget defaults and mandatory immutable Runtime Hard Limit contract with per-deployment GPU/driver calibration requirements."
