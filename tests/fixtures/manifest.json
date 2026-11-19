@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Case 46 scalar inputs include complete Effective Inverse Mass normal/friction values, unit-bearing residuals, right-handed Candidate / Boundary contact frames, and q-compatible Jacobian row order. E_contact_impulse is recomputed and checked against tolerance; E_applied_impulse remains uncertified. The coupled fixture requires full generalized Delassus, responsive-subspace and J^T*q certificates. Cases 45-47 remain specified_not_implemented until executable assertions consume fixtures and CI passes.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 cover TOI boundary identity / snap bounds / deployment qualification; Case 48 covers ordered in-flight submissions and two-bank reuse; Case 49 covers XPBD correction-sweep Broadphase completeness, VT / EE Correction Motion CCD, Contact Set refresh, fail-closed unresolved / crossing behavior, and pseudo-time isolation. Cases 45-49 remain specified_not_implemented until executable assertions consume the corresponding fixtures and CI passes.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -631,11 +631,38 @@
         "id": "DCR_47_DEPLOYMENT_PROFILE_SAMPLE_AND_TARGET_LIMIT_QUALIFICATION",
         "test_case": 47,
         "fixture_id": "DCR_47_POOLED_RAW_SAMPLE_PERCENTILE"
+      },
+      {
+        "id": "DCR_48_IN_FLIGHT_WINDOW_TWO_BANK_SERIALIZATION",
+        "test_case": 48
+      },
+      {
+        "id": "DCR_49_XPBD_CORRECTION_SWEEP_BROADPHASE_CCD",
+        "test_case": 49,
+        "fixture_ids": [
+          "DCR_49_VT_POINT_THROUGH_TRIANGLE",
+          "DCR_49_EE_EDGE_THROUGH_EDGE",
+          "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY",
+          "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT",
+          "DCR_49_VT_CERTIFIED_MISS",
+          "DCR_49_CONTACT_SET_CASCADE",
+          "DCR_49_UNRESOLVED_INTERVAL_AND_BOUND",
+          "DCR_49_CORRECTION_CAPACITY_OVERFLOW",
+          "DCR_49_PSEUDO_TIME_ISOLATION",
+          "DCR_49_TOI_PREFIX_PSEUDO_TIME_ISOLATION"
+        ]
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; applied_impulse_and_full_coupled_certificates_not_provided; Snap_authorization_fixtures_fail_closed",
-    "fixture_version": "1.9"
+    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; missing_correction_interval_certificates_fail_closed",
+    "fixture_version": "1.9",
+    "additional_fixture_bundles": [
+      {
+        "path": "design_review/correction_sweep_broadphase.json",
+        "fixture_version": "1.0",
+        "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
+      }
+    ]
   },
   "latest_ci_attempt": {
     "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
