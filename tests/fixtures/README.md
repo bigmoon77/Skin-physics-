@@ -25,6 +25,7 @@ This directory contains version-controlled input fixtures and expected reference
 - **Phase 09 Animation:** CPU target sampling plus WARP translation/velocity, quaternion Slerp and teleport policy.
 - **Phase 10 Attribute Paint:** CPU operations and WARP Paint/Smooth/Average/Erase comparisons.
 - **Phase 11 Performance / GPU orchestration:** WARP Timestamp Query collection, DXGI local-memory query capability handling and two-pass Compute Pass Graph execution with SRV/UAV hazard validation.
+- **Phase 12 Correction Motion CCD (CPU reference subset):** fixture-driven VT / EE correction path hit and crossing, positive / negative latched side, same-side transient proximity, endpoint contact discovery, certified miss, ambiguous start-side rejection, non-finite input rejection and interval-budget exhaustion. Segment-wide broadphase integration, Contact Set cascade, GPU kernels, and complete Case 49 capacity / pseudo-time assertions remain pending.
 
 ## GPU test interpretation
 
