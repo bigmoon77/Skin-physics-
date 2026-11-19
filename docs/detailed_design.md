@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.22
+- 文書バージョン: 1.23
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.17
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.19
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.14
-- 前版: 1.21
+- 対応基本設計: basic_design.md 1.18
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.20
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.15
+- 前版: 1.22
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1195,12 +1195,24 @@ G_internal / G_contact / G_vの区間評価は外向き丸め付きInterval / Af
 
 Impulse誤差はContact Effective Inverse Mass等の個別値の差を列挙するだけでは証明できない。Candidate時刻とSnap先時刻の両方を含む入力不確かさ集合 U を構築し、同じ決定的な有限反復Contact Solver FをU全域で評価する。FはContact Island内のCoupled Normal / Tangential Impulse、XPBD Support Impulse、Restitution、Friction Projectionおよび固定反復順序を含む。Candidate / BoundaryのContact-relative Velocity入力は、内部制約後かつContact Position Constraints前に保存したG_vから取得する。Contact geometry / positionはG_contact後の状態を用いてよいが、Contact Position correctionを使ってVelocityを再構築してはならない。
 
-Contact IslandのContactをCanonical Contact Key順に並べ、Impulse出力ベクトルを次の固定順で定義する。
+Contact IslandのContactをCanonical Contact Key順に並べ、Solverが使用する局所一般化Impulse係数ベクトルqを次の固定順で定義する。
 
-    j = [j_n,0, ..., j_n,N-1,
+    q = [j_n,0, ..., j_n,N-1,
          j_t,0,u, j_t,0,v, ..., j_t,N-1,u, j_t,N-1,v]
 
-各j_n,iはContact iのNormal Impulse scalar、j_t,i,u / j_t,i,vはContact iの右手系Tangent Basis上の2D Impulse成分である。F(z)はこの3N次元ベクトルを返し、以下の誤差Boundは全てこのベクトル表現のEuclidean L2 normで評価する。Contact数がCandidate / Boundaryで異なる、Canonical Contact Key集合が一致しない、または同じBoundaryへSnapするContact Island集合が確定しない場合はImpulse Boundをunknownとし、Snapを禁止する。
+各j_n,iはContact iのNormal Impulse scalar、j_t,i,u / j_t,i,vはContact iの右手系Tangent Basis上の2D係数である。qは局所Contact座標でDelassus Solverへ入力する係数配列であり、物理的なImpulse Errorの比較対象として直接使用しない。
+
+各Contact iの物理的なWorld-space Impulse Vectorは次で得る。
+
+    I_i = j_n,i * n_i
+        + j_t,i,u * tangent_u_i
+        + j_t,i,v * tangent_v_i
+
+F(z)はCanonical Contact Key順に並べたWorld-space Vectorを返す。
+
+    F(z) = [I_0.x, I_0.y, I_0.z, ..., I_N-1.x, I_N-1.y, I_N-1.z]
+
+したがってF(z)は固定World座標系で表現された3N次元ベクトルであり、E_impulseはそのEuclidean L2 normで評価する。Normal / Tangent Basisの回転による物理Impulse方向の変化もこの出力へ反映する。Contact数がCandidate / Boundaryで異なる、Canonical Contact Key集合が一致しない、または同じBoundaryへSnapするContact Island集合が確定しない場合はImpulse Boundをunknownとし、Snapを禁止する。
 
     E_impulse = sup { || F(z) - F(z_boundary) ||_2 : z in U }
 
@@ -1223,7 +1235,7 @@ Uは少なくとも次の変数を包含する。
                 + E_friction_vector
                 + E_solver_residual
 
-ここでE_normal_scalarはContact Island全体のNormal Impulse scalar stack差のL2上界、J_normal_maxはU全域におけるNormal Impulse stackのL2 norm上界、theta_normal_maxは全Contact NormalのCandidate / Boundary方向角度差の最大上界、E_friction_vectorは全Contactの2D Tangential Impulse stack差のL2上界、E_solver_residualはCandidate / Boundary両評価のNormal / Tangential残差をImpulse単位でL2評価した上界の和である。接触ごとの角度差に対するBlock-diagonal Rotation Operatorの最大特異値を2*sin(theta_normal_max/2)で抑える。各Contactの誤差上界を個別に算出する場合は、各上界をCanonical Contact Key順に並べてL2集約する。単純な最大値だけで複数Contactを代表してはならない。
+ここでE_normal_scalarはContact Island全体のNormal Impulse scalar stack差のL2上界、J_normal_maxはU全域におけるNormal Impulse stackのL2 norm上界、theta_normal_maxは全Contact NormalのCandidate / Boundary方向角度差の最大上界、E_friction_vectorは全ContactのWorld-space Tangential Impulse Vector stack差のL2上界、E_solver_residualはCandidate / Boundary両評価の残差をWorld-space Impulseへ変換したVector stackのL2上界の和である。接触ごとのNormal方向差に対するBlock-diagonal Rotation Operatorの最大特異値を2*sin(theta_normal_max/2)で抑える。各Contactの誤差上界を個別に算出する場合は、各上界をCanonical Contact Key順に並べてL2集約する。単純な最大値だけで複数Contactを代表してはならない。Tangent座標の係数差だけをWorld-space Tangential Impulse誤差として扱ってはならず、Tangent Basis回転も評価する。
 
 
 **単一Contact / Contactごとに独立した対角Effective Inverse Massの計算可能な特殊ケース**
@@ -1246,21 +1258,24 @@ CouplingがなくNormal / Tangential Effective Inverse Massがスカラー（ま
 
 とする。`K_t`もDelassus接線対角係数（Effective Inverse Mass）[1/kg]とする。`K_t_min > 0` [1/kg]、`dt_min > 0`を要求し、`v_t_max`、`Delta_v_t`、`Delta_K_t`、`mu_max`、`Delta_mu`、`lambda_n_max`、`Delta_lambda_n`、`Delta_inverse_dt`をU上の上限とする。Disk Projectionの非拡大性と半径変動Boundから、
 
-    E_friction_vector <= Delta_v_t / K_t_min
-                         + v_t_max * Delta_K_t / (K_t_min * K_t_min)
-                         + s_max * Delta_mu
-                         + mu_max * (E_normal_scalar
-                                     + Delta_lambda_n / dt_min
-                                     + lambda_n_max * Delta_inverse_dt)
+    E_friction_coordinates <= Delta_v_t / K_t_min
+                               + v_t_max * Delta_K_t / (K_t_min * K_t_min)
+                               + s_max * Delta_mu
+                               + mu_max * (E_normal_scalar
+                                           + Delta_lambda_n / dt_min
+                                           + lambda_n_max * Delta_inverse_dt)
+
+    E_friction_vector <= E_friction_coordinates
+                         + 2 * J_tangent_max * sin(theta_tangent_max / 2)
 
 
     s_max = j_n_max + lambda_n_max / dt_min
 
-を使える。`Delta_inverse_dt`は`abs(1/dt_candidate - 1/dt_boundary)`の保守上限とする。`Delta_v_t`はNormal変動に伴うTangent Basis回転も含めた接線Velocity座標差の上限とする。`E_solver_residual`は両評価のNormal / Tangential Impulse残差をImpulse単位へ換算して合算した上界である。
+を使える。`Delta_inverse_dt`は`abs(1/dt_candidate - 1/dt_boundary)`の保守上限とする。`Delta_v_t`はCandidate / BoundaryそれぞれのTangent Basisで表した接線Velocity座標差を包含する上限とする。`J_tangent_max`はU全域のWorld-space Tangential Impulse Vector stackのL2 norm上限、`theta_tangent_max`は対応するTangent Basisの最大回転角である。最後の回転項はTangent Basisの変化によるWorld-space Impulse方向の差を抑える。`E_solver_residual`は両評価のNormal / Tangential Impulse残差をWorld-space Impulseへ変換してL2評価した上界の和である。
 
 この特殊ケース式はNormal / Tangential方向の独立性が証明できる場合だけ適用する。非対角Coupling、共有頂点、複数ContactのProjected Jacobi、異方性摩擦Metric、またはSolverの反復写像が独立スカラー式へ分離できない場合は適用禁止とし、前述の完全なContact-Island関数Fを外向き丸め付き区間評価または検証済みLipschitz Boundで評価する。
 
-`E_normal_scalar`はContact Island全体のNormal Impulse scalar stack差のL2上界とする。`theta_normal_max`はU全域での各Contact Normal方向差の最大角度、`J_normal_max`はU全域のNormal Impulse stack全体のL2 norm上限とする。`E_friction_vector`は全ContactのTangent Basis上2D Impulseを連結したstack差のL2上界とする。`E_solver_residual`はCandidate / Boundary各評価のNormal / Tangential残差ベクトルのL2上限を合算したものとする。`K_n` / `K_t`はDelassus対角係数すなわちEffective Inverse Mass [1/kg]を表し、物理的なEffective Mass [kg]とは区別する。単一Contact式の値を複数の独立Contactへ適用する場合は、Contactごとの証明済み上界を同じCanonical Contact Key順でL2集約する。各項の計算方法・単位・区間根拠はFixtureごとに記録する。
+`E_normal_scalar`はContact Island全体のNormal Impulse scalar stack差のL2上界とする。`theta_normal_max`はU全域での各Contact Normal方向差の最大角度、`J_normal_max`はU全域のNormal Impulse stack全体のL2 norm上限とする。`E_friction_vector`は全ContactのWorld-space Tangential Impulse Vector stack差のL2上界であり、Tangent Basis回転を含む。単一Contactの対角Effective Inverse Mass特殊ケースでは、まず係数座標の誤差をE_friction_coordinatesで評価し、2*J_tangent_max*sin(theta_tangent_max/2)を加えてWorld-space上界へ変換する。`J_tangent_max`はU全域のWorld-space Tangential Impulse Vector stackのL2 norm上限、`theta_tangent_max`はTangent Basisの最大回転角とする。`E_solver_residual`はCandidate / Boundary各評価のNormal / Tangential残差をWorld-spaceへ変換したVector stackのL2上限を合算したものとする。`K_n` / `K_t`はDelassus対角係数すなわちEffective Inverse Mass [1/kg]を表し、物理的なEffective Mass [kg]とは区別する。単一Contact式の値を複数の独立Contactへ適用する場合は、Contactごとの証明済み上界を同じCanonical Contact Key順でL2集約する。各項の計算方法・単位・区間根拠はFixtureごとに記録する。
 
 Active Contact Set / Stick-Slip Projection BranchがU内で変化する可能性を排除できない場合、変化を含む全分岐を区間評価して有限上界を証明できるときだけSnap候補に残す。Responsive DelassusのK_minが正と証明できない、F(U)が有限に包含できない、反復Solverの残差Boundがない、または上記いずれかの入力区間が欠落する場合は`impulse_error_bound = unknown`とし、Snapを禁止する。独立したContact GroupごとのImpulse誤差を単純に最大値だけで代表してはならず、同じBoundaryへSnapする全Contact Islandのベクトル誤差を評価する。
 
@@ -1608,6 +1623,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.23: Impulse Errorの比較空間をWorld-space 3N Vectorへ統一。Delassus Solverの局所係数qと物理Impulse出力Fを分離し、Tangent Basis回転誤差をE_friction_vectorへ追加。
 - 1.22: TOI誤差式のImpulse出力ベクトル順・Contact Island L2集約・Normal方向回転Boundを定義。DelassusをEffective Inverse Mass [1/kg]と明示し、Responsive Subspaceのrank / basis安定性をSnap証明条件に追加。
 - 1.21: Corrected the normative TOI equations to use E_Gcontact and E_Gv with candidate / boundary residuals; removed the stale G_p reference and made the map-to-error-budget binding explicit.
 - 1.20: XPBD写像をG_internal / G_contact / G_vへ分離し、Pre-contact Velocity保存とContact Position correctionの順序を一致。Snap Fixtureを証明未添付時にFail-closedとし、tau=0 / tau=dt端点、Tangential Delassus / Cross Block / Tangent Basis / XPBD Support Impulse入力を追加。Basic / Runtime / Profileの相互参照と履歴を統合。
