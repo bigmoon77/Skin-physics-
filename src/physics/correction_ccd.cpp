@@ -1103,6 +1103,13 @@ namespace skin_physics::physics
                 epsilon_length / edge_a_length.lower;
             result.feature_parameter_tolerance_b =
                 epsilon_length / edge_b_length.lower;
+            if (result.feature_parameter_tolerance_a >= 0.5L ||
+                result.feature_parameter_tolerance_b >= 0.5L)
+            {
+                result.feature_parameter_a.valid = false;
+                result.feature_parameter_b.valid = false;
+                return result;
+            }
 
             const interval_vector3 normal = interval_scale_vector(
                 interval_cross(direction_a, direction_b),
@@ -1136,9 +1143,9 @@ namespace skin_physics::physics
             {
                 return false;
             }
-            const real parameter_tolerance = std::min(
-                0.25L, epsilon_length / edge_length);
-            return parameter > parameter_tolerance &&
+            const real parameter_tolerance = epsilon_length / edge_length;
+            return parameter_tolerance < 0.5L &&
+                parameter > parameter_tolerance &&
                 parameter < one - parameter_tolerance;
         }
 
