@@ -42,8 +42,10 @@ namespace skin_physics::physics
     struct correction_candidate_pair_key
     {
         correction_contact_type contact_type = correction_contact_type::vertex_triangle;
+        uint64_t stable_id_a = 0;
         uint32_t mesh_a = 0;
         uint32_t primitive_a = 0;
+        uint64_t stable_id_b = 0;
         uint32_t mesh_b = 0;
         uint32_t primitive_b = 0;
 
@@ -100,8 +102,10 @@ namespace skin_physics::physics
 
     correction_candidate_pair_key make_canonical_correction_candidate_key(
         correction_contact_type contact_type,
+        uint64_t stable_id_a,
         uint32_t mesh_a,
         uint32_t primitive_a,
+        uint64_t stable_id_b,
         uint32_t mesh_b,
         uint32_t primitive_b);
 
