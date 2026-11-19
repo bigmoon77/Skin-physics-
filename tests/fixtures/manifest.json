@@ -609,6 +609,18 @@
       {
         "id": "DCR_44_TOI_ENDPOINT_SNAP_GEOMETRIC_ERROR_GUARD",
         "test_case": 44
+      },
+      {
+        "id": "DCR_45_TOI_ZERO_TIME_RUNTIME_PARITY",
+        "test_case": 45
+      },
+      {
+        "id": "DCR_46_TOI_BOUNDARY_ID_AND_FULL_SNAP_ERROR_BUDGET",
+        "test_case": 46
+      },
+      {
+        "id": "DCR_47_DEPLOYMENT_PROFILE_SAMPLE_AND_TARGET_LIMIT_QUALIFICATION",
+        "test_case": 47
       }
     ]
   },
