@@ -1791,12 +1791,60 @@ namespace
 
         using skin_physics::physics::correction_primitive_role;
         std::vector<skin_physics::physics::correction_broadphase_primitive>
-            correction_primitives = {
-                { 100, 1, 0, correction_primitive_role::vertex, point_bounds },
-                { 200, 1, 1, correction_primitive_role::triangle, triangle_bounds },
-                { 300, 1, 2, correction_primitive_role::edge, point_bounds },
-                { 400, 1, 3, correction_primitive_role::edge, triangle_bounds }
-            };
+            correction_primitives(7);
+        correction_primitives[0].stable_id = 100;
+        correction_primitives[0].mesh_id = 1;
+        correction_primitives[0].primitive_id = 0;
+        correction_primitives[0].role = correction_primitive_role::vertex;
+        correction_primitives[0].envelope_bounds = point_bounds;
+        correction_primitives[0].vertex_stable_ids = { 11 };
+
+        correction_primitives[1].stable_id = 200;
+        correction_primitives[1].mesh_id = 1;
+        correction_primitives[1].primitive_id = 1;
+        correction_primitives[1].role = correction_primitive_role::triangle;
+        correction_primitives[1].envelope_bounds = triangle_bounds;
+        correction_primitives[1].vertex_stable_ids = { 21, 22, 23 };
+
+        correction_primitives[2].stable_id = 300;
+        correction_primitives[2].mesh_id = 1;
+        correction_primitives[2].primitive_id = 2;
+        correction_primitives[2].role = correction_primitive_role::edge;
+        correction_primitives[2].envelope_bounds = point_bounds;
+        correction_primitives[2].vertex_stable_ids = { 31, 32 };
+
+        correction_primitives[3].stable_id = 400;
+        correction_primitives[3].mesh_id = 1;
+        correction_primitives[3].primitive_id = 3;
+        correction_primitives[3].role = correction_primitive_role::edge;
+        correction_primitives[3].envelope_bounds = triangle_bounds;
+        correction_primitives[3].vertex_stable_ids = { 41, 42 };
+
+        // This Vertex overlaps the Triangle AABB but shares a topology Vertex,
+        // so it must be excluded before Candidate capacity is evaluated.
+        correction_primitives[4].stable_id = 500;
+        correction_primitives[4].mesh_id = 1;
+        correction_primitives[4].primitive_id = 4;
+        correction_primitives[4].role = correction_primitive_role::vertex;
+        correction_primitives[4].envelope_bounds = point_bounds;
+        correction_primitives[4].vertex_stable_ids = { 21 };
+
+        // The pair overlaps geometrically but is explicitly excluded by the
+        // topology owner's one-ring adjacency policy.
+        correction_primitives[5].stable_id = 600;
+        correction_primitives[5].mesh_id = 1;
+        correction_primitives[5].primitive_id = 5;
+        correction_primitives[5].role = correction_primitive_role::edge;
+        correction_primitives[5].envelope_bounds = point_bounds;
+        correction_primitives[5].vertex_stable_ids = { 51, 52 };
+        correction_primitives[5].excluded_primitive_ids = { { 700, 1, 6 } };
+
+        correction_primitives[6].stable_id = 700;
+        correction_primitives[6].mesh_id = 1;
+        correction_primitives[6].primitive_id = 6;
+        correction_primitives[6].role = correction_primitive_role::edge;
+        correction_primitives[6].envelope_bounds = triangle_bounds;
+        correction_primitives[6].vertex_stable_ids = { 61, 62 };
         skin_physics::physics::broadphase_settings correction_broadphase_settings;
         correction_broadphase_settings.cell_size = 0.25f;
         correction_broadphase_settings.contact_thickness = 0.0f;
@@ -1810,7 +1858,7 @@ namespace
         require(correction_broadphase.success &&
             correction_broadphase.required_candidates == 2 &&
             correction_broadphase.candidates.size() == 2,
-            "Correction Broadphase must map existing Spatial Hash pairs to VT / EE typed candidates.");
+            "Correction Broadphase must map Spatial Hash pairs to VT / EE and remove topology-adjacent pairs before capacity counting.");
         require(correction_broadphase.broadphase_candidate_count >=
             correction_broadphase.required_candidates,
             "Typed Correction Candidate count must not exceed the source Broadphase pair count.");
@@ -1834,6 +1882,17 @@ namespace
                     key.stable_id_a == 300 && key.stable_id_b == 400;
             }),
             "Correction Broadphase must preserve the canonical EE stable-ID pair.");
+
+        require(std::none_of(
+            correction_broadphase.candidates.begin(),
+            correction_broadphase.candidates.end(),
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+            {
+                return (key.stable_id_a == 200 && key.stable_id_b == 500) ||
+                    (key.stable_id_a == 500 && key.stable_id_b == 200) ||
+                    (key.stable_id_a == 600 && key.stable_id_b == 700);
+            }),
+            "Shared-vertex and explicit one-ring topology pairs must be excluded before Canonical Candidate output.");
 
         skin_physics::physics::broadphase_settings double_expansion_settings =
             correction_broadphase_settings;
