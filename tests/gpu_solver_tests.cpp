@@ -1872,6 +1872,40 @@ namespace
             invalid_primitive_identity.candidates[0].identity_a[0] == 0xffffffffu,
             "GPU Candidate Count must reject duplicate Stable / Mesh / Primitive identities without publishing a partial Candidate Set.");
 
+        std::vector<gpu_uint2> repeated_pair_seeds =
+            candidate_pair_seeds;
+        repeated_pair_seeds.push_back(candidate_pair_seeds.front());
+        const gpu_pipeline_readback repeated_pair_result =
+            run_pipeline(gpu_primitives, repeated_pair_seeds, 2, 2);
+        require(repeated_pair_result.totals[0] == 2u &&
+            repeated_pair_result.totals[1] == 0u &&
+            compare_pair(repeated_pair_result.candidates[0],
+                cpu_reference.candidates[0]) &&
+            compare_pair(repeated_pair_result.candidates[1],
+                cpu_reference.candidates[1]),
+            "GPU Candidate Count must ignore duplicate broadphase Pair Seeds before Capacity accounting.");
+
+        const std::vector<gpu_correction_candidate_primitive> isolated_primitive = {
+            gpu_primitives[0]
+        };
+        const gpu_pipeline_readback isolated_result =
+            run_pipeline(isolated_primitive, {}, 1, 1);
+        require(isolated_result.totals[0] == 0u &&
+            isolated_result.totals[1] == 0u &&
+            isolated_result.candidates[0].identity_a[0] == 0xffffffffu,
+            "A valid isolated Primitive with zero Candidate Pair Seeds must complete validation and return an empty Candidate Set.");
+
+        std::vector<gpu_correction_candidate_primitive> invalid_isolated_primitive = {
+            gpu_primitives[0]
+        };
+        invalid_isolated_primitive[0].role = 99u;
+        const gpu_pipeline_readback invalid_isolated_result =
+            run_pipeline(invalid_isolated_primitive, {}, 1, 1);
+        require(invalid_isolated_result.totals[0] == 0u &&
+            invalid_isolated_result.totals[1] == 2u &&
+            invalid_isolated_result.candidates[0].identity_a[0] == 0xffffffffu,
+            "GPU Primitive validation must reject malformed input even when the Candidate Pair Seed list is empty.");
+
         std::cout << "[PASS] P12_WARP_CORRECTION_CANDIDATE_PIPELINE\n";
     }
 
@@ -2510,6 +2544,9 @@ int run_gpu_solver_tests()
         const std::filesystem::path correction_candidate_shader_path =
             test_support::fixture_path(
                 "phase12_correction/correction_candidate_pipeline.cs.hlsl");
+        const ComPtr<ID3D11ComputeShader> correction_candidate_validate_shader =
+            compile_compute_shader(device.Get(), correction_candidate_shader_path,
+                "correction_candidate_validate_primitives");
         const ComPtr<ID3D11ComputeShader> correction_candidate_count_shader =
             compile_compute_shader(device.Get(), correction_candidate_shader_path,
                 "correction_candidate_count");
@@ -2535,6 +2572,7 @@ int run_gpu_solver_tests()
             device.Get(), context.Get(), correction_swept_aabb_shader.Get());
         test_phase12_warp_correction_candidate_pipeline(
             device.Get(), context.Get(),
+            correction_candidate_validate_shader.Get(),
             correction_candidate_count_shader.Get(),
             correction_candidate_scan_shader.Get(),
             correction_candidate_initialize_shader.Get(),
