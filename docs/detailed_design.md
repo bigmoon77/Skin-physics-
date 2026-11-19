@@ -1,11 +1,11 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.16
+- 文書バージョン: 1.17
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.14
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.13
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.8
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.14
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.9
 - 前版: 1.15
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
@@ -760,7 +760,7 @@ Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraint
 5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
 7. TOIがない場合は、Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを規定反復数だけ解く。
-8. TOI Candidateは§11.4のGeometrically Safe Boundary Snapで端点または既存Substep / Animation / Force / Impulse境界へSnapできるか判定する。`tau=0`はInitial Contact Event、`tau=dt_segment`はSegment終端Contact Eventとして処理し、どちらも追加Segmentを作らない。時間許容差内でもSnap位置誤差Boundが`distance_tolerance`を超える場合はSnapせず、検出した正確なtauに内部Boundaryを作る。安全にSnapできる境界は既存Event ScheduleへContact Eventとしてマージし、追加Splitに数えない。その他の一意な内部時間Boundaryだけで基底Segmentをprefix / residualに分割する。同じfloat32 tauビット列を持つCandidateは、Contact Geometryが異なり複数Contact Groupに分類されても単一時間Boundaryとし、`discovered_toi_split_count`は`toi_time_boundary_id`ごとに1回だけ増やす。異なるtauのBoundaryは、全CandidateのSnap位置誤差Boundが個別`distance_tolerance`以下の場合だけ代表時刻へマージする。Contact Group化とSplit Countは独立し、別Contact Groupが同じBoundaryを共有してもCountを増やさない。残SegmentをDispatchする前に、`minimum_required_integration_segments = planned_integration_segments + discovered_toi_split_count`を算出しAdmission Limitと比較する。上限を超える場合は`BLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toi`とし、`executed_integration_segments`および`minimum_required_integration_segments`をGPU Status Bufferへ記録する。残Segment / 後続Pass / Render Publish / Commitを抑止し、Event QueryでCPUへ通知する。この値は現在のDispatch Attemptで発見済みのTOIによる厳密な下限であり、未発見の将来TOIを含む最終総数ではない。新しいDispatch PlanによるRetryでは分割Countを基底Segment Scheduleから再初期化し、再実行中にTOIが追加される場合は同じReservationを繰り返しBlockして下限値を更新できる。§11.4で定義したSemi-implicit Euler離散pathを使ってprefix状態を構成する。Dynamic Vertexはx_tau = x_segment_start + tau * path_velocity、v_tau = path_velocityとし、dt=tauのVelocity Predictionを再実行しない。Fixed / Kinematic Vertexはtau時刻のAnimation Target Trajectory位置を直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準とし、Deviation Boundで膨張させる。TOI prefixにおける非接触内部Constraintをdt=tauで解く。
+8. TOI Candidateは§11.4のGeometrically Safe Boundary SnapとBoundary Identity規則に従う。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となるCCD対象Segment（Residual Segmentを含む）ごとに一意とする。同一Segment内の同じ有限float32 tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentは同じtau bitsでも別Boundaryとする。-0.0は+0.0へ正規化し、NaN / InfinityはCommitしない。tau=0 / tau=dt_segmentと安全な既存Schedule BoundaryへのSnapは追加Splitを作らない。異なるtauをSnap / Mergeするには時間差、XPBD後位置応答、接触相対Velocity、Impulseの全誤差Boundを満たす必要がある。証明できなければ正確なtauを維持して独立内部Boundaryを作る。Split Countは一意Boundary IDごとに1回だけ増やす。
 9. Discrete / TOIの双方で、非接触内部Constraint後・Contact Position Constraint前にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、Positive-Time TOI prefixではtauを使う。tau=0 Initial Contact EventはSegment-start velocity / Kinematic Trajectory Derivativeを使い、ゼロ時間prefixのVelocity Reconstructionを行わない。次にContact候補を現在の内部Constraint後Positionで再検査し、接触が成立しているものだけContact Position XPBDを解く。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
 10. 保存済みContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを一度適用する。TOI Impactはimpact_resolvedに記録し、Impact後Velocityから残時間の新Segmentを開始する。Contact位置補正後またはImpact後に同じSegmentのVelocity Reconstructionを実行しない。TOI候補がprefix再検査で成立しない場合はImpactを発生させず、tau位置から残時間を継続し、必要ならCCD候補を再構築する。
 
@@ -1139,9 +1139,34 @@ EE:
     tau_next = tau + delta_tau
     safety = 0.8  // 初期値
 
-d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>dt_segmentかつ終端距離がrより大きければ当該Segmentでは接触なし。Conservative Advancementは最大32反復を初期上限とする。`tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`、`tau_snap_tolerance = min(tau_tolerance, 0.25 * dt_segment)`、`distance_tolerance = max(1e-6 * L_ref, 1e-4 * contact_thickness)`を初期値とし、L_refは当該Physics Meshのmedian positive rest-edge lengthとする。Boundary / Endpoint / Simultaneous EventへSnapまたはGroup化する場合は、`snap_position_error_bound = v_bound * abs(tau_candidate - tau_boundary) + kinematic_path_deviation_bound`を使い、`snap_position_error_bound <= distance_tolerance`を必須とする。誤差Boundが許容値を超える候補は時間許容差内でもSnap / Group化せず、正確なtauで内部Splitする。Boundを保守的に算出できない場合はCCDUnresolvedとしてCommitしない。`safety=0.8`は維持する。停止判定は距離条件または保守的区間No-Hit条件で行い、tau_tolerance到達だけでNo-Hitにしない。進行不能または32反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
+Snap判定は§11.4の全Bound（XPBD後位置応答・dt感度・相対Velocity・Impulse）を唯一の正本とし、位置誤差Bound単独では許可しない。
 
 ### 11.4 TOI処理
+
+**Boundary Identity（Normative）**
+
+Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)とする。base_integration_segment_idはtauの相対時間原点となる各CCD対象Segmentに割り当て、TOI後に生成されたResidual Segmentにも新しいIDを割り当てる。同一Dispatch Attempt / 同一Segment / 同一有限float32 tau bitsはContact Groupが異なっても同一Boundaryとする。異なるSegmentはtau bitsが同じでも別Boundaryとする。-0.0は+0.0へ正規化し、NaN / InfinityはInvalid CCD CandidateとしてCommitしない。Retryは新しいdispatch_attempt_idを発行し、Boundary IDを基底Scheduleから再生成する。
+
+**Geometrically Safe Boundary Snap（Normative）**
+
+Candidate tauとSnap先時刻t_bの差をdelta_t=abs(tau-t_b)とする。Snap可否は次の保守的誤差BoundをCandidate / Snap先ごとに算出する。
+
+    E_path_position = v_bound * delta_t + kinematic_path_deviation_bound
+    E_xpbd_position = xpbd_response_lipschitz_bound * E_path_position
+                         + xpbd_dt_sensitivity_position_bound * delta_t
+                         + 2 * xpbd_solver_residual_position_bound
+    E_total_position = E_path_position + E_xpbd_position
+    E_relative_velocity = relative_acceleration_bound * delta_t
+                         + trajectory_derivative_error_bound
+                         + xpbd_velocity_response_bound
+                         + xpbd_dt_sensitivity_velocity_bound * delta_t
+
+XPBD応答BoundはConstraint Gradient / Effective Inverse Mass / Compliance / Iteration数 / Solver Residualを含む。dt感度Boundはalpha_tilde = compliance / dt_segment^2の変化を含む。Impulse BoundはContact Effective Mass / Normal Variation / Restitution / Frictionを含む応答差を上から抑える。
+
+Snapを許可する条件は、時間差 <= tau_snap_tolerance、E_total_position <= distance_tolerance、E_relative_velocity <= relative_velocity_tolerance、impulse_error_bound <= impulse_toleranceの全てである。distance_tolerance [m]、relative_velocity_tolerance [m/s]、impulse_tolerance [N*s]はNumerical Acceptance Profileのtoi_snap_error_budgetにFixture / Workloadごとに必須指定する。いずれか未指定、非有限、または保守Boundを証明できない場合はSnapを禁止し、正確なtauで独立した内部Boundaryを作る。正確なtauのCCDも安全に評価できない場合だけCCDUnresolvedとしてCommitしない。
+
+tau=0はInitial Contact Eventとしてゼロ時間prefix / Velocity Reconstructionを作らない。Dynamic VertexはSegment開始Velocityを保持し、Fixed / Kinematic Vertexはtau=0の解析的Trajectory Derivativeを使う。tau=dt_segmentはSegment終端Contact Eventとして扱い、残時間Segmentを作らない。端点近傍のPositive-Time Candidateも全Snap Boundを満たす場合だけ端点へSnapし、それ以外は正確なtauを保持。
+
 
 現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。CA time toleranceは`tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`、Snap / Grouping time toleranceは`tau_snap_tolerance = min(tau_tolerance, 0.25 * dt_segment)`とする。TOI Reductionは最小tau、既存Boundary候補、同時TOI Group候補および各候補のConservative `v_bound` / `kinematic_path_deviation_bound`を返す。Groupに含まれる各Contactを別Splitとして数えてはならない。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算とTOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint ChordはSwept AABBのBroadphase基準形状としてだけ使う。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
 
@@ -1154,9 +1179,9 @@ TOIが確定したら、検出に使った離散軌道と同一の位置・速�
     x_path(tau) = position_segment_start + tau * path_velocity
     v_path(tau) = path_velocity
 
-このpathはv1の離散積分方式に対応するSegment内の衝突判定軌道である。端点／既存BoundaryへのSnapが幾何学的に安全である場合、TOI位置・Trajectory・Relative Velocity・Contact SolveはSnap先時刻で再評価する。Snap許容差内でも`snap_position_error_bound > distance_tolerance`の場合、またはBoundを保守的に証明できない場合はSnapせず正確なtauを維持し、前者は内部Split、後者はCCDUnresolvedとする。TOI prefixをdt=tauで再積分してはいけない。そうするとDamping / Forceの更新結果が変化し、Conservative Advancementが検出した軌道と異なる位置へ到達する。Positive-Time TOI時は予測Destinationを破棄し、上記x_path(tau) / v_path(tau)から全Dynamic Vertexのprefix状態を構成する。Fixed / Kinematic VertexのTOI位置はtau時刻のAnimation Target Trajectoryを直接評価し、接触相対Velocityには同時刻のTrajectory微分を使う。Endpoint ChordはSwept AABBの基準だけに使い、kinematic_path_deviation_boundでAABBを保守的に膨張させる。Conservative Advancementは実Trajectory位置の距離d(tau)を使い、v_boundにはAnimation / Skinning Trajectoryの区間速度上限を加える。
+Snap判定は§11.4の全Bound（XPBD後位置応答・dt感度・相対Velocity・Impulse）を唯一の正本とし、位置誤差Bound単独では許可しない。
 
-TOI Split Countは、TOIによって新しい内部時間境界を追加した回数を表し、Contact Event Group数とは独立する。TOI Candidateは`(tau, canonical_contact_key)`順で決定的に処理し、最初にEndpoint / 既存Substep / Animation / Force / Impulse BoundaryへのSnapを試す。`tau=0`はInitial Contact Event、`tau=dt_segment`はSegment終端Contact Eventとして扱い、いずれも追加Segmentを作らない。候補tauとBoundary時刻`t_b`の差が`tau_snap_tolerance`以内であり、`snap_position_error_bound = v_bound * abs(tau - t_b) + kinematic_path_deviation_bound <= distance_tolerance`を満たす場合だけ`t_b`へSnapし、既存Boundary Eventへマージする。時間許容差内でも位置誤差Boundが`distance_tolerance`を超えるTOIは正確なtauを維持して新しい内部Boundaryを作る。
+Snap判定は§11.4の全Bound（XPBD後位置応答・dt感度・相対Velocity・Impulse）を唯一の正本とし、位置誤差Bound単独では許可しない。
 
 Endpoint / 既存BoundaryへSnapされなかった内部TOIは、Contact Group化と別に`toi_time_boundary_id`を割り当てる。同じIEEE-754 float32 tauビット列を持つCandidateは、幾何学的位置が異なり別Contact Groupへ分類されても同一時間Boundaryとして扱う。異なるtau同士は、時間差が`tau_snap_tolerance`以内かつ代表時刻への保守的移動Boundが各Candidateの`distance_tolerance`以下の場合に限り、最も早いtauを代表時刻として同一Boundaryへマージする。幾何条件を満たさない異なるtauは正確な時刻を保持して別Boundaryとする。`discovered_toi_split_count`は新たに追加された`toi_time_boundary_id`ごとに1回だけ増やす。同一Boundaryに属する複数Contact Group / Contactは追加Splitを増やさない。Contact Event Groupは時間差と各Contactの幾何誤差条件の両方を満たす場合だけ構成し、幾何条件を満たさないContactは別Groupに残す。同一Boundaryの各Groupは同じBoundary Timeで順序付けし、Group内はContact Key順に処理する。TOI候補の並び順によらずBoundary ID / Contact Group / Countを決定的にする。
 
