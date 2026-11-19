@@ -1,10 +1,10 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.31
+- 文書バージョン: 1.32
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.26
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.28
+- 対応基本設計: basic_design.md 1.27
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.29
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
 - 前版: 1.30
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
@@ -1712,6 +1712,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.32: CorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure / ContactGeometryUnresolvedのREJECTED分類を一般的な回復可能CCD / Capacity BLOCKED契約から分離し、同一Reservation Recovery APIの有無を明記。Basic v1.27 / Runtime v1.29と同期。
 - 1.31: Correction Motion CCDのSigned Separationを符号正規化Interval h=sigma*gで評価し、sigma<0時の上下端交換を明記。始点・終端だけで途中通過を否定しない契約と負側初期位置の回帰ケースを追加。Basic v1.26 / Runtime v1.28と同期。
 - 1.30: XPBDの全Position-Writer DispatchをEpoch化し、物理Sweepと補正SweepのCandidate Union、VT / EE Correction Motion CCD、Crossing / Unresolved時のFail-Closed Commit Gateを定義。Broadphase Envelopeの任意最大補正Marginを廃止。
 
@@ -1744,7 +1745,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
-## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.28）
+## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.29）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～49は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
