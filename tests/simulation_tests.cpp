@@ -2168,6 +2168,37 @@ namespace
             segment_state.vertex_contact_csr.contact_indices.size() == 8,
             "Final Discrete Narrowphase must refresh all active VT / EE Contacts and build the complete Vertex-to-Contact CSR.");
 
+        const auto valid_segment_commit_gate =
+            skin_physics::physics::validate_correction_segment_commit_gate(
+                segment_state);
+        require(valid_segment_commit_gate.commit_allowed &&
+            valid_segment_commit_gate.status ==
+                skin_physics::physics::correction_segment_commit_gate_status::ready &&
+            valid_segment_commit_gate.candidate_generation == 2 &&
+            valid_segment_commit_gate.position_writer_epoch_generation == 2,
+            "The Segment Commit Gate must allow publication only after Candidate, Active Contact Set and CSR generations are mutually current.");
+
+        auto stale_csr_payload_state = segment_state;
+        stale_csr_payload_state.vertex_contact_csr.current = false;
+        const auto stale_csr_commit_gate =
+            skin_physics::physics::validate_correction_segment_commit_gate(
+                stale_csr_payload_state);
+        require(!stale_csr_commit_gate.commit_allowed &&
+            stale_csr_commit_gate.status ==
+                skin_physics::physics::correction_segment_commit_gate_status::rejected,
+            "The Segment Commit Gate must inspect the CSR payload freshness flag as well as its outer Generation state.");
+
+        auto invalid_csr_index_state = segment_state;
+        invalid_csr_index_state.vertex_contact_csr.contact_indices[0] =
+            std::numeric_limits<uint32_t>::max();
+        const auto invalid_csr_commit_gate =
+            skin_physics::physics::validate_correction_segment_commit_gate(
+                invalid_csr_index_state);
+        require(!invalid_csr_commit_gate.commit_allowed &&
+            invalid_csr_commit_gate.status ==
+                skin_physics::physics::correction_segment_commit_gate_status::rejected,
+            "The Segment Commit Gate must reject CSR indices outside the Active Contact Set.");
+
         const auto transient_candidate =
             skin_physics::physics::make_canonical_correction_candidate_key(
                 correction_contact_type::vertex_triangle, 1500, 15, 150,
