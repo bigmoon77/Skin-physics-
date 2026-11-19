@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-#include "skin_physics/asset/types.hpp"
+#include "skin_physics/physics/collision.hpp"
 
 namespace skin_physics::physics
 {
@@ -29,6 +29,32 @@ namespace skin_physics::physics
         float distance_tolerance = 1.0e-5f;
         float epsilon_length = 1.0e-7f;
         uint32_t maximum_interval_evaluations = 32;
+    };
+
+    enum class correction_contact_type : uint8_t
+    {
+        vertex_triangle,
+        edge_edge
+    };
+
+    struct correction_candidate_pair_key
+    {
+        correction_contact_type contact_type = correction_contact_type::vertex_triangle;
+        uint32_t mesh_a = 0;
+        uint32_t primitive_a = 0;
+        uint32_t mesh_b = 0;
+        uint32_t primitive_b = 0;
+
+        bool operator==(const correction_candidate_pair_key& other) const;
+        bool operator<(const correction_candidate_pair_key& other) const;
+    };
+
+    struct correction_candidate_union_result
+    {
+        std::vector<correction_candidate_pair_key> candidates;
+        std::size_t required_count = 0;
+        bool overflow = false;
+        bool success = false;
     };
 
     struct correction_ccd_result
@@ -69,6 +95,23 @@ namespace skin_physics::physics
         bool has_persistent_contact_cache = false;
         asset::vec3 persistent_contact_normal;
     };
+
+    correction_candidate_pair_key make_canonical_correction_candidate_key(
+        correction_contact_type contact_type,
+        uint32_t mesh_a,
+        uint32_t primitive_a,
+        uint32_t mesh_b,
+        uint32_t primitive_b);
+
+    correction_candidate_union_result merge_correction_candidate_union(
+        const std::vector<correction_candidate_pair_key>& existing_candidates,
+        const std::vector<correction_candidate_pair_key>& incoming_candidates,
+        std::size_t capacity);
+
+    bool build_correction_swept_aabb(
+        const std::vector<correction_vertex_motion>& vertex_motions,
+        float contact_thickness,
+        collision_aabb& output_bounds);
 
     correction_ccd_result detect_vertex_triangle_correction_motion(
         const vertex_triangle_correction_motion& motion,
