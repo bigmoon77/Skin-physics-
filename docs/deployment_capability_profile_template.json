@@ -129,7 +129,7 @@
     }
   },
   "calibration_trials": [],
-  "template_version": "1.2",
+  "template_version": "1.3",
   "calibration_trial_schema": {
     "trial_id": "stable string identifier unique within this profile",
     "workload": {
