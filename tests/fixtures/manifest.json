@@ -694,6 +694,7 @@
         "tests/gpu_solver_tests.cpp"
       ],
       "gpu_assertions": [
+        "compute_pass_graph_srvs_uavs_and_constant_buffer_slots",
         "before_after_point_and_triangle_swept_bounds",
         "outward_rounded_cpu_aabb_enclosure",
         "invalid_primitive_vertex_index_status"
