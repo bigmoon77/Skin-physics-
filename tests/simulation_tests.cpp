@@ -2431,6 +2431,11 @@ namespace
         auto crossing_epoch_state = crossing_epoch_state_result.state;
         const auto crossing_epoch_primitives = make_vt_epoch_primitives(
             vt_crossing.at("input"), 3100, 3200);
+        require(initialize_test_correction_segment_geometry(
+            crossing_epoch_state, 3001, crossing_epoch_primitives,
+            static_cast<float>(vt_crossing.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Crossing Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
         const auto crossing_epoch = 
             skin_physics::physics::process_correction_position_writer_epoch(
                 crossing_epoch_state, 3001, 1, crossing_epoch_primitives,
@@ -2452,6 +2457,11 @@ namespace
             skin_physics::physics::create_correction_segment_candidate_state(
                 3002, {}, 16);
         auto transient_epoch_state = transient_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            transient_epoch_state, 3002, transient_epoch_primitives,
+            static_cast<float>(transient.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Transient Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
         const auto transient_epoch =
             skin_physics::physics::process_correction_position_writer_epoch(
                 transient_epoch_state, 3002, 1, transient_epoch_primitives,
@@ -2480,6 +2490,11 @@ namespace
             skin_physics::physics::create_correction_segment_candidate_state(
                 3003, {}, 16);
         auto endpoint_epoch_state = endpoint_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            endpoint_epoch_state, 3003, endpoint_epoch_primitives,
+            static_cast<float>(endpoint.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Endpoint Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
         const auto endpoint_epoch =
             skin_physics::physics::process_correction_position_writer_epoch(
                 endpoint_epoch_state, 3003, 1, endpoint_epoch_primitives,
@@ -2498,6 +2513,11 @@ namespace
             skin_physics::physics::create_correction_segment_candidate_state(
                 3004, {}, 16);
         auto miss_epoch_state = miss_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            miss_epoch_state, 3004, miss_epoch_primitives,
+            static_cast<float>(miss.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Certified-miss Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
         const auto miss_epoch =
             skin_physics::physics::process_correction_position_writer_epoch(
                 miss_epoch_state, 3004, 1, miss_epoch_primitives,
@@ -2522,6 +2542,11 @@ namespace
             skin_physics::physics::create_correction_segment_candidate_state(
                 3005, {}, 16);
         auto blocked_epoch_state = blocked_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            blocked_epoch_state, 3005, crossing_epoch_primitives,
+            static_cast<float>(vt_crossing.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Capacity-blocked Epoch must retain an initialized immutable Segment-start and Physical Sweep snapshot.");
         const auto blocked_epoch =
             skin_physics::physics::process_correction_position_writer_epoch(
                 blocked_epoch_state, 3005, 1, crossing_epoch_primitives,
