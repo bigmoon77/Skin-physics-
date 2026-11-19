@@ -86,7 +86,8 @@ namespace skin_physics::physics
         std::array<correction_vertex_motion, 3> triangle;
         asset::vec3 segment_start_point;
         std::array<asset::vec3, 3> segment_start_triangle;
-        bool has_persistent_contact_cache = false;
+        // Set true only after Contact Key, Topology and Patch Generation match.
+        bool has_valid_persistent_contact_cache = false;
         asset::vec3 persistent_contact_normal;
     };
 
@@ -96,7 +97,8 @@ namespace skin_physics::physics
         std::array<correction_vertex_motion, 2> edge_b;
         std::array<asset::vec3, 2> segment_start_edge_a;
         std::array<asset::vec3, 2> segment_start_edge_b;
-        bool has_persistent_contact_cache = false;
+        // Set true only after Contact Key, Topology and Patch Generation match.
+        bool has_valid_persistent_contact_cache = false;
         asset::vec3 persistent_contact_normal;
     };
 
