@@ -1529,6 +1529,7 @@ namespace skin_physics::physics
         ++state.candidate_generation;
         state.contact_set_current = false;
         state.vertex_contact_csr_current = false;
+        state.vertex_contact_csr.current = false;
         result.changed = true;
         result.success = true;
         return result;
@@ -1569,6 +1570,7 @@ namespace skin_physics::physics
         ++state.position_writer_epoch_generation;
         state.contact_set_current = false;
         state.vertex_contact_csr_current = false;
+        state.vertex_contact_csr.current = false;
         result.changed = true;
         result.success = true;
         return result;
