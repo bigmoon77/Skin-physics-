@@ -1849,7 +1849,7 @@ namespace
         correction_broadphase_settings.cell_size = 0.25f;
         correction_broadphase_settings.contact_thickness = 0.0f;
         correction_broadphase_settings.cell_record_capacity = 4096;
-        correction_broadphase_settings.candidate_capacity = 16;
+        correction_broadphase_settings.candidate_capacity = 2;
         correction_broadphase_settings.max_cells_per_primitive = 4096;
         correction_broadphase_settings.self_collision_enabled = true;
         const auto correction_broadphase =
@@ -1859,9 +1859,9 @@ namespace
             correction_broadphase.required_candidates == 2 &&
             correction_broadphase.candidates.size() == 2,
             "Correction Broadphase must map Spatial Hash pairs to VT / EE and remove topology-adjacent pairs before capacity counting.");
-        require(correction_broadphase.broadphase_candidate_count >=
-            correction_broadphase.required_candidates,
-            "Typed Correction Candidate count must not exceed the source Broadphase pair count.");
+        require(correction_broadphase.broadphase_candidate_count == 2 &&
+            correction_broadphase.required_candidates == 2,
+            "Topology filtering must happen before Candidate Capacity accounting, matching the GPU Count pass.");
         require(std::any_of(
             correction_broadphase.candidates.begin(),
             correction_broadphase.candidates.end(),
