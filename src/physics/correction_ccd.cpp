@@ -1439,6 +1439,134 @@ namespace skin_physics::physics
         return true;
     }
 
+    correction_broadphase_result generate_correction_broadphase_candidates(
+        const std::vector<correction_broadphase_primitive>& primitives,
+        const std::vector<broadphase_mesh_pair>& mesh_pairs,
+        const broadphase_settings& settings)
+    {
+        correction_broadphase_result result;
+        if (settings.contact_thickness != 0.0f)
+        {
+            result.diagnostics.push_back({
+                collision_error::invalid_settings,
+                asset::invalid_index,
+                "Correction Broadphase requires pre-expanded per-primitive AABBs and contact_thickness == 0 to avoid double expansion."
+            });
+            return result;
+        }
+
+        std::vector<broadphase_primitive> broadphase_primitives;
+        std::vector<correction_primitive_role> roles;
+        broadphase_primitives.reserve(primitives.size());
+        roles.reserve(primitives.size());
+
+        for (std::size_t index = 0; index < primitives.size(); ++index)
+        {
+            const correction_broadphase_primitive& primitive = primitives[index];
+            switch (primitive.role)
+            {
+            case correction_primitive_role::vertex:
+            case correction_primitive_role::triangle:
+            case correction_primitive_role::edge:
+                break;
+            default:
+                result.diagnostics.push_back({
+                    collision_error::invalid_geometry,
+                    static_cast<uint32_t>(index),
+                    "Correction Broadphase primitive role is invalid."
+                });
+                return result;
+            }
+
+            broadphase_primitives.push_back({
+                primitive.mesh_id,
+                primitive.envelope_bounds
+            });
+            roles.push_back(primitive.role);
+        }
+
+        const broadphase_result broadphase = generate_broadphase_candidates(
+            broadphase_primitives, mesh_pairs, settings);
+        result.diagnostics = broadphase.diagnostics;
+        result.required_cell_records = broadphase.required_cell_records;
+        result.broadphase_candidate_count = broadphase.required_candidates;
+        result.overflow = broadphase.overflow;
+        if (!broadphase.success)
+        {
+            return result;
+        }
+
+        std::vector<correction_candidate_pair_key> typed_candidates;
+        typed_candidates.reserve(broadphase.candidates.size());
+        for (const collision_candidate& candidate : broadphase.candidates)
+        {
+            if (candidate.primitive_a >= primitives.size() ||
+                candidate.primitive_b >= primitives.size())
+            {
+                result.diagnostics.push_back({
+                    collision_error::invalid_geometry,
+                    asset::invalid_index,
+                    "Broadphase returned a primitive index outside the correction input."
+                });
+                return result;
+            }
+
+            const correction_broadphase_primitive& primitive_a =
+                primitives[candidate.primitive_a];
+            const correction_broadphase_primitive& primitive_b =
+                primitives[candidate.primitive_b];
+            const correction_primitive_role role_a =
+                roles[candidate.primitive_a];
+            const correction_primitive_role role_b =
+                roles[candidate.primitive_b];
+
+            correction_contact_type contact_type;
+            if ((role_a == correction_primitive_role::vertex &&
+                    role_b == correction_primitive_role::triangle) ||
+                (role_a == correction_primitive_role::triangle &&
+                    role_b == correction_primitive_role::vertex))
+            {
+                contact_type = correction_contact_type::vertex_triangle;
+            }
+            else if (role_a == correction_primitive_role::edge &&
+                role_b == correction_primitive_role::edge)
+            {
+                contact_type = correction_contact_type::edge_edge;
+            }
+            else
+            {
+                continue;
+            }
+
+            typed_candidates.push_back(make_canonical_correction_candidate_key(
+                contact_type,
+                primitive_a.stable_id, primitive_a.mesh_id, primitive_a.primitive_id,
+                primitive_b.stable_id, primitive_b.mesh_id, primitive_b.primitive_id));
+        }
+
+        const correction_candidate_union_result unique_candidates =
+            merge_correction_candidate_union({}, typed_candidates,
+                settings.candidate_capacity);
+        result.required_candidates = unique_candidates.required_count;
+        result.overflow = result.overflow || unique_candidates.overflow;
+        if (!unique_candidates.success)
+        {
+            if (unique_candidates.overflow)
+            {
+                result.diagnostics.push_back({
+                    collision_error::candidate_capacity_overflow,
+                    asset::invalid_index,
+                    "Correction Candidate Union capacity exceeded; no partial Candidate Set was returned."
+                });
+            }
+            return result;
+        }
+
+        result.candidates = unique_candidates.candidates;
+        result.success = true;
+        return result;
+    }
+
     correction_ccd_result detect_vertex_triangle_correction_motion(
         const vertex_triangle_correction_motion& motion,
         const correction_ccd_settings& settings)
