@@ -75,6 +75,9 @@
     <ClCompile Include="src\physics\ccd.cpp">
       <Filter>Source Files\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="src\physics\correction_ccd.cpp">
+      <Filter>Source Files\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="src\physics\animation_track.cpp">
       <Filter>Source Files\Physics</Filter>
     </ClCompile>
