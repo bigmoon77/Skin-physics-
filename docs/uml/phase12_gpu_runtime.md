@@ -202,6 +202,8 @@ Every Retry passes through Query / Render Candidate / in-flight Resource Admissi
 
 TOI Split Count is based on unique new interior time-boundary IDs after Geometrically Safe Boundary Snap, not on Contact Event Group count. The Snap window is `tau_snap_tolerance = min(max(1e-7 s, 1e-5 * dt_segment), 0.25 * dt_segment)`; a candidate is snapped / merged only when `v_bound * abs(tau_candidate - tau_boundary) + kinematic_path_deviation_bound <= distance_tolerance`. If the geometric bound exceeds tolerance, the exact tau is retained and a new interior time boundary is counted even when it lies inside the time window. Endpoint / existing-boundary Snap adds no Split Count. Candidates with identical float32 tau bits share one time-boundary ID even when different Contact Geometry forces separate Contact Groups. Distinct tau values share a boundary only when every candidate satisfies the conservative geometric snap bound; otherwise exact-time boundaries remain separate. Multiple Contact Groups sharing one time-boundary ID count one Split only.
 
+TOI Boundary IDは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)で識別する。base_integration_segment_idはResidual Segmentを含む各CCD時間原点に割り当てる。同一tau bitsでも時間原点が異なれば別Boundaryとし、Contact Groupは独立に分類する。tau=0はSegment開始Velocity / Trajectory Derivativeを使い、ゼロ時間Velocity Reconstructionを行わない。SnapにはXPBD Solver後の位置応答、dt感度、接触相対Velocity、Impact Impulseの保守BoundとFixture許容値を要求する。いずれかが証明できない場合は正確なtauを維持する。
+
 ## 4. Submission and completion state
 
 ```mermaid
