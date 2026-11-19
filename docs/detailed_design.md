@@ -6,7 +6,7 @@
 - 対応基本設計: basic_design.md 1.27
 - Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.29
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
-- 前版: 1.30
+- 前版: 1.31
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1712,10 +1712,11 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
-- 1.32: CorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure / ContactGeometryUnresolvedのREJECTED分類を一般的な回復可能CCD / Capacity BLOCKED契約から分離し、同一Reservation Recovery APIの有無を明記。Basic v1.27 / Runtime v1.29と同期。
+- 1.32: CorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure / ContactGeometryUnresolvedのREJECTED分類を一般的な回復可能CCD / Capacity BLOCKED契約から分離。reference normal / sigma_pairをbase_integration_segment_id単位でLatchし、全Epochで同じSideを維持する規則、Segment-start Snapshot / Persistent Cache / epsilon_lengthの使用を明記。Basic v1.27 / Runtime v1.29と同期。
 - 1.31: Correction Motion CCDのSigned Separationを符号正規化Interval h=sigma*gで評価し、sigma<0時の上下端交換を明記。始点・終端だけで途中通過を否定しない契約と負側初期位置の回帰ケースを追加。Basic v1.26 / Runtime v1.28と同期。
 - 1.30: XPBDの全Position-Writer DispatchをEpoch化し、物理Sweepと補正SweepのCandidate Union、VT / EE Correction Motion CCD、Crossing / Unresolved時のFail-Closed Commit Gateを定義。Broadphase Envelopeの任意最大補正Marginを廃止。
 
+- 1.29: configurable `maximum_in_flight_ticks` 1 / 2 / 4をCPU未観測Submission Attempt数として定義し、単一Immediate Context Command Streamでの2-bank直列再利用とRender Candidate Ring N+1容量を同期。
 - 1.28: Basic Design v1.23 / Runtime Integration Design v1.25の現行正本参照を同期。Basic Designの責務引継ぎ節とRuntime統合参照の整合を確認。
 - 1.27: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.26: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
