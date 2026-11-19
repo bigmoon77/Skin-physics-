@@ -1701,14 +1701,18 @@ namespace
             triangle_bounds.maximum.y > 1.0f,
             "Per-primitive Correction Swept AABBs must enclose all paths and half-thickness expansion.");
 
+        const skin_physics::physics::collision_aabb physical_bounds = {
+            { -0.5f, -0.5f, -0.5f },
+            { 0.5f, 0.5f, 0.5f }
+        };
         skin_physics::physics::collision_aabb segment_envelope;
         require(skin_physics::physics::union_correction_envelope_aabb(
-            point_bounds, triangle_bounds, segment_envelope),
+            physical_bounds, point_bounds, segment_envelope),
             "Physical and correction per-primitive AABBs must form a valid Segment envelope.");
-        require(segment_envelope.minimum.x <= point_bounds.minimum.x &&
-            segment_envelope.minimum.x <= triangle_bounds.minimum.x &&
-            segment_envelope.maximum.z >= point_bounds.maximum.z &&
-            segment_envelope.maximum.z >= triangle_bounds.maximum.z,
+        require(segment_envelope.minimum.x <= physical_bounds.minimum.x &&
+            segment_envelope.minimum.x <= point_bounds.minimum.x &&
+            segment_envelope.maximum.z >= physical_bounds.maximum.z &&
+            segment_envelope.maximum.z >= point_bounds.maximum.z,
             "Segment envelope union must enclose both physical and correction sweeps.");
 
         using skin_physics::physics::correction_primitive_role;
@@ -1807,6 +1811,15 @@ namespace
             candidate_union.required_count == 2 &&
             candidate_union.candidates.size() == 2,
             "Canonical Candidate Union must sort, deduplicate reversed pairs, and preserve contact type.");
+
+        const auto segment_candidate_union =
+            skin_physics::physics::merge_correction_candidate_union(
+                { candidate_ee }, { candidate_vt, candidate_vt_reversed }, 2);
+        require(segment_candidate_union.success &&
+            segment_candidate_union.required_count == 2 &&
+            segment_candidate_union.candidates[0] == candidate_vt &&
+            segment_candidate_union.candidates[1] == candidate_ee,
+            "Each correction epoch must retain existing physical candidates and append canonical new candidates.");
 
         const auto candidate_overflow =
             skin_physics::physics::merge_correction_candidate_union(
