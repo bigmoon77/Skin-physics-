@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -140,10 +141,14 @@ namespace skin_physics::physics
         const std::array<asset::vec3, 2>& edge_b,
         float combined_thickness);
 
+    using broadphase_candidate_filter =
+        std::function<bool(uint32_t, uint32_t)>;
+
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
-        const broadphase_settings& settings = {});
+        const broadphase_settings& settings = {},
+        const broadphase_candidate_filter& candidate_filter = {});
 
     capacity_check_result check_candidate_capacity(
         std::size_t required_count,
