@@ -295,6 +295,16 @@ namespace skin_physics::physics
             return interval_add(interval_add(x, y), z);
         }
 
+        interval interval_dot(
+            const interval_vector3& a,
+            const interval_vector3& b)
+        {
+            return interval_add(interval_add(
+                interval_multiply(a.x, b.x),
+                interval_multiply(a.y, b.y)),
+                interval_multiply(a.z, b.z));
+        }
+
         interval_vector3 interval_add(
             const interval_vector3& a,
             const interval_vector3& b)
@@ -1028,6 +1038,7 @@ namespace skin_physics::physics
             const interval_vector3& edge_b1,
             const vector3& reference_normal,
             int8_t side_sign,
+            int orientation_sign,
             real distance_tolerance,
             real epsilon_length)
         {
@@ -1042,28 +1053,15 @@ namespace skin_physics::physics
                 interval_difference(edge_a0, edge_b0);
 
             const interval length_a_squared =
-                interval_dot(direction_a, {
-                    direction_a.x, direction_a.y, direction_a.z
-                });
+                interval_dot(direction_a, direction_a);
             const interval length_b_squared =
-                interval_dot(direction_b, {
-                    direction_b.x, direction_b.y, direction_b.z
-                });
+                interval_dot(direction_b, direction_b);
             const interval direction_dot =
-                interval_add(interval_add(
-                    interval_multiply(direction_a.x, direction_b.x),
-                    interval_multiply(direction_a.y, direction_b.y)),
-                    interval_multiply(direction_a.z, direction_b.z));
+                interval_dot(direction_a, direction_b);
             const interval relative_a =
-                interval_add(interval_add(
-                    interval_multiply(direction_a.x, relative.x),
-                    interval_multiply(direction_a.y, relative.y)),
-                    interval_multiply(direction_a.z, relative.z));
+                interval_dot(direction_a, relative);
             const interval relative_b =
-                interval_add(interval_add(
-                    interval_multiply(direction_b.x, relative.x),
-                    interval_multiply(direction_b.y, relative.y)),
-                    interval_multiply(direction_b.z, relative.z));
+                interval_dot(direction_b, relative);
 
             const interval denominator = interval_subtract(
                 interval_multiply(length_a_squared, length_b_squared),
@@ -1105,8 +1103,9 @@ namespace skin_physics::physics
             result.feature_parameter_tolerance_b =
                 epsilon_length / edge_b_length.lower;
 
-            const interval_vector3 normal =
-                interval_cross(direction_a, direction_b);
+            const interval_vector3 normal = interval_scale_vector(
+                interval_cross(direction_a, direction_b),
+                static_cast<real>(orientation_sign));
             result.alignment = interval_dot(normal, reference_normal);
             result.normal_length = interval_vector_length(normal);
             const interval signed_numerator = interval_scale(
@@ -1519,14 +1518,9 @@ namespace skin_physics::physics
                     interval_motion(motion.edge_b[1], range);
                 const side_interval_bounds bounds = make_ee_side_interval(
                     a0, a1, b0, b1, reference_normal, side_sign,
-                    settings.distance_tolerance, settings.epsilon_length);
-                side_interval_bounds oriented_bounds = bounds;
-                if (orientation_sign < 0)
-                {
-                    oriented_bounds.alignment = interval_scale(
-                        oriented_bounds.alignment, -1.0L);
-                }
-                return oriented_bounds;
+                    orientation_sign, settings.distance_tolerance,
+                    settings.epsilon_length);
+                return bounds;
             });
 
         if (side_status == side_proof_status::crossing)
