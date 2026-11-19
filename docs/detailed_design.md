@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.27
+- 文書バージョン: 1.28
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.22
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.24
+- 対応基本設計: basic_design.md 1.23
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.25
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
-- 前版: 1.26
+- 前版: 1.27
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1631,6 +1631,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.28: Basic Design v1.23 / Runtime Integration Design v1.25の現行正本参照を同期。Basic Designの責務引継ぎ節とRuntime統合参照の整合を確認。
 - 1.27: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.26: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.25: Contact-level error notationをE_contact_impulseへ統一し、Applied Generalized Impulse E_applied_impulseとは別ゲートとして扱う。Delassus対角係数の差分単位をEffective Inverse Mass [1/kg]へ明確化。
@@ -1659,7 +1660,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
-## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.24）
+## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.25）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～47は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
