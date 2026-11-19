@@ -1,13 +1,13 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.15
+- 文書バージョン: 1.16
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.14
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.20
+- 前版: 1.15
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.21
 - Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.17
-- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.12
+- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.13
 
 ## 1. 設計方針
 
@@ -296,7 +296,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 14. 詳細設計との責務境界・校正への引継ぎ
 
-本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.20および[runtime_integration_design.md](runtime_integration_design.md) v1.17で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
+本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.21および[runtime_integration_design.md](runtime_integration_design.md) v1.17で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
 
 - Soft Body Corotational FEM、応力・内部力・Segment積分・減衰: detailed_design.md §6。
 - Cloth Stretch / Shear / Bend / XPBD Lambda、外力・Impulse、World Integration Segment: detailed_design.md §7。
@@ -306,7 +306,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - Animation Target / Velocity、Render Binding、属性保持: detailed_design.md §5-6 / §12-13。
 - GPU Pass、Tick Transaction、Capacity、JSON、再現性、Gate R0-R6: detailed_design.md §14-19、runtime_integration_design.md §5-10。
 - WORK_BUDGET_EXCEEDEDの回復は、Logical Tick ReservationとTransient Submission Leaseを分離するruntime_integration_design.md §5.3 / §5.6を正とする。Block後はin-flight / Query / Render Candidate Leaseを解放し、Reservationだけを保持する。Retry時は3 Leaseを再AdmissionしてからPlan / dispatch_idを生成する。LeaseがないBlocked Reservationはin-flight数へ算入せず、Host Render Leaseもなければ`reset_world`で明示的に破棄できる。Hard Limit到達は`work_budget_unsatisfiable`として明示する。Retry途中に物理品質・材料・時間分割条件を変更しない。
-- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.12を正とする。
+- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.13を正とする。
 
 ## 15. 参考OSS・技術資料
 
@@ -327,21 +327,21 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.16: 詳細設計 v1.21 / Runtime統合設計 v1.17 / Numerical Acceptance Profile v1.13への参照を同期し、TOI Snap誤差式をG_contact / G_vと残差項へ統一。
 - 1.15: 詳細設計 v1.20 / Runtime統合設計 v1.17 / Numerical Acceptance Profile v1.12への参照を同期し、実装前のTOI Snap評価写像とPre-contact Velocity順序を明確化。
 - 1.14: Logical Reservation / Transient Submission Leaseの分離、Block後Lease解放とReset条件、幾何誤差Guard付きTOI端点Snap、CPU-only advance_report StatusとDeployment Profile qualification policyを反映。
 - 1.13: Work Budget RetryのResource Re-Admission、Hard Limit Unsatisfiable / Reset、TOI Unique Split Count、API StatusとTick Statusの分離を反映。
-- 1.12: Numerical Acceptance ProfileのGPU Packet ABI参照を単一化し、WORK_BUDGET_EXCEEDEDからのReservation維持・実行予算再設定契約を追加.
-- 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
-- 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
-- 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
+- 1.12: Numerical Acceptance ProfileのGPU Packet ABI参照を単一化し、WORK_BUDGET_EXCEEDEDからのReservation維持・実行予算再設定契約を追加。
 - 1.10: Immutable Animation Trajectory PacketとWorldごとのMutable Span Cursorを分離し、Cursor Snapshot Rollback / RetryとPacket不変性を確定。
 - 1.9: SM5固定幅PacketのTrack / Channel / Blend / Collider RangeとNode Role / Inverse Bind参照、補間Flags / Quaternion Coefficients / Column-Major Matrix ABIを確定。
 - 1.8: SM5固定幅Animation / Collider Packet ABI、CPU double絶対時刻とGPU Span-local float時刻、各Segmentでのnormalized cursor更新、Animation / Collider arbitrary-tau評価、Coupled Contact / bounded Segment Schedulerを追加。
 - 1.7: GPU Animation Trajectory Packet / Spanによる任意tau評価、最大2 Track Blend、非応答Contactの退化処理、Coupled Projected Jacobi Impulse、Contact Temporal Quality Limit、Logical Tick内Integration Segment数上限を追加。
 - 1.6: Animation Target Velocityを最終Skinning Trajectoryの時間微分へ統一し、Kinematic CCDの保守的Path Bound、Contact Position correctionとContact前Velocityの分離を追加。
 - 1.5: Force / Impulse EventとTOIによるIntegration Segment分割、Soft Body / Cloth共通のSegment予測、線形粘性減衰の積分、Fixed / Kinematic Velocityの所有規則を追加。
-- 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加.
-
+- 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加。
+- 1.2: GPU Runtime / Static Library境界、Host-owned D3D11 Device / Immediate Context、非同期GPU Tick Commit、Rollback / Retry、Committed-only Render Binding、複数Model / Mesh World、数値受け入れProfileとPhase 12統合Gateを追加。
+- 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
+- 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 
 ## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.17）
 
