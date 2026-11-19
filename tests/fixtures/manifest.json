@@ -612,6 +612,6 @@
     "build": "not_started",
     "tests": "not_started",
     "classification": "runner_not_assigned",
-    "note": "The latest observed run targets commit 98b819d. Its job ended before runner assignment (runner_name is empty and no steps were reported), so no compiler or test execution occurred and this is not evidence of a source-code failure. The last successful verified CI remains commit 36dab21 / run 44327398017. This metadata-only follow-up commit is not covered by that run."
+    "note": "The latest observed run targets commit 98b819d. Its job ended before runner assignment (runner_name is empty and no steps were reported), so no compiler or test execution occurred and this is not evidence of a source-code failure. The last successful verified CI remains commit 36dab21 / run 44327398017. The follow-up Runtime descriptor clarification committed after 98b819d is newer than this run and remains unverified by CI."
   }
 }
