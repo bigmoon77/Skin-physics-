@@ -774,6 +774,45 @@ namespace
         uint32_t reserved = 0;
     };
 
+    struct gpu_correction_candidate_primitive
+    {
+        uint32_t stable_id_low = 0;
+        uint32_t stable_id_high = 0;
+        uint32_t mesh_id = 0;
+        uint32_t primitive_id = 0;
+        uint32_t role = 0;
+        uint32_t vertex_count = 0;
+        uint32_t vertex_id_low[4] = {};
+        uint32_t vertex_id_high[4] = {};
+    };
+
+    struct gpu_correction_candidate_pair
+    {
+        uint32_t identity_a[4] = {};
+        uint32_t identity_b[4] = {};
+        uint32_t metadata[4] = {};
+    };
+
+    struct alignas(16) gpu_correction_candidate_parameters
+    {
+        uint32_t primitive_count = 0;
+        uint32_t mesh_count = 0;
+        uint32_t pair_count = 0;
+        uint32_t candidate_capacity = 0;
+        uint32_t sort_capacity = 0;
+        uint32_t exclusion_count = 0;
+        uint32_t self_collision_enabled = 0;
+        uint32_t reserved = 0;
+    };
+
+    struct alignas(16) gpu_correction_sort_parameters
+    {
+        uint32_t sort_k = 0;
+        uint32_t sort_j = 0;
+        uint32_t reserved0 = 0;
+        uint32_t reserved1 = 0;
+    };
+
 
     struct alignas(16) gpu_collision_parameters
     {
@@ -799,6 +838,14 @@ namespace
         "Correction primitive input layout must match HLSL.");
     static_assert(sizeof(gpu_correction_parameters) == 16,
         "Correction parameter layout must match HLSL.");
+    static_assert(sizeof(gpu_correction_candidate_primitive) == 56,
+        "Correction candidate primitive layout must match HLSL.");
+    static_assert(sizeof(gpu_correction_candidate_pair) == 48,
+        "Correction candidate pair layout must match HLSL.");
+    static_assert(sizeof(gpu_correction_candidate_parameters) == 32,
+        "Correction candidate parameter layout must match HLSL.");
+    static_assert(sizeof(gpu_correction_sort_parameters) == 16,
+        "Correction sort parameter layout must match HLSL.");
 
     gpu_float4 to_gpu_float4(const vec3& value, float w = 0.0f)
     {
