@@ -386,6 +386,14 @@ cbuffer CorrectionParameters : register(b1)
     uint correction_reserved;
 };
 
+Aabb correction_zero_aabb()
+{
+    Aabb result;
+    result.minimum = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    result.maximum = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    return result;
+}
+
 float correction_next_float_down(float value)
 {
     uint bits = asuint(value);
@@ -424,7 +432,7 @@ void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
         !isfinite(correction_contact_thickness) ||
         correction_contact_thickness < 0.0f)
     {
-        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_bounds[primitive_index] = correction_zero_aabb();
         correction_swept_status[primitive_index] = 1u;
         return;
     }
@@ -432,7 +440,7 @@ void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
     uint first_vertex = primitive.vertex_indices.x;
     if (first_vertex >= correction_vertex_count)
     {
-        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_bounds[primitive_index] = correction_zero_aabb();
         correction_swept_status[primitive_index] = 2u;
         return;
     }
@@ -441,7 +449,7 @@ void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
     float3 first_after = correction_position_after[first_vertex].xyz;
     if (!all(isfinite(first_before)) || !all(isfinite(first_after)))
     {
-        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_bounds[primitive_index] = correction_zero_aabb();
         correction_swept_status[primitive_index] = 4u;
         return;
     }
@@ -460,7 +468,7 @@ void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
         uint vertex_index = primitive.vertex_indices[vertex_slot];
         if (vertex_index >= correction_vertex_count)
         {
-            correction_swept_bounds[primitive_index] = (Aabb)0;
+            correction_swept_bounds[primitive_index] = correction_zero_aabb();
             correction_swept_status[primitive_index] = 2u;
             return;
         }
@@ -469,7 +477,7 @@ void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
         float3 after_position = correction_position_after[vertex_index].xyz;
         if (!all(isfinite(before_position)) || !all(isfinite(after_position)))
         {
-            correction_swept_bounds[primitive_index] = (Aabb)0;
+            correction_swept_bounds[primitive_index] = correction_zero_aabb();
             correction_swept_status[primitive_index] = 4u;
             return;
         }
@@ -485,7 +493,7 @@ void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
         !all(isfinite(expanded_minimum)) ||
         !all(isfinite(expanded_maximum)))
     {
-        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_bounds[primitive_index] = correction_zero_aabb();
         correction_swept_status[primitive_index] = 8u;
         return;
     }
@@ -498,6 +506,13 @@ void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
         correction_next_float_up(expanded_maximum.x),
         correction_next_float_up(expanded_maximum.y),
         correction_next_float_up(expanded_maximum.z));
+    if (!all(isfinite(expanded_minimum)) ||
+        !all(isfinite(expanded_maximum)))
+    {
+        correction_swept_bounds[primitive_index] = correction_zero_aabb();
+        correction_swept_status[primitive_index] = 8u;
+        return;
+    }
 
     Aabb output;
     output.minimum = float4(expanded_minimum, 0.0f);
