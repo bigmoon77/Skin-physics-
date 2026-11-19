@@ -656,7 +656,7 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; Case49_CPU_reference_subset_implemented_for_7_geometry_vectors; Cases45_to_48_executable_assertions_not_implemented; remaining_Case49_ContactSet_Capacity_PseudoTime_and_GPU_integration_assertions_pending",
+    "fixture_status": "persistent_input_vectors_added; Case49_CPU_reference_subset_implemented_for_7_geometry_vectors_plus_AABB_and_CandidateUnion_unit_tests; Cases45_to_48_executable_assertions_not_implemented; remaining_Case49_Broadphase_ContactSet_PseudoTime_and_GPU_integration_assertions_pending",
     "fixture_version": "1.9",
     "additional_fixture_bundles": [
       {
