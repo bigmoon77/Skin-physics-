@@ -188,6 +188,7 @@ namespace skin_physics::physics
     correction_segment_candidate_update_result merge_correction_position_writer_epoch_candidates(
         correction_segment_candidate_state& state,
         uint64_t base_integration_segment_id,
+        uint32_t position_writer_epoch_id,
         const std::vector<correction_candidate_pair_key>& epoch_candidates,
         std::size_t capacity);
 
