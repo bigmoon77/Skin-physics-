@@ -1,6 +1,6 @@
 {
-  "fixture_version": "1.7",
-  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Case 46 separates contact-level World-space impulse error from the generalized applied impulse J^T*q over stable responsive Physics Vertex IDs. The scalar fixture supplies a simple Candidate / Boundary Contact Jacobian pair but intentionally lacks a certified J^T*q interval result; the coupled fixture lacks a complete Jacobian interval. Both remain Snap-disabled until all XPBD, contact-impulse and applied-impulse certificates are supplied.",
+  "fixture_version": "1.8",
+  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Case 46 scalar coefficients now include all effective-inverse-mass inputs needed to recompute the normal and friction bounds; its Candidate / Boundary contact Jacobians use a right-handed frame and consistent rotation bounds. Contact-level E_contact_impulse is numerically below tolerance, but E_applied_impulse remains uncertified, so Snap is still denied. The coupled fixture declares full generalized matrix and Jacobian row-order contracts, but lacks full certificates and remains Snap-disabled.",
   "cases": [
     {
       "id": "DCR_45_TAU_ZERO",
@@ -127,11 +127,11 @@
         },
         "relative_velocity_tolerance_m_per_s": 0.001,
         "impulse_error_components_ns": {
-          "normal_scalar_effective_mass_restitution_bound": 0.02,
           "normal_direction_max_impulse_ns": 4,
           "normal_direction_angle_bound_radians": 0.01,
           "friction_vector_bound": 0.024999958333385416,
-          "coupled_solver_residual_bound": 0.005
+          "coupled_solver_residual_bound": 0.005,
+          "normal_scalar_effective_inverse_mass_restitution_bound": 0.02
         },
         "impulse_tolerance_ns": 0.1,
         "impulse_error_formula_inputs": {
@@ -141,7 +141,10 @@
             "delta_normal_relative_velocity": 0.01,
             "delta_restitution": 0.01,
             "expected_E_normal_scalar_ns": 0.02,
-            "normal_impulse_l2_max_ns": 4
+            "normal_impulse_l2_max_ns": 4,
+            "effective_inverse_mass_min": 2,
+            "delta_effective_inverse_mass": 0.01,
+            "formula": "E_normal_scalar <= ((1+e_max)*Delta_v_n + v_n_max*Delta_e)/K_n_min + (1+e_max)*v_n_max*Delta_K_n/(K_n_min^2)"
           },
           "friction_isotropic_uncoupled": {
             "tangent_relative_velocity_max": 1,
@@ -158,7 +161,13 @@
             "tangent_basis_angle_bound_radians": 0.01,
             "tangent_impulse_l2_max_ns": 1,
             "expected_E_friction_coordinates_ns": 0.015,
-            "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.01 / 2)"
+            "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.01 / 2)",
+            "tangent_effective_inverse_mass_min": 2,
+            "delta_tangent_effective_inverse_mass": 0,
+            "normal_impulse_max_ns": 0.9,
+            "support_impulse_lambda_over_dt_max_ns": 0.1,
+            "s_max_ns": 1,
+            "formula": "E_friction_coordinates <= Delta_v_t/K_t_min + v_t_max*Delta_K_t/(K_t_min^2) + s_max*Delta_mu + mu_max*(E_normal_scalar + Delta_lambda_n/dt_min + lambda_n_max*Delta_inverse_dt)"
           },
           "units": {
             "normal_and_tangent_effective_inverse_mass": "1/kg",
@@ -207,10 +216,10 @@
           [
             0,
             0,
-            1,
+            -1,
             0,
             0,
-            -1
+            1
           ]
         ],
         "contact_jacobian_boundary": [
@@ -233,10 +242,10 @@
           [
             0,
             0,
-            1,
+            -1,
             0,
             0,
-            -1
+            1
           ]
         ],
         "contact_jacobian_row_order": [
@@ -256,7 +265,8 @@
         "applied_impulse_interval_certificate": {
           "status": "not_provided",
           "required_output": "L2 upper bound for J^T*q Candidate / Boundary difference in World-space responsive Physics Vertex DOF order"
-        }
+        },
+        "contact_jacobian_global_row_order_rule": "For N contacts, rows 0..N-1 are Contact Normal rows in Canonical Contact Key order; rows N..3N-1 are tangent_u / tangent_v rows per Contact in the same order."
       },
       "expected": {
         "normal_direction_error_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
@@ -280,9 +290,12 @@
         ],
         "scalar_formula_outputs": {
           "E_normal_scalar_ns": 0.02,
-          "E_friction_vector_ns": 0.015,
+          "E_normal_direction_rotation_ns": 0.039999833333541665,
+          "E_friction_coordinates_ns": 0.015,
+          "E_tangent_basis_rotation_ns": 0.009999958333385416,
+          "E_friction_vector_ns": 0.024999958333385416,
           "E_solver_residual_ns": 0.005,
-          "full_E_impulse_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 0.005"
+          "E_contact_impulse_ns": 0.08999979166692709
         },
         "snap_disabled_reason": "complete_G_internal_G_contact_G_v_and_J_transpose_q_interval_certificates_missing",
         "scalar_impulse_formula_is_independently_verified": true,
@@ -399,7 +412,7 @@
             "tangent_v": [
               0,
               0,
-              1
+              -1
             ]
           },
           {
@@ -1111,14 +1124,14 @@
         ],
         "contact_jacobian_interval_certificate": {
           "status": "not_provided",
-          "required": "Candidate / Boundary sparse J rows in the generalized local contact coordinate order and columns in stable responsive Physics Vertex ID / World XYZ order"
+          "required": "Candidate / Boundary sparse J rows in q order: all Normal rows first, then per-contact tangent_u / tangent_v; every contact frame must be right-handed orthonormal with normal cross tangent_u = tangent_v; columns use stable responsive Physics Vertex ID / World XYZ order."
         }
       },
       "expected": {
         "interval_evaluation_required": true,
         "scalar_formula_must_be_rejected": true,
         "snap_allowed": false,
-        "snap_disabled_reason": "no_certified_complete_generalized_contact_solver_interval_result_attached",
+        "snap_disabled_reason": "full_solver_contact_jacobian_and_applied_impulse_certificates_missing",
         "do_not_infer_a_numeric_impulse_error_bound_from_the_matrix_samples": true,
         "all_reachable_branches_must_be_enclosed": true,
         "mutation_variants_that_must_disable_snap": [
