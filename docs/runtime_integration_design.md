@@ -5,14 +5,14 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.15
+- 文書バージョン: 1.16
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
 - 対応基本設計: basic_design.md 1.14
-- 対応詳細設計: detailed_design.md 1.18
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.10
-- Deployment Capability Profile形式: deployment_capability_profile_template.json v1.3
-- 前版: 1.12
+- 対応詳細設計: detailed_design.md 1.19
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.11
+- Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
+- 前版: 1.15
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -595,7 +595,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 - `planned_substeps`: CPU Preflightが確定したWorld Substep数。正確値であり、GPU Dispatch前に算出する。
 - `planned_integration_segments`: GPU Dispatch前に確定したWorld Substep / Animation / Force / Impulse境界からなる予定Segment総数。正確値であり、動的TOI分割を含まない。
 - `executed_integration_segments`: 直近のGPU Dynamic TOI Block試行でSegment Endまで完了したSegment数。CPU Preflight Blockでは0。
-- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となる各CCD対象Segment（TOI後のResidual Segmentを含む）ごとにDispatch Attempt内で一意に割り当てる。canonical_tau_bitsは有限float32 tauのIEEE-754 bit patternで、-0.0を+0.0へ正規化し、NaN / InfinityはInvalid CCD Candidateとする。同一Attempt / 同一Segment / 同一tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentはtau bitsが同じでも別Boundaryとする。Snapは時間差・XPBD後位置応答誤差・接触相対Velocity誤差・Impulse誤差の全Boundを満たす場合だけ許可し、いずれか不明なら正確なtauを維持する。discovered_toi_split_countは一意な内部Boundaryごとに1回だけ増やす。現在の下限はplanned_integration_segments + discovered_toi_split_countであり、未発見TOIを含む最終総数ではない。CPU Preflight Blockでは0。executed_integration_segmentsはSegment Endまで完了したものだけを数え、未完了prefixは含めない。Retryは新しいdispatch_attempt_idでBoundary ID / Split Countを基底Scheduleから再生成する。
+- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となる各CCD対象Segment（TOI後のResidual Segmentを含む）ごとにDispatch Attempt内で一意に割り当てる。canonical_tau_bitsは有限float32 tauのIEEE-754 bit patternで、-0.0を+0.0へ正規化し、NaN / InfinityはInvalid CCD Candidateとする。同一Attempt / 同一Segment / 同一tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentはtau bitsが同じでも別Boundaryとする。Snapは時間差・XPBD後位置応答誤差・接触相対Velocity誤差・Impulse誤差の全Boundを満たす場合だけ許可し、いずれか不明なら正確なtauを維持する。discovered_toi_split_countは一意な内部Boundaryごとに1回だけ増やす。内部Boundaryを数えるdiscovered_toi_split_countと、TOIで生成した追加Segmentを数えるdiscovered_toi_segment_countを分離する。現在の下限はplanned_integration_segments + discovered_toi_segment_countであり、未発見TOIを含む最終総数ではない。tau=0の全長Continuation Segmentはsplit_countを増やさずsegment_countを1増やす。tau=dt_segmentはどちらも増やさない。CPU Preflight Blockでは0。executed_integration_segmentsはSegment Endまで完了したものだけを数え、未完了prefixは含めない。Retryは新しいdispatch_attempt_idでBoundary ID / Split Countを基底Scheduleから再生成する。
 - すべてのCountは`std::uint32_t`。uint32範囲を超える算出値はWrapせずWork Count OverflowとしてWorldを`FAILED`にする。
 
 #### Block発生元ごとの観測契約
@@ -721,12 +721,12 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
    - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill / Sort / Pair Dedup。
    - VT / EE Narrowphase、Contact Patch Reduction、CCD Conservative Advancement / Minimum TOI Reduction。
    - TOIなし: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
-   - TOIあり: Detailed Design §7.1.2 / §11.4のGeometrically Safe Boundary SnapとUnique Interior Boundary規則でtauを分類する。安全条件を満たす端点 / 既存境界TOIは既存Boundary Eventとして処理し、それ以外の一意な内部時間Boundaryだけで基底Segmentをprefix / residualへ分割する。同一tauを持つContactが幾何条件により別Contact Groupへ分かれても時間Boundaryは一つとして`discovered_toi_split_count`を1回だけ増やす。異なるtauを同一Boundaryへマージする場合は各Candidateの保守的Snap誤差Boundを満たすこと。Snap条件を満たさないTOIは正確なtauに内部Boundaryを作る。残SegmentをDispatchする前に累積Segment数を検査する。Admission Limit超過時は`BLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toi`としてStatus Bufferへ`executed_integration_segments`と`minimum_required_integration_segments = planned_integration_segments + discovered_toi_split_count`を記録し、残Segment / 後続Pass / Render Publish / Commitを停止する。未発見の後続TOI数は予測しない。CPUはEvent Query完了後にStatusを観測し、同じTick ReservationをRetryする。
+   - TOIあり: Detailed Design §7.1.2 / §11.4のGeometrically Safe Boundary SnapとUnique Interior Boundary規則でtauを分類する。安全条件を満たす端点 / 既存境界TOIは既存Boundary Eventとして処理し、それ以外の一意な内部時間Boundaryだけで基底Segmentをprefix / residualへ分割する。tau=0はzero-duration prefixを作らず、Segment-start Dynamic Velocity / Kinematic Trajectory DerivativeからImpactを解決し、残時間dt_segment全量を新しいbase_integration_segment_idを持つContinuation Segmentとして一度だけ進める。tau=dt_segmentは残Segmentを作らない。同一tauを持つContactが幾何条件により別Contact Groupへ分かれても時間Boundaryは一つとして`discovered_toi_split_count`を1回だけ増やす。異なるtauを同一Boundaryへマージする場合は各Candidateの保守的Snap誤差Boundを満たすこと。Snap条件を満たさないTOIは正確なtauに内部Boundaryを作る。残SegmentをDispatchする前に累積Segment数を検査する。Admission Limit超過時は`BLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toi`としてStatus Bufferへ`executed_integration_segments`と`minimum_required_integration_segments = planned_integration_segments + discovered_toi_segment_count`を記録し、残Segment / 後続Pass / Render Publish / Commitを停止する。未発見の後続TOI数は予測しない。CPUはEvent Query完了後にStatusを観測し、同じTick ReservationをRetryする。
    - Contact Position Constraint前にDynamic VertexのContact前Velocityを保存する。通常Segmentはdt_segment、Positive-Time TOI prefixはtauで速度再構築する。tau=0 Initial Contact Eventはゼロ時間prefixを作らず、Segment開始時のDynamic Velocityを保持する。Fixed / Kinematic Vertexはtau=0を含む同時刻のTrajectory Derivativeを使う。tau=0でPosition差分を時間除算してはならない。
    - Discrete / TOI Contact Position XPBDを解く。Contact位置補正はPositionだけを変更し、保存済みContact前Velocityへ反映しない。
    - 保存したContact前VelocityをCoupled Projected Jacobiへ渡す。Contact Contributionを反復Gatherし、Normal / Coulomb Cone Residualが許容範囲へ収束した場合のみv_finalを確定する。W_ii <= epsilon_inverse_massのContactはNON_RESPONSIVE_CONTACTとしてPosition / ImpulseをSkipする。TOI Contactは成功時にimpact_resolvedを設定する。
    - Broadphase Envelope / NonFinite / Capacity / CCD / Physical Quality Gateを検証する。Envelope外は同じSegment内で再Buildし、Contact解決を再実行する。
-   - TOIありの場合、Impact後Velocityから残時間の新しいIntegration Segmentへ進む。Impact後Velocityを同じSegmentの速度再構築で上書きしない。
+   - TOIありの場合、Impact後Velocityから残時間の新しいIntegration Segmentへ進む。tau=0では残時間はdt_segment全量であり、zero-duration prefixを発行せず全長Continuation Segmentを1回だけ実行する。tau=dt_segmentでは残Segmentを生成しない。Impact後Velocityを同じSegmentの速度再構築で上書きしない。
 6. 全Integration Segment / World Substep成功後にRender Feedback Candidate Prepare（Tick Reservation済みslotへ書き込む）。
 7. Render Candidate Validation。
 8. GPU Logical Tick Commit ControlでPhysics State Set / GenerationとRender Candidate Slot / Generationを同時にcommit。
@@ -990,3 +990,8 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - 1.2: World共通Substep契約、AccumulatorからTick Reservationへの時間移管、Lease Generation付きRelease、Deferred Context Command Listの解放順序、Model / Collider / World / RuntimeのDestroy・Drain・Shutdown条件を明文化。
 - 1.1: 複数WorldのQuery Ring集約、Model Transform / Material / Paint API、Pose履歴不足時のBLOCKED_BY_INPUT、Fixed Delta fractional remainder、Capacity Growth / Memory Budget、Render Candidate Ring / Host Lease、Physics State Bank 2枚とSubstep Snapshotの分離を明文化。
 - 1.0: Runtime / Library境界、Public API、D3D11 Device / Context所有権、Fixed Step Scheduler、GPU Commit / Rollback、Render Binding、Device Loss、R0-R6 Gateの初版。
+
+
+## Revision History
+
+- v1.16: tau=0の全長Continuation Segmentを明文化し、内部TOI Split Countと追加Segment Countを分離。Admission下限を追加Segment Count基準へ統一。
