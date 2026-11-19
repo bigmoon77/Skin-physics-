@@ -4,7 +4,7 @@
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.23
+- 前版: 1.25
 - 詳細設計: [detailed_design.md](detailed_design.md) v1.31
 - Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.28
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
@@ -305,8 +305,9 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - CCD / TOI、Segment retime、初期貫通修正: detailed_design.md §10-11。
 - Animation Target / Velocity、Render Binding、属性保持: detailed_design.md §5-6 / §12-13。
 - GPU Pass、Tick Transaction、Capacity、JSON、再現性、Gate R0-R6: detailed_design.md §14-19、runtime_integration_design.md §5-10。
-- WORK_BUDGET_EXCEEDEDの回復は、Logical Tick ReservationとTransient Submission Leaseを分離するruntime_integration_design.md §5.3 / §5.6を正とする。Block後はin-flight / Query / Render Candidate Leaseを解放し、Reservationだけを保持する。Retry時は3 Leaseを再AdmissionしてからPlan / dispatch_idを生成する。LeaseがないBlocked Reservationはin-flight数へ算入せず、Host Render Leaseもなければ`reset_world`で明示的に破棄できる。Hard Limit到達は`work_budget_unsatisfiable`として明示する。Retry途中に物理品質・材料・時間分割条件を変更しない。
-- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.13を正とする。
+- WORK_BUDGET_EXCEEDEDの回復は、Logical Tick ReservationとTransient Submission Leaseを分離するruntime_integration_design.md §5.3 / §5.6を正とする。
+- CorrectionCcdUnresolved / CorrectionPathCrossing / ContactGeometryUnresolvedは、v1で同一Reservationの回復APIがないためREJECTEDとし自動Retryしない。実際のAABB / Candidate Buffer Capacity超過はBroadphaseOverflowとしてBLOCKEDにし、同じReservationでCapacity Retryする。Block後はin-flight / Query / Render Candidate Leaseを解放し、Reservationだけを保持する。Retry時は3 Leaseを再AdmissionしてからPlan / dispatch_idを生成する。LeaseがないBlocked Reservationはin-flight数へ算入せず、Host Render Leaseもなければ`reset_world`で明示的に破棄できる。Hard Limit到達は`work_budget_unsatisfiable`として明示する。Retry途中に物理品質・材料・時間分割条件を変更しない。
+- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.19を正とする。
 
 ## 15. 参考OSS・技術資料
 
