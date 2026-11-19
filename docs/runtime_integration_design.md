@@ -5,14 +5,14 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.17
+- 文書バージョン: 1.18
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.15
-- 対応詳細設計: detailed_design.md 1.20
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.12
+- 対応基本設計: basic_design.md 1.16
+- 対応詳細設計: detailed_design.md 1.21
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.13
 - Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
-- 前版: 1.16
+- 前版: 1.17
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -976,6 +976,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.18: Basic Design v1.16 / Detailed Design v1.21 / Numerical Acceptance Profile v1.13との相互参照を同期。Runtime API・Submission Lease・Commit / Rollback契約の実行規則は変更なし。
 - 1.17: Basic Design v1.15 / Detailed Design v1.20 / Numerical Acceptance Profile v1.12との相互参照を同期。Runtimeの所有権・Submission Lease・Commit / Rollback契約は本書を正本として維持。
 - 1.16: tau=0の全長Continuation Segmentを明文化し、内部TOI Split Countと追加Segment Countを分離。Admission下限を追加Segment Count基準へ統一。
 - 1.15: TOI時間BoundaryとContact Group形成を分離し、同一Segment / 同一tauのBoundary共有と、Segment IDを跨ぐBoundary分離を定義。
