@@ -2846,13 +2846,15 @@ namespace skin_physics::physics
                 ccd_settings.epsilon_length,
                 ccd_settings.contact_set_capacity,
                 ccd_settings.vertex_contact_csr_capacity);
+        result.required_contacts = refresh.required_contact_count;
+        result.required_vertex_contact_indices =
+            refresh.required_vertex_contact_indices;
         if (!refresh.success)
         {
             result.status = refresh.capacity_overflow
                 ? correction_writer_epoch_status::blocked
                 : correction_writer_epoch_status::rejected;
             result.capacity_overflow = refresh.capacity_overflow;
-            result.required_candidates = refresh.required_contact_count;
             result.diagnostic = refresh.diagnostic;
             return result;
         }
