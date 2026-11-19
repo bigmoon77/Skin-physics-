@@ -16,9 +16,10 @@
     "distance_tolerance_source": "Detailed Design §11.4 distance_tolerance",
     "max_interval_evaluations": 32,
     "no_hit_rule": "Every interval must have an outward-rounded distance lower bound greater than pair contact thickness + distance_tolerance.",
-    "unresolved_rule": "Missing / non-finite displacement or distance bounds, unstable feature / normal mapping, or interval budget exhaustion returns CORRECTION_CCD_UNRESOLVED and cannot Commit.",
+    "unresolved_rule": "Missing / non-finite displacement or distance bounds, unstable feature / normal mapping, or interval budget exhaustion returns CorrectionCcdUnresolved and REJECTED; v1 defines no same-Reservation interval-budget recovery API.",
     "candidate_union": "physical_swept_candidates UNION all_epoch_correction_candidates UNION final_discrete_candidates, keyed by the canonical pair key",
-    "correction_hit_effect": "Candidate discovery only; never creates a physical TOI, restitution / friction impulse, or impact_resolved event."
+    "correction_hit_effect": "Candidate discovery only; never creates a physical TOI, restitution / friction impulse, or impact_resolved event.",
+    "capacity_rule": "Actual AABB / Candidate Buffer Capacity overflow returns BroadphaseOverflow and BLOCKED; preserve the same Reservation and retry only after Capacity admission succeeds."
   },
   "cases": [
     {
@@ -84,7 +85,7 @@
         "correction_candidate_added_to_canonical_union": true,
         "correction_motion_ccd": "HIT",
         "endpoint_signed_separation_m": -1,
-        "crossing": "CORRECTION_PATH_CROSSING",
+        "crossing": "CorrectionPathCrossing",
         "tick_state": "REJECTED",
         "commit": false,
         "physical_toi_created": false,
@@ -159,7 +160,7 @@
         "correction_motion_ccd": "HIT",
         "correction_witness_s": "0.5",
         "endpoint_signed_separation_changes_side": true,
-        "crossing": "CORRECTION_PATH_CROSSING",
+        "crossing": "CorrectionPathCrossing",
         "tick_state": "REJECTED",
         "commit": false
       }
@@ -390,8 +391,8 @@
         "contact_position_iteration_limit": 1
       },
       "mutation_expected": {
-        "diagnostic": "CONTACT_GEOMETRY_UNRESOLVED",
-        "tick_state": "BLOCKED",
+        "diagnostic": "ContactGeometryUnresolved",
+        "tick_state": "REJECTED",
         "commit": false
       }
     },
@@ -409,9 +410,9 @@
         ]
       },
       "expected": {
-        "diagnostic": "CORRECTION_CCD_UNRESOLVED",
+        "diagnostic": "CorrectionCcdUnresolved",
         "result_is_no_hit": false,
-        "tick_state": "BLOCKED",
+        "tick_state": "REJECTED",
         "commit": false
       }
     },
