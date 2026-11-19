@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v3.7）
+# Skin Physics 設計閉鎖書（v3.8）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.22
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.27
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.24
+- 基本設計: [basic_design.md](basic_design.md) v1.23
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.28
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.25
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 - Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.4
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
@@ -440,6 +440,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
+- 3.8: Synchronized Basic / Detailed / Runtime current-version references and repaired the stale Basic Design handoff paragraph.
 - 3.7: Fixed q-compatible Contact Jacobian row order and right-handed contact-frame convention; made scalar inverse-mass and unit-bearing residual fixture inputs reproducible.
 - 3.6: Added q-compatible Contact Jacobian row order and right-handed contact-frame convention; completed scalar effective-inverse-mass fixture inputs and tangent-basis rotation math.
 - 3.5: Normalized E_contact_impulse terminology and synchronized Basic / Detailed / Runtime / Numerical Acceptance cross-references for independent contact-level and applied-vertex impulse error gates.
