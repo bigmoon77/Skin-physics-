@@ -976,6 +976,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.24: Basic Design v1.22 / Detailed Design v1.27 / Numerical Acceptance Profile v1.19の相互参照を同期。Runtime実行契約に変更なし。
 - 1.23: Basic Design v1.21 / Detailed Design v1.26 / Numerical Acceptance Profile v1.18の相互参照を同期。Runtime実行契約に変更なし。
 - 1.22: Basic Design v1.20 / Detailed Design v1.25 / Numerical Acceptance Profile v1.17との相互参照を同期。Runtime実行契約に変更なし。
 - 1.21: Basic Design v1.19 / Detailed Design v1.24 / Numerical Acceptance Profile v1.16との相互参照を同期。Runtime実行規則は変更なし。
