@@ -1950,6 +1950,42 @@ namespace skin_physics::physics
             return reject(
                 "Segment Commit Gate requires a valid Integration Segment and non-zero Candidate Generation.");
         }
+        if (!state.segment_geometry_initialized ||
+            !state.segment_broadphase_envelope_initialized ||
+            !finite(state.segment_broadphase_envelope.minimum) ||
+            !finite(state.segment_broadphase_envelope.maximum) ||
+            state.segment_broadphase_envelope.minimum.x >
+                state.segment_broadphase_envelope.maximum.x ||
+            state.segment_broadphase_envelope.minimum.y >
+                state.segment_broadphase_envelope.maximum.y ||
+            state.segment_broadphase_envelope.minimum.z >
+                state.segment_broadphase_envelope.maximum.z ||
+            state.segment_start_vertex_positions.size() !=
+                state.latest_vertex_positions.size())
+        {
+            return reject(
+                "Segment Commit Gate requires an initialized Segment-start Snapshot, latest Vertex positions and cumulative Physical / Correction Swept Envelope.");
+        }
+
+        for (std::size_t index = 0;
+            index < state.segment_start_vertex_positions.size(); ++index)
+        {
+            const correction_segment_vertex_snapshot& segment_start =
+                state.segment_start_vertex_positions[index];
+            const correction_segment_vertex_snapshot& latest =
+                state.latest_vertex_positions[index];
+            if (!finite(segment_start.position) ||
+                !finite(latest.position) ||
+                segment_start.stable_vertex_id != latest.stable_vertex_id ||
+                (index > 0 &&
+                    state.segment_start_vertex_positions[index - 1u].stable_vertex_id >=
+                        segment_start.stable_vertex_id))
+            {
+                return reject(
+                    "Segment-start / latest Vertex Snapshot ordering or identity is invalid.");
+            }
+        }
+
         if (!state.contact_set_current ||
             !state.vertex_contact_csr_current ||
             !state.vertex_contact_csr.current)
