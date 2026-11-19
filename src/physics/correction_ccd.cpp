@@ -509,11 +509,6 @@ namespace skin_physics::physics
             const vector3 edge_ends[3] = {
                 triangle[1], triangle[2], triangle[0]
             };
-            const std::array<std::array<real, 3>, 3> endpoint_weights = {{
-                {{ 1.0L, 0.0L, 0.0L }},
-                {{ 0.0L, 1.0L, 0.0L }},
-                {{ 0.0L, 0.0L, 1.0L }}
-            }};
             const std::size_t edge_indices[3][2] = {
                 { 0, 1 }, { 1, 2 }, { 2, 0 }
             };
