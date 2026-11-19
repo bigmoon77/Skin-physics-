@@ -1647,19 +1647,18 @@ namespace skin_physics::physics
 
                 if (contact.edge_edge.distance <= epsilon_length)
                 {
-                    const asset::vec3 direction_a = subtract(
-                        edge_a[1], edge_a[0]);
-                    const asset::vec3 direction_b = subtract(
-                        edge_b[1], edge_b[0]);
-                    const asset::vec3 edge_normal = cross(
+                    const vector3 direction_a = subtract(
+                        to_vector(edge_a[1]), to_vector(edge_a[0]));
+                    const vector3 direction_b = subtract(
+                        to_vector(edge_b[1]), to_vector(edge_b[0]));
+                    const vector3 edge_normal = cross(
                         direction_a, direction_b);
-                    const float normal_length_squared =
-                        edge_normal.x * edge_normal.x +
-                        edge_normal.y * edge_normal.y +
-                        edge_normal.z * edge_normal.z;
-                    const float minimum_area =
-                        epsilon_length * epsilon_length;
-                    if (!std::isfinite(normal_length_squared) ||
+                    const real normal_length_squared =
+                        length_squared(edge_normal);
+                    const real minimum_area =
+                        static_cast<real>(epsilon_length) *
+                        static_cast<real>(epsilon_length);
+                    if (!finite(normal_length_squared) ||
                         normal_length_squared <=
                             minimum_area * minimum_area)
                     {
