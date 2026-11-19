@@ -92,8 +92,12 @@ namespace skin_physics::physics
     {
         uint64_t base_integration_segment_id = 0;
         uint64_t candidate_generation = 0;
+        uint64_t position_writer_epoch_generation = 0;
+        uint32_t last_position_writer_epoch_id = 0;
         uint64_t contact_set_candidate_generation = 0;
+        uint64_t contact_set_position_writer_epoch_generation = 0;
         uint64_t vertex_contact_csr_candidate_generation = 0;
+        uint64_t vertex_contact_csr_position_writer_epoch_generation = 0;
         bool contact_set_current = false;
         bool vertex_contact_csr_current = false;
         std::vector<correction_candidate_pair_key> candidates;
@@ -115,6 +119,8 @@ namespace skin_physics::physics
         bool capacity_overflow = false;
         bool wrong_segment = false;
         bool generation_overflow = false;
+        bool invalid_epoch_order = false;
+        bool epoch_generation_overflow = false;
         bool success = false;
         std::string diagnostic;
     };
@@ -185,9 +191,15 @@ namespace skin_physics::physics
         const std::vector<correction_candidate_pair_key>& epoch_candidates,
         std::size_t capacity);
 
+    correction_segment_candidate_update_result begin_correction_position_writer_epoch(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        uint32_t position_writer_epoch_id);
+
     bool mark_correction_segment_contact_set_and_csr_current(
         correction_segment_candidate_state& state,
-        uint64_t candidate_generation);
+        uint64_t candidate_generation,
+        uint64_t position_writer_epoch_generation);
 
     // Input envelope bounds must already include the per-primitive Contact Thickness expansion.
     // settings.contact_thickness must be zero so the existing Broadphase does not expand twice.
