@@ -1,13 +1,13 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.16
+- 文書バージョン: 1.17
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.15
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.21
-- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.17
-- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.13
+- 前版: 1.16
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.22
+- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.19
+- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.14
 
 ## 1. 設計方針
 
@@ -327,6 +327,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.17: 詳細設計 v1.22 / Runtime統合設計 v1.19 / Numerical Acceptance Profile v1.14への参照を同期し、Impulse Error BoundのContact Island L2集約を明確化。
 - 1.16: 詳細設計 v1.21 / Runtime統合設計 v1.17 / Numerical Acceptance Profile v1.13への参照を同期し、TOI Snap誤差式をG_contact / G_vと残差項へ統一。
 - 1.15: 詳細設計 v1.20 / Runtime統合設計 v1.17 / Numerical Acceptance Profile v1.12への参照を同期し、実装前のTOI Snap評価写像とPre-contact Velocity順序を明確化。
 - 1.14: Logical Reservation / Transient Submission Leaseの分離、Block後Lease解放とReset条件、幾何誤差Guard付きTOI端点Snap、CPU-only advance_report StatusとDeployment Profile qualification policyを反映。
