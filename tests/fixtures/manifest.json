@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Case 46 scalar inputs are algebraically complete for Effective Inverse Mass-based normal and friction bounds, with Candidate / Boundary right-handed contact frames and synchronized tangent rotation bounds. E_contact_impulse is numerically checked against its tolerance, but E_applied_impulse is not certified; Snap remains denied. The coupled fixture requires the full generalized Delassus interval, responsive-subspace proof, and J^T*q applied-impulse certificate. Cases 45-47 remain specified_not_implemented until executable assertions consume fixtures and CI passes.",
+    "purpose": "Track senior-engineer design-review regression cases. Case 46 scalar inputs include complete Effective Inverse Mass normal/friction values, unit-bearing residuals, right-handed Candidate / Boundary contact frames, and q-compatible Jacobian row order. E_contact_impulse is recomputed and checked against tolerance; E_applied_impulse remains uncertified. The coupled fixture requires full generalized Delassus, responsive-subspace and J^T*q certificates. Cases 45-47 remain specified_not_implemented until executable assertions consume fixtures and CI passes.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -635,7 +635,7 @@
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
     "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; applied_impulse_and_full_coupled_certificates_not_provided; Snap_authorization_fixtures_fail_closed",
-    "fixture_version": "1.8"
+    "fixture_version": "1.9"
   },
   "latest_ci_attempt": {
     "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
