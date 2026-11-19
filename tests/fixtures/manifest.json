@@ -601,17 +601,19 @@
     ]
   },
   "latest_ci_attempt": {
-    "commit": "98b819d94d0b78f0b4b8e78ceb3e73a4fe59963c",
-    "workflow_run_id": 44425244581,
-    "job_id": 135228284992,
+    "commit": "6a5980b8f5ac4abb3c40308fc3ccf5b6abc02ce5",
+    "workflow_run_id": 44431714570,
+    "job_id": 135250434438,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
+    "runner_id": 0,
     "runner_name": "",
     "steps_reported": 0,
     "build": "not_started",
     "tests": "not_started",
+    "logs_available": false,
     "classification": "runner_not_assigned",
-    "note": "The latest observed run targets commit 98b819d. Its job ended before runner assignment (runner_name is empty and no steps were reported), so no compiler or test execution occurred and this is not evidence of a source-code failure. The last successful verified CI remains commit 36dab21 / run 44327398017. The follow-up Runtime descriptor clarification committed after 98b819d is newer than this run and remains unverified by CI."
+    "note": "The most recent observed run targets commit 6a5980b. The workflow job completed with runner_id 0, an empty runner_name, no reported steps, and no logs URL, so it ended before a Windows runner was assigned. No compiler or test execution occurred; this is not evidence of a source-code or design-document failure. The last successful verified CI remains commit 36dab21 / run 44327398017. Commits after 6a5980b are not covered by this run."
   }
 }
