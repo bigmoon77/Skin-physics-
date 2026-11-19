@@ -1832,12 +1832,62 @@ namespace
             !segment_state_result.state.vertex_contact_csr_current,
             "A new Integration Segment must begin with its physical candidates and unbuilt Contact/CSR generations.");
 
+        const auto make_vt_discrete_input =
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+        {
+            skin_physics::physics::correction_discrete_contact_input input;
+            input.key = key;
+            input.vertex_stable_ids = { 11, 12, 13, 14 };
+            input.positions = {
+                skin_physics::asset::vec3{ 0.25f, 0.25f, 0.005f },
+                skin_physics::asset::vec3{ 0.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 0.0f, 1.0f, 0.0f }
+            };
+            input.contact_thickness = 0.01f;
+            return input;
+        };
+        const auto make_ee_discrete_input =
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+        {
+            skin_physics::physics::correction_discrete_contact_input input;
+            input.key = key;
+            input.vertex_stable_ids = { 21, 22, 23, 24 };
+            input.positions = {
+                skin_physics::asset::vec3{ 0.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 0.5f, -0.5f, 0.0f },
+                skin_physics::asset::vec3{ 0.5f, 0.5f, 0.0f }
+            };
+            input.contact_thickness = 0.02f;
+            return input;
+        };
+
         auto segment_state = segment_state_result.state;
-        require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 1, 0) &&
+        std::vector<skin_physics::physics::correction_discrete_contact_input>
+            vt_discrete_inputs = { make_vt_discrete_input(candidate_vt) };
+        const auto initial_contact_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs);
+        require(initial_contact_refresh.success &&
+            initial_contact_refresh.candidate_count == 1 &&
+            initial_contact_refresh.active_contact_count == 1 &&
             segment_state.contact_set_current &&
-            segment_state.vertex_contact_csr_current,
-            "The initial Contact Set / CSR must be bound to both the Candidate and Position-Writer generations.");
+            segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 1 &&
+            segment_state.vertex_contact_csr.vertex_stable_ids.size() == 4 &&
+            segment_state.vertex_contact_csr.offsets.size() == 5 &&
+            segment_state.vertex_contact_csr.contact_indices.size() == 4,
+            "Final Discrete VT Narrowphase must build the active Contact Set and four-participant Vertex-to-Contact CSR for the current generations.");
+
+        const auto stale_initial_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 0, 0, vt_discrete_inputs);
+        require(!stale_initial_refresh.success &&
+            stale_initial_refresh.generation_mismatch &&
+            segment_state.contact_set_current &&
+            segment_state.contact_set.size() == 1,
+            "A stale Candidate Generation refresh must not overwrite a previously valid Contact Set.");
 
         const auto begin_epoch_1 =
             skin_physics::physics::begin_correction_position_writer_epoch(
@@ -1859,14 +1909,22 @@ namespace
             !segment_state.vertex_contact_csr_current,
             "An Epoch that adds only duplicate canonical pairs must not advance Candidate Generation or falsely mark geometry-dependent data current.");
 
-        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 1, 0),
+        const auto stale_epoch_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs);
+        require(!stale_epoch_refresh.success &&
+            stale_epoch_refresh.generation_mismatch &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
             "A Contact Set / CSR completion from the pre-Epoch Position Generation must be rejected.");
-        require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 1, 1) &&
+        const auto epoch_1_contact_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 1, vt_discrete_inputs);
+        require(epoch_1_contact_refresh.success &&
             segment_state.contact_set_current &&
-            segment_state.vertex_contact_csr_current,
-            "Contact Set and CSR refresh must acknowledge the latest Position-Writer Epoch.");
+            segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 1,
+            "Contact Set and CSR refresh must run Final Discrete Narrowphase for the latest Position-Writer Epoch.");
 
         const auto begin_epoch_2 =
             skin_physics::physics::begin_correction_position_writer_epoch(
@@ -1877,8 +1935,12 @@ namespace
             !segment_state.vertex_contact_csr_current,
             "A later position write must invalidate Contact Set / CSR even when no new broadphase pair is emitted.");
 
-        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 1, 1),
+        const auto stale_epoch_refresh_2 =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 1, vt_discrete_inputs);
+        require(!stale_epoch_refresh_2.success &&
+            stale_epoch_refresh_2.generation_mismatch &&
+            !segment_state.contact_set_current,
             "A stale Position-Writer Epoch rebuild completion must not clear a newer geometry generation.");
 
         const auto stale_epoch_candidate_update =
@@ -1900,14 +1962,33 @@ namespace
             !segment_state.vertex_contact_csr_current,
             "A newly discovered Epoch candidate must advance the Candidate Generation and invalidate Contact Set / CSR.");
 
-        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 1, 2),
-            "A Contact Set built from an older Candidate Generation must not be accepted for the current Position-Writer Epoch.");
-        require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
-            segment_state, 2, 2) &&
+        std::vector<skin_physics::physics::correction_discrete_contact_input>
+            complete_discrete_inputs = {
+                make_ee_discrete_input(candidate_ee),
+                make_vt_discrete_input(candidate_vt)
+            };
+        const auto missing_candidate_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 2, 2, { make_vt_discrete_input(candidate_vt) });
+        require(!missing_candidate_refresh.success &&
+            missing_candidate_refresh.invalid_input &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 1,
+            "Final Discrete Narrowphase must cover every Candidate Pair and preserve prior data on incomplete input.");
+        const auto latest_contact_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 2, 2, complete_discrete_inputs);
+        require(latest_contact_refresh.success &&
+            latest_contact_refresh.candidate_count == 2 &&
+            latest_contact_refresh.active_contact_count == 2 &&
             segment_state.contact_set_current &&
-            segment_state.vertex_contact_csr_current,
-            "Contact Set and CSR refresh must acknowledge both current Segment generations.");
+            segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 2 &&
+            segment_state.vertex_contact_csr.vertex_stable_ids.size() == 8 &&
+            segment_state.vertex_contact_csr.offsets.size() == 9 &&
+            segment_state.vertex_contact_csr.contact_indices.size() == 8,
+            "Final Discrete Narrowphase must refresh all active VT / EE Contacts and build the complete Vertex-to-Contact CSR.");
 
         const auto wrong_segment_begin =
             skin_physics::physics::begin_correction_position_writer_epoch(
