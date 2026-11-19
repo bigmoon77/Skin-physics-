@@ -1875,9 +1875,12 @@ namespace
             segment_state.candidate_generation == 2,
             "Candidates from a different base_integration_segment_id must not enter this Segment State.");
 
+        const auto new_capacity_candidate =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::vertex_triangle, 900, 9, 90, 800, 8, 80);
         const auto state_capacity_overflow =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
-                segment_state, 1001, { candidate_overflow }, 2);
+                segment_state, 1001, { new_capacity_candidate }, 2);
         require(!state_capacity_overflow.success &&
             state_capacity_overflow.capacity_overflow &&
             segment_state.candidates.size() == 2 &&
