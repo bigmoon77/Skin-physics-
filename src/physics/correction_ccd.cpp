@@ -1355,6 +1355,113 @@ namespace skin_physics::physics
         return result;
     }
 
+    correction_segment_candidate_state_result create_correction_segment_candidate_state(
+        uint64_t base_integration_segment_id,
+        const std::vector<correction_candidate_pair_key>& physical_swept_candidates,
+        std::size_t capacity)
+    {
+        correction_segment_candidate_state_result result;
+        if (base_integration_segment_id == 0)
+        {
+            result.diagnostic =
+                "Correction Candidate State requires a non-zero base_integration_segment_id.";
+            return result;
+        }
+
+        const correction_candidate_union_result merged =
+            merge_correction_candidate_union(
+                {}, physical_swept_candidates, capacity);
+        result.required_count = merged.required_count;
+        result.capacity_overflow = merged.overflow;
+        if (!merged.success)
+        {
+            result.diagnostic = merged.overflow
+                ? "Physical Swept Candidate Set exceeds the Segment Candidate Capacity."
+                : "Physical Swept Candidate Set could not be canonicalized.";
+            return result;
+        }
+
+        result.state.base_integration_segment_id = base_integration_segment_id;
+        result.state.candidates = merged.candidates;
+        result.state.candidate_generation = merged.candidates.empty() ? 0u : 1u;
+        result.state.contact_set_candidate_generation = 0u;
+        result.state.vertex_contact_csr_candidate_generation = 0u;
+        result.state.contact_set_current = false;
+        result.state.vertex_contact_csr_current = false;
+        result.success = true;
+        return result;
+    }
+
+    correction_segment_candidate_update_result merge_correction_position_writer_epoch_candidates(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        const std::vector<correction_candidate_pair_key>& epoch_candidates,
+        std::size_t capacity)
+    {
+        correction_segment_candidate_update_result result;
+        if (base_integration_segment_id == 0 ||
+            state.base_integration_segment_id != base_integration_segment_id)
+        {
+            result.wrong_segment = true;
+            result.diagnostic =
+                "Position-Writer Epoch Candidate Set belongs to a different Integration Segment.";
+            return result;
+        }
+
+        const correction_candidate_union_result merged =
+            merge_correction_candidate_union(
+                state.candidates, epoch_candidates, capacity);
+        result.required_count = merged.required_count;
+        result.capacity_overflow = merged.overflow;
+        if (!merged.success)
+        {
+            result.diagnostic = merged.overflow
+                ? "Position-Writer Epoch Candidate Union exceeds the Segment Capacity."
+                : "Position-Writer Epoch Candidate Union could not be canonicalized.";
+            return result;
+        }
+
+        if (merged.candidates == state.candidates)
+        {
+            result.success = true;
+            return result;
+        }
+
+        if (state.candidate_generation ==
+            std::numeric_limits<uint64_t>::max())
+        {
+            result.generation_overflow = true;
+            result.diagnostic =
+                "Correction Candidate Generation overflow; Segment State was not mutated.";
+            return result;
+        }
+
+        state.candidates = merged.candidates;
+        ++state.candidate_generation;
+        state.contact_set_current = false;
+        state.vertex_contact_csr_current = false;
+        result.changed = true;
+        result.success = true;
+        return result;
+    }
+
+    bool mark_correction_segment_contact_set_and_csr_current(
+        correction_segment_candidate_state& state,
+        uint64_t candidate_generation)
+    {
+        if (state.base_integration_segment_id == 0 ||
+            candidate_generation != state.candidate_generation)
+        {
+            return false;
+        }
+
+        state.contact_set_candidate_generation = candidate_generation;
+        state.vertex_contact_csr_candidate_generation = candidate_generation;
+        state.contact_set_current = true;
+        state.vertex_contact_csr_current = true;
+        return true;
+    }
+
     bool union_correction_envelope_aabb(
         const collision_aabb& first,
         const collision_aabb& second,
