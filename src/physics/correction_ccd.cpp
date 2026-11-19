@@ -1255,8 +1255,10 @@ namespace skin_physics::physics
         const correction_candidate_pair_key& other) const
     {
         return contact_type == other.contact_type &&
+            stable_id_a == other.stable_id_a &&
             mesh_a == other.mesh_a &&
             primitive_a == other.primitive_a &&
+            stable_id_b == other.stable_id_b &&
             mesh_b == other.mesh_b &&
             primitive_b == other.primitive_b;
     }
@@ -1264,34 +1266,41 @@ namespace skin_physics::physics
     bool correction_candidate_pair_key::operator<(
         const correction_candidate_pair_key& other) const
     {
-        return std::tie(contact_type, mesh_a, primitive_a, mesh_b, primitive_b) <
-            std::tie(other.contact_type, other.mesh_a, other.primitive_a,
-                other.mesh_b, other.primitive_b);
+        return std::tie(stable_id_a, mesh_a, primitive_a,
+            stable_id_b, mesh_b, primitive_b, contact_type) <
+            std::tie(other.stable_id_a, other.mesh_a, other.primitive_a,
+                other.stable_id_b, other.mesh_b, other.primitive_b,
+                other.contact_type);
     }
 
     correction_candidate_pair_key make_canonical_correction_candidate_key(
         correction_contact_type contact_type,
+        uint64_t stable_id_a,
         uint32_t mesh_a,
         uint32_t primitive_a,
+        uint64_t stable_id_b,
         uint32_t mesh_b,
         uint32_t primitive_b)
     {
-        const std::pair<uint32_t, uint32_t> endpoint_a = {
-            mesh_a, primitive_a
+        const std::tuple<uint64_t, uint32_t, uint32_t> endpoint_a = {
+            stable_id_a, mesh_a, primitive_a
         };
-        const std::pair<uint32_t, uint32_t> endpoint_b = {
-            mesh_b, primitive_b
+        const std::tuple<uint64_t, uint32_t, uint32_t> endpoint_b = {
+            stable_id_b, mesh_b, primitive_b
         };
         if (endpoint_b < endpoint_a)
         {
+            std::swap(stable_id_a, stable_id_b);
             std::swap(mesh_a, mesh_b);
             std::swap(primitive_a, primitive_b);
         }
 
         correction_candidate_pair_key result;
         result.contact_type = contact_type;
+        result.stable_id_a = stable_id_a;
         result.mesh_a = mesh_a;
         result.primitive_a = primitive_a;
+        result.stable_id_b = stable_id_b;
         result.mesh_b = mesh_b;
         result.primitive_b = primitive_b;
         return result;
@@ -1315,14 +1324,14 @@ namespace skin_physics::physics
         for (const correction_candidate_pair_key& key : existing_candidates)
         {
             merged.push_back(make_canonical_correction_candidate_key(
-                key.contact_type, key.mesh_a, key.primitive_a,
-                key.mesh_b, key.primitive_b));
+                key.contact_type, key.stable_id_a, key.mesh_a, key.primitive_a,
+                key.stable_id_b, key.mesh_b, key.primitive_b));
         }
         for (const correction_candidate_pair_key& key : incoming_candidates)
         {
             merged.push_back(make_canonical_correction_candidate_key(
-                key.contact_type, key.mesh_a, key.primitive_a,
-                key.mesh_b, key.primitive_b));
+                key.contact_type, key.stable_id_a, key.mesh_a, key.primitive_a,
+                key.stable_id_b, key.mesh_b, key.primitive_b));
         }
 
         std::sort(merged.begin(), merged.end());
