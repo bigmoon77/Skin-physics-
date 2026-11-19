@@ -1649,6 +1649,24 @@ namespace
                 make_vt_correction_motion(vt_crossing.at("input")), invalid_settings);
         require(settings_result.status == correction_ccd_status::invalid_input,
             "Correction CCD must enforce the specified maximum 32 interval evaluations.");
+
+        skin_physics::physics::correction_ccd_settings limited_settings =
+            read_correction_ccd_settings(vt_crossing.at("input"));
+        limited_settings.maximum_interval_evaluations = 2;
+        const auto limited_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_crossing.at("input")), limited_settings);
+        require(limited_result.status == correction_ccd_status::unresolved,
+            "Interval budget exhaustion must fail closed as Unresolved.");
+
+        auto ambiguous_side_motion = make_vt_correction_motion(vt_crossing.at("input"));
+        ambiguous_side_motion.segment_start_point = { 0.25f, 0.25f, 0.0f };
+        const auto ambiguous_side_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                ambiguous_side_motion,
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(ambiguous_side_result.status == correction_ccd_status::unresolved,
+            "A Segment-start Pair exactly on the separating plane must not invent an allowed side.");
     }
 }
 
