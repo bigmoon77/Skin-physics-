@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 have persistent deterministic input vectors. Case 46 separates scalar uncoupled impulse algebra from Snap authorization: without certified G_internal / G_contact / G_v interval outputs, the scalar fixture must keep Snap disabled. The coupled-island fixture includes normal, tangential and cross-Delassus inputs plus candidate/boundary friction and XPBD support-impulse inputs, but remains Snap-disabled until a certified complete finite-iteration interval result is attached. They remain specified_not_implemented until executable assertions consume the fixtures and pass CI.",
+    "purpose": "Track senior-engineer design-review regression cases. Case 46 contains an isolated scalar impulse algebra fixture that cannot authorize Snap without G_internal / G_contact / G_v certificates, plus a coupled 2-contact fixture with its full 6x6 generalized Delassus matrix explicitly assembled from normal, normal-tangential, transposed tangential-normal and tangential blocks. The complete interval/eigenvalue certificate remains absent, so Snap is denied. Cases 45-47 remain specified_not_implemented until executable assertions consume the fixture vectors and pass CI.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -634,7 +634,8 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; Snap_authorization_fixtures_fail_closed"
+    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; full_6x6_interval_certificate_not_provided; Snap_authorization_fixtures_fail_closed",
+    "fixture_version": "1.3"
   },
   "latest_ci_attempt": {
     "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
