@@ -2013,6 +2013,29 @@ namespace
             segment_state.vertex_contact_csr.contact_indices.size() == 4,
             "Final Discrete VT Narrowphase must build the active Contact Set and four-participant Vertex-to-Contact CSR for the current generations.");
 
+        const auto contact_capacity_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs, 1.0e-7f, 0, 16);
+        require(!contact_capacity_refresh.success &&
+            contact_capacity_refresh.capacity_overflow &&
+            contact_capacity_refresh.required_contact_count == 1 &&
+            segment_state.contact_set_current &&
+            segment_state.contact_set.size() == 1 &&
+            segment_state.vertex_contact_csr.current,
+            "Contact Set Capacity overflow must report the required count and preserve the prior published Contact Set / CSR atomically.");
+
+        const auto csr_capacity_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs, 1.0e-7f, 16, 0);
+        require(!csr_capacity_refresh.success &&
+            csr_capacity_refresh.capacity_overflow &&
+            csr_capacity_refresh.required_vertex_contact_indices == 4 &&
+            segment_state.contact_set_current &&
+            segment_state.contact_set.size() == 1 &&
+            segment_state.vertex_contact_csr.current &&
+            segment_state.vertex_contact_csr.contact_indices.size() == 4,
+            "Vertex-to-Contact CSR Capacity overflow must preserve both prior published structures atomically.");
+
         const auto stale_initial_refresh =
             skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
                 segment_state, 0, 0, vt_discrete_inputs);
