@@ -1536,11 +1536,12 @@ namespace
         };
 
         const auto run_pipeline = [&](
+            const std::vector<gpu_correction_candidate_primitive>& input_primitives,
             uint32_t candidate_capacity,
             uint32_t sort_capacity) -> gpu_pipeline_readback
         {
             const uint32_t primitive_count =
-                static_cast<uint32_t>(gpu_primitives.size());
+                static_cast<uint32_t>(input_primitives.size());
             const uint32_t pair_count =
                 primitive_count * primitive_count;
             const std::vector<uint32_t> initial_flags(pair_count, 0u);
@@ -1556,7 +1557,7 @@ namespace
 
             const ComPtr<ID3D11Buffer> primitive_buffer =
                 create_structured_buffer(
-                    device, gpu_primitives, D3D11_BIND_SHADER_RESOURCE);
+                    device, input_primitives, D3D11_BIND_SHADER_RESOURCE);
             const ComPtr<ID3D11Buffer> bounds_buffer =
                 create_structured_buffer(
                     device, gpu_bounds, D3D11_BIND_SHADER_RESOURCE);
@@ -1751,7 +1752,7 @@ namespace
             return readback;
         };
 
-        const gpu_pipeline_readback normal = run_pipeline(2, 2);
+        const gpu_pipeline_readback normal = run_pipeline(gpu_primitives, 2, 2);
         require(normal.totals[0] == cpu_reference.candidates.size() &&
             normal.totals[1] == 0u,
             "WARP Candidate Count / Scan / Capacity / Fill / Sort / Dedup must match the CPU required count without overflow.");
@@ -1793,7 +1794,7 @@ namespace
             normal.candidates[1].identity_b[0] == 400u,
             "GPU Candidate output must exclude shared-vertex and explicitly excluded one-ring pairs before sorting.");
 
-        const gpu_pipeline_readback overflow = run_pipeline(1, 1);
+        const gpu_pipeline_readback overflow = run_pipeline(gpu_primitives, 1, 1);
         require(overflow.totals[0] == 2u && overflow.totals[1] == 1u,
             "GPU Candidate Capacity Check must report the full required count and overflow status.");
         require(overflow.candidates.size() == 1 &&
@@ -1801,6 +1802,34 @@ namespace
             overflow.candidates[0].identity_b[0] == 0xffffffffu &&
             overflow.candidates[0].metadata[0] == 0xffffffffu,
             "GPU Candidate Fill must write no partial pairs when the Count / Scan result exceeds Capacity.");
+
+        std::vector<gpu_correction_candidate_primitive> duplicate_vertex_ids =
+            gpu_primitives;
+        duplicate_vertex_ids[1].vertex_id_low[2] =
+            duplicate_vertex_ids[1].vertex_id_low[1];
+        duplicate_vertex_ids[1].vertex_id_high[2] =
+            duplicate_vertex_ids[1].vertex_id_high[1];
+        const gpu_pipeline_readback invalid_vertex_topology =
+            run_pipeline(duplicate_vertex_ids, 2, 2);
+        require(invalid_vertex_topology.totals[1] == 2u &&
+            invalid_vertex_topology.candidates[0].identity_a[0] == 0xffffffffu,
+            "GPU Candidate Count must fail closed on duplicate Stable Vertex IDs inside one Primitive.");
+
+        std::vector<gpu_correction_candidate_primitive> duplicate_primitive_identity =
+            gpu_primitives;
+        duplicate_primitive_identity[1].stable_id_low =
+            duplicate_primitive_identity[0].stable_id_low;
+        duplicate_primitive_identity[1].stable_id_high =
+            duplicate_primitive_identity[0].stable_id_high;
+        duplicate_primitive_identity[1].mesh_id =
+            duplicate_primitive_identity[0].mesh_id;
+        duplicate_primitive_identity[1].primitive_id =
+            duplicate_primitive_identity[0].primitive_id;
+        const gpu_pipeline_readback invalid_primitive_identity =
+            run_pipeline(duplicate_primitive_identity, 2, 2);
+        require(invalid_primitive_identity.totals[1] == 2u &&
+            invalid_primitive_identity.candidates[0].identity_a[0] == 0xffffffffu,
+            "GPU Candidate Count must reject duplicate Stable / Mesh / Primitive identities without publishing a partial Candidate Set.");
 
         std::cout << "[PASS] P12_WARP_CORRECTION_CANDIDATE_PIPELINE\n";
     }
