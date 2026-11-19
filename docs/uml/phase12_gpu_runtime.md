@@ -105,7 +105,7 @@ GPU command submission and CPU observation are separate events. Event Query comp
 
 A Tick Reservation owns its fixed-time interval from submission through Retry / Block until GPU Commit. A transient reject never returns time to the Accumulator and never allocates a new Tick Sequence. CPU Observation updates status only; it never consumes or refunds simulation time. World Substep schedule is common to Soft Body / Cloth / Contact / Animation Tracking, and TOI / Force event boundaries split time for every participant.
 
-The Runtime permits up to two submitted-but-not-observed ticks. Each immutable Dispatch Plan contains the expected predecessor sequence and source State Generation. Tick N+1 checks the GPU Commit result of N before any Physics State read/write. If N fails, N+1 is blocked before touching Physics State and must be resubmitted after N is successfully replayed.
+The Runtime permits `maximum_in_flight_ticks` submitted-but-not-CPU-observed ticks per World (supported values 1 / 2 / 4; default 2). In-flight counts CPU-unobserved Submission Attempts, not simultaneous GPU Physics State writers. All batches execute serially on the single ordered Immediate Context Command Stream. The two Persistent State Banks are reused in alternating order only after each predecessor Commit Gate succeeds. Each immutable Dispatch Plan contains the expected predecessor sequence and source State Generation. Tick N+1 checks the GPU Commit result of N before any Physics State read/write. If N fails, N+1 is blocked before touching Physics State and must be resubmitted after N is successfully replayed.
 
 ## 3. Capacity / CCD failure and retry
 
