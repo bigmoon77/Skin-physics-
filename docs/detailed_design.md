@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.23
+- 文書バージョン: 1.24
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.18
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.20
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.15
-- 前版: 1.22
+- 対応基本設計: basic_design.md 1.19
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.21
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.16
+- 前版: 1.23
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1214,11 +1214,21 @@ F(z)はCanonical Contact Key順に並べたWorld-space Vectorを返す。
 
 したがってF(z)は固定World座標系で表現された3N次元ベクトルであり、E_impulseはそのEuclidean L2 normで評価する。Normal / Tangent Basisの回転による物理Impulse方向の変化もこの出力へ反映する。Contact数がCandidate / Boundaryで異なる、Canonical Contact Key集合が一致しない、または同じBoundaryへSnapするContact Island集合が確定しない場合はImpulse Boundをunknownとし、Snapを禁止する。
 
-    E_impulse = sup { || F(z) - F(z_boundary) ||_2 : z in U }
+    E_contact_impulse = sup { || F_contact_world(z) - F_contact_world(z_boundary) ||_2 : z in U }
+
+Contact-level World-space impulse comparison alone does not prove that the same impulse is applied to the same Physics Vertices. Contact Jacobian rows contain signed VT / EE interpolation coefficients, the Normal / Tangent frame, and the mapping from Contact coordinates to responsive Physics Vertex velocity degrees of freedom. The local generalized coefficient vector q is mapped to the generalized World-space impulse applied to Physics Vertices by:
+
+    P_applied(z) = J(z)^T * q(z)
+
+J(z) is the complete sparse Contact Jacobian in canonical Contact Key and stable Physics Vertex ID order. Its rows use the same local Normal / Tangent coordinate order as q, and its columns use fixed World-space XYZ components for every responsive Physics Vertex. Candidate / Boundary must use the same responsive Physics Vertex ID set and ordering. The applied-impulse error is:
+
+    E_applied_impulse = sup { || J(z)^T*q(z) - J(z_boundary)^T*q(z_boundary) ||_2 : z in U }
+
+E_applied_impulse compares the generalized impulse vectors actually distributed to Physics Vertices, in [N*s], over the complete stable Vertex ID set. Its interval evaluation must enclose both q and J over Candidate / Boundary uncertainty, including feature interpolation weights and Normal / Tangent basis variation. Missing Jacobian intervals, mismatched Vertex ID sets, unbounded interpolation changes or non-finite output make E_applied_impulse unknown and forbid Snap.
 
 Uは少なくとも次の変数を包含する。
 
-- Contact Jacobian / Normal Basisとその角度偏差。
+- Contact Jacobian / Normal Basisとその角度偏差。Candidate / Boundary双方のSparse Jacobian row、符号付きVT / EE interpolation係数、responsive Physics Vertex ID集合を包含する。Contact-level Impulse Fとは別にJ^T*qのApplied Impulse Errorを評価する。
 - Effective Inverse Mass / Delassus Matrixとその区間Bound。Delassus coefficientはJ M^-1 J^Tで定義し、単位は[1/kg]。Responsive subspace上の最小固有値には有限かつ正の下限 K_min [1/kg]を要求する。Candidate / Boundary全域でResponsive subspaceのrankとbasisが変化しないことを証明できない場合はSnapを禁止する。
 - Candidate / Boundary間のContact-relative Normal / Tangential Velocity差。
 - Restitution係数 e の許容区間。
@@ -1279,9 +1289,7 @@ CouplingがなくNormal / Tangential Effective Inverse Massがスカラー（ま
 
 Active Contact Set / Stick-Slip Projection BranchがU内で変化する可能性を排除できない場合、変化を含む全分岐を区間評価して有限上界を証明できるときだけSnap候補に残す。Responsive DelassusのK_minが正と証明できない、F(U)が有限に包含できない、反復Solverの残差Boundがない、または上記いずれかの入力区間が欠落する場合は`impulse_error_bound = unknown`とし、Snapを禁止する。独立したContact GroupごとのImpulse誤差を単純に最大値だけで代表してはならず、同じBoundaryへSnapする全Contact Islandのベクトル誤差を評価する。
 
-Snapの最終条件は、時間差・E_total_position・E_relative_velocity・E_impulseの全てが対応するFixture許容値以下であること。位置・Velocity・ImpulseのいずれかのBoundが不明なら、他のBoundが小さくてもSnapしない。
-
-Snapを許可する条件は、時間差 <= tau_snap_tolerance、E_total_position <= distance_tolerance、E_relative_velocity <= relative_velocity_tolerance、impulse_error_bound <= impulse_toleranceの全てである。distance_tolerance [m]、relative_velocity_tolerance [m/s]、impulse_tolerance [N*s]はNumerical Acceptance Profileのtoi_snap_error_budgetにFixture / Workloadごとに必須指定する。いずれか未指定、非有限、または保守Boundを証明できない場合はSnapを禁止し、正確なtauで独立した内部Boundaryを作る。正確なtauのCCDも安全に評価できない場合だけCCDUnresolvedとしてCommitしない。
+Snapの許可条件は、時間差 <= tau_snap_tolerance、E_total_position <= distance_tolerance、E_relative_velocity <= relative_velocity_tolerance、E_contact_impulse <= impulse_tolerance、E_applied_impulse <= applied_impulse_toleranceの全てである。distance_tolerance [m]、relative_velocity_tolerance [m/s]、impulse_tolerance [N*s]、applied_impulse_tolerance [N*s]はNumerical Acceptance Profileのtoi_snap_error_budgetにFixture / Workloadごとに必須指定する。Contact-level World-space Impulse差と、Sparse Contact Jacobianを介してPhysics Vertexへ実際に配分されるGeneralized Impulse差は独立して検証する。位置・Velocity・Contact-level Impulse・Applied Generalized ImpulseのいずれかのBoundが不明、未指定、非有限、または保守的に証明できない場合はSnapを禁止し、正確なtauで独立した内部Boundaryを作る。正確なtauのCCDも安全に評価できない場合だけCCDUnresolvedとしてCommitしない。
 
 tau=0はInitial Contact Eventとしてゼロ時間prefix / Velocity Reconstructionを作らない。Dynamic VertexはSegment開始Velocityを保持し、Fixed / Kinematic Vertexはtau=0の解析的Trajectory Derivativeを使う。Impact解決後は残時間dt_segment-tau=dt_segmentの全量を、Impact後Stateを開始Stateとする新しいResidual Integration Segment（新しいbase_integration_segment_id）で一度だけ進める。これはゼロ時間prefixを伴わないContinuation Segmentであり、interior Split Countは増やさないが、追加Segment数とWork Budgetには計上する。tau=dt_segmentはSegment終端Contact Eventとして扱い、残時間Segmentを作らない。端点近傍のPositive-Time Candidateも全Snap Boundを満たす場合だけ端点へSnapし、それ以外は正確なtauを保持。
 
@@ -1623,6 +1631,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.24: Contact-level World-space ImpulseとJ^T*q Generalized Applied Impulseを分離。SnapにApplied Impulse toleranceを追加し、Sparse Contact Jacobianとstable Physics Vertex ID集合の区間評価を必須化。
 - 1.23: Impulse Errorの比較空間をWorld-space 3N Vectorへ統一。Delassus Solverの局所係数qと物理Impulse出力Fを分離し、Tangent Basis回転誤差をE_friction_vectorへ追加。
 - 1.22: TOI誤差式のImpulse出力ベクトル順・Contact Island L2集約・Normal方向回転Boundを定義。DelassusをEffective Inverse Mass [1/kg]と明示し、Responsive Subspaceのrank / basis安定性をSnap証明条件に追加。
 - 1.21: Corrected the normative TOI equations to use E_Gcontact and E_Gv with candidate / boundary residuals; removed the stale G_p reference and made the map-to-error-budget binding explicit.
