@@ -2598,6 +2598,16 @@ namespace skin_physics::physics
                 "Position-Writer Epoch ID must be non-zero and strictly increasing.";
             return result;
         }
+        if (!state.segment_geometry_initialized ||
+            !state.segment_broadphase_envelope_initialized ||
+            state.segment_start_vertex_positions.size() !=
+                state.latest_vertex_positions.size())
+        {
+            result.status = correction_writer_epoch_status::rejected;
+            result.diagnostic =
+                "Position-Writer Epoch requires an immutable Segment-start Snapshot and initialized Physical Swept Broadphase Envelope.";
+            return result;
+        }
         if (!valid_settings(ccd_settings))
         {
             result.status = correction_writer_epoch_status::rejected;
@@ -2615,6 +2625,22 @@ namespace skin_physics::physics
 
         using primitive_key = std::tuple<uint64_t, uint32_t, uint32_t>;
         std::map<primitive_key, std::size_t> primitive_lookup;
+        std::map<uint64_t, asset::vec3> segment_start_position_lookup;
+        std::map<uint64_t, asset::vec3> latest_position_lookup;
+        std::map<uint64_t, std::pair<asset::vec3, asset::vec3>>
+            epoch_position_updates;
+        for (const correction_segment_vertex_snapshot& snapshot :
+            state.segment_start_vertex_positions)
+        {
+            segment_start_position_lookup.emplace(
+                snapshot.stable_vertex_id, snapshot.position);
+        }
+        for (const correction_segment_vertex_snapshot& snapshot :
+            state.latest_vertex_positions)
+        {
+            latest_position_lookup.emplace(
+                snapshot.stable_vertex_id, snapshot.position);
+        }
         std::vector<correction_broadphase_primitive> correction_primitives;
         std::vector<correction_broadphase_primitive> final_discrete_primitives;
         correction_primitives.reserve(primitives.size());
@@ -2687,6 +2713,51 @@ namespace skin_physics::physics
                 result.diagnostic =
                     "Position-Writer Epoch contains duplicate Stable / Mesh / Primitive identity.";
                 return result;
+            }
+
+            for (std::size_t vertex_index = 0;
+                vertex_index < expected_vertex_count; ++vertex_index)
+            {
+                const uint64_t vertex_id =
+                    primitive.vertex_stable_ids[vertex_index];
+                const auto segment_start = segment_start_position_lookup.find(
+                    vertex_id);
+                const auto latest_position = latest_position_lookup.find(
+                    vertex_id);
+                if (segment_start == segment_start_position_lookup.end() ||
+                    latest_position == latest_position_lookup.end() ||
+                    !same_position(
+                        primitive.segment_start_positions[vertex_index],
+                        segment_start->second) ||
+                    !same_position(
+                        primitive.vertex_motions[vertex_index].before,
+                        latest_position->second))
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic =
+                        "Position-Writer Epoch does not match its immutable Segment-start Snapshot or previous accepted Epoch endpoint.";
+                    return result;
+                }
+
+                const std::pair<asset::vec3, asset::vec3> vertex_update = {
+                    primitive.vertex_motions[vertex_index].before,
+                    primitive.vertex_motions[vertex_index].after
+                };
+                const auto inserted = epoch_position_updates.emplace(
+                    vertex_id, vertex_update);
+                if (!inserted.second &&
+                    (!same_position(
+                        inserted.first->second.first,
+                        vertex_update.first) ||
+                    !same_position(
+                        inserted.first->second.second,
+                        vertex_update.second)))
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic =
+                        "A shared Dynamic Vertex has inconsistent before / after positions across Position-Writer Epoch Primitives.";
+                    return result;
+                }
             }
 
             collision_aabb correction_bounds;
@@ -2810,7 +2881,73 @@ namespace skin_physics::physics
             return result;
         }
 
+        collision_aabb correction_epoch_envelope = {};
+        bool correction_epoch_envelope_initialized = false;
+        for (const correction_broadphase_primitive& primitive :
+            correction_primitives)
+        {
+            if (!correction_epoch_envelope_initialized)
+            {
+                correction_epoch_envelope = primitive.envelope_bounds;
+                correction_epoch_envelope_initialized = true;
+            }
+            else
+            {
+                collision_aabb combined_bounds;
+                if (!union_correction_envelope_aabb(
+                    correction_epoch_envelope,
+                    primitive.envelope_bounds,
+                    combined_bounds))
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic =
+                        "Correction Epoch Broadphase Envelope could not be conservatively unioned.";
+                    return result;
+                }
+                correction_epoch_envelope = combined_bounds;
+            }
+        }
+
         correction_segment_candidate_state next_state = state;
+        if (correction_epoch_envelope_initialized)
+        {
+            collision_aabb segment_envelope;
+            if (!union_correction_envelope_aabb(
+                next_state.segment_broadphase_envelope,
+                correction_epoch_envelope,
+                segment_envelope))
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Segment Physical / Correction Swept Broadphase Envelope could not be conservatively unioned.";
+                return result;
+            }
+            next_state.segment_broadphase_envelope = segment_envelope;
+        }
+
+        for (const auto& vertex_update : epoch_position_updates)
+        {
+            const auto latest_position = std::lower_bound(
+                next_state.latest_vertex_positions.begin(),
+                next_state.latest_vertex_positions.end(),
+                vertex_update.first,
+                [](const correction_segment_vertex_snapshot& snapshot,
+                    uint64_t stable_vertex_id)
+                {
+                    return snapshot.stable_vertex_id < stable_vertex_id;
+                });
+            if (latest_position ==
+                    next_state.latest_vertex_positions.end() ||
+                latest_position->stable_vertex_id != vertex_update.first)
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Position-Writer Epoch attempted to update a Vertex outside the immutable Segment-start Snapshot.";
+                return result;
+            }
+            latest_position->position = vertex_update.second.second;
+        }
+
         const correction_segment_candidate_update_result begin_result =
             begin_correction_position_writer_epoch(
                 next_state, base_integration_segment_id,
