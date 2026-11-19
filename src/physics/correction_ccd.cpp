@@ -2529,6 +2529,8 @@ namespace skin_physics::physics
 
             correction_writer_epoch_ccd_record record;
             record.candidate = candidate;
+            const correction_segment_side_latch* side_latch =
+                find_side_latch(candidate);
             if (candidate.contact_type == correction_contact_type::vertex_triangle)
             {
                 const correction_primitive_epoch_input* point = nullptr;
@@ -2542,8 +2544,6 @@ namespace skin_physics::physics
                 }
 
                 vertex_triangle_correction_motion motion;
-                const correction_segment_side_latch* side_latch =
-                    find_side_latch(candidate);
                 if (side_latch != nullptr)
                 {
                     motion.has_segment_side_latch = true;
@@ -2576,8 +2576,6 @@ namespace skin_physics::physics
                 }
 
                 edge_edge_correction_motion motion;
-                const correction_segment_side_latch* side_latch =
-                    find_side_latch(candidate);
                 if (side_latch != nullptr)
                 {
                     motion.has_segment_side_latch = true;
