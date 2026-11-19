@@ -165,6 +165,12 @@ namespace skin_physics::physics
         std::vector<uint64_t> topology_vertex_stable_ids;
     };
 
+    struct correction_segment_vertex_snapshot
+    {
+        uint64_t stable_vertex_id = 0;
+        asset::vec3 position;
+    };
+
     struct correction_segment_candidate_state
     {
         uint64_t base_integration_segment_id = 0;
@@ -177,6 +183,11 @@ namespace skin_physics::physics
         uint64_t vertex_contact_csr_position_writer_epoch_generation = 0;
         bool contact_set_current = false;
         bool vertex_contact_csr_current = false;
+        bool segment_geometry_initialized = false;
+        std::vector<correction_segment_vertex_snapshot> segment_start_vertex_positions;
+        std::vector<correction_segment_vertex_snapshot> latest_vertex_positions;
+        bool segment_broadphase_envelope_initialized = false;
+        collision_aabb segment_broadphase_envelope;
         std::vector<correction_candidate_pair_key> candidates;
         std::vector<correction_segment_side_latch> side_latches;
         std::vector<correction_discrete_contact> contact_set;
@@ -314,6 +325,12 @@ namespace skin_physics::physics
         const std::vector<correction_candidate_pair_key>& existing_candidates,
         const std::vector<correction_candidate_pair_key>& incoming_candidates,
         std::size_t capacity);
+
+    bool initialize_correction_segment_geometry(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        const std::vector<correction_segment_vertex_snapshot>& segment_start_vertex_positions,
+        const collision_aabb& physical_swept_bounds);
 
     correction_segment_candidate_state_result create_correction_segment_candidate_state(
         uint64_t base_integration_segment_id,
