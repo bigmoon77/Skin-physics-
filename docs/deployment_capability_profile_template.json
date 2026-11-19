@@ -168,14 +168,15 @@
       "unique_key": "run_id",
       "items": {
         "run_id": "required stable unique identifier; unique within selected trial",
-        "run_identity": "required independent process / session identity and start timestamp; duplicate sessions are not independent runs",
+        "run_identity": "required independent process / session identity and start timestamp; unique within selected trial; duplicate sessions are not independent runs",
         "measured_frame_sample_count": "integer >= 1000 after warm-up; must equal the number of raw frame samples in the artifact",
         "gpu_tick_sample_count": "integer >= 1000 after warm-up; must equal the number of raw GPU Tick samples in the artifact",
         "cpu_submission_sample_count": "integer >= 1000 after warm-up; must equal the number of raw CPU Submission samples in the artifact",
         "frame_time_samples_artifact_uri": "required immutable raw frame-time sample series URI",
         "gpu_tick_samples_artifact_uri": "required immutable raw per-Tick GPU timestamp sample series URI",
         "cpu_submission_samples_artifact_uri": "required immutable raw CPU submission sample series URI"
-      }
+      },
+      "count_consistency": "run_count must equal the array length; every array element represents one complete independent run."
     },
     "p95_method": "Pool every raw per-frame / per-Tick / per-submission sample from all complete independent runs in the selected trial, then compute each p95 once over the pooled population. Never average, pool, or otherwise aggregate per-run p95 summaries. Maximum GPU Tick and Peak Library GPU Memory are maxima over all samples / runs."
   }
