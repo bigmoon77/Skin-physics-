@@ -1497,7 +1497,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
 
-## 22. GPU Runtime / Library Integration（v1.10）
+## 22. GPU Runtime / Library Integration（v1.11）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～41は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
@@ -1506,11 +1506,11 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1 Worldに複数Model Instance / Mesh Componentを登録し、Soft Body / Cloth / Noneを混在させる。Contact KeyはWorld / Model / Mesh / Primitive IDを持つ。
 - 既存fixed_step_controllerとsimulation_step_pipelineはCPU Reference / Test Environment用に保持する。非同期GPU Commitの判定やProduction GPU Stateの所有には流用しない。
 - GPUがRuntime Physics Stateの唯一の正。Commit済みRender BindingだけをHostへRead-only公開し、通常FrameでPhysics Vertex / Contact / Lambdaを全量Readbackしない。
-- GPU StatusはLogical Tick単位でPENDING / SUBMITTED / GPU_COMMITTED / REJECTEDを管理する。CPU completed timeはEvent Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を満たした範囲だけ進める。
+- GPU StatusはLogical Tick単位でPENDING / SUBMITTED / GPU_COMMITTED / BLOCKED / REJECTED / FAILEDを管理する。Capacity / CCD / WORK_BUDGET_EXCEEDEDの回復可能な超過はBLOCKEDとしてReservationを保持する。CPU Preflight BlockはQueryを発行せずCPU Status Queueからpoll()で同期観測し、GPU Dynamic TOI BlockはEvent Query + Status Readbackで観測する。CPU completed timeはGPU Event Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を満たした範囲だけ進める。
 - 最大2件のin-flight Tickはexpected_predecessor_tick_sequence / expected_source_state_generation / expected_source_state_set / dispatch_idを持つImmutable Dispatch Planで連結する。Tick Commit ControlだけがCommitted State Generation / Active State Setを更新し、Rejectでは更新しない。
 - 後続Tickのtick_begin_controlと全Budgeted Physics Passは先行TickのCommit Sequence / State Generationを確認する。先行Tickが失敗した場合、後続TickはPhysics StateのRead / Write前にBLOCKED_BY_PREDECESSORとして停止する。先行TickをRetryしてCommitした後、後続Tickを新しいGenerationで再Submissionする。
 - get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した最後のCPU-observed committed State Generationを返す。未確認GPU CommitやWorking BufferをRendererへ公開しない。
-- Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDED / NonFinite / Physical Quality Gate失敗はTickをCommitしない。WORK_BUDGET_EXCEEDEDの回復はRuntime §5.6の専用実行予算APIのみを使い、同一Tick InputとInitial Snapshotを再利用する。候補や異なる時間境界を黙って捨てない。
+- Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDED / NonFinite / Physical Quality Gate失敗はTickをCommitしない。Capacity / CCD / WORK_BUDGET_EXCEEDEDが回復可能な間はBLOCKEDとし、Tick Reservation / Sequence / Input Snapshotを保持する。WORK_BUDGET_EXCEEDEDの回復はRuntime §5.6の専用実行予算APIのみを使い、TOI Dynamic Blockでのminimum_required_integration_segmentsは発見済みTOIに対する下限値として扱い、追加TOIが見つかる場合の複数Retryを許可する。候補や異なる時間境界を黙って捨てない。
 - Render Feedback Candidateは専用SlotへCommit前に生成・検証し、GPU Commit ControlがPhysics StateとRender Slot参照を同時に切り替える。CPU-observed committed prefixのみをHostへ公開する。Render Candidate RingはWorldごとにmaximum_in_flight_ticks + 1 Slotとし、Lease解放前のSlotを再利用しない。追加Buffer / Copy / Dispatch / Ring VRAM / GPU時間をPerformance Runへ含める。
 - Device Loss時は新規Submissionを停止し、Asset / Initial StateからWorldを再構築してTimelineをResetする。毎Frameの全State Readbackで復旧しない。
 - 数値・物理品質の初期比較基準はnumerical_acceptance_profile_v1.jsonを使い、同一Solver Algorithm / Update OrderのCPU Double Referenceと比較する。異なるSolver方式同士はAnalytical FixtureとPhysical Invariantで比較する。

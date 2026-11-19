@@ -382,7 +382,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | world_desc | time_scale | 0以上の有限値。Frame elapsedへ適用 |
 | world_desc | gravity | SI単位 m/s²。初期値(0,-9.81,0) |
 | world_desc | maximum_in_flight_ticks | 1 / 2 / 4を比較可能。出荷初期値2、上限変更はquery / dependency gateを含む検証が必要 |
-| world_desc | minimum_substeps | World共通Substep数の下限。初期値1。必要数が実行予算上限を超える場合はWORK_BUDGET_EXCEEDEDとしてTickをCommitしない |
+| world_desc | minimum_substeps | World共通Substep数の下限。初期値1。CPU Preflightでmaximum_substepsを超える場合はplanned_substepsを報告してBLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflightとし、Reservationを保持する |
 | world_desc / world_execution_budget | maximum_substeps / maximum_integration_segments_per_tick | std::uint32_t。初期値128 / 512。world_descで初期化し、`set_world_execution_budget`で更新するAdmission Limit。対応するRuntime Hard Limit以下でなければならない。必要Work量・物理品質・時間境界は変更しない。上限超過時はBLOCKED / WORK_BUDGET_EXCEEDEDとしてReservationを保持 |
 | world_desc | world_max_substep_delta_time | World共通Substepの任意上限。0は未指定。全Solverへ適用する共通上限 |
 | world_desc | contact_max_substep_delta_time | double [s]。初期値1/120 s、有限値かつ0以上。0は明示無効（Substep式では+infinity） |
@@ -567,7 +567,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 
 ### 5.5 World共通Substep Schedule
 
-詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactの時間上限（contact_max_substep_delta_time > 0の場合だけ適用）を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。contact_max_substep_delta_time=0は+infinityとして扱う。World Substep / Clip Key / Loop / Blend Weight / Root Transform / Force / Impulse境界を統合したSegment数をGPU Physics Upload前にCountし、maximum_integration_segments_per_tick（初期値512）を超える場合はWORK_BUDGET_EXCEEDEDとしてReservationを保持する。Keyまたは異なるEvent時刻の境界を結合・省略しない。TOIで新たな残Segmentを作成する際も実行済みSegment数へ加算し、上限を超えたら残SegmentをDispatchせずTick全体を未Commitにする。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitとContact Temporal Quality LimitはXPBDの安定保証ではなく品質上限として扱う。各SubstepはAnimation Span / Force / Impulse / TOI境界でIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えたらWORK_BUDGET_EXCEEDEDでCommitせずReservationを保持する。
+詳細設計§6.8 / §7.1.1 / §7.1.2のWorld共通Substep / Integration SegmentをRuntime Schedulerの唯一の時間分割規則とする。Logical Tick Beginで参加する全Soft BodyのFEM CFL / Animation Tracking制限、全Cloth ConstraintのTemporal Quality Limit、Contactの時間上限（contact_max_substep_delta_time > 0の場合だけ適用）を集約し、World Descriptorのminimum_substeps / maximum_substeps / world_max_substep_delta_timeを適用してN_worldを確定する。contact_max_substep_delta_time=0は+infinityとして扱う。CPU PreflightでWorld Substep / Clip Key / Loop / Blend Weight / Root Transform / Force / Impulse境界を統合した予定Segment数をGPU Physics Upload前にCountし、maximum_substepsまたはmaximum_integration_segments_per_tickを超える場合はLogical TickをBLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflightとしてCPU Status Queueへ記録する。CPU Preflight BlockはGPU Physics Upload / Dispatch / Event Queryを発行せず、未使用Query / Render Candidate Slotを解放し、同じTick Reservation / Sequence / Snapshot / Packet Versionを保持する。poll()はこのStatusを同期的に返す。Keyまたは異なるEvent時刻の境界を結合・省略しない。GPU実行中にTOIで追加の残Segmentを作成する場合は、累積Segment数がAdmission Limitを超える前に残SegmentをDispatchせず、TickをBLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toiとする。GPU Status Buffer / Event Queryで報告するminimum_required_integration_segmentsは発見済みTOIだけから得られる下限値であり、未発見の将来TOIを含む最終総数ではない。全Soft Body / Cloth / Contact / Animation Trackingは同じdt_world=fixed_delta_time/N_worldを使用する。ClothのTemporal Quality LimitとContact Temporal Quality LimitはXPBDの安定保証ではなく品質上限として扱う。各SubstepはAnimation Span / Force / Impulse / TOI境界でIntegration Segmentへ分割する。Segment内のForceは開始時に評価し、Impulseは開始境界で一度だけ適用する。Mesh追加・Material変更・Fixed Delta変更は次Tick開始境界で反映し、そのTickのschedule計算から再評価する。N_worldがmaximum_substepsを超えた場合も同じReservationを保持したままBLOCKEDとし、Commitしない。
 
 ### 5.6 WORK_BUDGET_EXCEEDEDからの実行予算回復
 
@@ -581,7 +581,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 - `planned_substeps`: CPU Preflightが確定したWorld Substep数。正確値であり、GPU Dispatch前に算出する。
 - `planned_integration_segments`: GPU Dispatch前に確定したWorld Substep / Animation / Force / Impulse境界からなる予定Segment総数。正確値であり、動的TOI分割を含まない。
 - `executed_integration_segments`: 直近のGPU Dynamic TOI Block試行でSegment Endまで完了したSegment数。CPU Preflight Blockでは0。
-- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。予定Segment、発見済みTOI分割、およびBlock時点で必要と判明した未実行の残Segmentを数える。まだ発見されていない将来のTOIは含まないため、最終Tick総数を示す正確値ではない。CPU Preflight Blockでは0。
+- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。予定Segment、発見済みTOI分割、およびBlock時点で必要と判明した未実行の残Segmentを数える。TOIが基底Segmentをprefix / residualの2つへ分割するため、現時点の下限は `planned_integration_segments + discovered_toi_split_count` とする。まだ発見されていない将来のTOIは含まないため、最終Tick総数を示す正確値ではない。CPU Preflight Blockでは0。`executed_integration_segments`はSegment Endまで完了したものだけを数え、未完了のprefixは含めない。
 - すべてのCountは`std::uint32_t`。uint32範囲を超える算出値はWrapせずWork Count OverflowとしてWorldを`FAILED`にする。
 
 #### Block発生元ごとの観測契約
@@ -685,7 +685,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
 
 1. CPU Animation EvaluationでLogical Tick候補のAnimation Trajectory Span Packet / Conservative Bounds、Kinematic Transform Sample、World Substep / Animation / Force / Impulseの暫定Boundary Tableを生成する。Target PoseとTrajectory Derivativeは同じSimulation Timeで評価する。この段階ではAccumulatorから時間を移動しない。
 2. Render Candidate Slot / Query Slot / in-flight枠を確保する。いずれか不足する場合はPacket / Boundary Tableを破棄可能なPending Inputとして扱い、Accumulator / Step Request Queueに時間を保持する。Slot確保成功後にTick Sequence / Input Snapshot / Animation Packet Versionを固定し、Accumulatorからfixed_delta_timeを一度だけTick Reservationへ移す。
-3. 確定済みBoundary TableからWorld Substep / Animation / Force / Impulse境界を統合した予定Segment数をCountする。maximum_integration_segments_per_tickを超える場合はWORK_BUDGET_EXCEEDEDとして同じTick Reservation / Sequence / Snapshot / Packet Versionを保持し、GPU Physics Upload / Dispatchを行わない。異なる時刻のBoundaryを結合・省略して上限内へ丸めない。設定更新後のRetryは同じReservationを使用する。
+3. CPU Preflightで`planned_substeps`と、確定済みBoundary TableからWorld Substep / Animation / Force / Impulse境界を統合した`planned_integration_segments`をCountする。どちらかがAdmission Limitを超えた場合は`BLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflight`をCPU Status Queueへ同期記録し、同じTick Reservation / Sequence / Input Snapshot / Packet Versionを保持する。GPU Physics Upload / Dispatch / Event Queryは発行せず、使用しなかったQuery Slot / Render Candidate Slotを解放する。`poll()`はEvent Queryを待たず同じ呼出しでこのCPU Statusを返す。異なる時刻のBoundaryを結合・省略して上限内へ丸めない。設定更新後のRetryは同じReservationを使用する。
 4. GPUへAnimation Trajectory Packet / Collider RecordをUploadし、Span Coefficient / Bound / Input Version / ABI StrideをValidate。GPU SkinningでAnimation Target / Target Velocityを生成する。
 5. Logical Tick開始SnapshotとTerminal Status初期化。
 6. 各World Integration Segmentについて次を処理する。
@@ -699,7 +699,7 @@ Immediate ContextのCommand Streamは順序付きだが、CPUは最大2件のPhy
    - Swept AABB / Broadphase Count / Scan / Capacity Check / Fill / Sort / Pair Dedup。
    - VT / EE Narrowphase、Contact Patch Reduction、CCD Conservative Advancement / Minimum TOI Reduction。
    - TOIなし: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
-   - TOIあり: Endpoint Contactを確定せず、Dynamicの離散pathとAnimation Trajectory Packetが評価するtau時刻のKinematic実TrajectoryでTOI prefixを構成し、非接触内部Constraintをtau時間で解く。TOI分割後に作成する残SegmentをSegment数へ加算し、maximum_integration_segments_per_tickを超える場合は残SegmentをDispatchせずTickをWORK_BUDGET_EXCEEDEDで未Commitにする。
+   - TOIあり: Endpoint Contactを確定せず、Dynamicの離散pathとAnimation Trajectory Packetが評価するtau時刻のKinematic実TrajectoryでTOI prefixを構成し、非接触内部Constraintをtau時間で解く。TOIで基底Segmentがprefix / residualへ分割されるたびに`discovered_toi_split_count`を増やし、残SegmentをDispatchする前に累積Segment数を検査する。Admission Limit超過時は`BLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toi`としてStatus Bufferへ`executed_integration_segments`と`minimum_required_integration_segments = planned_integration_segments + discovered_toi_split_count`を記録し、残Segment / 後続Pass / Render Publish / Commitを停止する。未発見の後続TOI数は予測しない。CPUはEvent Query完了後にStatusを観測し、同じTick ReservationをRetryする。
    - Contact Position Constraint前にDynamic VertexのContact前Velocityを保存する。通常Segmentはdt_segment、TOI prefixはtauで速度再構築する。Fixed / Kinematic VelocityはAnimation Trajectory微分を維持する。
    - Discrete / TOI Contact Position XPBDを解く。Contact位置補正はPositionだけを変更し、保存済みContact前Velocityへ反映しない。
    - 保存したContact前VelocityをCoupled Projected Jacobiへ渡す。Contact Contributionを反復Gatherし、Normal / Coulomb Cone Residualが許容範囲へ収束した場合のみv_finalを確定する。W_ii <= epsilon_inverse_massのContactはNON_RESPONSIVE_CONTACTとしてPosition / ImpulseをSkipする。TOI Contactは成功時にimpact_resolvedを設定する。

@@ -24,8 +24,8 @@
       "immutable_after_initialize": true,
       "zero_is_invalid": true,
       "scope": "Runtime-wide upper bounds applied to every World Admission Limit",
-      "calibration": "Values are deployment-specific and must be recorded for the exact GPU adapter, driver, Windows build, shader package and workload profile under Gate R6. No universal safe numeric maximum or TDR guarantee is asserted. The Runtime must reject values above the deployment-certified profile and all per-Dispatch D3D11 limits must still be validated.",
-      "acceptance": "World Admission Limits must be <= the Runtime Hard Limits. set_world_execution_budget above either Hard Limit returns invalid_argument without mutating Budget, Revision, Reservation or Timeline."
+      "calibration": "The two runtime_desc values are the deployment-certified finite upper envelope and must be recorded for the exact GPU adapter, driver, Windows build, shader package and workload profile under Gate R6. The Host supplies these values from the certified deployment profile; initialize validates and freezes them for the Runtime lifetime. No universal safe numeric maximum or TDR guarantee is asserted. All per-Dispatch D3D11 limits and resource-allocation bounds must also be validated.",
+      "acceptance": "World Admission Limits must be <= the immutable runtime_desc Hard Limits supplied by the Host from a Gate R6-certified deployment profile. create_world and set_world_execution_budget validate these limits. A zero, uncertified, or over-hard-limit value returns invalid_argument without mutating Budget, Revision, Reservation or Timeline."
     }
   },
   "normalization": {
