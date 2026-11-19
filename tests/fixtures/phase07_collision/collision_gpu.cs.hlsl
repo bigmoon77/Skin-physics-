@@ -358,3 +358,149 @@ void bvh_broadphase(uint3 dispatch_id : SV_DispatchThreadID)
         }
     }
 }
+
+
+// Phase 12: per-primitive XPBD correction swept bounds.
+// The input Position Writer Epoch is represented by immutable before/after
+// position buffers. Each thread writes exactly one primitive bound and status.
+struct CorrectionPrimitiveInput
+{
+    uint4 vertex_indices;
+    uint vertex_count;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+};
+
+StructuredBuffer<float4> correction_position_before : register(t6);
+StructuredBuffer<float4> correction_position_after : register(t7);
+StructuredBuffer<CorrectionPrimitiveInput> correction_primitives : register(t8);
+RWStructuredBuffer<Aabb> correction_swept_bounds : register(u4);
+RWStructuredBuffer<uint> correction_swept_status : register(u5);
+
+cbuffer CorrectionParameters : register(b1)
+{
+    uint correction_primitive_count;
+    uint correction_vertex_count;
+    float correction_contact_thickness;
+    uint correction_reserved;
+};
+
+float correction_next_float_down(float value)
+{
+    uint bits = asuint(value);
+    if (value == 0.0f)
+    {
+        return asfloat(0x80000001u);
+    }
+    bits = value > 0.0f ? bits - 1u : bits + 1u;
+    return asfloat(bits);
+}
+
+float correction_next_float_up(float value)
+{
+    uint bits = asuint(value);
+    if (value == 0.0f)
+    {
+        return asfloat(0x00000001u);
+    }
+    bits = value > 0.0f ? bits + 1u : bits - 1u;
+    return asfloat(bits);
+}
+
+[numthreads(64, 1, 1)]
+void correction_swept_aabb(uint3 dispatch_id : SV_DispatchThreadID)
+{
+    uint primitive_index = dispatch_id.x;
+    if (primitive_index >= correction_primitive_count)
+    {
+        return;
+    }
+
+    correction_swept_status[primitive_index] = 0u;
+    CorrectionPrimitiveInput primitive = correction_primitives[primitive_index];
+    if (primitive.vertex_count == 0u || primitive.vertex_count > 3u ||
+        correction_vertex_count == 0u ||
+        !isfinite(correction_contact_thickness) ||
+        correction_contact_thickness < 0.0f)
+    {
+        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_status[primitive_index] = 1u;
+        return;
+    }
+
+    uint first_vertex = primitive.vertex_indices.x;
+    if (first_vertex >= correction_vertex_count)
+    {
+        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_status[primitive_index] = 2u;
+        return;
+    }
+
+    float3 first_before = correction_position_before[first_vertex].xyz;
+    float3 first_after = correction_position_after[first_vertex].xyz;
+    if (!all(isfinite(first_before)) || !all(isfinite(first_after)))
+    {
+        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_status[primitive_index] = 4u;
+        return;
+    }
+
+    float3 minimum_value = min(first_before, first_after);
+    float3 maximum_value = max(first_before, first_after);
+
+    [unroll]
+    for (uint vertex_slot = 1u; vertex_slot < 3u; ++vertex_slot)
+    {
+        if (vertex_slot >= primitive.vertex_count)
+        {
+            break;
+        }
+
+        uint vertex_index = primitive.vertex_indices[vertex_slot];
+        if (vertex_index >= correction_vertex_count)
+        {
+            correction_swept_bounds[primitive_index] = (Aabb)0;
+            correction_swept_status[primitive_index] = 2u;
+            return;
+        }
+
+        float3 before_position = correction_position_before[vertex_index].xyz;
+        float3 after_position = correction_position_after[vertex_index].xyz;
+        if (!all(isfinite(before_position)) || !all(isfinite(after_position)))
+        {
+            correction_swept_bounds[primitive_index] = (Aabb)0;
+            correction_swept_status[primitive_index] = 4u;
+            return;
+        }
+
+        minimum_value = min(minimum_value, min(before_position, after_position));
+        maximum_value = max(maximum_value, max(before_position, after_position));
+    }
+
+    float expansion = correction_contact_thickness * 0.5f;
+    float3 expanded_minimum = minimum_value - expansion;
+    float3 expanded_maximum = maximum_value + expansion;
+    if (!isfinite(expansion) ||
+        !all(isfinite(expanded_minimum)) ||
+        !all(isfinite(expanded_maximum)))
+    {
+        correction_swept_bounds[primitive_index] = (Aabb)0;
+        correction_swept_status[primitive_index] = 8u;
+        return;
+    }
+
+    expanded_minimum = float3(
+        correction_next_float_down(expanded_minimum.x),
+        correction_next_float_down(expanded_minimum.y),
+        correction_next_float_down(expanded_minimum.z));
+    expanded_maximum = float3(
+        correction_next_float_up(expanded_maximum.x),
+        correction_next_float_up(expanded_maximum.y),
+        correction_next_float_up(expanded_maximum.z));
+
+    Aabb output;
+    output.minimum = float4(expanded_minimum, 0.0f);
+    output.maximum = float4(expanded_maximum, 0.0f);
+    correction_swept_bounds[primitive_index] = output;
+}
