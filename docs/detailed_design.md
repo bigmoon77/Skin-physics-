@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.21
+- 文書バージョン: 1.22
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.16
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.17
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.13
-- 前版: 1.20
+- 対応基本設計: basic_design.md 1.17
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.19
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.14
+- 前版: 1.21
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1193,14 +1193,21 @@ G_internal / G_contact / G_vの区間評価は外向き丸め付きInterval / Af
 
 **Impact Impulse Error Bound（Normative）**
 
-Impulse誤差はContact Effective Mass等の個別値の差を列挙するだけでは証明できない。Candidate時刻とSnap先時刻の両方を含む入力不確かさ集合 U を構築し、同じ決定的な有限反復Contact Solver FをU全域で評価する。FはContact Island内のCoupled Normal / Tangential Impulse、XPBD Support Impulse、Restitution、Friction Projectionおよび固定反復順序を含む。 Candidate / BoundaryのContact-relative Velocity入力は、内部制約後かつContact Position Constraints前に保存したG_vから取得する。Contact geometry / positionはG_contact後の状態を用いてよいが、Contact Position correctionを使ってVelocityを再構築してはならない。
+Impulse誤差はContact Effective Inverse Mass等の個別値の差を列挙するだけでは証明できない。Candidate時刻とSnap先時刻の両方を含む入力不確かさ集合 U を構築し、同じ決定的な有限反復Contact Solver FをU全域で評価する。FはContact Island内のCoupled Normal / Tangential Impulse、XPBD Support Impulse、Restitution、Friction Projectionおよび固定反復順序を含む。Candidate / BoundaryのContact-relative Velocity入力は、内部制約後かつContact Position Constraints前に保存したG_vから取得する。Contact geometry / positionはG_contact後の状態を用いてよいが、Contact Position correctionを使ってVelocityを再構築してはならない。
+
+Contact IslandのContactをCanonical Contact Key順に並べ、Impulse出力ベクトルを次の固定順で定義する。
+
+    j = [j_n,0, ..., j_n,N-1,
+         j_t,0,u, j_t,0,v, ..., j_t,N-1,u, j_t,N-1,v]
+
+各j_n,iはContact iのNormal Impulse scalar、j_t,i,u / j_t,i,vはContact iの右手系Tangent Basis上の2D Impulse成分である。F(z)はこの3N次元ベクトルを返し、以下の誤差Boundは全てこのベクトル表現のEuclidean L2 normで評価する。Contact数がCandidate / Boundaryで異なる、Canonical Contact Key集合が一致しない、または同じBoundaryへSnapするContact Island集合が確定しない場合はImpulse Boundをunknownとし、Snapを禁止する。
 
     E_impulse = sup { || F(z) - F(z_boundary) ||_2 : z in U }
 
 Uは少なくとも次の変数を包含する。
 
 - Contact Jacobian / Normal Basisとその角度偏差。
-- Effective Mass / Delassus Matrixとその区間Bound。Responsive subspace上の最小固有値には有限かつ正の下限 K_min を要求する。
+- Effective Inverse Mass / Delassus Matrixとその区間Bound。Delassus coefficientはJ M^-1 J^Tで定義し、単位は[1/kg]。Responsive subspace上の最小固有値には有限かつ正の下限 K_min [1/kg]を要求する。Candidate / Boundary全域でResponsive subspaceのrankとbasisが変化しないことを証明できない場合はSnapを禁止する。
 - Candidate / Boundary間のContact-relative Normal / Tangential Velocity差。
 - Restitution係数 e の許容区間。
 - Friction係数 mu、Coulomb Disk ProjectionおよびStick / Slip分岐の入力区間。
@@ -1216,14 +1223,16 @@ Uは少なくとも次の変数を包含する。
                 + E_friction_vector
                 + E_solver_residual
 
+ここでE_normal_scalarはContact Island全体のNormal Impulse scalar stack差のL2上界、J_normal_maxはU全域におけるNormal Impulse stackのL2 norm上界、theta_normal_maxは全Contact NormalのCandidate / Boundary方向角度差の最大上界、E_friction_vectorは全Contactの2D Tangential Impulse stack差のL2上界、E_solver_residualはCandidate / Boundary両評価のNormal / Tangential残差をImpulse単位でL2評価した上界の和である。接触ごとの角度差に対するBlock-diagonal Rotation Operatorの最大特異値を2*sin(theta_normal_max/2)で抑える。各Contactの誤差上界を個別に算出する場合は、各上界をCanonical Contact Key順に並べてL2集約する。単純な最大値だけで複数Contactを代表してはならない。
 
-**単一Contact / 対角Effective Massの計算可能な特殊ケース**
 
-CouplingがなくNormal / Tangential Effective Massがスカラー（または各方向で独立した対角ブロック）として証明できる場合、Normal Impulseを
+**単一Contact / Contactごとに独立した対角Effective Inverse Massの計算可能な特殊ケース**
+
+CouplingがなくNormal / Tangential Effective Inverse Massがスカラー（または各Contact / 方向で独立した対角ブロック）として証明できる場合、Normal Impulseを
 
     j_n = max(0, -(1 + e) * v_n / K_n)
 
-とし、U上の上限値を`e_max`、`v_n_max`、正の下限を`K_n_min`、Candidate / Boundary間の区間幅を`Delta_v_n`、`Delta_e`、`Delta_K_n`とする。このときReLUの非拡大性と逆数差のBoundから、
+とし、`K_n`はDelassus対角係数（Effective Inverse Mass）[1/kg]と定義する。U上の上限値を`e_max`、`v_n_max`、正の下限を`K_n_min` [1/kg]、Candidate / Boundary間の区間幅を`Delta_v_n`、`Delta_e`、`Delta_K_n`とする。このときReLUの非拡大性と逆数差のBoundから、
 
     E_normal_scalar <= ((1 + e_max) * Delta_v_n + v_n_max * Delta_e) / K_n_min
                        + (1 + e_max) * v_n_max * Delta_K_n / (K_n_min * K_n_min)
@@ -1235,7 +1244,7 @@ CouplingがなくNormal / Tangential Effective Massがスカラー（または�
 
     j_t = ProjectDisk(-v_t / K_t, radius = mu * (j_n + lambda_n / dt_contact))
 
-とする。`K_t_min > 0`、`dt_min > 0`を要求し、`v_t_max`、`Delta_v_t`、`Delta_K_t`、`mu_max`、`Delta_mu`、`lambda_n_max`、`Delta_lambda_n`、`Delta_inverse_dt`をU上の上限とする。Disk Projectionの非拡大性と半径変動Boundから、
+とする。`K_t`もDelassus接線対角係数（Effective Inverse Mass）[1/kg]とする。`K_t_min > 0` [1/kg]、`dt_min > 0`を要求し、`v_t_max`、`Delta_v_t`、`Delta_K_t`、`mu_max`、`Delta_mu`、`lambda_n_max`、`Delta_lambda_n`、`Delta_inverse_dt`をU上の上限とする。Disk Projectionの非拡大性と半径変動Boundから、
 
     E_friction_vector <= Delta_v_t / K_t_min
                          + v_t_max * Delta_K_t / (K_t_min * K_t_min)
@@ -1251,7 +1260,7 @@ CouplingがなくNormal / Tangential Effective Massがスカラー（または�
 
 この特殊ケース式はNormal / Tangential方向の独立性が証明できる場合だけ適用する。非対角Coupling、共有頂点、複数ContactのProjected Jacobi、異方性摩擦Metric、またはSolverの反復写像が独立スカラー式へ分離できない場合は適用禁止とし、前述の完全なContact-Island関数Fを外向き丸め付き区間評価または検証済みLipschitz Boundで評価する。
 
-`E_normal_scalar`はEffective Mass / Delassus、Normal Velocity、Restitutionの変動を含むNormal Impulseスカラー差の上界とする。`theta_normal_max`はU全域のNormal方向角度差上限、`J_normal_max`はU全域のNormal Impulse絶対値上限とする。`E_friction_vector`はTangential Effective Mass、Tangential Velocity、Friction係数、Coulomb Projection、XPBD Support Impulseを含む摩擦Impulseベクトル差の上界とする。`E_solver_residual`は両時刻の有限反復Solver残差をImpulse単位へ変換した上界の和とする。各項の計算方法・単位・区間根拠はFixtureごとに記録する。
+`E_normal_scalar`はContact Island全体のNormal Impulse scalar stack差のL2上界とする。`theta_normal_max`はU全域での各Contact Normal方向差の最大角度、`J_normal_max`はU全域のNormal Impulse stack全体のL2 norm上限とする。`E_friction_vector`は全ContactのTangent Basis上2D Impulseを連結したstack差のL2上界とする。`E_solver_residual`はCandidate / Boundary各評価のNormal / Tangential残差ベクトルのL2上限を合算したものとする。`K_n` / `K_t`はDelassus対角係数すなわちEffective Inverse Mass [1/kg]を表し、物理的なEffective Mass [kg]とは区別する。単一Contact式の値を複数の独立Contactへ適用する場合は、Contactごとの証明済み上界を同じCanonical Contact Key順でL2集約する。各項の計算方法・単位・区間根拠はFixtureごとに記録する。
 
 Active Contact Set / Stick-Slip Projection BranchがU内で変化する可能性を排除できない場合、変化を含む全分岐を区間評価して有限上界を証明できるときだけSnap候補に残す。Responsive DelassusのK_minが正と証明できない、F(U)が有限に包含できない、反復Solverの残差Boundがない、または上記いずれかの入力区間が欠落する場合は`impulse_error_bound = unknown`とし、Snapを禁止する。独立したContact GroupごとのImpulse誤差を単純に最大値だけで代表してはならず、同じBoundaryへSnapする全Contact Islandのベクトル誤差を評価する。
 
@@ -1599,6 +1608,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.22: TOI誤差式のImpulse出力ベクトル順・Contact Island L2集約・Normal方向回転Boundを定義。DelassusをEffective Inverse Mass [1/kg]と明示し、Responsive Subspaceのrank / basis安定性をSnap証明条件に追加。
 - 1.21: Corrected the normative TOI equations to use E_Gcontact and E_Gv with candidate / boundary residuals; removed the stale G_p reference and made the map-to-error-budget binding explicit.
 - 1.20: XPBD写像をG_internal / G_contact / G_vへ分離し、Pre-contact Velocity保存とContact Position correctionの順序を一致。Snap Fixtureを証明未添付時にFail-closedとし、tau=0 / tau=dt端点、Tangential Delassus / Cross Block / Tangent Basis / XPBD Support Impulse入力を追加。Basic / Runtime / Profileの相互参照と履歴を統合。
 - 1.19: XPBD Snap誤差を有限反復Solver写像の不確かさ集合上の差として定義。tau=0の全長Continuation Segmentと、Split Count / 追加Segment Count / Admission下限を分離。
