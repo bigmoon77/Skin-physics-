@@ -1395,6 +1395,7 @@ namespace skin_physics::physics
     correction_segment_candidate_update_result merge_correction_position_writer_epoch_candidates(
         correction_segment_candidate_state& state,
         uint64_t base_integration_segment_id,
+        uint32_t position_writer_epoch_id,
         const std::vector<correction_candidate_pair_key>& epoch_candidates,
         std::size_t capacity)
     {
@@ -1405,6 +1406,14 @@ namespace skin_physics::physics
             result.wrong_segment = true;
             result.diagnostic =
                 "Position-Writer Epoch Candidate Set belongs to a different Integration Segment.";
+            return result;
+        }
+        if (position_writer_epoch_id == 0 ||
+            position_writer_epoch_id != state.last_position_writer_epoch_id)
+        {
+            result.invalid_epoch_order = true;
+            result.diagnostic =
+                "Candidate append result does not belong to the currently active Position-Writer Epoch.";
             return result;
         }
 
