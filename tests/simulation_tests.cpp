@@ -1486,8 +1486,8 @@ namespace
         motion.segment_start_triangle = segment_triangle != fields.end()
             ? read_vec3_triplet(segment_triangle->second) : triangle_before;
 
-        const auto cache_flag = fields.find("has_persistent_contact_cache");
-        motion.has_persistent_contact_cache = cache_flag != fields.end() &&
+        const auto cache_flag = fields.find("has_valid_persistent_contact_cache");
+        motion.has_valid_persistent_contact_cache = cache_flag != fields.end() &&
             cache_flag->second.as_bool();
         const auto cache_normal = fields.find("persistent_contact_normal");
         if (cache_normal != fields.end())
@@ -1517,8 +1517,8 @@ namespace
         motion.segment_start_edge_a = edge_a_before;
         motion.segment_start_edge_b = edge_b_before;
         const auto& fields = input.as_object();
-        const auto cache_flag = fields.find("has_persistent_contact_cache");
-        motion.has_persistent_contact_cache = cache_flag != fields.end() &&
+        const auto cache_flag = fields.find("has_valid_persistent_contact_cache");
+        motion.has_valid_persistent_contact_cache = cache_flag != fields.end() &&
             cache_flag->second.as_bool();
         const auto cache_normal = fields.find("persistent_contact_normal");
         if (cache_normal != fields.end())
