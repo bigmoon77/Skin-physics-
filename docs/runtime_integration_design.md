@@ -365,7 +365,7 @@ v1のPublic Descriptorは次の意味を持つ。
 | world_status::work_budget_resolution | enum class : std::uint8_t | none / retryable / hard_limit_reached |
 | advance_report::cpu_preflight_blocked_tick_count | std::uint32_t | 当該`advance()`内で同期的に検出したCPU Preflight Block数。GPU Dynamic TOIは含まない |
 | advance_report::first_cpu_preflight_blocked_tick_sequence | std::uint64_t | 当該Report内で最古のCPU Preflight Block Sequence。該当なしは0 |
-| world_status::planned_substeps / planned_integration_segments / executed_integration_segments / minimum_required_integration_segments | std::uint32_t | CPU Preflightが確定した予定値、GPU試行で完了した数、TOI検出時点で証明できるSegment下限。非該当値は0 |
+| world_status::planned_substeps / planned_integration_segments / executed_integration_segments / minimum_required_integration_segments | std::uint32_t | CPU Preflightが確定した予定値、GPU試行で完了した数、discovered_toi_segment_countから証明できる追加Segment下限。非該当値は0 |
 | contact_max_substep_delta_time | double | finite、0以上。0は無効 |
 | contact_impulse_iterations | std::uint32_t | 1～16。初期値8 |
 | contact_impulse_relaxation | float | finite、0より大きく1以下。初期値0.5 |
@@ -436,7 +436,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | world_status | execution_budget_revision / work_budget_block_flags / work_budget_block_origin | Admission Limit世代、超過理由（bit0=Substep / bit1=CPU Preflight Segment / bit2=GPU Dynamic TOI Segment）、Block判定元。Originはnone / cpu_preflight / gpu_dynamic_toi |
 | world_status | planned_substeps / planned_integration_segments | CPU PreflightがGPU Physics Dispatch前に算出する正確な予定数。GPU Dynamic TOIによる追加Segmentは含めない |
 | world_status | executed_integration_segments | 最新のGPU Dynamic TOI Block試行でSegment Endまで処理した数。CPU Preflight Blockでは0。Retryごとに当該Dispatchの値へ更新 |
-| world_status | minimum_required_integration_segments | gpu_dynamic_toi Blockでのみ有効。既知のTOI分割と、超過時点で必要と判明した残Segmentを含む下限値。将来未発見のTOIは含まず、最終総数の正確値とはしない。その他のOriginでは0 |
+| world_status | minimum_required_integration_segments | gpu_dynamic_toi Blockでのみ有効。planned_integration_segments + discovered_toi_segment_count。tau=0 Continuation Segmentを含む発見済み追加Segmentの下限値。将来未発見のTOIは含まず、最終総数の正確値とはしない。その他のOriginでは0 |
 | world_status 
 | world_status | requested_simulation_time / cancelled_requested_time / effective_requested_time / reserved_tick_time / gpu_committed_simulation_time / cpu_observed_completed_time | 要求時間、未Reservation取消時間、有効要求時間、Tick Reservation時間、GPU Commit時間、CPU確認時間を別々に報告 |
 | render_binding | position_srv / normal_srv / tangent_srv | Commit済みPhysics Stateから生成したRead-only SRV |
@@ -595,7 +595,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 - `planned_substeps`: CPU Preflightが確定したWorld Substep数。正確値であり、GPU Dispatch前に算出する。
 - `planned_integration_segments`: GPU Dispatch前に確定したWorld Substep / Animation / Force / Impulse境界からなる予定Segment総数。正確値であり、動的TOI分割を含まない。
 - `executed_integration_segments`: 直近のGPU Dynamic TOI Block試行でSegment Endまで完了したSegment数。CPU Preflight Blockでは0。
-- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となる各CCD対象Segment（TOI後のResidual Segmentを含む）ごとにDispatch Attempt内で一意に割り当てる。canonical_tau_bitsは有限float32 tauのIEEE-754 bit patternで、-0.0を+0.0へ正規化し、NaN / InfinityはInvalid CCD Candidateとする。同一Attempt / 同一Segment / 同一tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentはtau bitsが同じでも別Boundaryとする。Snapは時間差・XPBD後位置応答誤差・接触相対Velocity誤差・Impulse誤差の全Boundを満たす場合だけ許可し、いずれか不明なら正確なtauを維持する。discovered_toi_split_countは一意な内部Boundaryごとに1回だけ増やす。内部Boundaryを数えるdiscovered_toi_split_countと、TOIで生成した追加Segmentを数えるdiscovered_toi_segment_countを分離する。現在の下限はplanned_integration_segments + discovered_toi_segment_countであり、未発見TOIを含む最終総数ではない。tau=0の全長Continuation Segmentはsplit_countを増やさずsegment_countを1増やす。tau=dt_segmentはどちらも増やさない。CPU Preflight Blockでは0。executed_integration_segmentsはSegment Endまで完了したものだけを数え、未完了prefixは含めない。Retryは新しいdispatch_attempt_idでBoundary ID / Split Countを基底Scheduleから再生成する。
+- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となる各CCD対象Segment（TOI後のResidual Segmentを含む）ごとにDispatch Attempt内で一意に割り当てる。canonical_tau_bitsは有限float32 tauのIEEE-754 bit patternで、-0.0を+0.0へ正規化し、NaN / InfinityはInvalid CCD Candidateとする。同一Attempt / 同一Segment / 同一tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentはtau bitsが同じでも別Boundaryとする。Snapは時間差・XPBD後位置応答誤差・接触相対Velocity誤差・Impulse誤差の全Boundを満たす場合だけ許可し、いずれか不明なら正確なtauを維持する。discovered_toi_split_countは一意な内部Boundaryごとに1回だけ増やす。内部Boundaryを数えるdiscovered_toi_split_countと、TOIで生成した追加Segmentを数えるdiscovered_toi_segment_countを分離する。現在の下限はplanned_integration_segments + discovered_toi_segment_countであり、未発見TOIを含む最終総数ではない。discovered_toi_segment_countは新たに生成するResidual / Continuation Segment数であり、tau=0の全長Continuationも1として数える。discovered_toi_split_countは内部時間Boundary数のみを表し、tau=0では増えない。tau=0の全長Continuation Segmentはsplit_countを増やさずsegment_countを1増やす。tau=dt_segmentはどちらも増やさない。CPU Preflight Blockでは0。executed_integration_segmentsはSegment Endまで完了したものだけを数え、未完了prefixは含めない。Retryは新しいdispatch_attempt_idでBoundary ID / Split Countを基底Scheduleから再生成する。
 - すべてのCountは`std::uint32_t`。uint32範囲を超える算出値はWrapせずWork Count OverflowとしてWorldを`FAILED`にする。
 
 #### Block発生元ごとの観測契約
