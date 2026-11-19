@@ -1821,6 +1821,71 @@ namespace
             segment_candidate_union.candidates[1] == candidate_ee,
             "Each correction epoch must retain existing physical candidates and append canonical new candidates.");
 
+        auto segment_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                1001, { candidate_vt }, 2);
+        require(segment_state_result.success &&
+            segment_state_result.state.candidate_generation == 1 &&
+            segment_state_result.state.candidates.size() == 1 &&
+            !segment_state_result.state.contact_set_current &&
+            !segment_state_result.state.vertex_contact_csr_current,
+            "A new Integration Segment must begin with its physical candidate set and stale Contact/CSR generations.");
+
+        auto segment_state = segment_state_result.state;
+        require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
+            segment_state, 1) &&
+            segment_state.contact_set_current &&
+            segment_state.vertex_contact_csr_current,
+            "Contact Set and Vertex-to-Contact CSR may be marked current only for the observed Candidate Generation.");
+
+        const auto duplicate_epoch_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, { candidate_vt_reversed }, 2);
+        require(duplicate_epoch_update.success &&
+            !duplicate_epoch_update.changed &&
+            segment_state.candidate_generation == 1 &&
+            segment_state.contact_set_current &&
+            segment_state.vertex_contact_csr_current,
+            "An Epoch that adds only duplicate canonical pairs must not invalidate the current Contact Set or CSR.");
+
+        const auto new_epoch_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, { candidate_ee }, 2);
+        require(new_epoch_update.success && new_epoch_update.changed &&
+            segment_state.candidate_generation == 2 &&
+            segment_state.candidates.size() == 2 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "A newly discovered Epoch candidate must advance the Generation and invalidate Contact Set / CSR freshness.");
+
+        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
+            segment_state, 1),
+            "A stale Contact Set / CSR rebuild completion must not clear a newer Candidate Generation.");
+        require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
+            segment_state, 2) &&
+            segment_state.contact_set_current &&
+            segment_state.vertex_contact_csr_current,
+            "Contact Set and CSR refresh must succeed for the latest Candidate Generation.");
+
+        const auto wrong_segment_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1002, {}, 2);
+        require(!wrong_segment_update.success && wrong_segment_update.wrong_segment &&
+            segment_state.base_integration_segment_id == 1001 &&
+            segment_state.candidate_generation == 2,
+            "Candidates from a different base_integration_segment_id must not enter this Segment State.");
+
+        const auto state_capacity_overflow =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, { candidate_overflow }, 2);
+        require(!state_capacity_overflow.success &&
+            state_capacity_overflow.capacity_overflow &&
+            segment_state.candidates.size() == 2 &&
+            segment_state.candidate_generation == 2 &&
+            segment_state.contact_set_current &&
+            segment_state.vertex_contact_csr_current,
+            "Candidate Capacity Retry must preserve the entire prior Segment Candidate / Contact / CSR state.");
+
         const auto candidate_overflow =
             skin_physics::physics::merge_correction_candidate_union(
                 { candidate_vt }, { candidate_ee }, 1);
