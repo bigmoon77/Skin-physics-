@@ -1,13 +1,13 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.21
+- 文書バージョン: 1.22
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.20
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.26
-- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.23
-- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.18
+- 前版: 1.21
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.27
+- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.24
+- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 
 ## 1. 設計方針
 
@@ -327,6 +327,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.22: Detailed Design v1.27 / Runtime Integration Design v1.24 / Numerical Acceptance Profile v1.19を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を同期。
 - 1.21: Detailed Design v1.26 / Runtime Integration Design v1.23 / Numerical Acceptance Profile v1.18を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を明確化。
 - 1.20: Detailed Design v1.25 / Runtime Integration Design v1.22 / Numerical Acceptance Profile v1.17を参照し、Contact-level E_contact_impulseとApplied E_applied_impulseの名称・役割を統一。
 - 1.19: 詳細設計 v1.24 / Runtime統合設計 v1.21 / Numerical Acceptance Profile v1.16を参照し、Contact Jacobianを介したApplied Impulse誤差条件を追加。
