@@ -5,14 +5,14 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.28
+- 文書バージョン: 1.29
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.26
-- 対応詳細設計: detailed_design.md 1.31
+- 対応基本設計: basic_design.md 1.27
+- 対応詳細設計: detailed_design.md 1.32
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
 - Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
-- 前版: 1.27
+- 前版: 1.28
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -978,7 +978,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 以下を満たした時点でGPU Runtime実装に進める。
 
-- 基本設計1.26 / 詳細設計1.31 / 本書1.28の独立Critical Reviewで重大な設計矛盾が0件。
+- 基本設計1.27 / 詳細設計1.32 / 本書1.29の独立Critical Reviewで重大な設計矛盾が0件。
 - Gate R0-R6の責務、入力、出力、失敗状態、検証Fixtureが追跡可能。
 - Corotational FEM / XPBD Cloth / Contactの式とCPU Double Oracleが一致している。
 - Runtime APIとDevice / Context / Render Bindingの所有権が確定。
@@ -989,6 +989,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.29: Correction診断をRuntime Error ContractとPass Gateへ統一。証明不能 / Crossing / Contact Set未収束はREJECTED、実Buffer Capacity超過のみBroadphaseOverflow / BLOCKEDとして同一ReservationをCapacity Retry。実装開始条件をBasic v1.27 / Detailed v1.32へ更新。
 - 1.28: Correction Motion CCDのSigned Separationを符号正規化Interval h=sigma*gに統一し、初期側sigma<0時のInterval端点交換と途中通過の区間証明をDetailed Design v1.31へ同期。Basic v1.26 / Detailed v1.31参照を更新。
 - 1.27: Detailed Design §9.4.1 / §9.4.2のPosition-Writer Epoch、Correction Swept AABB、Candidate Union、VT / EE Correction Motion CCD、Contact Set refresh、pseudo-timeと物理TOI / Impulseの分離をRuntime Pass順へ同期。
 - 1.25: Basic Design v1.23 / Detailed Design v1.28との相互参照を同期。Runtime実行契約に変更なし.
