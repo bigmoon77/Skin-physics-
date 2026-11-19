@@ -2057,8 +2057,66 @@ namespace skin_physics::physics
             roles.push_back(primitive.role);
         }
 
+        const broadphase_candidate_filter candidate_filter =
+            [&primitives, &roles](
+                uint32_t first_index,
+                uint32_t second_index) -> bool
+        {
+            if (first_index >= primitives.size() ||
+                second_index >= primitives.size())
+            {
+                return false;
+            }
+
+            const correction_broadphase_primitive& first =
+                primitives[first_index];
+            const correction_broadphase_primitive& second =
+                primitives[second_index];
+            const correction_primitive_role first_role = roles[first_index];
+            const correction_primitive_role second_role = roles[second_index];
+            const bool supported_pair =
+                (first_role == correction_primitive_role::vertex &&
+                    second_role == correction_primitive_role::triangle) ||
+                (first_role == correction_primitive_role::triangle &&
+                    second_role == correction_primitive_role::vertex) ||
+                (first_role == correction_primitive_role::edge &&
+                    second_role == correction_primitive_role::edge);
+            if (!supported_pair)
+            {
+                return false;
+            }
+
+            for (uint64_t first_vertex_id : first.vertex_stable_ids)
+            {
+                if (std::find(
+                    second.vertex_stable_ids.begin(),
+                    second.vertex_stable_ids.end(),
+                    first_vertex_id) != second.vertex_stable_ids.end())
+                {
+                    return false;
+                }
+            }
+
+            const correction_primitive_identity first_identity = {
+                first.stable_id, first.mesh_id, first.primitive_id
+            };
+            const correction_primitive_identity second_identity = {
+                second.stable_id, second.mesh_id, second.primitive_id
+            };
+            const bool excluded =
+                std::find(
+                    first.excluded_primitive_ids.begin(),
+                    first.excluded_primitive_ids.end(),
+                    second_identity) != first.excluded_primitive_ids.end() ||
+                std::find(
+                    second.excluded_primitive_ids.begin(),
+                    second.excluded_primitive_ids.end(),
+                    first_identity) != second.excluded_primitive_ids.end();
+            return !excluded;
+        };
+
         const broadphase_result broadphase = generate_broadphase_candidates(
-            broadphase_primitives, mesh_pairs, settings);
+            broadphase_primitives, mesh_pairs, settings, candidate_filter);
         result.diagnostics = broadphase.diagnostics;
         result.required_cell_records = broadphase.required_cell_records;
         result.broadphase_candidate_count = broadphase.required_candidates;
