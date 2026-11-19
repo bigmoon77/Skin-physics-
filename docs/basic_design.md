@@ -1,12 +1,12 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.22
+- 文書バージョン: 1.23
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.21
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.27
-- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.24
+- 前版: 1.22
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.28
+- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.25
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 
 ## 1. 設計方針
@@ -296,7 +296,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 14. 詳細設計との責務境界・校正への引継ぎ
 
-本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.21および[runtime_integration_design.md](runtime_integration_design.md) v1.17で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
+本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.28および[runtime_integration_design.md](runtime_integration_design.md) v1.25で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
 
 - Soft Body Corotational FEM、応力・内部力・Segment積分・減衰: detailed_design.md §6。
 - Cloth Stretch / Shear / Bend / XPBD Lambda、外力・Impulse、World Integration Segment: detailed_design.md §7。
@@ -327,6 +327,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.23: Detailed Design v1.28 / Runtime Integration Design v1.25への現行正本参照を統一し、責務引継ぎ節の旧版参照を解消。
 - 1.22: Detailed Design v1.27 / Runtime Integration Design v1.24 / Numerical Acceptance Profile v1.19を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を同期。
 - 1.21: Detailed Design v1.26 / Runtime Integration Design v1.23 / Numerical Acceptance Profile v1.18を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を明確化。
 - 1.20: Detailed Design v1.25 / Runtime Integration Design v1.22 / Numerical Acceptance Profile v1.17を参照し、Contact-level E_contact_impulseとApplied E_applied_impulseの名称・役割を統一。
@@ -349,7 +350,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 
-## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.23）
+## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.25）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
