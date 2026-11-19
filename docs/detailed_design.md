@@ -1717,6 +1717,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.30: XPBDの全Position-Writer DispatchをEpoch化し、物理Sweepと補正SweepのCandidate Union、VT / EE Correction Motion CCD、Crossing / Unresolved時のFail-Closed Commit Gateを定義。Broadphase Envelopeの任意最大補正Marginを廃止。
 
 - 1.29: configurable `maximum_in_flight_ticks` 1 / 2 / 4をCPU未観測Submission Attempt数として定義し、単一Immediate Context Command Streamでの2-bank直列再利用とRender Candidate Ring N+1容量を同期。
+- 1.29: `maximum_in_flight_ticks` 1 / 2 / 4のCPU未観測Submission Attempt数定義、単一Immediate Context Command Streamでの2-bank交互再利用、Render Candidate Ring N+1容量を詳細Pass契約へ同期。
 - 1.28: Basic Design v1.23 / Runtime Integration Design v1.25の現行正本参照を同期。Basic Designの責務引継ぎ節とRuntime統合参照の整合を確認。
 - 1.27: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.26: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
