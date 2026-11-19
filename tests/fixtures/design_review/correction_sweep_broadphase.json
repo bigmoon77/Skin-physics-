@@ -1,6 +1,6 @@
 {
-  "fixture_version": "1.0",
-  "purpose": "Persistent deterministic geometry and state vectors for design-review regression Case 49. This file is a reviewed specification input only; it is not an executable assertion or evidence of a production GPU implementation.",
+  "fixture_version": "1.1",
+  "purpose": "Persistent deterministic geometry and state vectors for design-review regression Case 49. This file is a reviewed specification input only; it is not an executable assertion or evidence of a production GPU implementation. Includes both positive and negative initial-side signed-separation crossing cases.",
   "normative_sources": [
     "docs/detailed_design.md §9.4.1",
     "docs/detailed_design.md §9.4.2",
@@ -163,6 +163,79 @@
         "crossing": "CorrectionPathCrossing",
         "tick_state": "REJECTED",
         "commit": false
+      }
+    },
+    {
+      "id": "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "triangle_vertices_before": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "triangle_vertices_after": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "point_before": [
+          0.25,
+          0.25,
+          -1
+        ],
+        "point_after": [
+          0.25,
+          0.25,
+          1
+        ],
+        "stable_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "initial_signed_separation_m": -1,
+        "contact_thickness_m": 0.02,
+        "physical_swept_candidate_present": false,
+        "position_writer_epoch_id": 6
+      },
+      "expected": {
+        "initial_side_sigma": -1,
+        "signed_interval_endpoint_order_reversed": true,
+        "correction_swept_aabb_contains_contact_path": true,
+        "correction_candidate_added_to_canonical_union": true,
+        "correction_motion_ccd": "HIT",
+        "endpoint_signed_separation_m": 1,
+        "crossing": "CORRECTION_PATH_CROSSING",
+        "tick_state": "REJECTED",
+        "commit": false,
+        "physical_toi_created": false,
+        "physical_impulse_created": false
       }
     },
     {
