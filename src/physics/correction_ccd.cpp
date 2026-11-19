@@ -819,6 +819,52 @@ namespace skin_physics::physics
             return true;
         }
 
+        bool use_segment_side_latch(
+            const vector3& initial_normal,
+            const vector3& side_vector,
+            const asset::vec3& latched_reference_normal,
+            int8_t latched_side_sign,
+            real epsilon_length,
+            vector3& reference_normal,
+            int8_t& side_sign,
+            int& orientation_sign)
+        {
+            const real initial_normal_length = length(initial_normal);
+            if (!finite(initial_normal_length) ||
+                initial_normal_length <= epsilon_length * epsilon_length ||
+                (latched_side_sign != -1 && latched_side_sign != 1) ||
+                !finite(latched_reference_normal))
+            {
+                return false;
+            }
+
+            reference_normal = normalized(to_vector(latched_reference_normal));
+            if (length_squared(reference_normal) <=
+                epsilon_length * epsilon_length)
+            {
+                return false;
+            }
+
+            const real alignment = dot(initial_normal, reference_normal);
+            if (!finite(alignment) ||
+                std::abs(alignment) <= epsilon_length * epsilon_length)
+            {
+                return false;
+            }
+            orientation_sign = alignment < 0.0L ? -1 : 1;
+
+            const real signed_distance = dot(reference_normal, side_vector);
+            if (!finite(signed_distance) ||
+                std::abs(signed_distance) <= epsilon_length ||
+                (signed_distance < 0.0L ? -1 : 1) != latched_side_sign)
+            {
+                return false;
+            }
+
+            side_sign = latched_side_sign;
+            return true;
+        }
+
         struct candidate_search_result
         {
             bool hit = false;
@@ -1162,6 +1208,15 @@ namespace skin_physics::physics
             const vector3 b = to_vector(motion.segment_start_triangle[1]);
             const vector3 c = to_vector(motion.segment_start_triangle[2]);
             const vector3 initial_normal = cross(subtract(b, a), subtract(c, a));
+            if (motion.has_segment_side_latch)
+            {
+                return use_segment_side_latch(
+                    initial_normal, subtract(point, a),
+                    motion.segment_reference_normal,
+                    motion.segment_allowed_side_sign,
+                    settings.epsilon_length,
+                    reference_normal, side_sign, orientation_sign);
+            }
             return latch_reference_side(
                 initial_normal, subtract(point, a),
                 motion.has_valid_persistent_contact_cache,
@@ -1203,6 +1258,15 @@ namespace skin_physics::physics
             }
 
             const vector3 initial_normal = cross(direction_a, direction_b);
+            if (motion.has_segment_side_latch)
+            {
+                return use_segment_side_latch(
+                    initial_normal, subtract(closest_a, closest_b),
+                    motion.segment_reference_normal,
+                    motion.segment_allowed_side_sign,
+                    settings.epsilon_length,
+                    reference_normal, side_sign, orientation_sign);
+            }
             return latch_reference_side(
                 initial_normal, subtract(closest_a, closest_b),
                 motion.has_valid_persistent_contact_cache,
