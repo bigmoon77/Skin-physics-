@@ -380,6 +380,10 @@
   },
   "version_history": [
     {
+      "version": "1.11",
+      "changes": "Defined complete finite-iteration XPBD position / velocity maps G_p and G_v over Candidate / Boundary uncertainty sets, including active-set and projection branch enclosure. Standardized pooled raw-sample p95 to nearest_rank. Deployment Profile Template v1.4 records the percentile method."
+    },
+    {
       "version": "1.10",
       "changes": "Defined a validated full Contact-Island impulse uncertainty-set bound, added computable scalar Effective-Mass / restitution / friction special-case bounds, and prohibited scalar shortcuts for coupled contact islands. Deployment Profile v1.3 stores independent Run records as an array and computes p95 from pooled raw samples."
     },
