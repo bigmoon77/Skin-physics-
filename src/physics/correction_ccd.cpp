@@ -2531,6 +2531,34 @@ namespace skin_physics::physics
             record.candidate = candidate;
             const correction_segment_side_latch* side_latch =
                 find_side_latch(candidate);
+            if (first == nullptr || second == nullptr)
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Correction Candidate references a primitive absent from the Position-Writer Epoch snapshot.";
+                return result;
+            }
+            std::vector<uint64_t> topology_vertex_ids;
+            topology_vertex_ids.reserve(
+                first->vertex_stable_ids.size() +
+                second->vertex_stable_ids.size());
+            topology_vertex_ids.insert(
+                topology_vertex_ids.end(),
+                first->vertex_stable_ids.begin(),
+                first->vertex_stable_ids.end());
+            topology_vertex_ids.insert(
+                topology_vertex_ids.end(),
+                second->vertex_stable_ids.begin(),
+                second->vertex_stable_ids.end());
+            if (side_latch != nullptr &&
+                side_latch->topology_vertex_stable_ids != topology_vertex_ids)
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Correction Candidate topology changed after its Integration Segment Side Latch was established.";
+                return result;
+            }
+
             if (candidate.contact_type == correction_contact_type::vertex_triangle)
             {
                 const correction_primitive_epoch_input* point = nullptr;
@@ -2624,6 +2652,8 @@ namespace skin_physics::physics
                         record.result.reference_normal;
                     new_latch.allowed_side_sign =
                         record.result.allowed_side_sign;
+                    new_latch.topology_vertex_stable_ids =
+                        topology_vertex_ids;
                     next_state.side_latches.push_back(new_latch);
                     std::sort(next_state.side_latches.begin(),
                         next_state.side_latches.end(),
