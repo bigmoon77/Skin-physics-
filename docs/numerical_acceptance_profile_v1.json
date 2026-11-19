@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.12",
+  "profile_version": "1.13",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -387,6 +387,10 @@
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
   },
   "version_history": [
+    {
+      "version": "1.13",
+      "changes": "Aligned the normative error equations with the separated finite-iteration maps: E_xpbd_position uses E_Gcontact plus position residuals; E_xpbd_velocity uses E_Gv plus velocity residuals. Removed the obsolete G_p wording from the active acceptance contract."
+    },
     {
       "version": "1.12",
       "changes": "Separated G_internal (post-internal, pre-contact-position), G_contact (final post-contact-position) and G_v (saved Pre-contact Velocity reconstructed from G_internal). Clarified that legacy Lipschitz / dt-sensitivity / residual components are not standalone Snap certificates; only complete interval map outputs with all branches and residuals can authorize Snap."
