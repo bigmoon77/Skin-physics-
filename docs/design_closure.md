@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v4.0）
+# Skin Physics 設計閉鎖書（v4.1）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.25
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.30
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.27
+- 基本設計: [basic_design.md](basic_design.md) v1.26
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.31
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.28
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 - Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.4
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
@@ -454,7 +454,8 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
-- 4.0: XPBD Position-Writer EpochごとのCorrection Swept AABB / Candidate Union / VT・EE Correction Motion CCDを閉鎖契約へ追加。最大拘束補正Marginを廃止し、Crossing / Unresolved / Contact Set未収束時のCommit禁止、Pseudo-Timeと物理TOI / Impulseの分離を定義。Basic v1.25 / Detailed v1.30 / Runtime v1.27 / Test Case 49と同期。
+- 4.1: Correction Motion CCDのSigned Separationを符号正規化Interval h=sigma*gで評価し、sigma<0時の上下端交換と途中通過の区間証明を明記。負側初期位置のRegression Fixtureを追加し、Basic v1.26 / Detailed v1.31 / Runtime v1.28と同期。
+- 4.0: XPBD Position-Writer EpochごとのCorrection Swept AABB / Candidate Union / VT・EE Correction Motion CCDを閉鎖契約へ追加。最大拘束補正Marginを廃止し、Crossing / Unresolved / Contact Set未収束時のCommit禁止、Pseudo-Timeと物理TOI / Impulseの分離を定義。
 
 - 3.8: Synchronized Basic / Detailed / Runtime current-version references and repaired the stale Basic Design handoff paragraph.
 - 3.7: Fixed q-compatible Contact Jacobian row order and right-handed contact-frame convention; made scalar inverse-mass and unit-bearing residual fixture inputs reproducible.
