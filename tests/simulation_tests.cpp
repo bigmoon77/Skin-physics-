@@ -1881,6 +1881,15 @@ namespace
             segment_state, 1, 1),
             "A stale Position-Writer Epoch rebuild completion must not clear a newer geometry generation.");
 
+        const auto stale_epoch_candidate_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, 1, { candidate_ee }, 2);
+        require(!stale_epoch_candidate_update.success &&
+            stale_epoch_candidate_update.invalid_epoch_order &&
+            segment_state.candidate_generation == 1 &&
+            segment_state.candidates.size() == 1,
+            "A delayed Candidate result from a previous Position-Writer Epoch must not mutate the active Segment Candidate Set.");
+
         const auto new_epoch_update =
             skin_physics::physics::merge_correction_position_writer_epoch_candidates(
                 segment_state, 1001, 2, { candidate_ee }, 2);
