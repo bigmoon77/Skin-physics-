@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.17",
+  "profile_version": "1.18",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -358,7 +358,8 @@
         "stable responsive Physics Vertex ID mapping and all applied-impulse residuals"
       ],
       "applied_impulse_vector_layout": "Applied output: stable responsive Physics Vertex ID order, each vertex contributes a World-space 3D generalized impulse vector. J^T*q returns this vector; E_applied_impulse is its Euclidean L2 error.",
-      "applied_impulse_error_definition": "J is the complete sparse Contact Jacobian. Its rows use Canonical Contact Key order and local Normal / Tangent solver coordinates; its columns use stable responsive Physics Vertex IDs with fixed World-space XYZ coordinates. It includes signed VT / EE interpolation coefficients and Candidate / Boundary contact frames. q is the local generalized contact-impulse coefficient vector from the finite-iteration solver. E_applied_impulse = sup over z in U of ||J(z)^T*q(z)-J(z_boundary)^T*q(z_boundary)||_2 over the complete stable Physics Vertex DOF set. The interval bound must enclose both J and q, including interpolation-feature changes, signed coefficients, basis rotation and vertex ID correspondence. Missing Jacobian intervals, mismatched responsive Vertex ID sets, non-finite values or unbounded interpolation variation make E_applied_impulse unknown and forbid Snap."
+      "applied_impulse_error_definition": "J is the complete sparse Contact Jacobian. Its rows use Canonical Contact Key order and local Normal / Tangent solver coordinates; its columns use stable responsive Physics Vertex IDs with fixed World-space XYZ coordinates. It includes signed VT / EE interpolation coefficients and Candidate / Boundary contact frames. q is the local generalized contact-impulse coefficient vector from the finite-iteration solver. E_applied_impulse = sup over z in U of ||J(z)^T*q(z)-J(z_boundary)^T*q(z_boundary)||_2 over the complete stable Physics Vertex DOF set. The interval bound must enclose both J and q, including interpolation-feature changes, signed coefficients, basis rotation and vertex ID correspondence. Missing Jacobian intervals, mismatched responsive Vertex ID sets, non-finite values or unbounded interpolation variation make E_applied_impulse unknown and forbid Snap.",
+      "contact_frame_convention": "Each Candidate / Boundary contact frame is a right-handed orthonormal basis with normal cross tangent_u = tangent_v and tangent_u cross tangent_v = normal. Non-orthonormal, non-finite or handedness-inconsistent frames invalidate the interval certificate."
     }
   },
   "reproducibility": {
@@ -406,6 +407,10 @@
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
   },
   "version_history": [
+    {
+      "version": "1.18",
+      "changes": "Fixed Contact Jacobian row order to match generalized solver coefficient vector q (all Normal rows, then per-contact tangent_u / tangent_v rows), and made the right-handed orthonormal contact frame convention normative."
+    },
     {
       "version": "1.17",
       "changes": "Normalized contact-level impulse error to E_contact_impulse and separated it from E_applied_impulse in the normative profile. Rewrote the Contact Solver interval definition to eliminate stale mixed E_impulse terminology."
