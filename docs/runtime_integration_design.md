@@ -157,6 +157,7 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
         struct world_desc;
 
         // Admission limits only; these values do not change solver quality or time-step policy.
+        // Both values must be <= the immutable Runtime Hard Limits supplied at initialize; create_world rejects invalid initial limits.
         struct world_execution_budget
         {
             uint32_t maximum_substeps = 128;
@@ -581,7 +582,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 - `planned_substeps`: CPU Preflightが確定したWorld Substep数。正確値であり、GPU Dispatch前に算出する。
 - `planned_integration_segments`: GPU Dispatch前に確定したWorld Substep / Animation / Force / Impulse境界からなる予定Segment総数。正確値であり、動的TOI分割を含まない。
 - `executed_integration_segments`: 直近のGPU Dynamic TOI Block試行でSegment Endまで完了したSegment数。CPU Preflight Blockでは0。
-- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。予定Segment、発見済みTOI分割、およびBlock時点で必要と判明した未実行の残Segmentを数える。TOIが基底Segmentをprefix / residualの2つへ分割するため、現時点の下限は `planned_integration_segments + discovered_toi_split_count` とする。まだ発見されていない将来のTOIは含まないため、最終Tick総数を示す正確値ではない。CPU Preflight Blockでは0。`executed_integration_segments`はSegment Endまで完了したものだけを数え、未完了のprefixは含めない。
+- `minimum_required_integration_segments`: GPU Dynamic TOI Blockでのみ有効な下限値。現在のDispatch Attempt内で発見したTOI分割とBlock時点で必要な残Segmentを数える。TOIが基底Segmentをprefix / residualの2つへ分割するため、現時点の下限は `planned_integration_segments + discovered_toi_split_count` とする。まだ発見されていない将来のTOIは含まないため、最終Tick総数を示す正確値ではない。CPU Preflight Blockでは0。`executed_integration_segments`はSegment Endまで完了したものだけを数え、未完了のprefixは含めない。新しいDispatch PlanでRetryを開始すると`discovered_toi_split_count`と実行済みCountを初期化し、同じ基底Segment Scheduleから再計数する。
 - すべてのCountは`std::uint32_t`。uint32範囲を超える算出値はWrapせずWork Count OverflowとしてWorldを`FAILED`にする。
 
 #### Block発生元ごとの観測契約
@@ -602,8 +603,8 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 
 1. GPU Dynamic TOI Blockでは、対象GPU Command / Event Query / CPU未観測Submissionがすべて完了し、先行Tickと後続`BLOCKED_BY_PREDECESSOR`のStatusもCPU観測済みでなければならない。CPU Preflight Blockには対象TickのGPU Queryは存在しないが、Preflight Statusを`poll()`で観測済みでなければならない。
 2. 更新対象が最も古い未CommitのBlocked Reservationであること。未Reservation時間はAccumulator / Step Queueに残し、後続ReservationはPredecessor Blockのまま保持する。
-3. `maximum_substeps >= world_desc.minimum_substeps`、`maximum_integration_segments_per_tick >= 1`を満たし、両値がRuntime初期化時に固定したHard Limit以下であること。Hard Limit超過は`invalid_argument`であり、全状態を変更しない。
-4. Blocked Reservationの更新では、Admission Limitを現在値より下げてはならない。新しいSubstep Limitは`planned_substeps`以上、Segment LimitはCPU Preflightでは`planned_integration_segments`以上、GPU Dynamic TOIでは`minimum_required_integration_segments`以上でなければならない。TOI下限値で再実行しても、さらに未発見TOIが生じた場合は同じReservationを再度Blockし、次の下限値を報告する。
+3. `maximum_substeps >= world_desc.minimum_substeps`、`maximum_integration_segments_per_tick >= 1`を満たし、両値がRuntime初期化時に固定したHard Limit以下であること。Hard Limit超過は`invalid_argument`であり、全状態を変更しない。Runtime初期化時にHard Limitが0または不正ならinitializeを拒否し、create_worldではminimum_substeps <= maximum_substeps <= maximum_world_substeps_hard_limit、および1 <= maximum_integration_segments_per_tick <= maximum_integration_segments_per_tick_hard_limitを検証する。
+4. Blocked Reservationの更新では、Admission Limitを現在値より下げてはならない。いずれかを減らそうとした場合は`invalid_argument`であり、両Limit / Revision / Reservation / Timelineを変更しない。新しいSubstep Limitは`planned_substeps`以上、Segment LimitはCPU Preflightでは`planned_integration_segments`以上、GPU Dynamic TOIでは`minimum_required_integration_segments`以上でなければならない。TOI下限値で再実行しても、さらに未発見TOIが生じた場合は同じReservationを再度Blockし、次の下限値を報告する。
 5. Blocked ReservationがないWorldでは、未Reservation Whole Tick、Step Request、Tick Reservation、GPU Submissionが一つもないIdle状態でのみ変更できる。この状態では増減を許可する。Pending Whole Tick Demand / Step Request / Reservationがある場合は`busy`を返し、予算・Revision・時間・Reservationを変更しない。
 
 有効な2フィールドはAtomicに置換し、`execution_budget_revision`を1増やす。Blocked Reservationに対する変更では、超過していない方のLimitを維持してよいが、現在値より小さくしてはならない。Substep数・予定Segment境界・Tick時間区間・Input Snapshot・Animation Packet Version・Cursor開始Snapshot・Force / Impulse Event ID / Cursor・Tick Sequence・Reservation時間は変更しない。既存Dispatch Planは破棄し、新しい`dispatch_id` / Budget Revisionを持つImmutable Planを同じReservationから再生成する。

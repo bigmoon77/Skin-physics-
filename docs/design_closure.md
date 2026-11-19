@@ -339,10 +339,10 @@ Render Candidate Ring:
 
 - `WORK_BUDGET_EXCEEDED`はLogical Tick State=`BLOCKED`とし、Reservation / Tick Sequence / Input Snapshotを保持する。`REJECTED`や`FAILED`へ分類しない。
 - CPU Preflightは正確な`planned_substeps` / `planned_integration_segments`をStatusへ記録し、GPU Physics Dispatch / Event Queryを発行しない。未使用Query / Render Candidate Slotを解放し、CPU Status Queueへ同期記録する。poll()で同じ呼出し中に観測可能とする。
-- GPU Dynamic TOIは`executed_integration_segments`と`minimum_required_integration_segments`をStatusへ記録する。後者は発見済みTOI分割と残Segmentに対する下限値であり、未知の後続TOIを含む最終総数ではない。追加TOIが発見されるたびに同じReservationを再Blockできる。
+- GPU Dynamic TOIは`executed_integration_segments`と`minimum_required_integration_segments`をStatusへ記録する。後者は現在のDispatch Attempt内で発見済みTOI分割と残Segmentに対する下限値であり、`planned_integration_segments + discovered_toi_split_count`とする。未知の後続TOIを含む最終総数ではない。新しいRetry Planでは分割Countを初期化し、追加TOIが発見されるたびに同じReservationを再Blockできる。
 - `work_budget_block_origin`はCPU Preflight / GPU Dynamic TOIを明示し、flags bit0/1/2でSubstep / Preflight Segment / Dynamic TOI Segment超過を識別する。
 - Runtime初期化時に`maximum_world_substeps_hard_limit`と`maximum_integration_segments_per_tick_hard_limit`を必須指定し、Runtime lifetime中は変更不可とする。値は対象GPU / DriverのDeployment Capability Profileで実測認定した有限上限とし、普遍的な固定安全値を仮定しない。0、未認定値、上限超過は初期化またはWorld生成を拒否する。
-- `set_world_execution_budget`のBlocked Reservation更新は上限引上げのみとし、報告された予定数 / TOI下限値以上かつHard Limit以下を要求する。Idle Worldの増減は未Reservation Whole Tick / Step Request / Reservation / GPU Submissionがない場合だけ許可する。Pending Demandがある場合は`BUSY`で無変更とする。
+- `set_world_execution_budget`のBlocked Reservation更新は上限引上げのみとし、報告された予定数 / TOI下限値以上かつHard Limit以下を要求する。いずれかのAdmission Limitを減らす要求は`invalid_argument`で無変更とする。Idle Worldの増減は未Reservation Whole Tick / Step Request / Reservation / GPU Submissionがない場合だけ許可する。Pending Demandがある場合は`BUSY`で無変更とする。
 - Budget超過でBlockされたTickはTick Sequence / Reservation時間 / Input Snapshot / Animation Packet Version / Cursor開始Snapshot / Event IDを保持する。
 - Retryでは新しい`dispatch_id` / Budget Revisionを持つImmutable Planを再生成し、同じReservationをTick開始Committed Stateから再実行する。後続Tickは先行Commit後に新Source Generationで再Planする。
 - 更新対象はAdmission Limitだけ。物理材料、Compliance、Contact品質、Fixed Delta、Substep / Segment境界の意味は変更しない。
