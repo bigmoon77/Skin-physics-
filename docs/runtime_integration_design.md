@@ -5,14 +5,14 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.23
+- 文書バージョン: 1.24
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.21
-- 対応詳細設計: detailed_design.md 1.26
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.18
+- 対応基本設計: basic_design.md 1.22
+- 対応詳細設計: detailed_design.md 1.27
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
 - Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
-- 前版: 1.22
+- 前版: 1.23
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
