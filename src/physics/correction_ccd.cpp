@@ -2056,14 +2056,14 @@ namespace skin_physics::physics
                 primitive_b.primitive_id
             };
             const bool explicitly_excluded =
-                std::binary_search(
+                std::find(
                     primitive_a.excluded_primitive_ids.begin(),
                     primitive_a.excluded_primitive_ids.end(),
-                    identity_b) ||
-                std::binary_search(
+                    identity_b) != primitive_a.excluded_primitive_ids.end() ||
+                std::find(
                     primitive_b.excluded_primitive_ids.begin(),
                     primitive_b.excluded_primitive_ids.end(),
-                    identity_a);
+                    identity_a) != primitive_b.excluded_primitive_ids.end();
             if (explicitly_excluded)
             {
                 continue;
