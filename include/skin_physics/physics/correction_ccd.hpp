@@ -60,6 +60,16 @@ namespace skin_physics::physics
         edge
     };
 
+    struct correction_primitive_identity
+    {
+        uint64_t stable_id = 0;
+        uint32_t mesh_id = 0;
+        uint32_t primitive_id = 0;
+
+        bool operator==(const correction_primitive_identity& other) const;
+        bool operator<(const correction_primitive_identity& other) const;
+    };
+
     struct correction_broadphase_primitive
     {
         uint64_t stable_id = 0;
@@ -67,6 +77,9 @@ namespace skin_physics::physics
         uint32_t primitive_id = 0;
         correction_primitive_role role = correction_primitive_role::vertex;
         collision_aabb envelope_bounds;
+        std::vector<uint64_t> vertex_stable_ids;
+        // Explicit one-ring / adjacency exclusions supplied by the topology owner.
+        std::vector<correction_primitive_identity> excluded_primitive_ids;
     };
 
     struct correction_broadphase_result
@@ -133,6 +146,7 @@ namespace skin_physics::physics
         uint32_t primitive_id = 0;
         correction_primitive_role role = correction_primitive_role::vertex;
         std::vector<uint64_t> vertex_stable_ids;
+        std::vector<correction_primitive_identity> excluded_primitive_ids;
         std::vector<correction_vertex_motion> vertex_motions;
         std::vector<asset::vec3> segment_start_positions;
     };
