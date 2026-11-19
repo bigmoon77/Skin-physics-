@@ -114,6 +114,7 @@ namespace skin_physics::physics
     struct correction_discrete_contact
     {
         correction_candidate_pair_key key;
+        std::array<uint64_t, 4> participant_vertex_stable_ids = {};
         vertex_triangle_contact vertex_triangle;
         edge_edge_contact edge_edge;
         bool active = false;
