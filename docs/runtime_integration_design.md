@@ -5,14 +5,14 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.27
+- 文書バージョン: 1.28
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.25
-- 対応詳細設計: detailed_design.md 1.30
+- 対応基本設計: basic_design.md 1.26
+- 対応詳細設計: detailed_design.md 1.31
 - 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
 - Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
-- 前版: 1.26
+- 前版: 1.27
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -989,7 +989,8 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
-- 1.27: Detailed Design §9.4.1 / §9.4.2のPosition-Writer Epoch、Correction Swept AABB、Candidate Union、VT / EE Correction Motion CCD、Contact Set refresh、pseudo-timeと物理TOI / Impulseの分離をRuntime Pass順へ同期。Basic v1.25 / Detailed v1.30参照を更新。
+- 1.28: Correction Motion CCDのSigned Separationを符号正規化Interval h=sigma*gに統一し、初期側sigma<0時のInterval端点交換と途中通過の区間証明をDetailed Design v1.31へ同期。Basic v1.26 / Detailed v1.31参照を更新。
+- 1.27: Detailed Design §9.4.1 / §9.4.2のPosition-Writer Epoch、Correction Swept AABB、Candidate Union、VT / EE Correction Motion CCD、Contact Set refresh、pseudo-timeと物理TOI / Impulseの分離をRuntime Pass順へ同期。
 - 1.25: Basic Design v1.23 / Detailed Design v1.28との相互参照を同期。Runtime実行契約に変更なし.
 - 1.24: Basic Design v1.22 / Detailed Design v1.27 / Numerical Acceptance Profile v1.19の相互参照を同期。Runtime実行契約に変更なし。
 - 1.23: Basic Design v1.21 / Detailed Design v1.26 / Numerical Acceptance Profile v1.18の相互参照を同期。Runtime実行契約に変更なし。
