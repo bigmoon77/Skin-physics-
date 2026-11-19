@@ -1701,6 +1701,84 @@ namespace
             triangle_bounds.maximum.y > 1.0f,
             "Per-primitive Correction Swept AABBs must enclose all paths and half-thickness expansion.");
 
+        skin_physics::physics::collision_aabb segment_envelope;
+        require(skin_physics::physics::union_correction_envelope_aabb(
+            point_bounds, triangle_bounds, segment_envelope),
+            "Physical and correction per-primitive AABBs must form a valid Segment envelope.");
+        require(segment_envelope.minimum.x <= point_bounds.minimum.x &&
+            segment_envelope.minimum.x <= triangle_bounds.minimum.x &&
+            segment_envelope.maximum.z >= point_bounds.maximum.z &&
+            segment_envelope.maximum.z >= triangle_bounds.maximum.z,
+            "Segment envelope union must enclose both physical and correction sweeps.");
+
+        using skin_physics::physics::correction_primitive_role;
+        std::vector<skin_physics::physics::correction_broadphase_primitive>
+            correction_primitives = {
+                { 100, 1, 0, correction_primitive_role::vertex, point_bounds },
+                { 200, 1, 1, correction_primitive_role::triangle, triangle_bounds },
+                { 300, 1, 2, correction_primitive_role::edge, point_bounds },
+                { 400, 1, 3, correction_primitive_role::edge, triangle_bounds }
+            };
+        skin_physics::physics::broadphase_settings correction_broadphase_settings;
+        correction_broadphase_settings.cell_size = 0.25f;
+        correction_broadphase_settings.contact_thickness = 0.0f;
+        correction_broadphase_settings.cell_record_capacity = 4096;
+        correction_broadphase_settings.candidate_capacity = 16;
+        correction_broadphase_settings.max_cells_per_primitive = 4096;
+        correction_broadphase_settings.self_collision_enabled = true;
+        const auto correction_broadphase =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                correction_primitives, {}, correction_broadphase_settings);
+        require(correction_broadphase.success &&
+            correction_broadphase.required_candidates == 2 &&
+            correction_broadphase.candidates.size() == 2,
+            "Correction Broadphase must map existing Spatial Hash pairs to VT / EE typed candidates.");
+        require(correction_broadphase.broadphase_candidate_count >=
+            correction_broadphase.required_candidates,
+            "Typed Correction Candidate count must not exceed the source Broadphase pair count.");
+        require(std::any_of(
+            correction_broadphase.candidates.begin(),
+            correction_broadphase.candidates.end(),
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+            {
+                return key.contact_type ==
+                    skin_physics::physics::correction_contact_type::vertex_triangle &&
+                    key.stable_id_a == 100 && key.stable_id_b == 200;
+            }),
+            "Correction Broadphase must preserve the canonical VT stable-ID pair.");
+        require(std::any_of(
+            correction_broadphase.candidates.begin(),
+            correction_broadphase.candidates.end(),
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+            {
+                return key.contact_type ==
+                    skin_physics::physics::correction_contact_type::edge_edge &&
+                    key.stable_id_a == 300 && key.stable_id_b == 400;
+            }),
+            "Correction Broadphase must preserve the canonical EE stable-ID pair.");
+
+        skin_physics::physics::broadphase_settings double_expansion_settings =
+            correction_broadphase_settings;
+        double_expansion_settings.contact_thickness = 0.02f;
+        const auto double_expansion_result =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                correction_primitives, {}, double_expansion_settings);
+        require(!double_expansion_result.success &&
+            !double_expansion_result.diagnostics.empty() &&
+            double_expansion_result.diagnostics[0].code ==
+                skin_physics::physics::collision_error::invalid_settings,
+            "Correction Broadphase must reject a non-zero second thickness expansion.");
+
+        skin_physics::physics::broadphase_settings correction_overflow_settings =
+            correction_broadphase_settings;
+        correction_overflow_settings.candidate_capacity = 0;
+        const auto correction_overflow =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                correction_primitives, {}, correction_overflow_settings);
+        require(!correction_overflow.success && correction_overflow.overflow &&
+            correction_overflow.candidates.empty(),
+            "Correction Broadphase overflow must not return a partial typed Candidate Set.");
+
         std::vector<skin_physics::physics::correction_vertex_motion> empty_sweep;
         require(!skin_physics::physics::build_correction_swept_aabb(
             empty_sweep, 0.02f, point_bounds),
