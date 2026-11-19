@@ -1,0 +1,212 @@
+{
+  "fixture_version": "1.0",
+  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications; they do not claim executable test coverage.",
+  "cases": [
+    {
+      "id": "DCR_45_TAU_ZERO",
+      "test_case": 45,
+      "input": {
+        "segment_start_dynamic_velocity": [
+          1.25,
+          -2,
+          0.5
+        ],
+        "tau_seconds": 0,
+        "segment_start_kinematic_trajectory_derivative": [
+          3,
+          0,
+          -4
+        ]
+      },
+      "expected": {
+        "dynamic_contact_pre_velocity": [
+          1.25,
+          -2,
+          0.5
+        ],
+        "kinematic_contact_pre_velocity": [
+          3,
+          0,
+          -4
+        ],
+        "zero_duration_prefix_created": false,
+        "velocity_reconstruction_divisions_by_tau": 0,
+        "residual_segment_created": false
+      }
+    },
+    {
+      "id": "DCR_46_BOUNDARY_IDENTITY",
+      "test_case": 46,
+      "input": {
+        "dispatch_attempt_id": 7,
+        "candidates": [
+          {
+            "candidate_id": "same_tau_segment_a_group_1",
+            "base_integration_segment_id": 11,
+            "canonical_tau_bits": "0x3e800000",
+            "contact_group_id": 1
+          },
+          {
+            "candidate_id": "same_tau_segment_a_group_2",
+            "base_integration_segment_id": 11,
+            "canonical_tau_bits": "0x3e800000",
+            "contact_group_id": 2
+          },
+          {
+            "candidate_id": "same_tau_residual_segment",
+            "base_integration_segment_id": 12,
+            "canonical_tau_bits": "0x3e800000",
+            "contact_group_id": 1
+          },
+          {
+            "candidate_id": "different_tau_same_segment",
+            "base_integration_segment_id": 11,
+            "canonical_tau_bits": "0x3e800001",
+            "contact_group_id": 3
+          }
+        ],
+        "retry_dispatch_attempt_id": 8,
+        "signed_zero_inputs": [
+          "-0.0",
+          "+0.0"
+        ],
+        "invalid_tau_inputs": [
+          "NaN",
+          "+Infinity",
+          "-Infinity"
+        ]
+      },
+      "expected": {
+        "same_segment_same_tau_groups_share_boundary": true,
+        "residual_segment_same_tau_has_distinct_boundary": true,
+        "different_tau_same_segment_has_distinct_boundary": true,
+        "retry_rebuilds_all_boundary_ids": true,
+        "negative_zero_canonical_bits": "0x00000000",
+        "non_finite_candidates_rejected": true
+      }
+    },
+    {
+      "id": "DCR_46_SNAP_ERROR_BUDGET",
+      "test_case": 46,
+      "input": {
+        "tau_snap_tolerance_seconds": 0.00001,
+        "tau_delta_seconds": 0.000005,
+        "position_error_components_m": {
+          "path_position": 0.0001,
+          "xpbd_response": 0.0001,
+          "xpbd_dt_sensitivity": 0.0001,
+          "both_solver_residuals": 0.0001
+        },
+        "distance_tolerance_m": 0.001,
+        "relative_velocity_error_components_m_per_s": {
+          "relative_acceleration": 0.0001,
+          "trajectory_derivative": 0.0001,
+          "xpbd_velocity_response": 0.0001,
+          "xpbd_dt_sensitivity": 0.0001
+        },
+        "relative_velocity_tolerance_m_per_s": 0.001,
+        "impulse_error_components_ns": {
+          "normal_scalar_effective_mass_restitution_bound": 0.02,
+          "normal_direction_max_impulse_ns": 4,
+          "normal_direction_angle_bound_radians": 0.01,
+          "friction_vector_bound": 0.015,
+          "coupled_solver_residual_bound": 0.005
+        },
+        "impulse_tolerance_ns": 0.1
+      },
+      "expected": {
+        "normal_direction_error_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
+        "total_impulse_error_bound_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 0.005",
+        "snap_allowed": true,
+        "mutation_variants_that_must_disable_snap": [
+          "position_error_exceeds_tolerance",
+          "xpbd_dt_sensitivity_bound_missing",
+          "relative_velocity_error_exceeds_tolerance",
+          "impulse_error_exceeds_tolerance",
+          "effective_mass_lower_eigenvalue_not_proven_positive",
+          "active_set_or_friction_projection_branch_not_enclosed",
+          "solver_residual_bound_missing",
+          "any_bound_non_finite"
+        ]
+      }
+    },
+    {
+      "id": "DCR_47_POOLED_RAW_SAMPLE_PERCENTILE",
+      "test_case": 47,
+      "input": {
+        "minimum_complete_independent_runs": 5,
+        "samples_per_metric_per_run": 1000,
+        "percentile_method": "nearest_rank",
+        "runs": [
+          {
+            "run_id": "run-001",
+            "independent_session_id": "session-001",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-002",
+            "independent_session_id": "session-002",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-003",
+            "independent_session_id": "session-003",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-004",
+            "independent_session_id": "session-004",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-005",
+            "independent_session_id": "session-005",
+            "sample_generator": {
+              "segments": [
+                {
+                  "count": 900,
+                  "value_ms": 1
+                },
+                {
+                  "count": 100,
+                  "value_ms": 100
+                }
+              ]
+            }
+          }
+        ],
+        "repeat_for_metrics": [
+          "frame_time",
+          "gpu_tick_time",
+          "cpu_submission_time"
+        ],
+        "required_raw_artifact_categories": [
+          "frame_time_samples",
+          "gpu_tick_samples",
+          "cpu_submission_samples"
+        ]
+      },
+      "expected": {
+        "pooled_sample_count_per_metric": 5000,
+        "pooled_p95_ms": 1,
+        "average_of_five_run_level_p95_ms_must_not_be_used": 20.8,
+        "reject_when_any_run_has_fewer_than_1000_samples": true,
+        "reject_when_fewer_than_five_complete_independent_runs": true,
+        "reject_when_any_raw_artifact_uri_missing": true,
+        "reject_duplicate_run_or_session_identity": true
+      }
+    }
+  ]
+}
