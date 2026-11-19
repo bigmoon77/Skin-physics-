@@ -354,7 +354,7 @@ Render Candidate Ring:
 
 - TOI Boundary IDは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)で一意化する。base_integration_segment_idはTOI後のResidual Segmentも含む各CCD時間原点に割り当てる。同じtauでも時間原点が異なれば別Boundaryとし、Contact Group数ではSplit Countを増やさない。tau=0はSegment開始Velocity / Trajectory Derivativeを使い、ゼロ時間Velocity Reconstructionを禁止する。
 - TOI Snapは時間差・CCD軌道位置誤差・XPBD適用後位置応答誤差・XPBD dt感度・接触相対Velocity誤差・Impact Impulse誤差を個別に保守Boundする。Fixtureごとの許容値と全Boundを証明できない場合はSnapせず正確なtauで内部Splitする。正確なtauの評価も不可能な場合だけCCDUnresolvedとする。
-- Deployment Profileは最低5回の独立Runを要求し、各Runで最低1000 Frame / GPU Tick / CPU Submission Sampleを保存する。p95はRaw Sampleを全RunでPoolして算出し、最大GPU Tick / Memoryは全Sampleの最大値を使う。Target Substep / Segmentは選択Hard Limit以下でなければqualifiedにしない。
+- Deployment Profileは最低5回の独立Runを要求し、各Runで最低1000 Frame / GPU Tick / CPU Submission Sampleを保存する。p95はRaw Sampleを全RunでPoolし、nearest_rank（昇順Sort後の1-based rank ceil(0.95*N)、補間なし）で算出する。最大GPU Tick / Memoryは全Sampleの最大値を使う。Target Substep / Segmentは選択Hard Limit以下でなければqualifiedにしない。
 
 - Deployment Capability Profile qualificationは、対象FPS 3～40、Target Frame / GPU Tick / CPU Submission Budget、Performance / Memory Headroom、最小測定回数を測定前に宣言して行う。p95 Frame / CPU Submission、最大GPU Tick、Peak Library GPU MemoryがHeadroom適用後のBudgetを満たし、Correctness Gateを全て通るTrialだけを採用する。Workload Envelope / Hard Limit / Timing Summaryは同一Trialから採用し、異なるTrialのDimension最大値を合成しない。詳細はRuntime Gate R6とProfile Template v1.4を正とする。
 
