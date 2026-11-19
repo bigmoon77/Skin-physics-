@@ -1190,7 +1190,7 @@ G_internal / G_contact / G_vの区間評価は外向き丸め付きInterval / Af
 
 **Impact Impulse Error Bound（Normative）**
 
-Impulse誤差はContact Effective Mass等の個別値の差を列挙するだけでは証明できない。Candidate時刻とSnap先時刻の両方を含む入力不確かさ集合 U を構築し、同じ決定的な有限反復Contact Solver FをU全域で評価する。FはContact Island内のCoupled Normal / Tangential Impulse、XPBD Support Impulse、Restitution、Friction Projectionおよび固定反復順序を含む。
+Impulse誤差はContact Effective Mass等の個別値の差を列挙するだけでは証明できない。Candidate時刻とSnap先時刻の両方を含む入力不確かさ集合 U を構築し、同じ決定的な有限反復Contact Solver FをU全域で評価する。FはContact Island内のCoupled Normal / Tangential Impulse、XPBD Support Impulse、Restitution、Friction Projectionおよび固定反復順序を含む。 Candidate / BoundaryのContact-relative Velocity入力は、内部制約後かつContact Position Constraints前に保存したG_vから取得する。Contact geometry / positionはG_contact後の状態を用いてよいが、Contact Position correctionを使ってVelocityを再構築してはならない。
 
     E_impulse = sup { || F(z) - F(z_boundary) ||_2 : z in U }
 
@@ -1619,7 +1619,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.17）
 
-本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～41は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
+本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～47は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
 - 配布Targetは既存のSkinPhysics Visual Studio Static Libraryとし、.sln / .vcxprojを正規Build手段にする。CMakeを必須にしない。
 - HostがD3D11 Device / Immediate Contextを生成・破棄する。RuntimeはCOM参照を保持してGPU Resourceを管理する。Host RendererとRuntimeは単一Submission ThreadでImmediate Contextを共有する。
