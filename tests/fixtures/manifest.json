@@ -642,6 +642,7 @@
         "fixture_ids": [
           "DCR_49_VT_POINT_THROUGH_TRIANGLE",
           "DCR_49_EE_EDGE_THROUGH_EDGE",
+          "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE",
           "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY",
           "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT",
           "DCR_49_VT_CERTIFIED_MISS",
@@ -654,12 +655,12 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; missing_correction_interval_certificates_fail_closed",
+    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; negative_signed_side_interval_vector_added; missing_correction_interval_certificates_fail_closed",
     "fixture_version": "1.9",
     "additional_fixture_bundles": [
       {
         "path": "design_review/correction_sweep_broadphase.json",
-        "fixture_version": "1.0",
+        "fixture_version": "1.1",
         "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
       }
     ]
