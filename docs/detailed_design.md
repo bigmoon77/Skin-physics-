@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.20
+- 文書バージョン: 1.21
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.15
+- 対応基本設計: basic_design.md 1.16
 - Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.17
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.12
-- 前版: 1.19
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.13
+- 前版: 1.20
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1150,8 +1150,9 @@ Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_
 Candidate tauとSnap先時刻t_bの差をdelta_t=abs(tau-t_b)とする。Snap可否は次の保守的誤差BoundをCandidate / Snap先ごとに算出する。
 
     E_path_position = v_bound * delta_t + kinematic_path_deviation_bound
-    E_xpbd_position = certified_bound_from_G_p
+    E_xpbd_position = E_Gcontact + r_p_candidate + r_p_boundary
     E_total_position = E_path_position + E_xpbd_position
+    E_xpbd_velocity = E_Gv + r_v_candidate + r_v_boundary
     E_relative_velocity = relative_acceleration_bound * delta_t
                          + trajectory_derivative_error_bound
                          + E_xpbd_velocity
@@ -1181,6 +1182,8 @@ zはSolver入力全体を表し、少なくともSegment開始Position / Velocit
 
     E_xpbd_position = E_Gcontact + r_p_candidate + r_p_boundary
     E_xpbd_velocity = E_Gv + r_v_candidate + r_v_boundary
+
+The equations at the start of this section use these exact definitions: position error is evaluated from the final G_contact map, while velocity error is evaluated from the saved Pre-contact Velocity map G_v. G_p is not part of the normative map contract.
 
 E_xpbd_positionはContact Position Constraints後の最終Position誤差を使う。E_xpbd_velocityはContact Position Constraints前に保存されたPre-contact Velocity誤差を使う。E_GinternalはG_contactおよびG_vの中間状態・依存入力の区間伝播を監査するために必ず評価対象へ含める。Contact Impulse / Restitution / FrictionによるVelocity差はE_Gvへ混ぜず、Impact Impulse Error Boundの完全Contact Solver Fで別に評価する。
 
@@ -1596,6 +1599,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.21: Corrected the normative TOI equations to use E_Gcontact and E_Gv with candidate / boundary residuals; removed the stale G_p reference and made the map-to-error-budget binding explicit.
 - 1.20: XPBD写像をG_internal / G_contact / G_vへ分離し、Pre-contact Velocity保存とContact Position correctionの順序を一致。Snap Fixtureを証明未添付時にFail-closedとし、tau=0 / tau=dt端点、Tangential Delassus / Cross Block / Tangent Basis / XPBD Support Impulse入力を追加。Basic / Runtime / Profileの相互参照と履歴を統合。
 - 1.19: XPBD Snap誤差を有限反復Solver写像の不確かさ集合上の差として定義。tau=0の全長Continuation Segmentと、Split Count / 追加Segment Count / Admission下限を分離。
 - 1.18: Contact IslandのCoupled Normal / Tangential Impulseを完全な有限反復Solver写像で評価する契約を追加し、非対角Delassus MatrixへのScalar式流用を禁止。Candidate / Boundary双方のBranchとResidualをSnap判定へ含める。
