@@ -633,9 +633,9 @@
     "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
   },
   "latest_ci_attempt": {
-    "commit": "101a13da08eb3b77f703bf819caad1602baeadc2",
-    "workflow_run_id": 44458786731,
-    "job_id": 135340248921,
+    "commit": "b6b7652b52f59ff2400465dec2a37e776507df4f",
+    "workflow_run_id": 44459042756,
+    "job_id": 135341068346,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
@@ -645,6 +645,6 @@
     "build": "not_verified",
     "tests": "not_started",
     "classification": "failed_before_any_reported_job_step",
-    "note": "The latest available workflow run for this design update failed before reporting any job steps. The job-step endpoint returned an empty steps array; runner identity and the underlying pre-step cause are unavailable. No compiler or test result exists, so this run is not evidence of a source-code regression."
+    "note": "The workflow run for this exact branch head failed before reporting any job steps. The job-step endpoint returned an empty steps array; runner identity and the underlying pre-step cause are unavailable. No compiler or test result exists, so this run is not evidence of a source-code regression."
   }
 }
