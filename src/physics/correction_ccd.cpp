@@ -2018,6 +2018,375 @@ namespace skin_physics::physics
         return result;
     }
 
+    correction_writer_epoch_result process_correction_position_writer_epoch(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        uint32_t position_writer_epoch_id,
+        const std::vector<correction_primitive_epoch_input>& primitives,
+        const std::vector<broadphase_mesh_pair>& mesh_pairs,
+        const broadphase_settings& broadphase_settings,
+        const correction_ccd_settings& ccd_settings)
+    {
+        correction_writer_epoch_result result;
+        result.candidate_generation = state.candidate_generation;
+        result.position_writer_epoch_generation =
+            state.position_writer_epoch_generation;
+
+        if (base_integration_segment_id == 0 ||
+            state.base_integration_segment_id != base_integration_segment_id)
+        {
+            result.status = correction_writer_epoch_status::rejected;
+            result.diagnostic =
+                "Position-Writer Epoch belongs to a different Integration Segment.";
+            return result;
+        }
+        if (position_writer_epoch_id == 0 ||
+            position_writer_epoch_id <= state.last_position_writer_epoch_id)
+        {
+            result.status = correction_writer_epoch_status::rejected;
+            result.diagnostic =
+                "Position-Writer Epoch ID must be non-zero and strictly increasing.";
+            return result;
+        }
+        if (!std::isfinite(ccd_settings.contact_thickness) ||
+            ccd_settings.contact_thickness < 0.0f ||
+            !std::isfinite(ccd_settings.distance_tolerance) ||
+            ccd_settings.distance_tolerance < 0.0f ||
+            !std::isfinite(ccd_settings.epsilon_length) ||
+            ccd_settings.epsilon_length <= 0.0f ||
+            ccd_settings.maximum_interval_evaluations == 0 ||
+            ccd_settings.maximum_interval_evaluations > 32)
+        {
+            result.status = correction_writer_epoch_status::rejected;
+            result.diagnostic =
+                "Position-Writer Epoch has invalid Correction CCD settings.";
+            return result;
+        }
+        if (broadphase_settings.contact_thickness != 0.0f)
+        {
+            result.status = correction_writer_epoch_status::rejected;
+            result.diagnostic =
+                "Position-Writer Epoch Broadphase requires pre-expanded AABBs and zero secondary Contact Thickness expansion.";
+            return result;
+        }
+
+        using primitive_key = std::tuple<uint64_t, uint32_t, uint32_t>;
+        std::map<primitive_key, std::size_t> primitive_lookup;
+        std::vector<correction_broadphase_primitive> broadphase_primitives;
+        broadphase_primitives.reserve(primitives.size());
+
+        for (std::size_t index = 0; index < primitives.size(); ++index)
+        {
+            const correction_primitive_epoch_input& primitive = primitives[index];
+            std::size_t expected_vertex_count = 0;
+            switch (primitive.role)
+            {
+            case correction_primitive_role::vertex:
+                expected_vertex_count = 1;
+                break;
+            case correction_primitive_role::triangle:
+                expected_vertex_count = 3;
+                break;
+            case correction_primitive_role::edge:
+                expected_vertex_count = 2;
+                break;
+            default:
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Position-Writer Epoch contains an unknown Primitive Role.";
+                return result;
+            }
+
+            if (primitive.vertex_motions.size() != expected_vertex_count ||
+                primitive.segment_start_positions.size() != expected_vertex_count)
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Position-Writer Epoch Primitive vertex count does not match its declared role.";
+                return result;
+            }
+
+            const primitive_key key = {
+                primitive.stable_id, primitive.mesh_id, primitive.primitive_id
+            };
+            if (!primitive_lookup.emplace(key, index).second)
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Position-Writer Epoch contains duplicate Stable / Mesh / Primitive identity.";
+                return result;
+            }
+
+            for (std::size_t vertex_index = 0;
+                vertex_index < expected_vertex_count; ++vertex_index)
+            {
+                if (!finite(primitive.vertex_motions[vertex_index].before) ||
+                    !finite(primitive.vertex_motions[vertex_index].after) ||
+                    !finite(primitive.segment_start_positions[vertex_index]))
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic =
+                        "Position-Writer Epoch contains a non-finite before / after / Segment-start position.";
+                    return result;
+                }
+            }
+
+            collision_aabb bounds;
+            if (!build_correction_swept_aabb(
+                    primitive.vertex_motions,
+                    ccd_settings.contact_thickness,
+                    bounds))
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Correction Swept AABB could not conservatively enclose a Position-Writer Epoch Primitive.";
+                result.diagnostics.push_back({
+                    collision_error::invalid_geometry,
+                    static_cast<uint32_t>(index),
+                    result.diagnostic
+                });
+                return result;
+            }
+
+            correction_broadphase_primitive broadphase_primitive;
+            broadphase_primitive.stable_id = primitive.stable_id;
+            broadphase_primitive.mesh_id = primitive.mesh_id;
+            broadphase_primitive.primitive_id = primitive.primitive_id;
+            broadphase_primitive.role = primitive.role;
+            broadphase_primitive.envelope_bounds = bounds;
+            broadphase_primitives.push_back(broadphase_primitive);
+        }
+
+        const correction_broadphase_result broadphase =
+            generate_correction_broadphase_candidates(
+                broadphase_primitives, mesh_pairs, broadphase_settings);
+        result.required_cell_records = broadphase.required_cell_records;
+        result.required_candidates = broadphase.required_candidates;
+        result.capacity_overflow = broadphase.overflow;
+        result.diagnostics = broadphase.diagnostics;
+        if (!broadphase.success)
+        {
+            result.status = broadphase.overflow
+                ? correction_writer_epoch_status::blocked
+                : correction_writer_epoch_status::rejected;
+            result.diagnostic = broadphase.overflow
+                ? "Correction Broadphase Capacity is insufficient; the Epoch Reservation must be retried without partial state."
+                : "Correction Broadphase could not prove a complete Candidate Set.";
+            return result;
+        }
+
+        correction_segment_candidate_state next_state = state;
+        const correction_segment_candidate_update_result begin_result =
+            begin_correction_position_writer_epoch(
+                next_state, base_integration_segment_id,
+                position_writer_epoch_id);
+        if (!begin_result.success)
+        {
+            result.status = correction_writer_epoch_status::rejected;
+            result.diagnostic = begin_result.diagnostic;
+            return result;
+        }
+
+        for (const correction_candidate_pair_key& candidate : broadphase.candidates)
+        {
+            const primitive_key key_a = {
+                candidate.stable_id_a, candidate.mesh_a, candidate.primitive_a
+            };
+            const primitive_key key_b = {
+                candidate.stable_id_b, candidate.mesh_b, candidate.primitive_b
+            };
+            const auto iterator_a = primitive_lookup.find(key_a);
+            const auto iterator_b = primitive_lookup.find(key_b);
+            if (iterator_a == primitive_lookup.end() ||
+                iterator_b == primitive_lookup.end())
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Correction Broadphase emitted a Candidate outside the Position-Writer Epoch input.";
+                return result;
+            }
+
+            const correction_primitive_epoch_input& primitive_a =
+                primitives[iterator_a->second];
+            const correction_primitive_epoch_input& primitive_b =
+                primitives[iterator_b->second];
+            correction_ccd_result ccd_result;
+
+            if (candidate.contact_type ==
+                correction_contact_type::vertex_triangle)
+            {
+                const correction_primitive_epoch_input* point_primitive = nullptr;
+                const correction_primitive_epoch_input* triangle_primitive = nullptr;
+                if (primitive_a.role == correction_primitive_role::vertex &&
+                    primitive_b.role == correction_primitive_role::triangle)
+                {
+                    point_primitive = &primitive_a;
+                    triangle_primitive = &primitive_b;
+                }
+                else if (primitive_b.role == correction_primitive_role::vertex &&
+                    primitive_a.role == correction_primitive_role::triangle)
+                {
+                    point_primitive = &primitive_b;
+                    triangle_primitive = &primitive_a;
+                }
+                if (point_primitive == nullptr || triangle_primitive == nullptr)
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic =
+                        "Correction VT Candidate roles do not contain exactly one Vertex and one Triangle.";
+                    return result;
+                }
+
+                vertex_triangle_correction_motion motion;
+                motion.point = point_primitive->vertex_motions[0];
+                motion.segment_start_point =
+                    point_primitive->segment_start_positions[0];
+                for (std::size_t index = 0; index < 3; ++index)
+                {
+                    motion.triangle[index] =
+                        triangle_primitive->vertex_motions[index];
+                    motion.segment_start_triangle[index] =
+                        triangle_primitive->segment_start_positions[index];
+                }
+
+                ccd_result = detect_vertex_triangle_correction_motion(
+                    motion, ccd_settings);
+                result.correction_ccd_results.push_back({ candidate, ccd_result });
+                if (ccd_result.status != correction_ccd_status::no_hit &&
+                    ccd_result.status != correction_ccd_status::hit)
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic = ccd_result.status ==
+                        correction_ccd_status::path_crossing
+                        ? "CorrectionPathCrossing rejected the Position-Writer Epoch."
+                        : "CorrectionCcdUnresolved rejected the Position-Writer Epoch.";
+                    return result;
+                }
+
+                if (ccd_result.status == correction_ccd_status::hit)
+                {
+                    const std::array<asset::vec3, 3> final_triangle = {
+                        triangle_primitive->vertex_motions[0].after,
+                        triangle_primitive->vertex_motions[1].after,
+                        triangle_primitive->vertex_motions[2].after
+                    };
+                    const vertex_triangle_contact final_contact =
+                        find_vertex_triangle_contact(
+                            point_primitive->vertex_motions[0].after,
+                            final_triangle,
+                            ccd_settings.contact_thickness);
+                    if (!final_contact.valid)
+                    {
+                        result.status = correction_writer_epoch_status::rejected;
+                        result.diagnostic =
+                            "Final Discrete VT Narrowphase could not validate a Correction Hit Candidate.";
+                        return result;
+                    }
+                    if (final_contact.hit)
+                    {
+                        result.active_contacts.push_back(candidate);
+                    }
+                }
+            }
+            else if (candidate.contact_type ==
+                correction_contact_type::edge_edge)
+            {
+                if (primitive_a.role != correction_primitive_role::edge ||
+                    primitive_b.role != correction_primitive_role::edge)
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic =
+                        "Correction EE Candidate roles must both be Edges.";
+                    return result;
+                }
+
+                edge_edge_correction_motion motion;
+                for (std::size_t index = 0; index < 2; ++index)
+                {
+                    motion.edge_a[index] = primitive_a.vertex_motions[index];
+                    motion.edge_b[index] = primitive_b.vertex_motions[index];
+                    motion.segment_start_edge_a[index] =
+                        primitive_a.segment_start_positions[index];
+                    motion.segment_start_edge_b[index] =
+                        primitive_b.segment_start_positions[index];
+                }
+
+                ccd_result = detect_edge_edge_correction_motion(
+                    motion, ccd_settings);
+                result.correction_ccd_results.push_back({ candidate, ccd_result });
+                if (ccd_result.status != correction_ccd_status::no_hit &&
+                    ccd_result.status != correction_ccd_status::hit)
+                {
+                    result.status = correction_writer_epoch_status::rejected;
+                    result.diagnostic = ccd_result.status ==
+                        correction_ccd_status::path_crossing
+                        ? "CorrectionPathCrossing rejected the Position-Writer Epoch."
+                        : "CorrectionCcdUnresolved rejected the Position-Writer Epoch.";
+                    return result;
+                }
+
+                if (ccd_result.status == correction_ccd_status::hit)
+                {
+                    const std::array<asset::vec3, 2> final_edge_a = {
+                        primitive_a.vertex_motions[0].after,
+                        primitive_a.vertex_motions[1].after
+                    };
+                    const std::array<asset::vec3, 2> final_edge_b = {
+                        primitive_b.vertex_motions[0].after,
+                        primitive_b.vertex_motions[1].after
+                    };
+                    const edge_edge_contact final_contact = find_edge_edge_contact(
+                        final_edge_a, final_edge_b,
+                        ccd_settings.contact_thickness);
+                    if (!final_contact.valid)
+                    {
+                        result.status = correction_writer_epoch_status::rejected;
+                        result.diagnostic =
+                            "Final Discrete EE Narrowphase could not validate a Correction Hit Candidate.";
+                        return result;
+                    }
+                    if (final_contact.hit)
+                    {
+                        result.active_contacts.push_back(candidate);
+                    }
+                }
+            }
+            else
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Correction Broadphase returned an unsupported Contact Type.";
+                return result;
+            }
+        }
+
+        const correction_segment_candidate_update_result candidate_update =
+            merge_correction_position_writer_epoch_candidates(
+                next_state,
+                base_integration_segment_id,
+                position_writer_epoch_id,
+                broadphase.candidates,
+                broadphase_settings.candidate_capacity);
+        result.required_candidates = candidate_update.required_count;
+        result.capacity_overflow = candidate_update.capacity_overflow;
+        if (!candidate_update.success)
+        {
+            result.status = candidate_update.capacity_overflow
+                ? correction_writer_epoch_status::blocked
+                : correction_writer_epoch_status::rejected;
+            result.diagnostic = candidate_update.diagnostic;
+            return result;
+        }
+
+        result.candidate_generation = next_state.candidate_generation;
+        result.position_writer_epoch_generation =
+            next_state.position_writer_epoch_generation;
+        result.status = correction_writer_epoch_status::accepted;
+        result.state_committed = true;
+        state = std::move(next_state);
+        return result;
+    }
+
     correction_ccd_result detect_vertex_triangle_correction_motion(
         const vertex_triangle_correction_motion& motion,
         const correction_ccd_settings& settings)
