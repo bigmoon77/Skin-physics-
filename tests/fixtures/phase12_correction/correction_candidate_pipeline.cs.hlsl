@@ -238,6 +238,20 @@ void correction_candidate_count(uint3 dispatch_id : SV_DispatchThreadID)
         InterlockedOr(correction_candidate_totals[1], 2u, previous);
         return;
     }
+    bool valid_role_a =
+        (primitive_a.role == 0u && primitive_a.vertex_count == 1u) ||
+        (primitive_a.role == 1u && primitive_a.vertex_count == 3u) ||
+        (primitive_a.role == 2u && primitive_a.vertex_count == 2u);
+    bool valid_role_b =
+        (primitive_b.role == 0u && primitive_b.vertex_count == 1u) ||
+        (primitive_b.role == 1u && primitive_b.vertex_count == 3u) ||
+        (primitive_b.role == 2u && primitive_b.vertex_count == 2u);
+    if (!valid_role_a || !valid_role_b)
+    {
+        uint previous = 0u;
+        InterlockedOr(correction_candidate_totals[1], 2u, previous);
+        return;
+    }
 
     uint contact_type = 0xffffffffu;
     if (!correction_pair_type(primitive_a, primitive_b, contact_type))
