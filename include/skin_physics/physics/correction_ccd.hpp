@@ -274,6 +274,8 @@ namespace skin_physics::physics
         uint64_t position_writer_epoch_generation = 0;
         std::size_t required_cell_records = 0;
         std::size_t required_candidates = 0;
+        std::size_t required_contacts = 0;
+        std::size_t required_vertex_contact_indices = 0;
         bool capacity_overflow = false;
         std::vector<correction_writer_epoch_ccd_record> correction_ccd_results;
         std::vector<correction_candidate_pair_key> active_contacts;
