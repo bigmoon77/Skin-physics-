@@ -241,6 +241,21 @@ namespace skin_physics::physics
             return interval_multiply(value, exact_interval(scalar));
         }
 
+        interval interval_divide_positive(
+            const interval& numerator,
+            const interval& denominator)
+        {
+            if (!numerator.valid || !denominator.valid ||
+                denominator.lower <= 0.0L)
+            {
+                return { 0.0L, 0.0L, false };
+            }
+            const interval reciprocal = make_interval(
+                round_down(one / denominator.upper),
+                round_up(one / denominator.lower));
+            return interval_multiply(numerator, reciprocal);
+        }
+
         interval interval_square(const interval& value)
         {
             if (!value.valid) return { 0.0L, 0.0L, false };
@@ -907,6 +922,42 @@ namespace skin_physics::physics
                     return side_proof_status::unresolved;
                 }
 
+                if (bounds.feature_mapping_required)
+                {
+                    if (!bounds.feature_parameter_a.valid ||
+                        !bounds.feature_parameter_b.valid ||
+                        bounds.feature_parameter_a.upper <=
+                            bounds.feature_parameter_tolerance_a ||
+                        bounds.feature_parameter_a.lower >=
+                            one - bounds.feature_parameter_tolerance_a ||
+                        bounds.feature_parameter_b.upper <=
+                            bounds.feature_parameter_tolerance_b ||
+                        bounds.feature_parameter_b.lower >=
+                            one - bounds.feature_parameter_tolerance_b)
+                    {
+                        return side_proof_status::unresolved;
+                    }
+                    if (bounds.feature_parameter_a.lower <=
+                            bounds.feature_parameter_tolerance_a ||
+                        bounds.feature_parameter_a.upper >=
+                            one - bounds.feature_parameter_tolerance_a ||
+                        bounds.feature_parameter_b.lower <=
+                            bounds.feature_parameter_tolerance_b ||
+                        bounds.feature_parameter_b.upper >=
+                            one - bounds.feature_parameter_tolerance_b)
+                    {
+                        const real midpoint =
+                            (current.lower + current.upper) * 0.5L;
+                        if (midpoint <= current.lower || midpoint >= current.upper)
+                        {
+                            return side_proof_status::unresolved;
+                        }
+                        pending.push_back({ current.lower, midpoint });
+                        pending.push_back({ midpoint, current.upper });
+                        continue;
+                    }
+                }
+
                 // The signed separation inequalities are meaningful only while
                 // the complete interval proves a non-degenerate Normal in the
                 // reference Normal's positive hemisphere.
@@ -944,6 +995,11 @@ namespace skin_physics::physics
             interval alignment;
             interval normal_length;
             interval phi;
+            interval feature_parameter_a;
+            interval feature_parameter_b;
+            real feature_parameter_tolerance_a = 0.0L;
+            real feature_parameter_tolerance_b = 0.0L;
+            bool feature_mapping_required = false;
         };
 
         side_interval_bounds make_side_interval(
@@ -959,6 +1015,102 @@ namespace skin_physics::physics
             const interval signed_numerator = interval_scale(
                 interval_dot(oriented_normal, separation_vector),
                 static_cast<real>(side_sign));
+            const interval tolerance_term = interval_scale(
+                result.normal_length, distance_tolerance);
+            result.phi = interval_add(signed_numerator, tolerance_term);
+            return result;
+        }
+
+        side_interval_bounds make_ee_side_interval(
+            const interval_vector3& edge_a0,
+            const interval_vector3& edge_a1,
+            const interval_vector3& edge_b0,
+            const interval_vector3& edge_b1,
+            const vector3& reference_normal,
+            int8_t side_sign,
+            real distance_tolerance,
+            real epsilon_length)
+        {
+            side_interval_bounds result;
+            result.feature_mapping_required = true;
+
+            const interval_vector3 direction_a =
+                interval_difference(edge_a1, edge_a0);
+            const interval_vector3 direction_b =
+                interval_difference(edge_b1, edge_b0);
+            const interval_vector3 relative =
+                interval_difference(edge_a0, edge_b0);
+
+            const interval length_a_squared =
+                interval_dot(direction_a, {
+                    direction_a.x, direction_a.y, direction_a.z
+                });
+            const interval length_b_squared =
+                interval_dot(direction_b, {
+                    direction_b.x, direction_b.y, direction_b.z
+                });
+            const interval direction_dot =
+                interval_add(interval_add(
+                    interval_multiply(direction_a.x, direction_b.x),
+                    interval_multiply(direction_a.y, direction_b.y)),
+                    interval_multiply(direction_a.z, direction_b.z));
+            const interval relative_a =
+                interval_add(interval_add(
+                    interval_multiply(direction_a.x, relative.x),
+                    interval_multiply(direction_a.y, relative.y)),
+                    interval_multiply(direction_a.z, relative.z));
+            const interval relative_b =
+                interval_add(interval_add(
+                    interval_multiply(direction_b.x, relative.x),
+                    interval_multiply(direction_b.y, relative.y)),
+                    interval_multiply(direction_b.z, relative.z));
+
+            const interval denominator = interval_subtract(
+                interval_multiply(length_a_squared, length_b_squared),
+                interval_square(direction_dot));
+            const real minimum_denominator =
+                epsilon_length * epsilon_length *
+                epsilon_length * epsilon_length;
+            if (!denominator.valid ||
+                denominator.lower <= minimum_denominator)
+            {
+                result.feature_parameter_a = { 0.0L, 0.0L, false };
+                result.feature_parameter_b = { 0.0L, 0.0L, false };
+                return result;
+            }
+
+            const interval numerator_a = interval_subtract(
+                interval_multiply(direction_dot, relative_b),
+                interval_multiply(relative_a, length_b_squared));
+            const interval numerator_b = interval_subtract(
+                interval_multiply(length_a_squared, relative_b),
+                interval_multiply(direction_dot, relative_a));
+            result.feature_parameter_a =
+                interval_divide_positive(numerator_a, denominator);
+            result.feature_parameter_b =
+                interval_divide_positive(numerator_b, denominator);
+
+            const interval edge_a_length = interval_sqrt(length_a_squared);
+            const interval edge_b_length = interval_sqrt(length_b_squared);
+            if (!edge_a_length.valid || !edge_b_length.valid ||
+                edge_a_length.lower <= epsilon_length ||
+                edge_b_length.lower <= epsilon_length)
+            {
+                result.feature_parameter_a.valid = false;
+                result.feature_parameter_b.valid = false;
+                return result;
+            }
+            result.feature_parameter_tolerance_a =
+                epsilon_length / edge_a_length.lower;
+            result.feature_parameter_tolerance_b =
+                epsilon_length / edge_b_length.lower;
+
+            const interval_vector3 normal =
+                interval_cross(direction_a, direction_b);
+            result.alignment = interval_dot(normal, reference_normal);
+            result.normal_length = interval_vector_length(normal);
+            const interval signed_numerator = interval_scale(
+                interval_dot(normal, relative), static_cast<real>(side_sign));
             const interval tolerance_term = interval_scale(
                 result.normal_length, distance_tolerance);
             result.phi = interval_add(signed_numerator, tolerance_term);
@@ -1365,15 +1517,16 @@ namespace skin_physics::physics
                     interval_motion(motion.edge_b[0], range);
                 const interval_vector3 b1 =
                     interval_motion(motion.edge_b[1], range);
-                const interval_vector3 direction_a = interval_difference(a1, a0);
-                const interval_vector3 direction_b = interval_difference(b1, b0);
-                const interval_vector3 normal = interval_scale_vector(
-                    interval_cross(direction_a, direction_b),
-                    static_cast<real>(orientation_sign));
-                const interval_vector3 separation = interval_difference(a0, b0);
-                return make_side_interval(
-                    normal, separation, reference_normal, side_sign,
-                    settings.distance_tolerance);
+                const side_interval_bounds bounds = make_ee_side_interval(
+                    a0, a1, b0, b1, reference_normal, side_sign,
+                    settings.distance_tolerance, settings.epsilon_length);
+                side_interval_bounds oriented_bounds = bounds;
+                if (orientation_sign < 0)
+                {
+                    oriented_bounds.alignment = interval_scale(
+                        oriented_bounds.alignment, -1.0L);
+                }
+                return oriented_bounds;
             });
 
         if (side_status == side_proof_status::crossing)
