@@ -57,7 +57,7 @@ sequenceDiagram
     S->>S: move one fixed dt from Accumulator to Tick Reservation; pin Input / Packet Version
     S->>G: submit reserved sequence + immutable input snapshot
     G->>G: preflight World Substep / Animation / Force / Impulse segment count
-    Note over S,G: Work Budget over cap -> WORK_BUDGET_EXCEEDED; keep same Reservation / Packet Version / required-work counts, no Physics Dispatch
+    Note over S,G: CPU Preflight over cap -> BLOCKED / cpu_preflight; exact planned counts enter CPU Status Queue, no Physics Dispatch / Event Query; unused Query and Render Candidate slots are released
     G->>D: predecessor / State Generation gate
     G->>D: upload immutable Animation Trajectory Span Packets / Collider Records + Bounds
     G->>D: initialize per-World Mutable Span Cursor Buffer from Tick Reservation
@@ -99,7 +99,7 @@ sequenceDiagram
     H->>API: release_render_bindings(world, lease_generation)
 ```
 
-The loop body is executed per World Integration Segment, not once per Solver independently. Before GPU Physics Dispatch, CPU preflight counts World Substep / Animation Span / Force / Impulse boundaries against maximum_integration_segments_per_tick (default 512), after Render / Query Slot reservation and Tick Reservation creation. A TOI-created residual Segment increments the same counter before dispatch. Exceeding the cap returns WORK_BUDGET_EXCEEDED, preserves the same Tick Reservation / Packet Version and never coalesces distinct boundary times. For CCD, the TOI prefix state must be sampled from the same semi-implicit discrete path used by Conservative Advancement; do not re-predict the prefix using dt=tau, because that changes the path. Kinematic endpoint chords are used only as conservative Swept AABB reference shapes expanded by the full-interval deviation bound. Conservative Advancement / TOI positions evaluate the exact Animation / Rigid Transform Trajectory at tau and use its conservative interval speed bound; Contact Relative Velocity uses the exact trajectory derivative. A World Substep is split at Animation Span Key / Loop / Blend Weight / Root Transform boundaries, Force start/end, one-shot Impulse time, and TOI. contact_max_substep_delta_time=0 means +infinity / no Contact-specific cap; otherwise it participates in the minimum World dt. At Segment Begin the Runtime captures the shared start state, selects the immutable Animation Trajectory Packet / Bound Version, evaluates target / velocity at boundaries, and distributes constant Force for the interval. The GPU evaluator also evaluates the exact packet at arbitrary TOI tau. Impulse Event at the start is consumed exactly once. Soft Body evaluates FEM / Kelvin-Voigt forces from that Segment start state; Cloth evaluates its external force input. Both use the common Segment integration rule in detailed_design.md §6.6. After non-contact internal XPBD constraints and before Contact Position XPBD, only Dynamic Vertex velocity is reconstructed from segment displacement and saved as v_pre_contact. Contact Position correction changes Position only and never participates in velocity reconstruction; friction / restitution use the saved v_pre_contact plus the exact Kinematic Trajectory Velocity. Contacts with W_eff <= epsilon_inverse_mass are skipped as non-responsive; all other contacts are solved together by Projected Jacobi iterations and Gather, with Commit gated on residual convergence. Fixed / Kinematic Vertex retains the Animation Interface's prescribed derivative and is never modified by contact impulses. An Impact-updated Dynamic Velocity becomes the next Segment's start velocity.
+The loop body is executed per World Integration Segment, not once per Solver independently. Before GPU Physics Dispatch, CPU Preflight counts World Substeps and planned Animation Span / Force / Impulse boundary Segments against the Admission Limits after Tick Reservation creation. A CPU Preflight overrun enters BLOCKED with origin cpu_preflight and exact planned_substeps / planned_integration_segments in the CPU Status Queue; it issues no Physics Upload / Dispatch / Event Query and releases unused Query / Render Candidate slots. poll() returns this CPU result synchronously. A TOI-created residual Segment is counted only when discovered during GPU execution. If it exceeds the Admission Limit, GPU reports executed_integration_segments and minimum_required_integration_segments, where the latter is a proven lower bound that excludes undiscovered later TOIs. GPU Dynamic TOI status is returned through Status Buffer + Event Query. Both paths preserve the same Tick Reservation / Packet Version and never coalesce distinct boundary times. For CCD, the TOI prefix state must be sampled from the same semi-implicit discrete path used by Conservative Advancement; do not re-predict the prefix using dt=tau, because that changes the path. Kinematic endpoint chords are used only as conservative Swept AABB reference shapes expanded by the full-interval deviation bound. Conservative Advancement / TOI positions evaluate the exact Animation / Rigid Transform Trajectory at tau and use its conservative interval speed bound; Contact Relative Velocity uses the exact trajectory derivative. A World Substep is split at Animation Span Key / Loop / Blend Weight / Root Transform boundaries, Force start/end, one-shot Impulse time, and TOI. contact_max_substep_delta_time=0 means +infinity / no Contact-specific cap; otherwise it participates in the minimum World dt. At Segment Begin the Runtime captures the shared start state, selects the immutable Animation Trajectory Packet / Bound Version, evaluates target / velocity at boundaries, and distributes constant Force for the interval. The GPU evaluator also evaluates the exact packet at arbitrary TOI tau. Impulse Event at the start is consumed exactly once. Soft Body evaluates FEM / Kelvin-Voigt forces from that Segment start state; Cloth evaluates its external force input. Both use the common Segment integration rule in detailed_design.md §6.6. After non-contact internal XPBD constraints and before Contact Position XPBD, only Dynamic Vertex velocity is reconstructed from segment displacement and saved as v_pre_contact. Contact Position correction changes Position only and never participates in velocity reconstruction; friction / restitution use the saved v_pre_contact plus the exact Kinematic Trajectory Velocity. Contacts with W_eff <= epsilon_inverse_mass are skipped as non-responsive; all other contacts are solved together by Projected Jacobi iterations and Gather, with Commit gated on residual convergence. Fixed / Kinematic Vertex retains the Animation Interface's prescribed derivative and is never modified by contact impulses. An Impact-updated Dynamic Velocity becomes the next Segment's start velocity.
 
 GPU command submission and CPU observation are separate events. Event Query completion proves command completion; the GPU Status Buffer determines whether a Logical Tick committed. Render Candidate is produced before Commit, but its slot becomes visible only when the same GPU Commit Control atomically selects the committed Physics State and Render Slot. The Host receives only the latest CPU-observed committed prefix. A World has one active Render Lease, and its ring contains maximum_in_flight_ticks + 1 slots; a slot cannot be reused until it is no longer in flight / unobserved and its Host lease has been released.
 
@@ -145,30 +145,41 @@ sequenceDiagram
     participant G as GPU Tick Scheduler
     participant D as D3D11 GPU
 
-    alt Preflight detects Substep / Segment budget excess
-        C->>C: keep head Tick Reservation; record required work counts
-    else TOI residual Segment exceeds budget during execution
-        G->>D: suppress remaining Segment / Render Publish / Commit
-        G->>Q: WORK_BUDGET_EXCEEDED + required counts + Event Query
-        C->>Q: poll until Query and status are complete
-        Q-->>C: blocked status; committed State Generation unchanged
+    alt CPU Preflight exceeds Substep / planned Segment Admission Limit
+        C->>C: keep head Tick Reservation; record exact planned counts
+        C->>C: release unused Query Slot / Render Candidate Slot
+        C->>C: enqueue BLOCKED + cpu_preflight in CPU Status Queue
+        Note over C,Q: No GPU Dispatch and no Event Query for this Tick
+        H->>API: poll()
+        API-->>H: synchronous CPU_PREFLIGHT BLOCKED status
+    else GPU Dynamic TOI residual exceeds Segment Admission Limit
+        G->>D: suppress residual Segment / Render Publish / Commit
+        G->>D: write BLOCKED + gpu_dynamic_toi + executed count + minimum required lower bound
+        G->>Q: Status Copy + Event Query
+        C->>Q: poll until Query completes
+        Q-->>C: Status Buffer mapped; committed State Generation unchanged
     end
-    C->>C: wait for all submitted descendants to report BLOCKED_BY_PREDECESSOR
+    C->>C: observe all submitted descendant BLOCKED_BY_PREDECESSOR statuses
     H->>API: set_world_execution_budget(world, raised_limits)
-    API->>C: validate idle GPU/query state and required counts
-    alt Query or GPU work remains pending / limits invalid
+    API->>C: validate Blocked Reservation, observed status, finite Hard Limits
+    alt GPU / Query pending, pending unreserved demand, or invalid / over-hard-limit budget
         API-->>H: BUSY / invalid_argument; no mutation
     else budget accepted
         C->>C: atomically update limits + Budget Revision
         C->>C: retain Reservation / Input / Packet / Cursor / Event Snapshot
         C->>G: rebuild immutable Plan with new dispatch_id; same Tick Sequence
         G->>D: replay full Tick from original committed State
-        D-->>G: Commit only when all gates pass
-        G->>C: retry later descendants after predecessor commit
+        alt another undiscovered TOI exceeds the new limit
+            G->>D: block again; report a larger proven lower bound
+            G->>Q: Status Copy + Event Query
+        else all admission and solver gates pass
+            D-->>G: Commit exactly once
+        end
+        G->>C: retry later descendants only after predecessor commit
     end
 ```
 
-The API changes admission caps only; it does not change material parameters, solver quality, Fixed Delta, Substep / Segment boundaries, or event times. It is CPU-only and does not call the Immediate Context, Flush, or Wait. A successful update requires all related GPU work and Status Queries to be CPU-observed. The retry uses the same Tick Reservation and Input / Packet / Event identity with a new immutable Dispatch Plan / dispatch_id. If the required Work Count cannot be represented by the uint32 contract, the World enters a terminal error instead of retrying indefinitely.
+The CPU Preflight result is a Scheduler-owned synchronous Status record; it does not wait for or fabricate an Event Query. The GPU Dynamic TOI result is asynchronous and cannot be changed until its Query and Status have been CPU-observed. `minimum_required_integration_segments` is a lower bound at the current discovery point, not a prediction of undiscovered future TOIs. The API changes admission caps only; it does not change material parameters, solver quality, Fixed Delta, Substep / Segment boundary schedule, or event times. It is CPU-only and does not call the Immediate Context, Flush, or Wait. A successful update uses the same Tick Reservation and Input / Packet / Event identity with a new immutable Dispatch Plan / dispatch_id.
 
 ## 4. Submission and completion state
 
@@ -181,27 +192,28 @@ stateDiagram-v2
     PendingInput --> BlockedByRenderLease: no Candidate Slot / Host Lease busy
     PendingInput --> Reserved: time + input + Render Slot + Query Slot ready
     Reserved --> Preflight: assign sequence / snapshot; move dt to Reservation
-    Preflight --> BlockedByWorkBudget: required Substep / Segment count exceeds Admission Limit
-    Preflight --> Submitted: all Admission Limits pass
+    Preflight --> BlockedByWorkBudget: CPU Preflight overrun; sync CPU status; no GPU Query
+    Preflight --> Submitted: all CPU Admission Limits pass
     Submitted --> GpuExecuting
     GpuExecuting --> GpuCommitted: GPU commit control passes
-    GpuExecuting --> BlockedByWorkBudget: TOI residual Segment exceeds Admission Limit; no Commit
+    GpuExecuting --> BlockedByWorkBudget: dynamic TOI lower bound exceeds cap; Query status
     GpuExecuting --> BlockedByCapacity: capacity overflow
     GpuExecuting --> BlockedByCCD: CCD unresolved / iteration limit
     GpuExecuting --> BlockedByPredecessor: previous Tick not committed
-    GpuExecuting --> Rejected: NonFinite / ContactGeometry / physical gate failure
-    BlockedByWorkBudget --> Reserved: set_world_execution_budget; same Reservation / Input / Event; new dispatch_id
-    BlockedByCapacity --> Reserved: capacity grown; same reservation replay
-    BlockedByCCD --> Reserved: common Substep budget raised; same reservation replay
+    GpuExecuting --> Rejected: invalid input / NonFinite / non-retryable physical gate
+    GpuExecuting --> Failed: device removed / unrepresentable work count / terminal runtime failure
+    BlockedByWorkBudget --> Preflight: set_world_execution_budget; same Reservation / Input / Event; new dispatch_id
+    BlockedByCapacity --> Reserved: capacity grown; same Reservation replay
+    BlockedByCCD --> Reserved: common Substep budget raised; same Reservation replay
     BlockedByPredecessor --> Reserved: predecessor committed; rebuild source generation
     BlockedByRenderLease --> PendingInput: lease released / slot available
     GpuCommitted --> CpuObserved: Event Query + COMMITTED status + contiguous prefix
     CpuObserved --> Ready
-    Rejected --> Failed
+    Rejected --> Ready: caller corrects input / starts a new valid Tick
     Failed --> [*]
 ```
 
-The CPU-observed completed time advances only from the contiguous COMMITTED tick prefix. Render Binding exposes committed data only.
+CPU Preflight Block is observable through `poll()` immediately and does not consume an Event Query. GPU Dynamic TOI Block requires Event Query completion and Status Readback. BLOCKED always preserves the same Reservation and does not advance committed time. REJECTED does not auto-retry, and FAILED terminates normal World execution. The CPU-observed completed time advances only from the contiguous COMMITTED tick prefix. Render Binding exposes committed data only.
 
 ## 5. In-flight predecessor dependency
 

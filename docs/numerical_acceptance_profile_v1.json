@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.5",
+  "profile_version": "1.6",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -9,6 +9,24 @@
     "precision_under_test": "GPU float32",
     "reference_precision": "CPU double",
     "reference_rule": "The CPU reference must use the same algorithm, equations, operation ordering, substep boundaries, solver iteration ordering, and input snapshots as the GPU path. Different algorithms are compared using analytic fixtures and physical invariants, not frame-by-frame trajectory equality."
+  },
+  "execution_budget": {
+    "default_admission_limits": {
+      "maximum_substeps": 128,
+      "maximum_integration_segments_per_tick": 512
+    },
+    "runtime_hard_limits": {
+      "fields": [
+        "runtime_desc.maximum_world_substeps_hard_limit",
+        "runtime_desc.maximum_integration_segments_per_tick_hard_limit"
+      ],
+      "required_at_initialize": true,
+      "immutable_after_initialize": true,
+      "zero_is_invalid": true,
+      "scope": "Runtime-wide upper bounds applied to every World Admission Limit",
+      "calibration": "Values are deployment-specific and must be recorded for the exact GPU adapter, driver, Windows build, shader package and workload profile under Gate R6. No universal safe numeric maximum or TDR guarantee is asserted. The Runtime must reject values above the deployment-certified profile and all per-Dispatch D3D11 limits must still be validated.",
+      "acceptance": "World Admission Limits must be <= the Runtime Hard Limits. set_world_execution_budget above either Hard Limit returns invalid_argument without mutating Budget, Revision, Reservation or Timeline."
+    }
   },
   "normalization": {
     "per_mesh": true,
@@ -287,6 +305,10 @@
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
   },
   "version_history": [
+    {
+      "version": "1.6",
+      "changes": "Added the execution-budget defaults and mandatory immutable Runtime Hard Limit contract with per-deployment GPU/driver calibration requirements."
+    },
     {
       "version": "1.5",
       "changes": "Removed the stale 64 / 208 / 48 / 128 byte stride list. expected_record_bytes is the single ABI byte-size source; immutable Packet records and the mutable World Cursor are explicitly separated."
