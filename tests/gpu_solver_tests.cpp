@@ -795,6 +795,10 @@ namespace
     static_assert(sizeof(gpu_bvh_node) == 48, "BVH node layout must match HLSL.");
     static_assert(sizeof(gpu_collision_parameters) == 48,
         "Collision parameter layout must match HLSL.");
+    static_assert(sizeof(gpu_correction_primitive_input) == 32,
+        "Correction primitive input layout must match HLSL.");
+    static_assert(sizeof(gpu_correction_parameters) == 16,
+        "Correction parameter layout must match HLSL.");
 
     gpu_float4 to_gpu_float4(const vec3& value, float w = 0.0f)
     {
@@ -1277,7 +1281,9 @@ namespace
             for (std::size_t axis = 0; axis < 3; ++axis)
             {
                 if (actual_minimum[axis] > expected_minimum[axis] ||
-                    actual_maximum[axis] < expected_maximum[axis])
+                    actual_maximum[axis] < expected_maximum[axis] ||
+                    std::abs(actual_minimum[axis] - expected_minimum[axis]) > 1.0e-6f ||
+                    std::abs(actual_maximum[axis] - expected_maximum[axis]) > 1.0e-6f)
                 {
                     return false;
                 }
