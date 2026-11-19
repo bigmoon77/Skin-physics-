@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -1494,19 +1495,253 @@ namespace skin_physics::physics
         return result;
     }
 
-    bool mark_correction_segment_contact_set_and_csr_current(
+    correction_contact_set_refresh_result refresh_correction_segment_contact_set_and_csr(
         correction_segment_candidate_state& state,
         uint64_t candidate_generation,
-        uint64_t position_writer_epoch_generation)
+        uint64_t position_writer_epoch_generation,
+        const std::vector<correction_discrete_contact_input>& discrete_inputs,
+        float epsilon_length)
     {
+        correction_contact_set_refresh_result result;
+        result.candidate_count = state.candidates.size();
+        result.candidate_generation = candidate_generation;
+        result.position_writer_epoch_generation = position_writer_epoch_generation;
+
         if (state.base_integration_segment_id == 0 ||
             candidate_generation != state.candidate_generation ||
             position_writer_epoch_generation !=
                 state.position_writer_epoch_generation)
         {
-            return false;
+            result.generation_mismatch = true;
+            result.diagnostic =
+                "Contact Set refresh does not match the current Segment Candidate and Position-Writer generations.";
+            return result;
+        }
+        if (!std::isfinite(epsilon_length) || epsilon_length <= 0.0f ||
+            discrete_inputs.size() != state.candidates.size())
+        {
+            result.invalid_input = true;
+            result.diagnostic =
+                "Contact Set refresh requires a positive finite epsilon and exactly one discrete geometry record per Candidate Pair.";
+            return result;
         }
 
+        std::vector<correction_discrete_contact_input> sorted_inputs =
+            discrete_inputs;
+        for (correction_discrete_contact_input& input : sorted_inputs)
+        {
+            input.key = make_canonical_correction_candidate_key(
+                input.key.contact_type,
+                input.key.stable_id_a, input.key.mesh_a, input.key.primitive_a,
+                input.key.stable_id_b, input.key.mesh_b, input.key.primitive_b);
+            if (!std::isfinite(input.contact_thickness) ||
+                input.contact_thickness < 0.0f)
+            {
+                result.invalid_input = true;
+                result.diagnostic =
+                    "Contact Set input contains an invalid Contact Thickness.";
+                return result;
+            }
+
+            std::array<uint64_t, 4> unique_vertex_ids = input.vertex_stable_ids;
+            std::sort(unique_vertex_ids.begin(), unique_vertex_ids.end());
+            if (std::adjacent_find(
+                    unique_vertex_ids.begin(), unique_vertex_ids.end()) !=
+                unique_vertex_ids.end())
+            {
+                result.invalid_input = true;
+                result.diagnostic =
+                    "A discrete Contact Candidate contains duplicate participant Vertex Stable IDs.";
+                return result;
+            }
+            for (const asset::vec3& position : input.positions)
+            {
+                if (!finite(position))
+                {
+                    result.invalid_input = true;
+                    result.diagnostic =
+                        "Contact Set input contains a non-finite participant position.";
+                    return result;
+                }
+            }
+        }
+
+        std::sort(sorted_inputs.begin(), sorted_inputs.end(),
+            [](const correction_discrete_contact_input& left,
+                const correction_discrete_contact_input& right)
+            {
+                return left.key < right.key;
+            });
+        for (std::size_t index = 1; index < sorted_inputs.size(); ++index)
+        {
+            if (sorted_inputs[index - 1].key == sorted_inputs[index].key)
+            {
+                result.invalid_input = true;
+                result.diagnostic =
+                    "Contact Set input contains duplicate Canonical Pair Keys.";
+                return result;
+            }
+        }
+
+        if (sorted_inputs.size() != state.candidates.size())
+        {
+            result.invalid_input = true;
+            result.diagnostic =
+                "Contact Set input does not cover the complete Segment Candidate Union.";
+            return result;
+        }
+        for (std::size_t index = 0; index < state.candidates.size(); ++index)
+        {
+            if (!(sorted_inputs[index].key == state.candidates[index]))
+            {
+                result.invalid_input = true;
+                result.diagnostic =
+                    "Contact Set input is missing a Candidate Pair or contains a Pair outside the Segment Candidate Union.";
+                return result;
+            }
+        }
+
+        std::vector<correction_discrete_contact> next_contact_set;
+        next_contact_set.reserve(sorted_inputs.size());
+        std::vector<std::pair<uint64_t, uint32_t>> vertex_contact_entries;
+        for (const correction_discrete_contact_input& input : sorted_inputs)
+        {
+            correction_discrete_contact contact;
+            contact.key = input.key;
+
+            if (input.key.contact_type ==
+                correction_contact_type::vertex_triangle)
+            {
+                const std::array<asset::vec3, 3> triangle = {
+                    input.positions[1], input.positions[2], input.positions[3]
+                };
+                contact.vertex_triangle = find_vertex_triangle_contact(
+                    input.positions[0], triangle, input.contact_thickness);
+                if (!contact.vertex_triangle.valid)
+                {
+                    result.invalid_input = true;
+                    result.diagnostic =
+                        "Final Discrete VT Narrowphase could not certify the Candidate geometry.";
+                    return result;
+                }
+                contact.active = contact.vertex_triangle.hit;
+            }
+            else if (input.key.contact_type ==
+                correction_contact_type::edge_edge)
+            {
+                const std::array<asset::vec3, 2> edge_a = {
+                    input.positions[0], input.positions[1]
+                };
+                const std::array<asset::vec3, 2> edge_b = {
+                    input.positions[2], input.positions[3]
+                };
+                contact.edge_edge = find_edge_edge_contact(
+                    edge_a, edge_b, input.contact_thickness);
+                if (!contact.edge_edge.valid)
+                {
+                    result.invalid_input = true;
+                    result.diagnostic =
+                        "Final Discrete EE Narrowphase could not certify the Candidate geometry.";
+                    return result;
+                }
+
+                if (contact.edge_edge.distance <= epsilon_length)
+                {
+                    const asset::vec3 direction_a = subtract(
+                        edge_a[1], edge_a[0]);
+                    const asset::vec3 direction_b = subtract(
+                        edge_b[1], edge_b[0]);
+                    const asset::vec3 edge_normal = cross(
+                        direction_a, direction_b);
+                    const float normal_length_squared =
+                        edge_normal.x * edge_normal.x +
+                        edge_normal.y * edge_normal.y +
+                        edge_normal.z * edge_normal.z;
+                    const float minimum_area =
+                        epsilon_length * epsilon_length;
+                    if (!std::isfinite(normal_length_squared) ||
+                        normal_length_squared <=
+                            minimum_area * minimum_area)
+                    {
+                        result.invalid_input = true;
+                        result.diagnostic =
+                            "Final Discrete EE contact has zero separation and no stable non-parallel Edge Normal.";
+                        return result;
+                    }
+                }
+                contact.active = contact.edge_edge.hit;
+            }
+            else
+            {
+                result.invalid_input = true;
+                result.diagnostic =
+                    "Contact Set input contains an unknown Contact Type.";
+                return result;
+            }
+
+            if (!contact.active)
+            {
+                continue;
+            }
+            if (next_contact_set.size() >=
+                static_cast<std::size_t>(
+                    std::numeric_limits<uint32_t>::max()))
+            {
+                result.invalid_input = true;
+                result.diagnostic =
+                    "Active Contact Set exceeds the Vertex-to-Contact CSR index range.";
+                return result;
+            }
+
+            const uint32_t contact_index =
+                static_cast<uint32_t>(next_contact_set.size());
+            for (uint64_t vertex_id : input.vertex_stable_ids)
+            {
+                vertex_contact_entries.emplace_back(vertex_id, contact_index);
+            }
+            next_contact_set.push_back(std::move(contact));
+        }
+
+        std::sort(vertex_contact_entries.begin(), vertex_contact_entries.end());
+        vertex_contact_entries.erase(
+            std::unique(vertex_contact_entries.begin(),
+                vertex_contact_entries.end()),
+            vertex_contact_entries.end());
+        if (vertex_contact_entries.size() >
+            static_cast<std::size_t>(
+                std::numeric_limits<uint32_t>::max()))
+        {
+            result.invalid_input = true;
+            result.diagnostic =
+                "Vertex-to-Contact CSR exceeds the 32-bit contact-index range.";
+            return result;
+        }
+
+        correction_vertex_contact_csr next_csr;
+        next_csr.candidate_generation = candidate_generation;
+        next_csr.position_writer_epoch_generation =
+            position_writer_epoch_generation;
+        next_csr.offsets.push_back(0u);
+        std::size_t entry_index = 0;
+        while (entry_index < vertex_contact_entries.size())
+        {
+            const uint64_t vertex_id =
+                vertex_contact_entries[entry_index].first;
+            next_csr.vertex_stable_ids.push_back(vertex_id);
+            while (entry_index < vertex_contact_entries.size() &&
+                vertex_contact_entries[entry_index].first == vertex_id)
+            {
+                next_csr.contact_indices.push_back(
+                    vertex_contact_entries[entry_index].second);
+                ++entry_index;
+            }
+            next_csr.offsets.push_back(
+                static_cast<uint32_t>(next_csr.contact_indices.size()));
+        }
+        next_csr.current = true;
+
+        state.contact_set = std::move(next_contact_set);
+        state.vertex_contact_csr = std::move(next_csr);
         state.contact_set_candidate_generation = candidate_generation;
         state.contact_set_position_writer_epoch_generation =
             position_writer_epoch_generation;
@@ -1515,7 +1750,10 @@ namespace skin_physics::physics
             position_writer_epoch_generation;
         state.contact_set_current = true;
         state.vertex_contact_csr_current = true;
-        return true;
+
+        result.active_contact_count = state.contact_set.size();
+        result.success = true;
+        return result;
     }
 
     bool union_correction_envelope_aabb(
