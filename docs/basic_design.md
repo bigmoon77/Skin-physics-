@@ -332,6 +332,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.26: Correction Motion CCDのSigned Separationを符号正規化Interval h=sigma*gで評価し、sigma<0時の上下端交換を明記。負側初期位置の回帰ケースを追加し、Detailed Design v1.31 / Runtime Integration Design v1.28と同期。
 - 1.25: XPBD Position-Writer Epochごとの補正Sweep / Correction Motion CCD / Candidate Unionの基本方針を追加し、最大補正Marginへの依存を廃止。
 
+- 1.24: in-flight上限1 / 2 / 4をCPU未観測Submission Attempt数として定義し、単一Immediate Context Command Streamでの2-bank交互再利用、Render Candidate Ring N+1容量を同期。
 - 1.23: Detailed Design v1.28 / Runtime Integration Design v1.25への現行正本参照を統一し、責務引継ぎ節の旧版参照を解消。
 - 1.22: Detailed Design v1.27 / Runtime Integration Design v1.24 / Numerical Acceptance Profile v1.19を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を同期。
 - 1.21: Detailed Design v1.26 / Runtime Integration Design v1.23 / Numerical Acceptance Profile v1.18を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を明確化。
