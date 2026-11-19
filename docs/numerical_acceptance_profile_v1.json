@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.8",
+  "profile_version": "1.9",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -67,7 +67,7 @@
       }
     },
     "deployment_profile_template": "deployment_capability_profile_template.json",
-    "deployment_profile_template_version": "1.1"
+    "deployment_profile_template_version": "1.2"
   },
   "normalization": {
     "per_mesh": true,
@@ -301,6 +301,31 @@
         "stride_source": "expected_record_bytes",
         "contract_source": "docs/detailed_design.md §5.3"
       }
+    },
+    "toi_snap_error_budget": {
+      "distance_tolerance": "Required per CCD fixture / workload [m]; no default is implied.",
+      "relative_velocity_tolerance": "Required per CCD fixture / workload [m/s]; no default is implied.",
+      "impulse_tolerance": "Required per CCD fixture / workload [N*s]; no default is implied.",
+      "snap_allowed_only_when": "time delta <= tau_snap_tolerance AND conservative total post-XPBD position error <= distance_tolerance AND conservative Contact-relative Velocity error <= relative_velocity_tolerance AND conservative post-Restitution/Friction Impulse error <= impulse_tolerance.",
+      "unknown_or_non_finite_bound_policy": "Snap forbidden; retain exact tau and create an independent interior Boundary. If exact-tau CCD cannot be evaluated safely, reject the Logical Tick as CCDUnresolved.",
+      "position_error_components": [
+        "CCD trajectory position deviation",
+        "XPBD post-solve response Lipschitz bound",
+        "XPBD dt/compliance sensitivity bound",
+        "both solver residual bounds"
+      ],
+      "relative_velocity_error_components": [
+        "relative acceleration over time shift",
+        "Animation / Kinematic trajectory derivative error",
+        "XPBD velocity response bound",
+        "XPBD dt/compliance sensitivity bound"
+      ],
+      "impulse_error_components": [
+        "effective mass variation",
+        "contact normal variation",
+        "restitution and friction response to relative velocity error"
+      ],
+      "note": "Tolerance values must be supplied by the reviewed fixture / workload profile. Missing values never authorize Snap."
     }
   },
   "reproducibility": {
@@ -346,6 +371,10 @@
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
   },
   "version_history": [
+    {
+      "version": "1.9",
+      "changes": "Added mandatory TOI Snap error budgets for post-XPBD position, contact-relative velocity and impact impulse; Snap falls back to exact tau whenever any conservative bound or fixture tolerance is unavailable. Deployment qualification requires at least five independent runs with >=1000 raw samples per measured series and target Substep / Segment dimensions within selected Hard Limits."
+    },
     {
       "version": "1.8",
       "changes": "Clarified measured_maximum as the default Hard Limit selection policy; lower caps require a documented Host conservative override from the same qualified Trial. Template v1.1 defines complete trial schema and target workload mapping. The selected trial must cover every required test scene ID."
