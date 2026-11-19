@@ -1355,6 +1355,57 @@ namespace skin_physics::physics
         return result;
     }
 
+    bool union_correction_envelope_aabb(
+        const collision_aabb& first,
+        const collision_aabb& second,
+        collision_aabb& output_bounds)
+    {
+        output_bounds = {};
+        const bool first_valid =
+            finite(first.minimum) && finite(first.maximum) &&
+            first.minimum.x <= first.maximum.x &&
+            first.minimum.y <= first.maximum.y &&
+            first.minimum.z <= first.maximum.z;
+        const bool second_valid =
+            finite(second.minimum) && finite(second.maximum) &&
+            second.minimum.x <= second.maximum.x &&
+            second.minimum.y <= second.maximum.y &&
+            second.minimum.z <= second.maximum.z;
+        if (!first_valid || !second_valid)
+        {
+            return false;
+        }
+
+        const float negative_infinity =
+            -std::numeric_limits<float>::infinity();
+        const float positive_infinity =
+            std::numeric_limits<float>::infinity();
+        const collision_aabb bounds = {
+            {
+                std::nextafter(std::min(first.minimum.x, second.minimum.x),
+                    negative_infinity),
+                std::nextafter(std::min(first.minimum.y, second.minimum.y),
+                    negative_infinity),
+                std::nextafter(std::min(first.minimum.z, second.minimum.z),
+                    negative_infinity)
+            },
+            {
+                std::nextafter(std::max(first.maximum.x, second.maximum.x),
+                    positive_infinity),
+                std::nextafter(std::max(first.maximum.y, second.maximum.y),
+                    positive_infinity),
+                std::nextafter(std::max(first.maximum.z, second.maximum.z),
+                    positive_infinity)
+            }
+        };
+        if (!finite(bounds.minimum) || !finite(bounds.maximum))
+        {
+            return false;
+        }
+        output_bounds = bounds;
+        return true;
+    }
+
     bool build_correction_swept_aabb(
         const std::vector<correction_vertex_motion>& vertex_motions,
         float contact_thickness,
