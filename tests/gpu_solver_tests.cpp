@@ -2437,11 +2437,40 @@ int run_gpu_solver_tests()
                 device.Get(),
                 test_support::fixture_path("phase07_collision/collision_gpu.cs.hlsl"),
                 "correction_swept_aabb");
+        const std::filesystem::path correction_candidate_shader_path =
+            test_support::fixture_path(
+                "phase12_correction/correction_candidate_pipeline.cs.hlsl");
+        const ComPtr<ID3D11ComputeShader> correction_candidate_count_shader =
+            compile_compute_shader(device.Get(), correction_candidate_shader_path,
+                "correction_candidate_count");
+        const ComPtr<ID3D11ComputeShader> correction_candidate_scan_shader =
+            compile_compute_shader(device.Get(), correction_candidate_shader_path,
+                "correction_candidate_exclusive_scan");
+        const ComPtr<ID3D11ComputeShader> correction_candidate_initialize_shader =
+            compile_compute_shader(device.Get(), correction_candidate_shader_path,
+                "correction_candidate_initialize");
+        const ComPtr<ID3D11ComputeShader> correction_candidate_fill_shader =
+            compile_compute_shader(device.Get(), correction_candidate_shader_path,
+                "correction_candidate_fill");
+        const ComPtr<ID3D11ComputeShader> correction_candidate_sort_shader =
+            compile_compute_shader(device.Get(), correction_candidate_shader_path,
+                "correction_candidate_bitonic_sort");
+        const ComPtr<ID3D11ComputeShader> correction_candidate_deduplicate_shader =
+            compile_compute_shader(device.Get(), correction_candidate_shader_path,
+                "correction_candidate_deduplicate");
         test_phase07_warp_vertex_triangle_contact(device.Get(), context.Get(), vt_shader.Get());
         test_phase07_warp_edge_edge_contact(device.Get(), context.Get(), ee_shader.Get());
         test_phase07_warp_hierarchical_broadphase(device.Get(), context.Get(), broadphase_shader.Get());
         test_phase12_warp_correction_swept_aabb(
             device.Get(), context.Get(), correction_swept_aabb_shader.Get());
+        test_phase12_warp_correction_candidate_pipeline(
+            device.Get(), context.Get(),
+            correction_candidate_count_shader.Get(),
+            correction_candidate_scan_shader.Get(),
+            correction_candidate_initialize_shader.Get(),
+            correction_candidate_fill_shader.Get(),
+            correction_candidate_sort_shader.Get(),
+            correction_candidate_deduplicate_shader.Get());
     }
     test_phase08_warp_point_triangle_ccd();
     test_phase09_warp_animation_target();
