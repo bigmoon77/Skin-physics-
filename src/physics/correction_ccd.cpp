@@ -2057,7 +2057,7 @@ namespace skin_physics::physics
         }
         if (broadphase_settings.contact_thickness != 0.0f)
         {
-            result.status = correction_writer_epoch_status::blocked;
+            result.status = correction_writer_epoch_status::rejected;
             result.diagnostic =
                 "Position-Writer Epoch Broadphase requires pre-expanded AABBs and zero secondary Contact Thickness expansion.";
             return result;
@@ -2119,7 +2119,7 @@ namespace skin_physics::physics
                 ccd_settings.contact_thickness,
                 correction_bounds))
             {
-                result.status = correction_writer_epoch_status::blocked;
+                result.status = correction_writer_epoch_status::rejected;
                 result.diagnostic =
                     "Correction Swept AABB could not conservatively enclose a Position-Writer Epoch Primitive.";
                 result.diagnostics.push_back({
@@ -2136,7 +2136,7 @@ namespace skin_physics::physics
             {
                 if (!finite(motion.before) || !finite(motion.after))
                 {
-                    result.status = correction_writer_epoch_status::blocked;
+                    result.status = correction_writer_epoch_status::rejected;
                     result.diagnostic =
                         "Position-Writer Epoch contains a non-finite before / after position.";
                     return result;
@@ -2161,7 +2161,7 @@ namespace skin_physics::physics
                 ccd_settings.contact_thickness,
                 final_discrete_bounds))
             {
-                result.status = correction_writer_epoch_status::blocked;
+                result.status = correction_writer_epoch_status::rejected;
                 result.diagnostic =
                     "Final Discrete AABB could not conservatively enclose the Position-Writer Epoch endpoint geometry.";
                 return result;
