@@ -1,11 +1,11 @@
-# Skin Physics 設計閉鎖書（v3.3）
+# Skin Physics 設計閉鎖書（v3.4）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.18
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.23
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.20
-- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.15
+- 基本設計: [basic_design.md](basic_design.md) v1.19
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.24
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.21
+- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.16
 - Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.4
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -440,6 +440,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
+- 3.4: Added applied generalized impulse acceptance through the complete sparse Contact Jacobian J^T*q over stable responsive Physics Vertex IDs; Snap requires this bound independently of contact-level impulse error.
 - 3.3: Defined World-space per-contact impulse output for Snap acceptance, separated from local Delassus solver coefficients, and included tangent-basis rotation in the friction error bound.
 - 3.2: Defined complete Contact Island impulse-vector L2 aggregation, the normal-basis rotation operator bound, Delassus effective-inverse-mass units, and responsive-subspace rank / basis stability.
 - 3.1: Corrected TOI Snap equations to use G_contact and G_v residual-inclusive bounds; synchronized Basic / Detailed / Runtime / Profile references and strictly descending version histories.
