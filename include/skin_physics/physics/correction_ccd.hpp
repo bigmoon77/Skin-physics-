@@ -53,6 +53,33 @@ namespace skin_physics::physics
         bool operator<(const correction_candidate_pair_key& other) const;
     };
 
+    enum class correction_primitive_role : uint8_t
+    {
+        vertex,
+        triangle,
+        edge
+    };
+
+    struct correction_broadphase_primitive
+    {
+        uint64_t stable_id = 0;
+        uint32_t mesh_id = 0;
+        uint32_t primitive_id = 0;
+        correction_primitive_role role = correction_primitive_role::vertex;
+        collision_aabb envelope_bounds;
+    };
+
+    struct correction_broadphase_result
+    {
+        std::vector<correction_candidate_pair_key> candidates;
+        std::vector<collision_diagnostic> diagnostics;
+        std::size_t required_cell_records = 0;
+        std::size_t broadphase_candidate_count = 0;
+        std::size_t required_candidates = 0;
+        bool overflow = false;
+        bool success = false;
+    };
+
     struct correction_candidate_union_result
     {
         std::vector<correction_candidate_pair_key> candidates;
@@ -115,6 +142,11 @@ namespace skin_physics::physics
         const std::vector<correction_candidate_pair_key>& existing_candidates,
         const std::vector<correction_candidate_pair_key>& incoming_candidates,
         std::size_t capacity);
+
+    correction_broadphase_result generate_correction_broadphase_candidates(
+        const std::vector<correction_broadphase_primitive>& primitives,
+        const std::vector<broadphase_mesh_pair>& mesh_pairs,
+        const broadphase_settings& settings = {});
 
     bool build_correction_swept_aabb(
         const std::vector<correction_vertex_motion>& vertex_motions,
