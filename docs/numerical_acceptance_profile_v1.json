@@ -48,7 +48,7 @@
         "qualification": "A selected calibration trial must satisfy every declared frame-time, GPU-tick, CPU-submission and local-memory budget after the declared headroom is applied. Its measured workload and selected Runtime Hard Limits must come from that same trial. Never combine per-dimension maxima from different trials.",
         "hard_limit_rule": "selected maximum_world_substeps_hard_limit and maximum_integration_segments_per_tick_hard_limit must be <= the corresponding values tested in the selected passing trial. Selected geometry / constraint / candidate / contact / iteration / memory limits must also be <= the corresponding tested dimensions.",
         "failure_rule": "Missing policy inputs, identity mismatch, insufficient repetitions, exceeded timing or memory budget, nonzero quality reduction, dropped work, or missing raw measurement evidence makes the profile not_qualified. Host must not use its numeric caps.",
-        "template_version": "1.3",
+        "template_version": "1.4",
         "hard_limit_selection_modes": {
           "measured_maximum": "selected Runtime Hard Limits equal the same qualified Trial's tested Substep and Integration Segment maxima",
           "host_conservative_override": "selected Runtime Hard Limits may be lower than the same qualified Trial's tested maxima only when a non-empty Host rationale is recorded before deployment",
@@ -67,7 +67,7 @@
       }
     },
     "deployment_profile_template": "deployment_capability_profile_template.json",
-    "deployment_profile_template_version": "1.3"
+    "deployment_profile_template_version": "1.4"
   },
   "normalization": {
     "per_mesh": true,
@@ -331,8 +331,7 @@
         "finite-iteration coupled solver response and certified solver-residual interval for the complete contact island",
         "restitution and friction response to relative velocity error"
       ],
-      "percentile_method": "nearest_rank",
-      "note": "Tolerance values must be supplied by the reviewed fixture / workload profile. Missing values never authorize Snap. nearest_rank p95 sorts pooled raw samples and selects 1-based rank ceil(0.95*N), without interpolation."
+      "note": "Tolerance values must be supplied by the reviewed fixture / workload profile. Missing values never authorize Snap."
     }
   },
   "reproducibility": {
@@ -347,6 +346,8 @@
     }
   },
   "benchmark_policy": {
+    "percentile_method": "nearest_rank",
+    "percentile_definition": "Sort pooled raw samples ascending and select the 1-based observation at rank ceil(0.95 * N); do not interpolate.",
     "profiles": {
       "tet_counts": [
         2000,
