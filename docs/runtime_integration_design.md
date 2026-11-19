@@ -5,14 +5,14 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.22
+- 文書バージョン: 1.23
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.20
-- 対応詳細設計: detailed_design.md 1.25
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.17
+- 対応基本設計: basic_design.md 1.21
+- 対応詳細設計: detailed_design.md 1.26
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.18
 - Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
-- 前版: 1.21
+- 前版: 1.22
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -976,6 +976,7 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.23: Basic Design v1.21 / Detailed Design v1.26 / Numerical Acceptance Profile v1.18の相互参照を同期。Runtime実行契約に変更なし。
 - 1.22: Basic Design v1.20 / Detailed Design v1.25 / Numerical Acceptance Profile v1.17との相互参照を同期。Runtime実行契約に変更なし。
 - 1.21: Basic Design v1.19 / Detailed Design v1.24 / Numerical Acceptance Profile v1.16との相互参照を同期。Runtime実行規則は変更なし。
 - 1.20: Basic Design v1.18 / Detailed Design v1.23 / Numerical Acceptance Profile v1.15との相互参照を同期。Runtime API・Submission Lease・Commit / Rollbackの規範動作は変更なし。
