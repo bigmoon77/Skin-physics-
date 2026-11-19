@@ -1281,6 +1281,21 @@ namespace skin_physics::physics
                 other.contact_type);
     }
 
+    bool correction_primitive_identity::operator==(
+        const correction_primitive_identity& other) const
+    {
+        return stable_id == other.stable_id &&
+            mesh_id == other.mesh_id &&
+            primitive_id == other.primitive_id;
+    }
+
+    bool correction_primitive_identity::operator<(
+        const correction_primitive_identity& other) const
+    {
+        return std::tie(stable_id, mesh_id, primitive_id) <
+            std::tie(other.stable_id, other.mesh_id, other.primitive_id);
+    }
+
     correction_candidate_pair_key make_canonical_correction_candidate_key(
         correction_contact_type contact_type,
         uint64_t stable_id_a,
@@ -1914,11 +1929,17 @@ namespace skin_physics::physics
         for (std::size_t index = 0; index < primitives.size(); ++index)
         {
             const correction_broadphase_primitive& primitive = primitives[index];
+            std::size_t expected_vertex_count = 0;
             switch (primitive.role)
             {
             case correction_primitive_role::vertex:
+                expected_vertex_count = 1;
+                break;
             case correction_primitive_role::triangle:
+                expected_vertex_count = 3;
+                break;
             case correction_primitive_role::edge:
+                expected_vertex_count = 2;
                 break;
             default:
                 result.diagnostics.push_back({
@@ -1929,10 +1950,46 @@ namespace skin_physics::physics
                 return result;
             }
 
-            broadphase_primitives.push_back({
-                primitive.mesh_id,
-                primitive.envelope_bounds
-            });
+            if (primitive.vertex_stable_ids.size() != expected_vertex_count)
+            {
+                result.diagnostics.push_back({
+                    collision_error::invalid_geometry,
+                    static_cast<uint32_t>(index),
+                    "Correction Broadphase primitive must provide one unique Stable Vertex ID per endpoint."
+                });
+                return result;
+            }
+            std::vector<uint64_t> vertex_ids = primitive.vertex_stable_ids;
+            std::sort(vertex_ids.begin(), vertex_ids.end());
+            if (std::adjacent_find(vertex_ids.begin(), vertex_ids.end()) !=
+                vertex_ids.end())
+            {
+                result.diagnostics.push_back({
+                    collision_error::invalid_geometry,
+                    static_cast<uint32_t>(index),
+                    "Correction Broadphase primitive contains duplicate Stable Vertex IDs."
+                });
+                return result;
+            }
+
+            std::vector<correction_primitive_identity> exclusions =
+                primitive.excluded_primitive_ids;
+            std::sort(exclusions.begin(), exclusions.end());
+            if (std::adjacent_find(exclusions.begin(), exclusions.end()) !=
+                exclusions.end())
+            {
+                result.diagnostics.push_back({
+                    collision_error::invalid_geometry,
+                    static_cast<uint32_t>(index),
+                    "Correction Broadphase primitive contains duplicate topology exclusions."
+                });
+                return result;
+            }
+
+            broadphase_primitive broadphase_primitive;
+            broadphase_primitive.mesh_id = primitive.mesh_id;
+            broadphase_primitive.bounds = primitive.envelope_bounds;
+            broadphase_primitives.push_back(broadphase_primitive);
             roles.push_back(primitive.role);
         }
 
@@ -1970,6 +2027,47 @@ namespace skin_physics::physics
                 roles[candidate.primitive_a];
             const correction_primitive_role role_b =
                 roles[candidate.primitive_b];
+
+            const std::vector<uint64_t>& vertex_ids_a =
+                primitive_a.vertex_stable_ids;
+            const std::vector<uint64_t>& vertex_ids_b =
+                primitive_b.vertex_stable_ids;
+            bool shares_topological_vertex = false;
+            for (uint64_t vertex_id_a : vertex_ids_a)
+            {
+                if (std::find(vertex_ids_b.begin(), vertex_ids_b.end(),
+                        vertex_id_a) != vertex_ids_b.end())
+                {
+                    shares_topological_vertex = true;
+                    break;
+                }
+            }
+            if (shares_topological_vertex)
+            {
+                continue;
+            }
+
+            const correction_primitive_identity identity_a = {
+                primitive_a.stable_id, primitive_a.mesh_id,
+                primitive_a.primitive_id
+            };
+            const correction_primitive_identity identity_b = {
+                primitive_b.stable_id, primitive_b.mesh_id,
+                primitive_b.primitive_id
+            };
+            const bool explicitly_excluded =
+                std::binary_search(
+                    primitive_a.excluded_primitive_ids.begin(),
+                    primitive_a.excluded_primitive_ids.end(),
+                    identity_b) ||
+                std::binary_search(
+                    primitive_b.excluded_primitive_ids.begin(),
+                    primitive_b.excluded_primitive_ids.end(),
+                    identity_a);
+            if (explicitly_excluded)
+            {
+                continue;
+            }
 
             correction_contact_type contact_type;
             if ((role_a == correction_primitive_role::vertex &&
@@ -2173,6 +2271,9 @@ namespace skin_physics::physics
             correction_primitive.primitive_id = primitive.primitive_id;
             correction_primitive.role = primitive.role;
             correction_primitive.envelope_bounds = correction_bounds;
+            correction_primitive.vertex_stable_ids = primitive.vertex_stable_ids;
+            correction_primitive.excluded_primitive_ids =
+                primitive.excluded_primitive_ids;
             correction_primitives.push_back(correction_primitive);
 
             correction_broadphase_primitive final_primitive;
@@ -2181,6 +2282,9 @@ namespace skin_physics::physics
             final_primitive.primitive_id = primitive.primitive_id;
             final_primitive.role = primitive.role;
             final_primitive.envelope_bounds = final_discrete_bounds;
+            final_primitive.vertex_stable_ids = primitive.vertex_stable_ids;
+            final_primitive.excluded_primitive_ids =
+                primitive.excluded_primitive_ids;
             final_discrete_primitives.push_back(final_primitive);
         }
 
