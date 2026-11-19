@@ -2505,6 +2505,23 @@ namespace
             latched_state.position_writer_epoch_generation == 1,
             "A later Epoch must reuse the original Segment-side latch and reject a mismatched Segment-start side instead of relatching it.");
 
+        auto topology_changed_state = latched_state;
+        auto changed_topology_epoch =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        changed_topology_epoch[1].vertex_stable_ids[0] += 100000u;
+        const correction_writer_epoch_result topology_changed_result =
+            process_correction_position_writer_epoch(
+                topology_changed_state, 7010, 2, changed_topology_epoch,
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(topology_changed_result.status ==
+                correction_writer_epoch_status::rejected &&
+            !topology_changed_result.state_committed &&
+            topology_changed_result.correction_ccd_results.empty() &&
+            topology_changed_state.side_latches.size() == 1 &&
+            topology_changed_state.position_writer_epoch_generation == 1,
+            "A Segment Side Latch must be invalidated by participant topology identity changes rather than reused across a different feature.");
+
         const test_json::value& crossing_case = find_correction_fixture_case(
             fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE");
         correction_ccd_settings crossing_settings =
