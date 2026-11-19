@@ -460,7 +460,8 @@ namespace skin_physics::physics
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
-        const broadphase_settings& settings)
+        const broadphase_settings& settings,
+        const broadphase_candidate_filter& candidate_filter)
     {
         broadphase_result result;
         if (!std::isfinite(settings.cell_size) || settings.cell_size <= 0.0f ||
@@ -570,6 +571,11 @@ namespace skin_physics::physics
 
                     const broadphase_primitive& first = primitives[first_id];
                     const broadphase_primitive& second = primitives[second_id];
+                    if (candidate_filter &&
+                        !candidate_filter(first_id, second_id))
+                    {
+                        continue;
+                    }
                     if (!mesh_pair_allowed(first.mesh_id, second.mesh_id,
                         mesh_pairs, settings.self_collision_enabled))
                     {
