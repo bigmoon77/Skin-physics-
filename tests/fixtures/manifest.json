@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 cover TOI boundary identity / snap bounds / deployment qualification; Case 48 covers ordered in-flight submissions and two-bank reuse; Case 49 covers XPBD correction-sweep Broadphase completeness, VT / EE Correction Motion CCD, Contact Set refresh, fail-closed unresolved / crossing behavior, and pseudo-time isolation. Cases 45-49 remain specified_not_implemented until executable assertions consume the corresponding fixtures and CI passes.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 cover TOI boundary identity / snap bounds / deployment qualification; Case 48 covers ordered in-flight submissions and two-bank reuse; Case 49 covers XPBD correction-sweep Broadphase completeness, VT / EE Correction Motion CCD, Contact Set refresh, fail-closed unresolved / crossing behavior, signed-side interval arithmetic, and Integration-Segment-latched collision side. Cases 45-49 remain specified_not_implemented until executable assertions consume the corresponding fixtures and CI passes.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -650,17 +650,18 @@
           "DCR_49_UNRESOLVED_INTERVAL_AND_BOUND",
           "DCR_49_CORRECTION_CAPACITY_OVERFLOW",
           "DCR_49_PSEUDO_TIME_ISOLATION",
-          "DCR_49_TOI_PREFIX_PSEUDO_TIME_ISOLATION"
+          "DCR_49_TOI_PREFIX_PSEUDO_TIME_ISOLATION",
+          "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE"
         ]
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; negative_signed_side_interval_vector_added; missing_correction_interval_certificates_fail_closed",
+    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; positive_and_negative_signed_side_interval_vectors_added; Segment_side_latch_vector_added; missing_correction_interval_certificates_fail_closed",
     "fixture_version": "1.9",
     "additional_fixture_bundles": [
       {
         "path": "design_review/correction_sweep_broadphase.json",
-        "fixture_version": "1.1",
+        "fixture_version": "1.2",
         "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
       }
     ]
