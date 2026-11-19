@@ -1197,7 +1197,7 @@ CouplingがなくNormal / Tangential Effective Massがスカラー（または�
 
     E_normal_scalar <= ((1 + e_max) * Delta_v_n + v_n_max * Delta_e) / K_n_min
                        + (1 + e_max) * v_n_max * Delta_K_n / (K_n_min * K_n_min)
-                       + E_normal_solver_residual
+                       
 
 を使える。ここで`Delta_K_n`はEffective Massの絶対差上限、`E_normal_solver_residual`はNormal Impulse単位へ換算した両評価の残差Boundの和である。
 
@@ -1213,11 +1213,11 @@ CouplingがなくNormal / Tangential Effective Massがスカラー（または�
                          + mu_max * (E_normal_scalar
                                      + Delta_lambda_n / dt_min
                                      + lambda_n_max * Delta_inverse_dt)
-                         + E_friction_solver_residual
+                         
 
     s_max = j_n_max + lambda_n_max / dt_min
 
-を使える。`Delta_inverse_dt`は`abs(1/dt_candidate - 1/dt_boundary)`の保守上限とする。`E_friction_solver_residual`は両評価のTangential Impulse残差を合算した上界である。
+を使える。`Delta_inverse_dt`は`abs(1/dt_candidate - 1/dt_boundary)`の保守上限とする。`E_solver_residual`は両評価のNormal / Tangential Impulse残差をImpulse単位へ換算して合算した上界である。
 
 この特殊ケース式はNormal / Tangential方向の独立性が証明できる場合だけ適用する。非対角Coupling、共有頂点、複数ContactのProjected Jacobi、異方性摩擦Metric、またはSolverの反復写像が独立スカラー式へ分離できない場合は適用禁止とし、前述の完全なContact-Island関数Fを外向き丸め付き区間評価または検証済みLipschitz Boundで評価する。
 
