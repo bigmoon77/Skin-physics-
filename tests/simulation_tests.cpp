@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -44,6 +45,79 @@ namespace
         {
             throw std::runtime_error(message);
         }
+    }
+
+    bool initialize_test_correction_segment_geometry(
+        skin_physics::physics::correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        const std::vector<skin_physics::physics::correction_primitive_epoch_input>& primitives,
+        float contact_thickness)
+    {
+        std::map<uint64_t, skin_physics::asset::vec3> unique_start_positions;
+        std::vector<skin_physics::physics::correction_vertex_motion>
+            envelope_vertex_motions;
+
+        for (const auto& primitive : primitives)
+        {
+            if (primitive.vertex_stable_ids.size() !=
+                    primitive.segment_start_positions.size() ||
+                primitive.vertex_stable_ids.size() !=
+                    primitive.vertex_motions.size())
+            {
+                return false;
+            }
+
+            for (std::size_t index = 0;
+                index < primitive.vertex_stable_ids.size(); ++index)
+            {
+                const uint64_t stable_id =
+                    primitive.vertex_stable_ids[index];
+                const skin_physics::asset::vec3& start_position =
+                    primitive.segment_start_positions[index];
+                const auto inserted = unique_start_positions.emplace(
+                    stable_id, start_position);
+                if (!inserted.second &&
+                    (inserted.first->second.x != start_position.x ||
+                    inserted.first->second.y != start_position.y ||
+                    inserted.first->second.z != start_position.z))
+                {
+                    return false;
+                }
+
+                envelope_vertex_motions.push_back({
+                    start_position, primitive.vertex_motions[index].before
+                });
+                envelope_vertex_motions.push_back(
+                    primitive.vertex_motions[index]);
+            }
+        }
+
+        if (envelope_vertex_motions.empty())
+        {
+            envelope_vertex_motions.push_back({
+                { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }
+            });
+        }
+
+        skin_physics::physics::collision_aabb physical_swept_bounds;
+        if (!skin_physics::physics::build_correction_swept_aabb(
+            envelope_vertex_motions, contact_thickness,
+            physical_swept_bounds))
+        {
+            return false;
+        }
+
+        std::vector<skin_physics::physics::correction_segment_vertex_snapshot>
+            segment_start_snapshot;
+        segment_start_snapshot.reserve(unique_start_positions.size());
+        for (const auto& entry : unique_start_positions)
+        {
+            segment_start_snapshot.push_back({ entry.first, entry.second });
+        }
+
+        return skin_physics::physics::initialize_correction_segment_geometry(
+            state, base_integration_segment_id,
+            segment_start_snapshot, physical_swept_bounds);
     }
 
     physics_mesh load_single_tetrahedron()
