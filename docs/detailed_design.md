@@ -1121,7 +1121,7 @@ PairのStable ID、Mesh ID、Primitive ID、Contact Typeによる正規化Key、
 
 #### 9.4.2 Correction Motion CCD
 
-各Position-Writer Epochの前後状態について、Correction Swept AABBから得たVT / EE CandidateをCorrection Motion CCDで検査する。各Vertexの補正速度をsに対する変位delta_x_iとみなす。最接近点が三角形内・辺上の凸結合で表されることから、保守的な相対速度Boundを次で与える。
+各Position-Writer Epochの前後状態について、Correction Swept AABBから得たVT / EE CandidateをCorrection Motion CCDで検査する。各Vertexの補正速度をsに対する変位delta_x_iとみなす。最接近点が三角形内・辺上の凸結合で表されることから、三角形 / 辺の各頂点変位Normの最大値はそのPrimitiveのHausdorff変位Boundとなる。Closest Featureが区間内で切り替わっても距離関数はこのBoundでLipschitz連続となるため、保守的な相対速度Boundを次で与える。
 
     VT:
       v_corr_bound =
@@ -1142,11 +1142,13 @@ d_interval_lower > r_pair + distance_toleranceなら、その区間全体をNo-H
 
 Hit WitnessにはDispatch Attempt ID、Integration Segment ID、Position-Writer Epoch ID、Canonical Primitive Pair Key、normalized s、Closest Feature Parameter、Normalおよび距離区間を記録する。始点ですでに接触しているPairはPersistent Contact Cacheまたは同時刻の直前Discrete Contactの安定法線を使用する。対応する安定法線・Feature Mappingを得られない退化PairはUnresolvedとする。
 
+Side判定はHit WitnessのNormal n_refをCorrection Epoch内で固定したSigned Separation g(s)=dot(n_ref, q_A(s)-q_B(s))で行う。VTではq_Aを頂点、q_Bを三角形Closest Point、EEではq_A / q_Bを両辺Closest Pointとする。初期非接触Pairはsigma=sign(g(0))、始点接触PairはPersistent Contact Cache / 直前Discrete Contactが保持する符号側をsigmaとする。始点接触なのに符号側を取得できない場合はUnresolvedとする。Closest Featureが変化する区間はFeature Boundaryで分割し、各区間のg(s)を外向き丸め付きIntervalで評価する。sigma * g_interval.upper < -distance_toleranceを満たす区間が一つでも証明された場合は、Correction経路が反対側へ越えたものとしてCrossingにする。全区間でsigma * g_interval.lower >= -distance_toleranceを証明できた場合だけ同じ側を維持したと判定する。いずれも証明できない区間は二分し、Correction CCDの最大32区間評価を共有する。予算内に符号側を証明できなければUnresolvedとし、始点・終端の符号だけで途中の反対側通過を否定しない。
+
 各Hit Witnessに対しx(1)で最終Discrete Narrowphaseを再評価する。
 
 - 終端で非貫通接触が成立するPairはContact Candidate Setへ追加し、次のContact Position XPBD反復で解決する。
-- 始点・終端が同じ分離側であり、安定したNormal / Feature Mappingを用いて全経路が反対側へ抜けていないと証明できる一過性の近接はActive Contactへ追加しない。ただしCandidate Unionと診断記録には保持する。
-- 始点の分離側から終端が反対側へ移り、終端Signed Separationが-(r_pair + distance_tolerance)未満となる交差はCORRECTION_PATH_CROSSINGとする。Physical Timeを進めずに位置補正が衝突面を通過させたため、そのLogical TickをREJECTEDにしCommitしない。
+- 前段のSigned Separation区間検査で全経路が同じ分離側に留まることを証明でき、終端にActive Contactがない一過性の近接はActive Contactへ追加しない。ただしCandidate Unionと診断記録には保持する。
+- Signed Separation区間検査で反対側への通過が証明された場合はCORRECTION_PATH_CROSSINGとする。終端だけでなく経路途中の反対側滞在も対象とする。Physical Timeを進めずに位置補正が衝突面を通過させたため、そのLogical TickをREJECTEDにしCommitしない。
 - 両側判定に必要な法線・Feature Mapping・符号連続性を証明できない場合はCORRECTION_CCD_UNRESOLVEDとしてBLOCKEDにし、Commitしない。
 
 VTのSigned SeparationはHit Witnessの安定法線で頂点と三角形Closest Pointの符号付き距離を評価する。EEもHit Witness法線とClosest Point Pairで同じ符号規則を用いる。法線の向きが区間内で連続と証明できない、またはFeatureが切り替わる区間を保守的に包含できない場合はUnresolvedとする。Correction Motion CCDは誤ったNo-Hitを許さないfail-closed検査であり、物理Impactを生成する機能ではない。
