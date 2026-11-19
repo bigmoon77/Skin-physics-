@@ -1,12 +1,12 @@
-# Skin Physics 設計閉鎖書（v2.7）
+# Skin Physics 設計閉鎖書（v2.8）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
 - 基本設計: [basic_design.md](basic_design.md) v1.14
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.17
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.14
-- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.9
-- Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.2
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.18
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.15
+- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.10
+- Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.3
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
 
@@ -354,7 +354,7 @@ Render Candidate Ring:
 - TOI Snapは時間差・CCD軌道位置誤差・XPBD適用後位置応答誤差・XPBD dt感度・接触相対Velocity誤差・Impact Impulse誤差を個別に保守Boundする。Fixtureごとの許容値と全Boundを証明できない場合はSnapせず正確なtauで内部Splitする。正確なtauの評価も不可能な場合だけCCDUnresolvedとする。
 - Deployment Profileは最低5回の独立Runを要求し、各Runで最低1000 Frame / GPU Tick / CPU Submission Sampleを保存する。p95はRaw Sampleを全RunでPoolして算出し、最大GPU Tick / Memoryは全Sampleの最大値を使う。Target Substep / Segmentは選択Hard Limit以下でなければqualifiedにしない。
 
-- Deployment Capability Profile qualificationは、対象FPS 3～40、Target Frame / GPU Tick / CPU Submission Budget、Performance / Memory Headroom、最小測定回数を測定前に宣言して行う。p95 Frame / CPU Submission、最大GPU Tick、Peak Library GPU MemoryがHeadroom適用後のBudgetを満たし、Correctness Gateを全て通るTrialだけを採用する。Workload Envelope / Hard Limit / Timing Summaryは同一Trialから採用し、異なるTrialのDimension最大値を合成しない。詳細はRuntime Gate R6とProfile Template v1.1を正とする。
+- Deployment Capability Profile qualificationは、対象FPS 3～40、Target Frame / GPU Tick / CPU Submission Budget、Performance / Memory Headroom、最小測定回数を測定前に宣言して行う。p95 Frame / CPU Submission、最大GPU Tick、Peak Library GPU MemoryがHeadroom適用後のBudgetを満たし、Correctness Gateを全て通るTrialだけを採用する。Workload Envelope / Hard Limit / Timing Summaryは同一Trialから採用し、異なるTrialのDimension最大値を合成しない。詳細はRuntime Gate R6とProfile Template v1.3を正とする。
 
 ## 5. Validation / Acceptance
 
