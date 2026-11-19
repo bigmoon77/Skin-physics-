@@ -1,12 +1,12 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.24
+- 文書バージョン: 1.25
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
 - 前版: 1.23
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.29
-- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.26
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.30
+- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.27
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 
 ## 1. 設計方針
@@ -199,6 +199,8 @@ GPU Spatial Hashを第一候補とする。ただし、粒子と三角形を同�
 
 Spatial Hash、Radix Sort、階層グリッドの最終構成とセルサイズは、粒子数・三角形数・大型三角形比率を変えたベンチマークで決定する。
 
+XPBDの位置補正で新しい接触候補が発生する経路を漏らさないため、位置を書き換える各DispatchをPosition-Writer Epochとして扱う。物理Prediction Sweepに加えて、各Epochのbefore / after補正SweepからVT / EE候補を追加し、Correction Motion CCDで補正経路中の接触通過を検査する。全候補はCanonical Pair KeyでUnion / Dedupし、最終位置のDiscrete Narrowphase候補も含める。固定の最大拘束補正Marginで代用しない。Correction Motion CCDのPseudo-Timeは物理時間・TOI・Impulseへ影響させず、交差・証明不能・Capacity超過はTickをCommitしない。詳細はdetailed_design.md §9.4.1 / §9.4.2を正とする。
+
 ### 7.3 Narrowphase
 
 主な接触候補はVertex-Triangle (VT) と Edge-Edge (EE) とする。VTでは頂点と三角形最近接点・重心座標を求める。EEでは両辺の最近接点と線分パラメータを求める。
@@ -215,9 +217,7 @@ EE接触では、最近接点を構成する各辺の2頂点へ線分パラメ�
 
 ### 7.5 CCD
 
-Broadphaseでは前位置と予測位置を包含するSwept AABBを用いて候補を絞る。全候補へ高価なCCDを実行せず、相対速度、移動距離、衝突厚み、離散判定の結果等からCCD対象を選択する。
-
-NarrowphaseではVT / EEの連続判定を候補とし、Time of Impactまたは保守的なSpeculative Contactを生成する。詳細設計で数式、退化ケース、反復中の位置更新との整合性、偽陽性・偽陰性の扱いを定義する。
+Physical CCDはSegment開始位置からPrediction位置までの物理軌道を対象にし、TOIでWorld共通Integration Segmentを分割する。XPBD Correction Motion CCDは各Position-Writer Epochのbefore / after補正経路を対象にし、正規化Pseudo-Time上で候補のNo-Hit / Hitを保守的に判定する。両者は別の検査として実行し、Correction Motion CCDは物理時間・TOI Boundary・Impulseを生成しない。どちらも未証明をNo-HitとしてCommitしない。詳細設計§9.4.1 / §9.4.2 / §11を正とする。
 
 ### 7.6 初期貫通
 
@@ -296,7 +296,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 14. 詳細設計との責務境界・校正への引継ぎ
 
-本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.28および[runtime_integration_design.md](runtime_integration_design.md) v1.25で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
+本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.30および[runtime_integration_design.md](runtime_integration_design.md) v1.27で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
 
 - Soft Body Corotational FEM、応力・内部力・Segment積分・減衰: detailed_design.md §6。
 - Cloth Stretch / Shear / Bend / XPBD Lambda、外力・Impulse、World Integration Segment: detailed_design.md §7。
@@ -327,7 +327,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
-- 1.24: Detailed Design v1.29 / Runtime Integration Design v1.26との参照を同期し、in-flight上限1 / 2 / 4の意味と2-bank直列実行契約を明確化。
+- 1.25: XPBD Position-Writer Epochごとの補正Sweep / Correction Motion CCD / Candidate Unionの基本方針を追加し、最大補正Marginへの依存を廃止。Detailed Design v1.30 / Runtime Integration Design v1.27と同期。
 
 - 1.23: Detailed Design v1.28 / Runtime Integration Design v1.25への現行正本参照を統一し、責務引継ぎ節の旧版参照を解消。
 - 1.22: Detailed Design v1.27 / Runtime Integration Design v1.24 / Numerical Acceptance Profile v1.19を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を同期。
@@ -352,7 +352,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.1: 初版レビュー対応。Soft Bodyモデル選定方針、XPBDとGatherの役割分離、双方向接触の補正配分、Spatial Hashの大型要素・overflow、CCD適用方針、アニメーション速度、Hair対応範囲、描画頂点対応の検査を明確化。
 - 1.0: 初版。全体構成、物理方式候補、GPUソルバー候補、衝突方針を定義。
 
-## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.25）
+## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.27）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
