@@ -1,0 +1,33 @@
+{
+  "point_start": [
+    0.25,
+    0.25,
+    1
+  ],
+  "point_end": [
+    0.25,
+    0.25,
+    -1
+  ],
+  "triangle": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ]
+  ],
+  "point_radius": 0.1,
+  "triangle_thickness": 0.1,
+  "interval_seconds": 1,
+  "normal_velocity": -2
+}

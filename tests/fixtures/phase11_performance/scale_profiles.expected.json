@@ -1,0 +1,35 @@
+{
+  "correctness_invariants": [
+    "no_nan",
+    "no_silent_overflow",
+    "candidate_set_contains_exhaustive_reference",
+    "state_commit_only_on_complete_step"
+  ],
+  "record_metrics": [
+    "cpu_time_ms",
+    "gpu_time_per_pass_ms",
+    "tetrahedron_count",
+    "cloth_triangle_count",
+    "candidate_count",
+    "contact_count",
+    "overflow_count",
+    "ccd_iteration_count",
+    "library_allocated_bytes",
+    "dxgi_current_usage_bytes",
+    "dxgi_budget_bytes"
+  ],
+  "profile_sizes": {
+    "soft_body_tetrahedra": [
+      2000,
+      8000,
+      32000
+    ],
+    "cloth_triangles": [
+      2000,
+      8000,
+      32000
+    ]
+  },
+  "absolute_fps_threshold": null,
+  "compare_same_scenario_hash": true
+}

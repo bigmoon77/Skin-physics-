@@ -1,10 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.2
-- 状態: 要件定義との整合性レビュー対応・再レビュー合格
+- 文書バージョン: 1.32
+- 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.1
-- 前版: 1.0
+- 対応基本設計: basic_design.md 1.27
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.29
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.19
+- 前版: 1.31
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -16,7 +18,7 @@
 
 | 領域 | 初期採用方式 | 補足・代替 |
 |---|---|---|
-| Soft Body | 四面体Corotational Linear Elasticity、半陰的Euler | 反転要素はSVD補助処理と体積ペナルティ |
+| Soft Body | 四面体Corotational Linear Elasticity、Segment単位の半陰的積分 + 指数線形減衰 | 反転要素はSVD補助処理と体積ペナルティ |
 | Cloth Stretch | XPBD距離制約、Graph Coloring | 色数超過時はGather Jacobi |
 | Cloth Shear | XPBD内積ひずみ制約、Gather Jacobi | 三角形局所Rest基底 |
 | Cloth Bend | XPBD符号付き二面角制約、Gather Jacobi | 退化ケースの検出必須 |
@@ -44,7 +46,7 @@ Soft Bodyは力ベースFEMとして独立させ、Clothと接触はXPBDとす�
 
 glTFのメートル基準を内部単位へ変換する。OBJは単位情報を保証できないため、インポート時に単位倍率の明示入力を要求する。単位不明のまま物理値を自動推定しない。
 
-内部座標系は右手系Y-upとし、Importerで座標軸・三角形表裏・法線を一度だけ変換する。描画、物理、アニメーションでは同じ内部座標系を用いる。ビルドはVisual Studio .sln / .vcxprojを正規手段とし、CMakeは必須としない。ランタイムの物理計算に外部物理ライブラリをリンクしない。Importer依存は入力変換層に限定し、四面体化器はオフラインAsset Buildでのみ使用する。
+内部座標系は右手系Y-upとし、Importerで座標軸・三角形表裏・法線を一度だけ変換する。描画、物理、アニメーションでは同じ内部座標系を用いる。Static Mesh / Mesh Nodeに含まれる初期ScaleはOffline Asset Build時にPosition / Normal / Tangent / Rest GeometryへBakeし、質量・Rest Volume・制約・Bindingを変換後Geometryから再生成する。Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformとし、非一様Scale・負Scale・ゼロScale・実行中のScale変更を禁止する。Skeleton BoneのScale AnimationはSkin Matrixに含まれる正値成分のみ許可し、特異または符号反転するScaleはImport Errorとする。ビルドはVisual Studio .sln / .vcxprojを正規手段とし、CMakeは必須としない。ランタイムの物理計算に外部物理ライブラリをリンクしない。Importer依存は入力変換層に限定し、四面体化器はオフラインAsset Buildでのみ使用する。
 
 ## 2. 初期対応アセット仕様
 
@@ -80,11 +82,12 @@ Skinning influenceは初期版で最大8本とする。インポート時に上�
 - アセット読み込み、入力検査、Physics Mesh生成・キャッシュ
 - 四面体・三角形の隣接リスト、制約リスト、Graph Coloringの構築
 - アニメーションClip評価、Bone行列生成
-- GPUリソース生成・破棄、固定時間刻み制御
-- JSON入出力、試験環境制御
-- 非同期GPU診断結果の回収と容量再設定
+- GPUリソース生成・破棄、Fixed Step AccumulatorとGPU Submission SchedulerのCPU制御
+- JSON入出力、試験環境制御、Model / Mesh / Collider登録
+- 非同期GPU診断結果・Commit Statusの回収と容量再設定
+- Host / Rendererと共有するD3D11 Immediate ContextのSubmission Thread管理
 
-CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。GPU診断結果の回収は非同期とし、通常処理を同期Readbackで停止させない。
+CPUは通常フレームのPhysics Vertex位置・速度・Contact / Lambda配列をReadbackしない。GPU診断結果とLogical Tick Statusの小規模Bufferだけを非同期回収し、通常処理を同期Readbackで停止させない。RuntimeはHostから渡されたD3D11 Device / Immediate Contextを使い、Hostと同じ単一Submission ThreadでGPU commandを発行する。
 
 ### 3.2 GPU側
 
@@ -94,7 +97,10 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 - Broadphase / Narrowphase / CCD
 - 接触位置補正、速度摩擦、反発
 - Render Mesh位置・法線・接線更新
+- Logical Tick / Substepの状態検証、Commit / Reject Control
 - GPUタイムスタンプ計測対象Pass
+
+GPUはRuntime Physics Stateの唯一の正とする。HostからGPU内部Solver Buffer / Scratch / Writable UAVを公開しない。Render向けにはCommit済みPhysics Stateから生成した専用Read-only Render Bindingを公開する。
 
 ### 3.3 GPUリソース構成
 
@@ -103,25 +109,32 @@ CPUは通常フレームのPhysics Vertex位置・速度をReadbackしない。G
 | バッファ | 形式例 | 更新頻度 | 主な用途 |
 |---|---|---|---|
 | position_read / position_write | SRV/UAV StructuredBuffer<float4> | 反復ごと | 位置Ping-Pong |
-| previous_position | StructuredBuffer<float4> | サブステップごと | 速度再構築 |
-| velocity | RWStructuredBuffer<float4> | サブステップごと | 速度 |
+| segment_start_position | StructuredBuffer<float4> | Integration Segment開始ごと | 内部Constraint後のVelocity再構築基準。Contact位置補正前に保持 |
+| velocity | RWStructuredBuffer<float4> | Integration Segmentごと / Impulse適用後 | 予測・内部Constraint反映・Contact Impulse後の速度 |
 | inverse_mass | StructuredBuffer<float> | 初期化時 | 逆質量 |
 | rest_position | StructuredBuffer<float4> | 初期化時 | Rest Pose |
-| animation_target | UAV出力 / SRV入力 StructuredBuffer<float4> | 描画フレーム・サブステップ | Skinning目標 |
-| animation_velocity | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 目標速度 |
-| animation_lambda | RWStructuredBuffer<float4> | サブステップ反復 | Cloth追従制約の3軸λ |
+| animation_target | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始・終了境界 | Skinning目標位置。CCD prefix時刻は同じTrajectory Evaluatorから取得 |
+| animation_trajectory_packet | SRV StructuredBuffer<AnimationTrajectoryRecord> | Logical Tick / Animation Spanごと | Bone単位のTranslation / Rotation / Scale補間係数、Parent、Blend、Root Transform。TOI任意時刻評価の入力 |
+| animation_span_cursor_gpu_record | WorldごとのRWStructuredBuffer / UAV | Logical Tick / Working Segmentごと | Immutable Span Packetを参照するMutable Cursor。Span Record Index / Packet Version / normalized u。Segment Snapshotへ含め、TOI / RetryでRollback |
+| animation_trajectory_bound | SRV StructuredBuffer<AnimationTrajectoryBound> | Animation Spanごと | Mesh単位の保守的な最大速度・最大加速度・Chord Deviation Bound。Swept AABB / CAに使用 |
+| animation_velocity | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始・終了境界 / TOI時刻 | Skinning済みTarget Trajectoryの時間微分 |
+| animation_lambda | RWStructuredBuffer<float4> | Segment反復 | Cloth追従制約の3軸λ Scratch |
 | tet_indices | StructuredBuffer<uint4> | 初期化時 | 四面体接続 |
 | tet_rest_data | StructuredBuffer<TetRestData> | 初期化時 | Bm、V0、材料ID |
 | vertex_tet_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Tet CSR |
-| tet_force_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | サブステップ | 四面体ごとの4頂点力 |
+| tet_force_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | Integration Segment開始状態ごと | 四面体ごとの4頂点力。Segmentごとに再評価 |
 | cloth_constraints | StructuredBuffer<ConstraintData> | 初期化時 | Stretch / Shear / Bend |
-| constraint_lambda | RWStructuredBuffer<float> | 反復ごと | XPBD λ |
+| constraint_lambda | RWStructuredBuffer<float> | Segment内反復ごと | XPBD λ Scratch |
 | vertex_constraint_offsets / ids | StructuredBuffer<uint> | 初期化時 | Vertex→Constraint CSR |
-| cell_records | UAV出力 / SRV入力 StructuredBuffer<CellRecord> | サブステップ | Spatial Hash登録 |
-| contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | サブステップ | VT / EE候補 |
-| contact_data | SRV/UAV StructuredBuffer<ContactData> | 反復ごと | 接触法線・係数・λ |
-| vertex_contact_offsets / ids | StructuredBuffer<uint> | サブステップ | Vertex→Contact CSR |
-| contact_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | 反復ごと | 接触補正寄与 |
+| cell_records | UAV出力 / SRV入力 StructuredBuffer<CellRecord> | Integration Segment / Position-Writer Epochごと | Physical / Correction Swept AABBによるSpatial Hash登録 |
+| correction_epoch_position_before | StructuredBuffer<float4> | Position-Writer Epochごと | 各XPBD位置書込みDispatch直前のDynamic Physics Vertex位置Snapshot。Epoch間で再利用 |
+| correction_epoch_displacement | RWStructuredBuffer<float4> | Position-Writer Epochごと | after - beforeの位置補正ベクトル。Correction Motion CCDの速度Boundに使用 |
+| correction_epoch_primitive_aabb | UAV出力 / SRV入力 StructuredBuffer<AabbRecord> | Position-Writer Epochごと | before / afterを包含するVT / EE Primitive Correction Swept AABB |
+| correction_epoch_status | RWStructuredBuffer<uint> | Position-Writer Epochごと | Correction CCD Hit / No-Hit / Unresolved、Capacity、非有限状態およびContact Set Generation |
+| contact_candidates | UAV出力 / SRV入力 StructuredBuffer<ContactCandidate> | Integration Segment / Position-Writer Epochごと | Physical Swept / Correction Motion CCD / Final Discrete候補のCanonical Union。Epochごとに増分追加し、Segment終端で確定 |
+| contact_data | SRV/UAV StructuredBuffer<ContactData> | Integration Segment / Contact Iterationごと | 接触法線・係数・λ Scratch。Segment開始時Reset |
+| vertex_contact_offsets / ids | StructuredBuffer<uint> | Contact Set更新ごと | Canonical Union済みの現Segment Contact集合に対するVertex→Contact CSR。Contact Set Generation変更時に再構築 |
+| contact_contrib | UAV出力 / SRV入力 StructuredBuffer<float4> | Contact Iterationごと | Contact位置補正寄与。Velocity再構築には直接加算しない |
 | render_binding | StructuredBuffer<RenderBinding> | 初期化時 | Render Vertex対応 |
 | diagnostic_buffer | RWStructuredBuffer<uint> | Passごと | Count / Overflow / Error |
 
@@ -138,7 +151,7 @@ GPU ResourceはSRV/UAV両方のViewを必要に応じて作成し、同じBuffer
     struct physics_vertex_state
     {
         float4 position;
-        float4 previous_position;
+        float4 segment_start_position;
         float4 velocity;
         float4 predicted_position;
         float inverse_mass;
@@ -209,7 +222,7 @@ Physics Mesh境界頂点について、元Render Mesh表面の最近接三角形
 
 Iは内部頂点、Bは境界頂点。内部頂点を含む各連結成分が少なくとも1つの境界頂点へ接続していることを事前検査し、境界へ接続しない成分は解を定義できないためアセットエラーとする。jointごとに疎行列反復解法を行う。解の残差、各頂点のweight sum、負値を検査し、最後に0以上へ射影・正規化する。Bone influenceが多いアセットでは必要jointごとに解くための計算量を記録する。
 
-### 5.3 GPU Skinning
+### 5.3 GPU Skinning / 任意時刻Animation Trajectory
 
 glTFのSkin Matrixは次で定義する。
 
@@ -217,7 +230,285 @@ glTFのSkin Matrixは次で定義する。
                    * joint_global_matrix[j]
                    * inverse_bind_matrix[j]
 
-inverseBindMatricesが省略されている場合は全Jointで単位行列を使う。CPUはSimulation Timeに対応するAnimation ClipのPoseを評価してBone行列をGPUへアップロードする。描画フレーム内に複数の物理Stepがある場合も、各Step時刻のPoseを評価または時間補間する。GPUはPhysics MeshのRest Positionとweightから各Stepの目標位置を計算する。前回Step目標位置との差分をそのStepの固定時間刻みで除してAnimation Velocityを得る。
+inverseBindMatricesが省略されている場合は全Jointで単位行列を使う。Animation Target PositionとAnimation Target Velocityは同じSimulation Timeの最終Skinning Trajectoryから生成し、前Step / Render Frame差分からVelocityを近似しない。
+
+#### Animation SpanとGPU入力Packet
+
+Logical Tick内のAnimation入力を、次の境界でAnimation Spanへ分割する。
+
+- 有効な各ClipのSTEP / LINEAR / CUBICSPLINE Key境界。
+- Loop / Ping-Pong等のClip Time wrap境界。
+- Blend Weight CurveのKey境界。
+- Root Transform / Kinematic Collider Transformの入力Sample境界。
+- Teleport / Reset / Time Rewind等の明示Discontinuity境界。
+
+各Animation Spanは単一の補間区間だけを含み、Span内のClip TimeはPlayback Speedを含む線形写像とする。TOIはSpan内で発生し、Key境界を跨がない。Logical Tick内のSpan境界をWorld Integration Segment境界へ追加する。Spanを分割できない欠落Sample / Invalid KeyはBLOCKED_BY_INPUTまたはInvalid Animation Inputとし、古いPoseを延長しない。
+
+CPU Animation Evaluatorは各Spanについて不変のanimation_trajectory_packetを作成し、GPUへUploadする。Packetは次を含む。
+
+- SpanのWorld Simulation Time [t0,t1]、Animation Input Version、Span ID。Span RecordはTrack / Channel / Blend / ColliderそれぞれのBuffer Rangeを明示する。
+- animation_track_gpu_recordはClip Index、Span内Clip Time開始 / 符号付きDelta、Playback Speed、Channel Record Rangeを保持する。Blend RecordのSource / Target Track IndexはSpan内Track Record Indexを参照する。
+- Skinningに必要なBone / Mesh Node / Root / 祖先NodeごとのNode Index・Parent Index・Inverse Bind Matrix Static Record Index・Node Roleを保持する。Track RecordのChannel RangeはSkeleton JointだけでなくMesh Node Global Matrixと全Joint Ancestorを含む。Channelを持たないNodeもRest Local Transformを定数係数として収録し、Hierarchy Global Matrixを完全に再構築する。非Joint NodeのInverse Bind IndexはUINT32_MAX。
+- 最大2本のAnimation Track。各TrackのClip Time区間、Playback Speed、Loop状態、補間種別、Channel有無。
+- BoneごとのTranslation / Scale補間係数c0..c3、Rotation補間パラメータ、Key境界情報。
+- Blend Weight Curveの係数w0..w3、Discontinuity EventとPolicy。
+- Root TransformのTranslation / Rotation Trajectoryと解析微分。
+- Kinematic ColliderごとのStable Collider ID、Sample Span [t0,t1]、Translation Linear係数、Shortest-Arc Slerp Quaternion、World Space Angular Axis / Angle、解析的Linear / Angular Velocity、最大Local Radius。
+- Span全域の保守的速度・加速度Boundを構成するCoefficient Interval。Collider BoundにはTranslation Speed、Angular Speed * Maximum Radius、Slerp Sagittaを含める。
+
+GPUはCAの各Iterationで指定されたtauを受け取り、同じPacketを用いてAnimation / Kinematic Transformを評価する。独立Kinematic Colliderはset_kinematic_pose_sampleで受け取った時刻付きTransform SampleをCPUでSpan化し、Translation Linear Interpolation + Shortest-Arc Slerpで評価可能なCollider Trajectory Recordへ変換する。Collider Spanは両端Sampleでbracketし、Span内の位置 / Quaternion / Linear Velocity / Angular Velocityを解析的に算出する。GPU Skinning / Trajectory EvaluatorはBone Local Transform、Bone Global Transform、Skin Matrix、Physics Vertex Target Position / Velocityを同一tauで算出し、Collider Transform Evaluatorは同じtauからCollider Position / Contact Point Velocityを算出する。TOI位置、Contact Relative Velocity、Tracking Targetが異なるPose Sampleを参照してはならない。Animation PacketはTick ReservationへVersion固定し、Retryでは同一Packetを再利用する。
+
+#### CPU Metadata / GPU Packet ABIと時刻精度
+
+CPU SchedulerはWorld Simulation Timeの絶対時刻、Tick Reservation、Animation Span境界をdoubleで保持する。GPU Trajectory PacketはShader Model 5で利用できるuint32 / floatのみを使い、double、bool、Pointer、std::string、std::vectorを含めない。
+
+GPU Trajectory PacketはRead-only / Immutableとし、CursorはWorldごとのMutable Working Bufferへ分離する。GPU PacketはSoAを基本とし、少なくとも次の固定幅Recordを使う。
+
+    struct gpu_float4
+    {
+        float x;
+        float y;
+        float z;
+        float w;
+    };
+
+    struct gpu_matrix4x4
+    {
+        gpu_float4 column0;
+        gpu_float4 column1;
+        gpu_float4 column2;
+        gpu_float4 column3;
+    };
+
+    struct animation_span_gpu_record
+    {
+        uint32_t span_id;
+        uint32_t animation_input_version_low;
+        uint32_t animation_input_version_high;
+        uint32_t first_track_record;
+        uint32_t track_record_count;
+        uint32_t first_channel_record;
+        uint32_t channel_record_count;
+        uint32_t first_blend_record;
+        uint32_t blend_record_count;
+        uint32_t first_collider_record;
+        uint32_t collider_record_count;
+        uint32_t flags;
+        float span_duration_seconds;
+        float inverse_span_duration;
+        float speed_bound;
+        float acceleration_bound;
+        float chord_deviation_bound;
+        float quaternion_normalization_lower_bound;
+        float reserved0;
+        float reserved1;
+    };
+
+    struct animation_span_cursor_gpu_record
+    {
+        uint32_t span_record_index;
+        uint32_t animation_input_version_low;
+        uint32_t animation_input_version_high;
+        float u_segment_start; // Mutable per-World Segment cursor; never embedded in immutable Packet
+    };
+
+    struct animation_track_gpu_record
+    {
+        uint32_t clip_index;
+        uint32_t first_channel_record;
+        uint32_t channel_record_count;
+        uint32_t flags;
+        float clip_time_start;
+        float clip_time_delta;
+        float playback_speed;
+        float reserved0;
+    };
+
+    struct animation_blend_gpu_record
+    {
+        uint32_t source_track_index;
+        uint32_t target_track_index;
+        uint32_t weight_curve_flags;
+        uint32_t reserved0;
+        gpu_float4 weight_coefficients;  // scalar Cubic Hermite c0..c3
+        float duration_seconds;
+        float inverse_duration;
+        float blend_start_offset_seconds;
+        float reserved2;
+    };
+
+    struct kinematic_collider_gpu_record
+    {
+        uint32_t stable_collider_id_low;
+        uint32_t stable_collider_id_high;
+        uint32_t span_sample_pair_id;
+        uint32_t flags;
+        gpu_float4 translation_start;
+        gpu_float4 translation_end;
+        gpu_float4 rotation_start;
+        gpu_float4 rotation_end;
+        gpu_float4 angular_axis_and_angle;
+        float duration_seconds;
+        float inverse_duration;
+        float linear_speed_bound;
+        float angular_speed_bound;
+        float maximum_local_radius;
+        float sagitta_bound;
+        float reserved0;
+        float reserved1;
+    };
+
+    struct animation_channel_gpu_record
+    {
+        uint32_t node_index;
+        uint32_t parent_index;
+        uint32_t inverse_bind_record_index; // UINT32_MAX for non-joint nodes
+        uint32_t interpolation_flags;
+        uint32_t channel_mask;
+        uint32_t node_role_flags; // joint / mesh node / root / required ancestor
+        uint32_t reserved0;
+        uint32_t reserved1;
+        gpu_float4 translation_c0;
+        gpu_float4 translation_c1;
+        gpu_float4 translation_c2;
+        gpu_float4 translation_c3;
+        gpu_float4 rotation_parameter0;
+        gpu_float4 rotation_parameter1;
+        gpu_float4 rotation_parameter2;
+        gpu_float4 rotation_parameter3;
+        gpu_float4 scale_c0;
+        gpu_float4 scale_c1;
+        gpu_float4 scale_c2;
+        gpu_float4 scale_c3;
+    };
+
+animation_span_gpu_record is exactly 80 bytes, animation_span_cursor_gpu_record is exactly 16 bytes (mutable per-World working state, not part of the immutable trajectory Packet), animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_cursor_gpu_record`はimmutableなAnimation Trajectory Packetとは別のWorldごとのMutable UAV Bufferで、Logical TickのWorking State / Segment Snapshotに属する。span_record_indexはimmutable Span Bufferの絶対Element Index、animation_input_version_low/highは参照Packet Version、u_segment_startは現在Segment開始時刻のSpan-local normalized coordinateである。GPU CAはcursor.u_segment_start + tau * span.inverse_span_durationからu_tauを求める。Segment終了時、通常 / Force / Impulse Segmentはdt_segment、TOI prefixはtauを加算してCursorだけを更新し、Packet Recordを書き換えない。次SegmentがSpan境界で開始するときは次Span Record Indexへ切り替え、Cursorを0へ戻す。正の時間進行でCursorが単調増加しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。Segment SnapshotにはCursor Recordも含み、TOI retime / Solver Retryは同じSpan Versionと開始CursorへRollbackする。Logical Tick全体のRejectはTick開始Cursorを再初期化し、Committed Packet / Source Stateを変更しない。Cursor BufferへのCPU Readback / CPU更新は行わない。
+
+GPU Shared Recordは上記gpu_float4 / gpu_matrix4x4を使用する。HLSL側のgpu_float4はfloat4、gpu_matrix4x4は明示的なcolumn_major float4x4として同じColumn-Major Storageへ対応させる。
+
+gpu_float4はsizeof=16 / alignof=4、gpu_matrix4x4はsizeof=64 / alignof=4とする。MatrixはAsset / HLSLで統一したColumn-Major Storageを使い、column0..column3に16個のfloatを格納する。CPUからUploadする直前に既定のAsset Matrix Conventionへ変換する。逆Bind MatrixはImmutable Asset Buffer内のgpu_matrix4x4として保存し、inverse_bind_record_indexはこのStructuredBuffer内の絶対Element Indexを参照する。Joint Nodeは必ず有効Indexを持ち、非Joint NodeはUINT32_MAXとする。Record Structは標準レイアウト / Trivially Copyable / alignof=4とし、#pragma packでField Alignmentを暗黙に変えない。C++のgpu_float4とHLSL float4のfield offsetsはx=0,y=4,z=8,w=12である。
+
+#### Channel / Track / Blend Flagsと係数の意味
+
+- channel_mask: bit0=Translation、bit1=Rotation、bit2=Scale。未設定ChannelはAsset Rest Local Transformの定数値を使い、PacketへRest Valueを定数係数として含める。
+- interpolation_flags: Translationはbit0..1、Rotationはbit2..3、Scaleはbit4..5。各2-bit値は0=STEP、1=LINEAR、2=CUBICSPLINE、3=Invalid。Reserved bitは0固定。
+- node_role_flags: bit0=Joint、bit1=Mesh Node、bit2=Model Root、bit3=Required Joint Ancestor。複数Roleを同時に持つことを許可する。
+- Track flags: bit0=Loop、bit1=Reverse Playback、他bitは0。clip_time_deltaはSpan開始 / 終了のClip Local Time差。playback_speedはclip_time_delta/span_durationと一致することを検証する。
+- Span flags: bit0=Has Blend、bit1=Has Kinematic Collider、bit2=Has Root Motion。Reserved bitは0。
+- weight_curve_flags: bit0=Enabled。Blend RecordのSource / Target IndexはSpan Track Range内のIndexとし、Track Range外参照はPacket Invalid。
+- Collider flags: bit0=Kinematic、bit1=Shortest Arc Slerp、他bitは0。
+
+ChannelのTranslation / Scale係数はp(u)=c0+c1*u+c2*u²+c3*u³とする。rotation_parameter0..3はQuaternion Channel専用で、STEPではqをparameter0へ格納し残りを0、LINEARではHemisphere整合済みq0 / q1をparameter0 / parameter1へ格納しAnalytic Slerpで評価する。CUBICSPLINEでは正規化前Raw Quaternionの4次元成分ごとのCubic Coefficient c0..c3をparameter0..3へ格納する。評価時はq=r/|r|、q_dot=(r_dot-q*dot(q,r_dot))/|r|を使用する。Quaternion Normalization Lower BoundはSpan Recordのquaternion_normalization_lower_boundで保証し、閾値以下となる入力はSpan細分化またはInvalid Animation Inputとする。
+
+Colliderのrotation_start / rotation_endはLocal-to-World Quaternion。angular_axis_and_angle.xyzはShortest-Arc SlerpのWorld Space回転軸、wは角度[rad]。角度がrotation_epsilon以下ならaxis=(0,0,0)、omega=0とする。その他はomega_world=axis_world*angle/span_duration。Contact Point Velocityはv_linear+cross(omega_world, x_contact-transform_origin)とする。
+固定RecordのByte Offsetは次の通りとする。first_track / first_channel / first_blend / first_collider Record RangeとTrack Recordのfirst_channel_recordは各StructuredBuffer内の絶対Element Index / Count。Blendのsource_track_index / target_track_indexのみSpanのTrack Range先頭からの相対Indexとする。OffsetはBuffer先頭からのbyte単位であり、全Fieldは4-byte alignmentとする。
+
+| Record | Field Offset |
+|---|---|
+| animation_span_gpu_record (80 B) | span_id=0, version_low=4, version_high=8, first_track=12, track_count=16, first_channel=20, channel_count=24, first_blend=28, blend_count=32, first_collider=36, collider_count=40, flags=44, span_duration=48, inverse_span_duration=52, speed_bound=56, acceleration_bound=60, chord_deviation_bound=64, quaternion_normalization_lower_bound=68, reserved0=72, reserved1=76 |
+| animation_span_cursor_gpu_record (16 B, mutable working buffer) | span_record_index=0, version_low=4, version_high=8, u_segment_start=12 |
+| animation_track_gpu_record (32 B) | clip_index=0, first_channel=4, channel_count=8, flags=12, clip_time_start=16, clip_time_delta=20, playback_speed=24, reserved0=28 |
+| animation_channel_gpu_record (224 B) | node_index=0, parent_index=4, inverse_bind_record_index=8, interpolation_flags=12, channel_mask=16, node_role_flags=20, reserved0=24, reserved1=28, translation_c0=32, translation_c1=48, translation_c2=64, translation_c3=80, rotation_parameter0=96, rotation_parameter1=112, rotation_parameter2=128, rotation_parameter3=144, scale_c0=160, scale_c1=176, scale_c2=192, scale_c3=208 |
+| animation_blend_gpu_record (48 B) | source_track_index=0 (Span-relative), target_track_index=4 (Span-relative), weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, blend_start_offset_seconds=40, reserved2=44 |
+| kinematic_collider_gpu_record (128 B) | stable_id_low=0, stable_id_high=4, span_sample_pair_id=8, flags=12, translation_start=16, translation_end=32, rotation_start=48, rotation_end=64, angular_axis_and_angle=80, duration=96, inverse_duration=100, linear_speed_bound=104, angular_speed_bound=108, maximum_local_radius=112, sagitta_bound=116, reserved0=120, reserved1=124 |
+
+#### Record Reference / Flag / Coefficient Semantic
+
+- Span Recordのfirst_*_record / *_record_countは各StructuredBufferに対する絶対Element Index / Count。Track Recordのfirst_channel_record / channel_record_countもChannel Buffer内の絶対Range。Track Recordのparent_indexは同じSpan / Track Channel Range内のParent Channel Record絶対Index。Root NodeはUINT32_MAX。Channel BufferはParentがChildより小さいIndexになるTopological Orderで格納する。
+- node_indexはAsset Node Index。inverse_bind_record_indexはImmutable Inverse Bind Matrix Bufferの絶対Index。Joint Roleを持つRecordは有効Index必須。非Joint NodeはUINT32_MAX。Mesh Node / Root / Required AncestorもChannel Recordへ含める。
+- channel_maskはbit0=Translation、bit1=Rotation、bit2=Scale。未設定ChannelはRest Local Transformの定数値。interpolation_flagsはTranslation bit0..1、Rotation bit2..3、Scale bit4..5。各2-bit値は0=STEP、1=LINEAR、2=CUBICSPLINE、3=Invalid。Reserved bitは0。
+- node_role_flagsはbit0=Joint、bit1=Mesh Node、bit2=Model Root、bit3=Required Joint Ancestor。複数Roleを許可する。Track flagsはbit0=Loop、bit1=Reverse Playback。clip_time_deltaはSpan内の符号付きClip Local Time差、playback_speed=clip_time_delta/span_durationを検証する。
+- Span flagsはbit0=Has Blend、bit1=Has Kinematic Collider、bit2=Has Root Motion。Blend weight_curve_flags bit0=Enabled。source_track_index / target_track_indexはSpan Track Range内の相対Index。範囲外参照はPacket Invalid。
+- Collider flagsはbit0=Kinematic、bit1=Shortest Arc Slerp。Reserved bitは0。
+
+Translation / ScaleはChannel Recordのc0..c3からp(u)=c0+c1*u+c2*u²+c3*u³で評価する。STEPではc0=value、他係数0。LINEARではc0=p0、c1=p1-p0、c2=c3=0。CUBICSPLINEはSpanの符号付きClip Time Deltaを含めてHermite係数へ変換する。
+
+rotation_parameter0..3はRotation Channel専用。STEPでは正規化Quaternionをparameter0へ格納し、他は0。LINEARではHemisphere整合済みq0 / q1をparameter0 / parameter1へ格納し、Shortest-Arc Slerpと解析微分を評価する。CUBICSPLINEでは正規化前Raw Quaternionの各4成分についてCubic Coefficient c0..c3をparameter0..3へ格納し、r(u)を評価後q=r/|r|へ正規化する。q_dot=(r_dot-q*dot(q,r_dot))/|r|。Quaternion Normalization Lower BoundはSpan Recordで保証する。
+
+Blend Recordのweight_coefficientsはSpanを覆うBlend Curveのnormalized Blend Coordinate vに対するScalar Polynomial c0..c3。blend_start_offset_seconds=t_span_start-t_blend_start、duration_seconds=t_blend_end-t_blend_startとし、
+
+    v = clamp((blend_start_offset_seconds + u_tau * span_duration_seconds) * inverse_duration, 0, 1)
+    w = c0 + c1*v + c2*v^2 + c3*v^3
+    w_dot = (c1 + 2*c2*v + 3*c3*v^2) * inverse_duration
+
+で評価する。Blendが存在しないSpanはHas Blendを0、Blend Record Countを0とする。
+
+gpu_matrix4x4 Inverse Bind MatrixはColumn-Majorの4列gpu_float4で保存する。Skin Matrixはinverse(mesh_node_global) * joint_global * inverse_bind_matrix。Node Global MatrixはParent IndexのTopological Orderで評価し、Mesh Node / Root / 全Joint Ancestorを含めて構築する。
+Collider RecordはStable Collider ID、Span Sample Pair ID、Translation係数、Shortest-Arc Slerp Quaternion、Maximum Local Radius、Linear / Angular Velocity Bound、Sagitta Boundを固定幅uint32 / floatで保持する。angular_axis_and_angle.xyzはWorld Space回転軸、wはShortest-Arc角度[rad]。Constant-Speed Slerpのomega_world = axis_world * angle / span_duration。Slerp回転の最大点加速度Boundにはomega_max^2 * maximum_local_radiusを加える。C++側とHLSL側でsizeof / offsetof / stride / field semanticの一致をStatic AssertionとGPU ABI Readback Fixtureで検証する。float3、DirectXMath型、enum classの暗黙Underlying Type、C++ boolをGPU共有Recordへ直接持ち込まない。
+
+CPUはdoubleのSpan開始・終了時刻とSegment開始時刻から、正規化Span座標u_segment_startを計算してfloatへ変換し、Tick Working Cursor Bufferを初期化する。GPUへの時間入力はAbsolute World Timeを含めず、Segment開始からの相対時間tau [s]だけを渡す。CursorはPacket係数Bufferと別Resourceで、Tick / Segment SnapshotのRollback対象とする。
+
+    u_tau = u_segment_start + tau * inverse_span_duration
+    u_tau = clamp(u_tau, 0, 1)
+
+通常 / Force / Impulse / TOIの各正時間Segment終了時にGPUがMutable Cursor Bufferのu_segment_startを進行させる。通常Segmentはdt_segment * inverse_span_duration、TOI prefixはtau * inverse_span_durationを加算し、immutable Span Recordは変更しない。次のSegmentがSpan境界で開始する場合はCursorのspan_record_indexを次Spanへ切り替えてu_segment_start=0へ戻す。CPUへTOI時刻Readbackして再Uploadする同期経路は作らない。Animation Key / Loop / Blend / Root / Collider Sample境界をSpan終端としているため、u_tauが1へ到達する前に次Spanへ跨がない。
+
+CPUはdouble→float変換後のSpan Duration / inverse duration / 初期Cursor u_segment_start / Speed Boundを検査する。正の有効Segment時間をGPU floatで表現できない、u_tauがtau増加に対して単調に進まない、または境界判定誤差がSpan内許容値を超える場合はAnimation Spanを決定的に細分化する。細分化深度8でも表現できなければBLOCKED_BY_INPUT / CCDUnresolvedとしてCommitしない。絶対World Timeをfloatへ直接CastしてShaderへ渡す実装は禁止する。
+
+Speed / Acceleration / Deviation BoundをfloatへUploadする場合は外向きに丸め、Boundを小さくしない。Boundの量子化後も同じNo-Miss条件を維持できない場合はSpanを分割し、それでも証明できない入力を拒否する。
+
+#### Channel補間と時間微分
+
+Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / Scaleの各Componentは次の多項式で表す。
+
+    p(u) = c0 + c1*u + c2*u^2 + c3*u^3
+    dp/dt = (c1 + 2*c2*u + 3*c3*u^2) / (t1 - t0)
+
+STEPはc0=value、他係数0。LINEARはc0=p0, c1=p1-p0、c2=c3=0。glTF CUBICSPLINEはSpan両端の値p0 / p1、符号付きClip Time幅Δcを使い、正方向Playbackではp0のOutgoing Tangentとp1のIncoming Tangent、逆方向Playbackではp0のIncoming Tangentとp1のOutgoing Tangentをm0 / m1として選ぶ。h0=m0*Δc、h1=m1*Δcとし、c0=p0、c1=h0、c2=-3p0+3p1-2h0-h1、c3=2p0-2p1+h0+h1へ変換する。ΔcにはPlayback SpeedとWorld Span時間を含める。負のPlayback SpeedではTangentsのKey側も方向に応じて入れ替える。ScaleはSpan全域で正かつ特異でないことを保証する。
+
+RotationはQuaternionを使う。STEPは一定Quaternion、LINEARは最短弧Slerp、CUBICSPLINEはglTF Hermite QuaternionをComponentごとに評価後normalizeする。CUBICSPLINEの未正規化Quaternionをr(t)、q=r/|r|とすると、
+
+    q_dot = (r_dot - q * dot(q, r_dot)) / |r|
+
+を使用する。SlerpのQuaternion / Angular Velocityも解析的に評価する。Quaternion qはLocalからWorldへの回転、q_dotはSimulation Time微分とし、World Angular Velocityはomega_world = 2 * vector(q_dot * conjugate(q))で求める。Quaternion積の順序は左からWorld回転を適用する規約とする。Quaternionの符号はSpan開始で連続になるHemisphereへ揃える。CUBICSPLINEの|r|の保守的下限が正規化epsilon以下になる区間は決定的に細分化し、なお保証できなければInvalid Animation Inputとして拒否する。正規化Quaternionの有限差分でVelocityを代用しない。
+
+#### Clip Blend
+
+v1は同時に2本までのAnimation Trackを許可し、Additive Animationは対象外とする。Translation / Scaleは、
+
+    p_blend = (1-w) * p_source + w * p_target
+    v_blend = (1-w) * v_source + w * v_target
+              + w_dot * (p_target - p_source)
+
+で評価する。RotationはSource / Target QuaternionのHemisphereを揃えた後、
+
+    r = (1-w) * q_source + w * q_target
+    q_blend = normalize(r)
+    q_dot_blend = (r_dot - q_blend * dot(q_blend, r_dot)) / |r|
+
+とする。Blend Weightは0～1のCubic Hermite Curveで、u=(t-t_blend_start)/T、T=t_blend_end-t_blend_startとして、w(u)=(2u^3-3u^2+1)w0+(u^3-2u^2+u)T*m0+(-2u^3+3u^2)w1+(u^3-u^2)T*m1を使う。m0 / m1はWorld Time微分[1/s]。dw/dtはこの式のu微分をTで除して求める。Curve全域で0<=w<=1を区間検証し、範囲外へOvershootするBlendは入力Errorとする。Rotation Blendはr_dot=(1-w)*q_dot_source+w*q_dot_target+w_dot*(q_target-q_source)を使ってq_dot_blendを計算する。Span PacketにWeight係数と微分係数を保持する。3本以上の同時Blend / Additiveはv1で明示Unsupportedとする。
+
+#### Hierarchy / Skinning微分
+
+Bone Global MatrixはParent順に評価し、微分は積の微分を使う。
+
+    M_global = M_parent * M_local
+    M_global_dot = M_parent_dot * M_local
+                    + M_parent * M_local_dot
+
+Skin Matrixの微分には逆行列の微分を含める。
+
+    A = inverse(mesh_node_global)
+    A_dot = -A * mesh_node_global_dot * A
+    S_j = A * joint_global[j] * inverse_bind[j]
+    S_j_dot = A_dot * joint_global[j] * inverse_bind[j]
+              + A * joint_global_dot[j] * inverse_bind[j]
+
+Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivativeを合成し、Physics Vertex Rest Positionへ適用してTarget Position / Velocityを得る。animation_channel_gpu_recordは各必要Node（Bone / Mesh Node / Root / Joint Ancestor）をnode_indexで識別し、Skeleton JointのInverse Bind MatrixはAsset Immutable BufferのStatic Indexから参照し、animation_channel_gpu_record::inverse_bind_record_indexで指定する。非Joint NodeはUINT32_MAX。node_role_flagsはJoint / Mesh Node / Root / Required Ancestorを区別する。Mesh Node Global Matrix / Derivativeも同じHierarchy Passで評価して、skin_matrix = inverse(mesh_node_global) * joint_global * inverse_bindを構成する。
+
+#### Conservative Trajectory Bounds
+
+Animation Packet生成時にCPUは各Spanの係数から区間演算（Interval Arithmetic）でLocal Transformの速度・加速度上限を算出する。Matrix積の微分BoundはProduct Ruleを上限演算へ適用し、Inverse Matrixは最小特異値の下限が確保できる場合だけ評価する。SkinningではInfluence Weightの総和と非負性を検証し、Bone / Mesh Node / Root Transformを通じてPhysics Mesh全体の保守的な最大頂点速度v_animation_maxと最大加速度a_animation_maxを求める。Quaternion由来のWorld Angular Velocityはomega_world = 2 * vector(q_dot * conjugate(q))、剛体Colliderの接触点Velocityはv_linear + cross(omega_world, x_contact - transform_origin)とする。上限演算は丸め誤差を外側へ膨張させ、実値を過小評価しない。GPUはこのBoundを改変せず利用する。
+
+Twice differentiableなSpanでは、Endpoint Chordに対する最大偏差を、
+
+    deviation_bound = a_animation_max * (t1 - t0)^2 / 8
+
+で上限化する。STEP / Teleport境界は同一Spanへ跨がせず、Span境界で明示Discontinuityとして処理する。Slerp Colliderの回転は最大半径r_max、区間角度thetaからSagitta Boundを求め、角速度上限をSpeed Boundへ含める。Boundが有限に得られないSpanは最大深度8まで分割し、それでも有限Boundを証明できなければCCDUnresolved / BLOCKED_BY_INPUTとしてCommitしない。
+
+このBoundはMesh全体で保守的に一つの上限を使う初期方式であり、AABBを過大に膨張させる場合がある。最適化でMesh Cluster / Primitive単位へ細分化しても、Boundの保守性とNo-Miss条件を緩和してはならない。
+
+Animation EvaluatorがTarget Position / Velocity / Boundを同じSpan Packetから供給できない区間はBLOCKED_BY_INPUTとする。Render用PoseとPhysics用Poseの時間軸を混在させない。
 
 ## 6. Soft Body Solver詳細
 
@@ -292,14 +583,51 @@ Rest Shape Function勾配を用い、頂点iの内部力を次で求める。
 
 ### 6.6 時間積分・減衰
 
-半陰的Eulerを使う。サブステップ開始位置と速度を保持し、外力・内部力を加えて予測する。
+v1では全ての変形Physics VertexをWorld共通Integration Segment単位で更新する。通常Substep、Force / Impulse Event境界、TOI境界のいずれでも同じ積分規則を使用する。ここでいうSegmentは正の有限時間幅を持つ区間であり、Segment開始状態を (x_segment_start, v_segment_start)、区間時間をdt_segmentとする。
 
-    force_total = force_external + force_internal + force_animation
-    velocity_next = velocity + delta_t * inverse_mass * force_total
-    velocity_next *= exp(-damping_rate * delta_t)
-    position_next = position + delta_t * velocity_next
+Dynamic Vertexに対するSegment中の運動方程式は、Segment内で評価した合力F_segmentを一定とみなす線形粘性減衰モデルとする。
 
-固定頂点はposition_next = animation_target、velocity_next = animation_velocityとする。Soft Body内部力は各物理サブステップで再評価する。
+    dv/dt = inverse_mass * F_segment - damping_rate * v
+
+F_segmentはSolverごとに次のように構成する。
+
+- Soft Body: gravity / User Force / Corotational FEM internal force / Kelvin-Voigt Animation Tracking forceの合計。内部力とTracking forceはSegment開始状態 (x_segment_start, v_segment_start) および同時刻のAnimation Target / Velocityで評価し、当該Segment内では固定する。
+- Cloth: gravity / User Forceの合計。Stretch / Shear / Bend / Animation Tracking / Contactは位置制約としてSegment内で解く。Clothへ将来Force型の追加項を導入する場合はF_segmentへ加え、単位と安定時間刻みを更新する。
+
+User ImpulseはForceへ変換しない。Impulse J_segmentはSegment開始境界で一度だけ速度へ加え、その直後から当該Segmentの減衰を受ける。Force Eventの有効状態はSegment内で一定でなければならない。Impulse Eventの時刻は必ずSegment境界へ挿入する。
+
+数値計算は次の順で行う。damping_rateは0以上の有限値とする。
+
+    z = damping_rate * dt_segment
+    decay = exp(-z)
+
+    damping_integral =
+        dt_segment                                      // z == 0
+        dt_segment * (1 - z/2 + z^2/6 - z^3/24)        // 0 < z < 1e-3
+        (1 - decay) / damping_rate                    // z >= 1e-3
+
+    v_after_impulse = v_segment_start
+                    + inverse_mass * J_segment
+
+    acceleration = inverse_mass * F_segment
+
+    v_predicted = decay * v_after_impulse
+                + damping_integral * acceleration
+
+    x_predicted = x_segment_start + dt_segment * v_predicted
+
+damping_integralは一定加速度に対する線形粘性減衰の速度積分係数である。小さいzでは級数近似を使い、1-exp(-z)の桁落ちを避ける。上式は速度についてSegment内一定加速度・線形減衰の解を使い、位置について半陰的Euler更新を行う。Soft Bodyの非線形内部力はSegment開始時に評価するため、この一定力近似の誤差をWorld Substep / TOI Segment解像度と収束試験で評価する。
+
+inverse_massが0のFixed / Kinematic Vertexには上記のDynamic更新式を適用しない。代わりにSegment終端時刻のAnimation Targetと、その時刻におけるAnimation Target Trajectoryの時間微分を設定する。
+
+    x_predicted = animation_target(t_segment_end)
+    v_predicted = animation_velocity(t_segment_end)
+
+Animation Velocityは同一内部時間軸でサンプリングされたTarget Trajectoryの時間微分とする。線形補間では区間勾配、CUBICSPLINEでは評価曲線の終端微分を使う。Velocity Sampleが得られない場合に前Frame値を流用しない。必要なPose Bracketが欠落していればBLOCKED_BY_INPUTとする。
+
+XPBD位置解決後の速度再構築はDynamic Vertexだけに適用する。Fixed / Kinematic Vertexは再構築値で上書きせず、Animation Interfaceが与えた終端Velocityを維持する。Contact Impulse / Friction / Restitutionは逆質量に従ってDynamic Vertexへだけ速度反映し、Kinematic VertexのVelocityは変えない。Kinematic Velocityは相対速度、摩擦、反発、CCDの入力として使用する。
+
+Impact後に次Segmentが存在する場合、Impact後の位置・速度を次Segment開始状態とする。Logical Tick全体の始点・終点差分でImpact後Velocityを再構築してはならない。
 
 ### 6.7 Animation Tracking力
 
@@ -314,16 +642,17 @@ tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1。
 
 ### 6.7.1 アニメーション不連続イベント
 
-Animation Interfaceは通常再生、Clip Blend、Teleport、Reset、Time Rewindを区別する。通常再生と連続Blendではprevious targetとtargetの履歴を維持し、Animation Velocityを連続計算する。Teleport / Reset / Time Rewindはdiscontinuity eventとして明示し、次のどちらかを選ぶ。
+Animation Interfaceは通常再生、Clip Blend、Teleport、Reset、Time Rewindを区別する。Clip Blendは最大2 Trackであり、Source / Targetの補間結果とBlend Weight Curveを§5.3のPacketで評価する。Additive / 3 Track以上のBlendはUnsupportedとする。Discontinuity Eventでは次のPolicyを選択する。
 
-- preserve_velocity: 物理速度を維持し、目標位置履歴だけを新しい姿勢へ合わせる。
-- reset_velocity: 物理速度と位置履歴を新しい目標状態へ再初期化する。
+- preserve_velocity: Dynamic Physics Velocityを直前値のまま維持し、目標Pose / Trajectory履歴だけを新しいSpanへ合わせる。
+- reset_velocity: Dynamic Physics Position / Velocityを新Target Position / Trajectory Velocityへ再初期化し、Contact / CCD CacheとSegment Snapshotを無効化する。
+- blend_velocity: Dynamic Positionは維持し、Dynamic Velocityをv_after=(1-w_event)*v_before + w_event*v_target(t_event+)へ再初期化する。w_eventはDiscontinuity Descriptorの0～1値。Target / Velocity履歴をEvent後Spanへ合わせる。
 
-Clip Blendはブレンド比率を連続更新し、通常はvelocity resetを行わない。速度差分の上限を超えた場合はイベント未指定の不連続として警告し、ユーザー指定ポリシーに従う。
+通常のClip Blend遷移はTrajectory自体の微分へw_dot項を含めるため、Policy適用によるVelocity Resetを要求しない。Discontinuity Policyは明示イベントにだけ適用する。Teleport / Reset / Time RewindではContact / CCD Cache、前回位置、速度、Segment SnapshotをPolicyに従って再初期化する。
 
 ### 6.8 明示積分の安定時間刻み
 
-陽的内部力 + 半陰的Eulerは条件付き安定であり、1/240秒にしただけで全メッシュ・全材料の安定性を保証しない。
+Segment開始時に評価した陽的内部力と半陰的Eulerによる位置更新は条件付き安定であり、速度に線形粘性減衰を厳密適用しても、1/240秒にしただけで全メッシュ・全材料の安定性を保証しない。
 
 材料の縦波速度を
 
@@ -338,7 +667,33 @@ Clip Blendはブレンド比率を連続更新し、通常はvelocity resetを�
     delta_t_limit = cfl_factor * min_t(h_t / c_p_t)
     cfl_factor = 0.2  // 初期評価値。実測で検証する
 
-これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。上限超過時は警告し、設定に応じてサブステップを増やす。最大サブステップ数を超えたら明示的にエラーとし、時間刻みを黙って無視しない。
+これは要素形状・材料・境界条件を含めた厳密な安定保証式ではなく、初期の保守的スクリーニングである。
+
+ClothはXPBDであるため、ここでの時間刻み上限はFEM CFLのような明示積分の安定保証ではなく、拘束振動数に基づくTemporal Quality Limitとする。各Constraint cについて、Rest / Current Geometryで評価したGradientと有効逆質量から、
+
+    omega_c = sqrt(k_c * sum_i(inverse_mass_i * dot(gradient_i, gradient_i)))
+    omega_cloth_max = max_c(omega_c)
+    dt_limit_cloth_quality = c_cloth / max(omega_cloth_max, epsilon_omega)
+
+と推定する。初期係数c_cloth=0.2はEngineering Baselineであり、Stretch / Shear / Bendの解像度収束・反復収束試験で校正する。全頂点固定、Compliance無限大、または拘束剛性0のConstraintは推定対象から除外する。推定値は厳密安定保証と称さず、品質上限として使う。
+
+World共通Substep ScheduleはFEM CFL、Animation Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限の最小値を集約する。Cloth品質LimitをScenarioで無効にした場合はその項を無限大として扱う。Contact Compliance 0のContactに固有振動数を割り当てず、contact_max_substep_delta_timeを独立した時間品質上限として使用する。初期値は1/120 s、0は明示無効とする。0を指定しworld_max_substep_delta_timeも0ならContact固有のdt上限を適用しない。
+上限超過時は警告し、設定に応じてWorld共通Substep数を増やす。最大World Substep数を超えたらBLOCKED / WORK_BUDGET_EXCEEDEDとしてLogical TickをCommitせず、同じReservation / Sequence / Input Snapshotを保持する。回復にはRuntime §5.6の専用Admission Limit APIを使う。Soft Bodyだけを細かく進めてCloth / Contactを旧時刻に残す独立Subcyclingはv1で禁止する。
+
+World共通Substep数はLogical Tick開始時に一度だけ決定する。全参加Soft Body MeshのFEM / Animation Tracking制限、全参加Cloth MeshのTemporal Quality Limit、Contact Temporal Quality Limit、World設定のminimum_substeps / maximum_substepsを集約し、
+
+    dt_limit_world = min(all_mesh_dt_limit_fem,
+                         all_mesh_dt_limit_tracking,
+                         all_mesh_dt_limit_cloth_quality,
+                         contact_max_substep_delta_time if > 0 else +infinity,
+                         world_max_substep_delta_time if > 0 else +infinity)
+
+    N_world = max(minimum_substeps,
+                  ceil(fixed_delta_time / dt_limit_world))
+
+とする。contact_max_substep_delta_time=0は+infinityとして扱い、world_max_substep_delta_time=0も+infinityとする。全項が無制限ならN_worldはminimum_substepsとなる。N_world > maximum_substepsはBLOCKED / WORK_BUDGET_EXCEEDEDとして同じTick Reservationを保持する。Substep数の算出自体がuint32範囲を超える整数Overflow、または非有限値はWorkCountOverflow / Invalid Runtime StateとしてFAILEDまたはREJECTEDへ分類し、値をWrap / Saturateして続行しない。実際のSubstep時間はdt_world = fixed_delta_time / N_worldとし、全Soft Body / Cloth / Contact / Animation Trackingへ同一値を渡す。ClothのXPBD ComplianceとContact Complianceは必ずこのdt_worldから算出する。
+
+TOI分割はWorld共通Substepの内部Segmentとして扱う。TOI以前・TOI以後の双方でSoft Body、Cloth、Animation Tracking、Contact対象の全てを同じSegment時間だけ進める。v1ではSoft BodyだけをTOIまで進めてClothを固定するようなソルバー別時間進行を行わない。minimum_substeps、maximum_substeps、world_max_substep_delta_timeはWorld Descriptor / Scenarioに保存し、Run Manifestへ記録する。
 
 ### 6.9 体積・せん断評価
 
@@ -348,9 +703,9 @@ muとshape_recovery_scaleは主に元形状への復元・せん断応答、Kと
 
 ### 7.1 XPBD共通式
 
-制約関数C(x)、Compliance alpha、固定サブステップdelta_t、制約ごとのlambdaを用いる。
+制約関数C(x)、Compliance alpha、実際のWorld共通Integration Segment時間dt_segment、Segment内の制約ごとのlambdaを用いる。TOIおよびForce / Impulse境界でWorld共通Substepが分割された場合、各Segmentは独立したXPBD Integration Intervalとなる。
 
-    alpha_tilde = alpha / (delta_t * delta_t)
+    alpha_tilde = alpha / (dt_segment * dt_segment)
     delta_lambda_raw =
         (-C(x) - alpha_tilde * lambda_old)
         / (sum_i(inverse_mass_i * dot(gradient_i, gradient_i))
@@ -364,7 +719,56 @@ Compliance alphaは制約関数の単位に依存する。エディタで扱う�
 
 初期版のCloth材料入力は面内引張剛性E_2D (N/m)、面内せん断剛性G_2D (N/m)、曲げ剛性D (N*m)とする。Stretch辺のdual width wは内部辺では隣接2三角形の辺直交高度の平均、境界辺では隣接三角形の高度の半分とし、Rest LengthをL0とするとk_stretch=E_2D*w/L0。Shear三角形はk_shear=G_2D*area。Bend hingeのdual width wは隣接2三角形の辺直交高度の平均とし、共有辺長lを使いk_bend=D*w/lとする。これらは離散化の初期モデルであり、解像度変更時のエネルギー一致を試験する。
 
-分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。λは各サブステップ開始時に0へ初期化し、同一サブステップの反復中は保持する。初期版ではサブステップ間Warm Startを行わない。
+分母が閾値以下、全頂点が固定、または値が非有限の場合は補正を出さず診断する。Contactについては§8.5のepsilon_inverse_massで応答可能性を先に判定し、非応答ContactのLambdaを生成しない。Cloth Stretch / Shear / Bend / Animation Tracking / Contactの各XPBD λは、各World共通Integration Segment開始時に0へ初期化し、そのSegment内の全Solver反復で保持する。Segment境界（通常Substep境界、Force / Impulse境界、TOI前後）では必ず0へ戻し、Segment間およびLogical Tick間のWarm Startはv1で行わない。すべてのComplianceは当該Segmentのdt_segmentからalpha_tilde=alpha/(dt_segment*dt_segment)を算出する。
+
+### 7.1.1 Cloth動力学予測・外力適用
+
+Clothの予測はWorld共通Integration Segmentごとに1回行う。World Substepの開始時だけに限定しない。Force / Impulse Event境界またはTOIでSubstepが分割された場合、直前Segmentの終了状態を次Segmentの開始状態として使い、次Segmentのdt_segmentで予測する。重力は一様加速度としてPhysics Vertex iへmass_i * gravityで適用する。
+
+ユーザーForce / Impulse Descriptorはワールド空間の作用点・方向・半径を持ち、Soft Body / ClothのPhysics Vertexへ同じ質量測度付きFalloffで分配する。頂点iのRest Lumped Massをm_i、Segment開始位置から作用点までのワールド空間距離をr_i、Force半径をRとする。Rは正の有限値を必須とし、サポート内頂点に対して、
+
+    s_i = r_i / R
+    phi(s_i) = (1 - s_i)^4 * (4 * s_i + 1)   // 0 <= s_i < 1
+    q_i = m_i * phi(s_i)
+    w_i = q_i / sum_j(q_j)
+
+とする。s_i >= 1の頂点はq_i=0。質量はSoft Bodyの四面体Lumped Mass、Clothの三角形Lumped Massから得る。sum_j(q_j)は同じForce Descriptorの対象World / Model / Mesh範囲内で動的・固定を含む全サポート頂点について求める。これによりDescriptorのForce / Impulse合計量を頂点数やMesh解像度によらず保存する。固定頂点へ配分された分は拘束反力として扱う。サポート頂点が0、または重み総和が閾値以下の場合はNO_FORCE_TARGETを記録し、そのEventを適用しない。
+
+ForceのMagnitudeはN、ImpulseのMagnitudeはN*sとし、方向は正規化済みベクトルとする。Force Eventの開始・終了時刻とImpulse Event時刻はWorld共通Segment境界へ追加する。Segment時間区間は半開区間[t_segment_start, t_segment_end)として扱い、ForceはSegment内で有効状態を一定にする。Impulseは時刻を含むSegmentの開始境界で一度だけ適用する。Logical Tick終端と一致するEventは次のLogical Tick開始境界に属する。イベントIDとTick Reservation内の消費記録を保持し、Retry / TOI prefix構成で同じImpulseを二重適用しない。0時間または負時間のSegmentを生成しない。
+
+各外部Event eは対象Filter内で独立にw_i,eを正規化する。Segment開始時のPhysics Vertex iへの入力は、
+
+    F_external_i = m_i * gravity
+                 + sum_e(w_i,e * direction_force_e * magnitude_force_e)
+
+    J_segment_i = sum_events_at_segment_start(
+                      w_i,e * direction_impulse_e * magnitude_impulse_e)
+
+とする。Force開始・終了境界でWorld共通Segmentを分割するため、ForceはSegment全体へ作用する。ImpulseはSegment開始時に一度だけ適用する。F_externalとJ_segmentを同じForceへ変換して二重加算しない。
+
+Clothには§6.6の共通Segment積分式を適用し、F_segment = F_external、J_segment = J_segment_iとする。Soft Bodyは§6.6の定義に従いFEM internal forceとKelvin-Voigt Animation Tracking forceもF_segmentへ加える。ClothのAnimation TrackingはXPBD Attachment Constraintとして位置解決時に扱う。
+
+Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解決した後、Contact Position Constraintを解く前にDynamic Vertexだけについて、
+
+    v_pre_contact = (x_internal_solved - x_segment_start) / dt_segment
+
+でContact前Velocityを再構築して保存する。Contact Position XPBDはPositionだけを補正し、保存済みv_pre_contactを変更しない。Fixed / Kinematic Vertexは§6.6に従い、Animation TargetとAnimation Trajectory Velocityを維持する。Friction / Restitution Impulseは保存済みContact前Velocityから一度だけ計算し、Kinematic VertexのVelocityは変更しない。Impact後のVelocityは次Segmentへ引き継ぐ。Logical Tick全体の始点・終点差分でImpact後Velocityを上書きしない。
+
+### 7.1.2 World Integration Segmentの処理順
+
+1. Logical Tick内のWorld Substep境界、Animation Span Key境界、Force開始 / 終了、Impulse時刻を昇順に統合する。World Substep境界も含めてLogical Tick内の予定Segment総数を算出する。CPU Preflightで`planned_substeps`と`planned_integration_segments`をAdmission Limitと比較し、どちらかが上限を超える場合は`BLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflight`としてReservationを保持し、GPU Physics Upload / Dispatch / Event Queryを発行しない。未使用Query / Render Candidate Slotは解放し、poll()へCPU Status Queue経由で同期反映する。TOIによる追加SegmentはCPU Preflightの予定数に含めない。
+   等しい時刻のEventはEvent ID順でまとめ、重複境界を除去する。異なる時刻のKey / Event境界を結合・省略しない。隣接する境界時刻が同一または数値的に逆転した場合は同一境界へ統合し、dt_segment <= 0のSegmentを発行しない。予定Segment数をAdmission Limit以内へ丸めてはならない。
+2. Segment開始時にPhysics Position / Velocity、Animation Input Version、Impulse Event Cursor / 適用済みEvent ID状態をSnapshotする。Segment境界でXPBD Lambda / Contact Lambda / Impact Scratchを初期化する。
+3. Animation Span PacketをSegment開始前に固定し、Segment開始・終了時刻およびTOI任意時刻のTarget / Velocityを同じGPU Trajectory Evaluatorで取得する。Span Key境界はSegment境界へ追加済みとする。必要なSample Bracket / Packet / Boundが揃わない場合はBLOCKED_BY_INPUTとし、予測へ進まない。
+4. Segment開始位置から各Force DescriptorのFalloff Weightを計算する。Gravity / ForceはSegment内で一定とし、ImpulseはSegment開始時刻のEvent IDを確認して一度だけ消費する。RetryはSnapshotと同じEvent Cursorから再生し、破棄されたWorking Stateへの適用を重複累積させない。
+5. Soft BodyはSegment開始位置・速度からCorotational FEM内部力とKelvin-Voigt Tracking力を評価する。Clothは外力を評価し、両Solverは§6.6の共通速度積分規則で予測する。Fixed / Kinematic VertexはSegment終端Animation Target / Velocityを設定する。
+6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
+7. TOIがない場合は、Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを規定反復数だけ解く。Graph Coloringの各Color DispatchおよびGather Jacobiの各Position DispatchをPosition-Writer Epochとして扱い、各Dispatch直後に§9.4.1のCorrection Swept AABB / Candidate追加と§9.4.2のCorrection Motion CCDを実行する。Hitの終端Contactは次のContact Solveに渡し、Crossing / Unresolved / Capacity ErrorはCommitを止める。
+8. TOI Candidateは§11.4のGeometrically Safe Boundary SnapとBoundary Identity規則に従う。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となるCCD対象Segment（Residual Segmentを含む）ごとに一意とする。同一Segment内の同じ有限float32 tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentは同じtau bitsでも別Boundaryとする。-0.0は+0.0へ正規化し、NaN / InfinityはCommitしない。tau=0 / tau=dt_segmentと安全な既存Schedule BoundaryへのSnapは追加Splitを作らない。異なるtauをSnap / Mergeするには時間差、XPBD後位置応答、接触相対Velocity、Impulseの全誤差Boundを満たす必要がある。証明できなければ正確なtauを維持して独立内部Boundaryを作る。Split Countは一意Boundary IDごとに1回だけ増やす。
+9. Discrete / TOIの双方で、非接触内部Constraint後にCandidate Unionを用いたFinal Discrete Narrowphaseを実行し、接触が成立しているContact Setを確定する。Correction Motion CCDで未解決のCrossing / Unresolvedが0であること、Candidate Set / Contact Set Generationが確定していることを確認した後にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、Positive-Time TOI prefixではtauを使う。tau=0 Initial Contact EventはSegment-start velocity / Kinematic Trajectory Derivativeを使い、ゼロ時間prefixのVelocity Reconstructionを行わない。Contact Position XPBDの各位置反復もPosition-Writer Epochとし、各反復後にCorrection Motion CCD / Candidate Union / Final Discrete refreshを行う。新規終端Contactは次の残り反復で解決する。規定反復の最後に新規Contactまたは未確定Generationが残る場合はContactGeometryUnresolvedとしてCommitしない。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
+10. 保存済みContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを一度適用する。TOI Impactはimpact_resolvedに記録し、Impact後Velocityから残時間の新Segmentを開始する。Contact位置補正後またはImpact後に同じSegmentのVelocity Reconstructionを実行しない。TOI候補がprefix再検査で成立しない場合はImpactを発生させず、tau位置から残時間を継続し、必要ならCCD候補を再構築する。
+
+Soft BodyとClothの内部解法は異なるが、時間境界・Force / Impulse Eventの意味・Kinematic Velocity所有者はWorld共通である。各Substepの単純な1回更新へ戻す実装、Solverごとの異なるSegment時間、固定頂点への差分Velocity上書きは禁止する。
 
 ### 7.2 Stretch
 
@@ -446,9 +850,9 @@ StretchはGraph Coloringを基本方式とする。同色内の制約は頂点�
 Clothの追従は頂点ごとのXPBDアタッチメント制約とする。固定頂点は逆質量0として目標位置へ直接固定する。柔軟頂点は次のベクトル制約を持つ。
 
     C_animation = position - animation_target
-    alpha_tilde = alpha_animation / (delta_t * delta_t)
+    alpha_tilde = alpha_animation / (dt_segment * dt_segment)
 
-各軸に対してXPBD更新を行い、lambda_animationはfloat3で頂点単位に保持する。lambdaは各サブステップ開始時にリセットし、反復中に維持する。Animation TrackingはStretch / Shear / BendのComplianceと独立して調整する。
+各軸に対してXPBD更新を行い、lambda_animationはfloat3で頂点単位にSegment Scratchへ保持する。各World共通Integration Segment開始時にリセットし、そのSegmentの反復中だけ維持する。Animation TrackingはStretch / Shear / BendのComplianceと独立して調整する。
 
 ### 7.6 Gather Jacobi
 
@@ -482,7 +886,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
 
 ### 8.1.1 Collision-only Collider
 
-初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、静的形状または固定時間刻みごとに与えられるTransformで移動する形状として扱う。Kinematic Colliderの頂点速度は前Stepと現在Stepの変換後位置から算出し、CCDと接触の相対速度へ含める。接触位置補正・ImpulseによってCollider自体は変形させない。
+初期版では衝突専用オブジェクトとしてStatic / Kinematic Triangle Meshをサポートする。Colliderは物理頂点の逆質量を0とし、時刻付きRigid Transform Sampleで移動する形状として扱う。接触点xのKinematic Collider速度は、剛体の並進速度v_linearと角速度omegaから、v_point = v_linear + cross(omega, x - transform_origin)で求める。Slerp区間ではQuaternionの解析微分からomegaを評価し、Transformの位置差分だけで頂点速度を近似しない。CCDのSwept AABBはSegment端点Transformを結ぶChord Pathを基準に作成し、Chord偏差Boundで膨張させる。Narrowphase / Conservative Advancementはtau時刻の実Rigid Transformを評価する。Contact Relative VelocityにはTOI時刻の剛体Transform Trajectory微分を使う。接触位置補正・ImpulseによってCollider自体は変形させない。
 
 変形オブジェクトの衝突面は初期版ではSoft Body境界面とCloth Physics Mesh表面を使う。低解像度Collision Proxyを変形メッシュへ割り当て、そのProxy接触を高解像度Physics Meshへ戻す埋め込み応答は初期版の対象外とする。将来追加時はProxy頂点からPhysics MeshへのEmbeddingと、接触勾配のPhysics Vertexへの合成を定義する。
 
@@ -500,7 +904,7 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     delta_lambda_applied = omega_contact * delta_lambda_projected
     lambda_next = lambda_old + delta_lambda_applied
 
-接触位置補正はdelta_lambda_appliedを使う。0 < omega_contact <= 1とし、初期比較値は0.5 / 0.75 / 1.0。contact Complianceは初期版で0を既定値とするが、完全剛体接触が振動する場合に限り小さいComplianceを比較する。
+接触位置補正はdelta_lambda_appliedを使う。0 < omega_contact <= 1とし、初期比較値は0.5 / 0.75 / 1.0。contact Complianceは初期版で0を既定値とするが、完全剛体接触が振動する場合に限り小さいComplianceを比較する。alpha_tildeは実際のdt_segmentから算出し、contact_lambdaはSegment Scratchに保持する。
 
 ### 8.3 Vertex-Triangle
 
@@ -517,7 +921,19 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     effective_inverse_mass =
         wp + beta0^2 * wb0 + beta1^2 * wb1 + beta2^2 * wb2
 
-各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一メッシュペア・隣接面パッチ内でContact Patchを形成する。初期重複判定は、接触点距離が`cluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)`以下、かつ法線内積がcos(10度)以上の場合とする。同一Cluster内では最も深い接触を1つ残し、深さ同値の場合はContact Key順で決定する。離れた接触点は別Constraintとして保持する。閾値は試験設定として変更可能にし、統合前後の最大貫通を計測する。λは同一サブステップの同一接触キーで保持し、接触キーが変わった場合は初期化する。
+各反復で最近接点と重心座標を再計算する。VTとEEの複数接触が同じ局所接触パッチへ集中すると過拘束になるため、同一Mesh Pair・同じ連結Surface Patch内でContact Patchを形成する。local_min_edge_lengthは、VTでは対象三角形の3辺、EEでは対象2辺のRest Edge Lengthのうち正かつ非退化な値の最小値とする。該当値がない場合はL_refを使う。Same Connected Surface PatchはPhysics Surface Triangleの共有Edge adjacencyからAsset Build時に割り当てたSurface Patch IDで判定する。EEは各辺に隣接するFaceのうちStable Primitive IDが最小のものを代表Faceとする。
+
+初期クラスタ判定は接触点距離がcluster_radius = max(0.5 * contact_thickness, 0.02 * local_min_edge_length)以下、かつ法線内積がcos(10度)以上の場合とする。候補は(Mesh Pair, Surface Patch ID A/B, Contact Key)順に処理し、最初のContactをSeedとして、Seed距離・Seed法線条件を満たす候補だけを追加する。複数Seedに入る候補は距離が最小のSeedへ割り当て、同距離はSeed Contact Key順で決める。連鎖的な近傍判定でPatch全体が無制限に拡大しないよう、候補同士の推移的連結だけで統合しない。
+
+v1初期値は1 Patchあたり最大4 Contact。Contact Key順でtie-breakする決定的なManifold Reductionを行い、(1)最深点、(2)最深点から最遠点、(3)既存2点が作る線分から最遠点、(4)既存3点が作る三角形から最大面積となる点を順次残す。候補が線状・点状の場合は幾何epsilonで同一点と判定される重複を除き、独立したSupport Point数だけを残す。
+
+縮約品質は同じ入力予測状態・同じSolver反復回数・同じIntegration Segment時間・同じContact Complianceで、全Candidateを使う未縮約Reference Manifoldと比較する。初期Engineering Threshold:
+- 縮約Manifoldの反復後最大残存貫通量が未縮約Referenceより増える量 <= 0.05 * max(contact_thickness, epsilon_length)。
+- 全Candidate法線を平均法線へ整列し、各Candidate法線から最も近いRetained法線までの最大角度 <= 5度。
+- CandidateとRetainedのContact Positionを平均法線に直交する2D基底へ射影したSupport Hull面積の保持率 >= 0.90。Retainedが退化して面積0の場合はCandidateが面積0のケース以外で失敗とする。
+- 線状PatchではSupport Hull長さ保持率 >= 0.90。点状Patchではepsilon内の重複を除いたSupport Point数が一致すること。
+
+いずれかを満たさない場合は、Contact間の相互距離が最大のPairを2つのSplit Seedとし、各Candidateを近いSeedへ割り当てる。同距離はSeed Contact Key順で決定する。Child Patchへ同じReduction / Quality Testを再帰適用する。分割深度上限は8。上限到達後も品質条件を満たさない場合はContact Manifold Reduction FailureとしてTickをRejectする。Patch総数 / Contact数はCapacity Check対象とする。上記閾値は初期Engineering Thresholdであり、Run Manifestへ記録してFixture / Hardware試験で校正する。contact_lambdaは同一Integration Segmentの同一Contact Keyで反復中保持する。Segment開始時に0へ初期化し、Contact KeyまたはPatch Generationが変わった場合も初期化する。
 
 ### 8.4 Edge-Edge
 
@@ -530,24 +946,107 @@ VTはメッシュペアごとにA頂点→B三角形、B頂点→A三角形の�
     gradient_b0 = -(1 - t) * n
     gradient_b1 = -t * n
 
-有効逆質量は4頂点のinverse_mass * gradient_coefficient^2の総和とする。平行・退化辺では区間最近接点の安定分岐を用い、有限値を保証する。
+有効逆質量は4頂点のinverse_mass * gradient_coefficient^2の総和とする。平行・退化辺では区間最近接点の安定分岐を用いる。最近接距離が幾何epsilon以下のときは§8.6の法線決定規則を適用し、法線を一意に決定できない候補を有限値保証の名目で任意方向へ補正しない。
 
-### 8.5 摩擦・反発
+### 8.5 摩擦・反発 / Coupled Contact Impulse
 
-位置XPBD接触と速度Impulseを分離する。位置反復中に摩擦を重ねて適用しない。
+位置XPBD接触と速度Impulseを分離する。Contact Position補正で生じた変位をVelocity / Restitutionへ混ぜない。各Integration Segmentでは次の順で処理する。
 
-Discrete contactでは位置解決後にvelocity = (position_after - previous_position) / delta_tを再構築する。TOIでImpulseを解決したcontactはimpact_resolvedフラグを設定し、同一Step終端のImpulse処理から除外する。TOIを伴わないDiscrete contactについて、接触点の相対速度をv_rel、法線速度をv_n = dot(v_rel,n)とする。接触が接近中の場合のみ、
+1. Segment開始状態からDynamic Velocity / Positionを予測する。
+2. ClothのStretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。
+3. 内部Constraint後の状態からDynamic VertexのContact前Velocityを一度だけ再構築し、immutableなv_pre_contact Snapshotへ保存する。
+4. Contact Position XPBDを解く。Contact補正はPositionだけに反映し、Snapshotを変更しない。
+5. 全ContactのVelocity ImpulseをCoupled Contact Solverで解く。Solverはv_pre_contactからWorking Velocityを作り、Contact Contributionを反復Gatherする。
 
-    j_n = -(1 + restitution) * min(v_n, 0) / effective_inverse_mass
+Contact位置補正後にPosition差分からVelocityを再構築してはならない。通常SegmentのContact前Velocityは、
 
-の法線Impulseを計算する。
+    v_pre_contact_i = (x_internal_solved_i - x_segment_start_i) / dt_segment
 
-接線速度v_t = v_rel - v_n*nから摩擦Impulse候補を求め、Coulomb円錐でクランプする。
+TOI prefixは分母をtauとする。Fixed / Kinematic VertexはTrajectory微分を維持する。
 
-    j_t_candidate = -v_t / effective_inverse_mass
-    j_t = clamp_magnitude(j_t_candidate, friction * j_n)
+#### 有効逆質量と非応答Contact
 
-接触の4頂点へ、接触勾配係数と逆質量でImpulseを配分する。摩擦係数は0以上、反発係数は0～1。初期反発係数は0とする。接触前の相対速度を保存し、同一接触で複数反復するたびに反発を重複適用しない。TOI contactはimpact_resolvedフラグにより同じImpulseをStep終端で二重適用しない。
+Contact iの頂点係数をc_ik、参加頂点の逆質量をw_kとし、
+
+    W_ii = sum_k(w_k * c_ik^2)
+
+を有効逆質量とする。VT / EEのNormal / Tangent方向は同じScalar係数を使うため、等方的Particle Massでは同じ対角有効逆質量になる。
+
+W_iiが有限でない場合はNonFinite ErrorとしてTickを拒否する。W_ii <= epsilon_inverse_massの場合、そのContactはNON_RESPONSIVE_CONTACTとしてImpulse対象から除外する。Contact Position XPBDも同じ事前判定でSkipし、Complianceにより0/0や無意味なLambdaを作らない。Static-Static、Kinematic-Kinematic、または接触係数が掛かるDynamic Vertexを持たないContactは正常な非応答Contactであり、CCD応答 / Position / Impulseを生成しない。Diagnostic Countへ記録する。epsilon_inverse_mass = 1e-12 / mass_reference_worldとする。mass_reference_worldはWorld内すべての参加Dynamic Physics VertexのMedian Positive Mass [kg]であり、epsilon_inverse_massの単位は[1/kg]。mass_reference_worldが存在しない場合は前述の通り全Contactを非応答とする。Dynamic Massが存在しないWorldは全Contactを非応答とする。
+
+#### Contact Relative Velocity / Normal / Friction
+
+Contact点A / Bの相対速度はVT重心係数 / EE最近接係数で補間する。
+
+    v_A = sum_i(beta_i * v_contact_pre_i)
+    v_B = sum_j(gamma_j * v_contact_pre_j)
+    v_rel = v_A - v_B
+    v_n = dot(v_rel, n)
+    v_t = v_rel - v_n * n
+
+法線nはBからAへ向き、接近時はv_n < 0。Kinematic Collider接触点速度は§8.1.1のv_linear + omega cross radiusを使う。
+
+#### Coupled Projected Jacobi Impulse Solver
+
+Contact間でDynamic Vertexを共有する場合、各Contactを同じv_pre_contactから独立計算して一度Gatherする方式では相互干渉を解けない。v1は全ContactをCanonical Contact Key順に整列し、Global Projected Jacobiで速度Impulseを反復する。Contact Patchの最大4点Reduction後も、異なるPatch間で共有Vertexを持つContactを同一World Solverへ含め、結合効果を反復Gatherで伝播する。
+
+Contact iごとにAccumulated Normal Impulse j_n_i >= 0とWorld Tangent Impulse Vector j_t_iを保持する。初期値は0。Contact XPBDの最終Normal Lambdaをlambda_n_iとすると、Support Friction Impulseはj_support_i=max(0,lambda_n_i)/dt_contactとする。dt_contactは通常Segmentでdt_segment、TOI prefixでtau。XPBD Lambdaの単位はkg*m、Lambda/dtの単位はN*sである。
+
+Iteration開始時のWorking Velocityは、v_pre_contactへ前Iterationまでに蓄積した全Contact ImpulseをVertex CSRでGatherしたものとする。Contact iの符号付き頂点係数をc_ik、法線をn_iとすると、
+
+    v_work_k = v_pre_contact_k
+             + inverse_mass_k
+               * sum_i(c_ik * (j_n_i * n_i + j_t_i))
+
+とする。各Contact iは同じIteration開始Snapshotからv_n_i_current / v_t_i_currentを評価し、
+
+    target_normal_velocity = -restitution * min(v_n_i_pre, 0)
+    delta_j_n = -omega_impulse
+                * (v_n_i_current - target_normal_velocity) / W_ii
+    j_n_i_new = max(0, j_n_i + delta_j_n)
+
+    delta_j_t = -omega_impulse * v_t_i_current / W_ii
+    j_t_candidate = j_t_i + delta_j_t
+    j_t_i_new = project_to_disk(
+        j_t_candidate,
+        friction_i * (j_support_i + j_n_i_new))
+
+としてAccumulated Impulseを更新する。project_to_diskはNormalに直交する2D Tangent Plane上で実行する。Iteration内の全Contactが同一Velocity Snapshotを読むJacobi更新とし、変更量だけを次でVertex単位にGatherする。
+
+    delta_v_k = inverse_mass_k
+                 * sum_i(c_ik * (delta_j_n_i * n_i + delta_j_t_i))
+    v_work_next_k = v_work_k + delta_v_k
+
+Contact Key順のContribution Reductionにより同一GPU / Driver / Buildで同じ順序を維持する。Contact iのc_ikはVT / EEのNormal / Tangent Gradient係数と同じ符号付き係数を使う。
+
+初期値はcontact_impulse_iterations=8、omega_impulse=0.5、最大許可Iterationは16。各Iteration後、Normal / TangentのProjected Fixed-Point Residualを次で評価する。
+
+    r_n = abs(j_n - max(0, j_n - (v_n_current - target_normal_velocity) / W_ii))
+    r_t = length(j_t - project_to_disk(j_t - v_t_current / W_ii,
+                                       friction * (j_support + j_n)))
+    J_ref = mass_reference_contact * (length_reference_contact / dt_contact)
+    residual = max(r_n, r_t) / J_ref
+
+mass_reference_contact / length_reference_contactはContact Solverへ参加するDynamic Meshの正値Mass / Rest Edge Length中央値から決める。contact_impulse_residual_tolerance以下へ収束した場合だけSolverをResolvedとする。初期値は1e-4。16 Iterationでも未収束ならCONTACT_IMPULSE_UNRESOLVEDとしてLogical TickをCommitしない。DescriptorでIteration数を1～16の範囲に設定でき、初期値8、Relaxationは0より大きく1以下、初期値0.5とする。Residual定義と正規化はNumerical Acceptance Profileを正とする。
+
+RestitutionはSegment開始時に保存したv_n_i_preから目標分離速度を設定し、Contact Position correction由来のVelocityを入力にしない。v_n_i_pre >= 0では反発Impulseを生成しない。Normal accumulated impulseは常に0以上。摩擦ImpulseはSupport / Restitution Normal Impulse合計のCoulomb Disk内に制限する。摩擦係数は0以上、反発係数は0～1。Initial Restitutionは0。
+
+#### TOI / Discrete Contact Event
+
+Discrete ContactとTOI Contactで同じCoupled Solverを使う。TOI Eventは同時TOI Group内でCanonical Contact Keyにより一意化し、impact_resolvedにより重複適用を防止する。Impact後Velocityから残Segmentを開始し、同一TOI Segment内でVelocity Reconstructionを実行しない。全World ContactのSolverが完了してからv_finalをPersistent Stateへ書き戻す。
+
+### 8.6 退化接触の法線決定
+
+長さepsilonはmax(1e-7 * L_ref, 1e-9 m)、面積epsilonはepsilon_length^2を初期値とする。候補ごとに以下の優先順位で法線を選ぶ。
+
+1. 同一Contact Keyで前SubstepのPersistent Contact Cacheに存在し、有限かつ正規化済みの前回法線。
+2. 現在形状から算出した非退化幾何法線。VTでは三角形法線、EEでは2辺の外積方向を使う。両面衝突の符号は前Substepの符号付き分離方向で整合させる。
+3. Rest Poseの面法線 / Hinge Binormalを現在の局所変形基底で写した参照方向。
+4. 相対速度ベクトル。速度がepsilon以下の場合は利用しない。
+
+候補法線はContactの正規向き（VTは三角形Bから頂点A、EEはCanonical PairのBからA）へ符号を統一する。候補間で向きが矛盾する場合は前回法線との内積で連続性を優先する。上記を適用しても法線が定まらない、または退化幾何によりNarrowphaseの距離・勾配が有限に計算できない場合はContactGeometryUnresolvedとしてLogical TickをCommitしない。Stable IDから任意軸を生成して押し出す処理は禁止する。
+
+Contact Cacheに法線があってもMesh Topology / Contact Key / Patch Generationが変化した場合は流用しない。無効Cacheを検出した場合は再評価し、失敗すればUnresolvedとする。
 
 ## 9. Broadphase Spatial Hash
 
@@ -557,9 +1056,9 @@ Discrete contactでは位置解決後にvelocity = (position_after - previous_po
 
     cell_width(level) = base_cell_width * 2^level
 
-base_cell_widthは代表PrimitiveのAABB寸法の中央値と最大接触半径の2倍の大きい方を初期候補とし、候補生成数・登録セル数の計測で調整する。各Primitiveは、接触厚みを膨張させたAABBが設定上限max_cells_per_primitive以下のセル数になる最も細かいlevelへ登録する。最大levelでも上限を超える場合はBroadphase Errorとする。全Primitive総当たりへフォールバックしない。
+base_cell_widthは、Point Primitiveを除いたCollision Primitive（Edge / Triangle）の正のAABB最大辺長中央値、最大Contact Thicknessの2倍、cell_width_floorの最大値とする。cell_width_floor=max(1e-6 m, 1e-3 * L_ref)、L_refはMeshのmedian positive rest-edge length。v1初期値はmax_cells_per_primitive=64、max_hash_levels=24。cell_width(level)=base_cell_width*2^levelとし、各Primitiveは接触厚みで膨張させたAABBが64セル以下となる最も細かいlevelへ登録する。最大levelでも64セルを超えるPrimitiveはLarge Primitiveとして別Bucketへ登録する。Large Primitive BucketのBVHは30-bit Morton Code（空間各軸10-bit）とStable Primitive IDの辞書順KeyでsortするGPU Linear BVHとし、Karras方式でBinary Nodeを構築する。Morton量子化BoundsはLarge Primitive全AABBのUnion Boundsとし、ゼロExtent軸は量子化値0に固定する。NodeはAABB min/max、left/right child、parent、escape_index、leaf primitive IDを持つ。Stable Primitive IDをTie-breakに含め、Morton Codeが同一でもLeaf順・Node構築順を一意にする。TraversalはStackless depth-firstとし、AABB不一致またはLeaf処理後はescape_indexへ進む。Large Primitive数N=0の場合はBVH Build / QueryをSkipし、Node / Pair Capacityを0として通常Hash候補だけを使う。N=1の場合は単一LeafをRootとして作成し、Karras Internal Node BuildをSkipする。N>=2の場合のみKarras方式を実行する。Node数はN=0で0、N>=1で2*N-1として事前Count / Capacity Checkし、uint32 / ByteWidth上限を検査する。escape_indexの終端SentinelはNode Countとし、Root Subtreeの処理完了後にTraversalを終了する。Regular PrimitiveはLarge Primitive BucketのBVHを自身の膨張AABBでQueryしてRegular-Large Pairを生成する。各Large Primitiveも同じBVHをQueryするが、LeafのStable Primitive IDが自身より大きい場合だけLarge-Large Pairを出力し、自己Pair・逆順重複を抑止する。Canonical Pair Keyで重複を除く。これにより専用StackとStack Overflow経路を持たず、BVH Node / Pair / Dedup Capacity不足だけをBlock / Retry対象とする。Hash / BVHの全候補はCanonical Pair KeyでUnion / DedupしてからNarrowphaseへ渡し、総当たりFallbackは禁止する。
 
-各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。
+各query Primitiveは自分のlevelから最大levelまでを検索し、各levelでquery AABBと重なる全セルを列挙して整数セル座標を比較する。Primitiveは自身のlevelより細かいlevelへ検索を戻らない。異なるlevelのペアは小さいPrimitive側が大きいPrimitiveのlevelを検索することで検出する。VTは頂点AABB対三角形AABB、EEは辺AABB対辺AABBを検索する。Large Primitive Bucketは通常PrimitiveとLarge Primitiveの双方からAABB Queryできる。各Large Primitiveは自身のAABBでBVH全体をQueryし、Stable Primitive IDの大小で自己Pairを一度だけ出力する。Large-Large専用の全件比較 / 総当たり / Tree Self-Traversalは行わない。候補は通常Hash由来Pairと同一のCanonical Pair Keyで重複排除する。BVHのMorton / Stable ID複合Keyは(key_hi=morton_code, key_lo=stable_primitive_id)の2つのuint32値として比較し、64-bit整数演算をHLSLへ要求しない。
 
 ### 9.2 接触厚みとセル範囲
 
@@ -583,7 +1082,80 @@ Hash値一致だけで同一セルと判定しない。Hash、level、元の整�
 
 ### 9.4 接触候補の完全性
 
-VTは頂点AABBと三角形AABB、EEは辺AABB同士のセル重複から候補化する。AABB膨張量・level検索範囲・pair正規化の整合性を単体試験する。Broadphase候補がNarrowphaseで接触した全ペアを包含することを小規模全探索参照実装と比較して検証する。
+VTは頂点AABBと三角形AABB、EEは辺AABB同士のセル重複から候補化する。AABB膨張量・level検索範囲・pair正規化の整合性を単体試験する。Broadphase候補がNarrowphaseで接触した全ペアを小規模全探索参照実装と比較し、完全包含を検証する。
+
+#### 9.4.1 XPBD Position-Writer Epoch
+
+Broadphase Envelopeは任意の最大補正距離を加算した固定AABBとして定義しない。Runtimeの各Integration Segmentにおいて、位置を書き換えるXPBD DispatchをPosition-Writer Epochとして識別し、その前後の全参加Dynamic Physics Vertex位置を記録する。次のDispatchをそれぞれ独立したEpochとする。
+
+- Graph Coloring方式のStretch等で色ごとに位置を書き換えるDispatch。
+- Gather Jacobi方式のShear / Bend / Animation Tracking等の各位置反復Dispatch。
+- Contact Position XPBDの各位置反復Dispatch。
+- TOI prefixで実行する上記と同等の位置書込みDispatch。
+
+Constraint Lambdaのみを更新しPhysics Positionを書き換えないDispatchはEpochではない。Fixed / Kinematic Vertexは補正対象に含めず、選択済みの物理時刻における規定Trajectory Positionを維持する。
+
+Epoch eの頂点iについて、Dispatch直前の位置をx_i_before、完了直後の位置をx_i_afterとし、次を保存する。
+
+    delta_x_i = x_i_after - x_i_before
+    x_i(s) = x_i_before + s * delta_x_i,  0 <= s <= 1
+
+sは補正経路だけに使う無次元Pseudo-Timeであり、物理時間ではない。Correction Swept AABBは各Primitiveの全頂点についてbefore / afterのAABBを包含し、§9.2と同じContact Thicknessの膨張規則を適用する。頂点の経路は線形なので、各座標軸の極値は端点に含まれる。Epoch Scratchは次のEpochで再利用できるが、当該EpochのBroadphase / CCD判定が終わるまで上書きしない。
+
+Broadphase Envelopeは次の集合として定義する。
+
+    B_segment =
+        B_physical_swept
+        UNION (UNION over every Position-Writer Epoch e of B_correction_swept[e])
+
+B_physical_sweptは§11.2のSegment開始位置からPrediction位置までのSweep、B_correction_swept[e]は当該Epochのbefore / after位置Sweepである。以前の「最大拘束補正余裕」のような任意スカラーMarginは使用しない。各EpochのCorrection Swept AABBを実際に生成できない、または生成したBoundが実際のbefore / after状態を包含しない場合はBroadphaseCompletenessFailureとしてREJECTEDにし、Commitを禁止する。実際のCount / AABB / Candidate Capacity超過は既存のBroadphaseOverflowとしてBLOCKEDにする。
+
+各EpochのCorrection Swept AABBを既存のCount / Scan / Capacity Check / Fill / Sort / Pair Dedup Pipelineへ入力し、Physical Swept候補へCanonical Pair Keyで追加する。Final Discrete Narrowphase候補も同じCandidate Setへ追加する。Segmentの候補集合は次のUnionであり、候補をEpoch終了時に破棄しない。
+
+    C_segment =
+        C_physical_swept
+        UNION (UNION over every Epoch e of C_correction_swept[e])
+        UNION C_final_discrete
+
+PairのStable ID、Mesh ID、Primitive ID、Contact Typeによる正規化Key、除外Filter、Capacity Checkは§8 / §9の既存契約を維持する。Candidate Setの増分追加によりGenerationが変わった場合はVertex→Contact CSR / PatchをGeneration単位で再構築する。候補数・AABB数・Dedup出力数がCapacityを超えた場合はFill後の切り捨てを行わず、同じTick ReservationをBLOCKEDにしてCapacity Retryする。
+
+#### 9.4.2 Correction Motion CCD
+
+各Position-Writer Epochの前後状態について、Correction Swept AABBから得たVT / EE CandidateをCorrection Motion CCDで検査する。各Vertexの補正速度をsに対する変位delta_x_iとみなす。最接近点が三角形内・辺上の凸結合で表されることから、三角形 / 辺の各頂点変位Normの最大値はそのPrimitiveのHausdorff変位Boundとなる。Closest Featureが区間内で切り替わっても距離関数はこのBoundでLipschitz連続となるため、保守的な相対速度Boundを次で与える。
+
+    VT:
+      v_corr_bound =
+          length(delta_x_vertex)
+          + max(length(delta_x_triangle_vertex_j), j = 0..2)
+
+    EE:
+      v_corr_bound =
+          max(length(delta_x_edge_A_endpoint_k), k = 0..1)
+          + max(length(delta_x_edge_B_endpoint_k), k = 0..1)
+
+v_corr_boundの単位はmeter / normalized-sである。全区間で有限かつ保守的であることを検証する。候補の正確なClosest-Feature Distanceをd(s)、§8.3 / §8.4と同じPair Contact Thicknessをr_pairとする。各区間[a,b]の中点mについて、Narrowphaseが返す外向き丸め済みの距離下限d_mid_lowerを使い、次の区間下限を求める。
+
+    d_interval_lower =
+        max(0, d_mid_lower - v_corr_bound * (b - a) / 2)
+
+d_interval_lower > r_pair + distance_toleranceなら、その区間全体をNo-Hitと証明できる。中点の外向き丸め済み距離上限d_mid_upper <= r_pair + distance_toleranceならHit Witnessを記録する。それ以外は区間を二分し、左区間、右区間の順で決定的に検査する。全区間がNo-Hitと証明された場合だけCorrection Motion No-Hitとする。最大32区間評価でHit / No-Hitを確定できない場合、距離区間・変位Boundが非有限または未証明の場合はCorrectionCcdUnresolvedとしてREJECTEDにし、No-Hitへフォールバックしない。現行v1に追加のCorrection CCD interval budget Recovery APIはないため、自動Retryしない。距離計算の単純なfloat32サンプル値、有限サンプルの最大値、経験的な安全係数だけを保守的Boundとして扱わない。
+
+Hit WitnessにはDispatch Attempt ID、Integration Segment ID、Position-Writer Epoch ID、Canonical Primitive Pair Key、normalized s、Closest Feature Parameter、Normalおよび距離区間を記録する。始点ですでに接触しているPairはPersistent Contact Cacheまたは同時刻の直前Discrete Contactの安定法線を使用する。対応する安定法線・Feature Mappingを得られない退化PairはUnresolvedとする。
+
+Side判定はHit Witnessから得た安定Normal n_refを基準に、各sのOriented Feature Normal n(s)とClosest Point Pair q_A(s) / q_B(s)からSigned Separation g(s)=dot(n(s), q_A(s)-q_B(s))を構成する。VTではn(s)は三角形のOriented Geometric NormalをWinding固定で評価し、n_refと同じ半球へ向きを揃える。EEのInterior-Interior Featureでは両Edge DirectionのCross Productを正規化してn(s)を作り、n_refと同じ半球へ向きを揃える。EEのEndpoint-Clamped FeatureではPersistent Contact Normal / Witness Normalを使用できるのは、Feature区間全体でそのNormalが有効な分離方向であることを証明できる場合だけとする。全Featureでdot(n(s), n_ref) > 0を区間全体に対して証明できなければ、区間を二分し、最大32区間評価でも証明できない場合はUnresolvedとする。Parallel / Degenerate Edge、退化Triangle、Normalの半球切替、Feature対応が一意でない区間はUnresolvedとする。各Canonical Pairのreference normal n_refとside sign sigma_pairは、同じbase_integration_segment_idを持つIntegration Segmentの開始Snapshotで一度だけLatchし、全Position-Writer Epoch / Contact Position Iterationで不変とする。Segment開始時に有効なPersistent Contact Cacheがある場合はCacheのNormalを使い、同じSegment開始Geometryからsigma_pairを算出する。Cacheがない場合はSegment開始SnapshotのOriented Feature NormalとClosest Point Pairからn_ref / sigma_pairを決める。Candidateが後続Epochで初めて発見された場合も、現在Epochのbefore位置からsideを再初期化せず、保存済みSegment開始Snapshotから同じ計算を行う。Segment開始Geometryで安定Normal / Signed Separationを得られない、またはabs(g_segment_start)が§8.6で定義したepsilon_length以下の場合はUnresolvedとし、任意の側を選ばない。Persistent Contact CacheとTopology / Contact Key / Patch Generationが一致しない場合はCacheを無効とし、Segment開始Geometryから再評価する。Epochごとにsigma_pairを再計算して、先行Epochで生じた反対側への移動を正当化してはならない。Closest Featureが変化する区間はFeature Boundaryで分割し、各区間のg(s)を外向き丸め付きIntervalで評価する。Latch済みsigma_pairを用いて符号正規化Interval h_interval = sigma_pair * g_intervalを作る。Intervalのscalar multiplicationはsigma_pair < 0の場合に上下端を交換し、h_lower = min(sigma_pair*g_lower, sigma_pair*g_upper)、h_upper = max(sigma_pair*g_lower, sigma_pair*g_upper)とする。h_upper < -distance_toleranceを満たす区間が一つでも証明された場合は、Correction経路が反対側へ越えたものとしてCrossingにする。全区間でh_lower >= -distance_toleranceを証明できた場合だけ同じ側を維持したと判定する。いずれも証明できない区間は二分し、Correction CCDの最大32区間評価を共有する。予算内に符号側を証明できなければUnresolvedとし、始点・終端の符号だけで途中の反対側通過を否定しない。
+
+各Hit Witnessに対しx(1)で最終Discrete Narrowphaseを再評価する。
+
+- 終端で非貫通接触が成立するPairはContact Candidate Setへ追加し、次のContact Position XPBD反復で解決する。
+- 前段のSigned Separation区間検査で全経路が同じ分離側に留まることを証明でき、終端にActive Contactがない一過性の近接はActive Contactへ追加しない。ただしCandidate Unionと診断記録には保持する。
+- Signed Separation区間検査で反対側への通過が証明された場合はCorrectionPathCrossingとする。終端だけでなく経路途中の反対側滞在も対象とする。Physical Timeを進めずに位置補正が衝突面を通過させたため、そのLogical TickをREJECTEDにしCommitしない。
+- 両側判定に必要な法線・Feature Mapping・符号連続性を証明できない場合はCorrectionCcdUnresolvedとしてREJECTEDにし、Commitしない。
+
+Signed Separationは前段のPer-Feature Oriented Normal / Closest Feature Interval規則を使う。Normalの半球連続性、Feature対応、Signed Separation Intervalのいずれかを証明できない場合はCorrectionCcdUnresolvedとする。Correction Motion CCDは誤ったNo-Hitを許さないfail-closed検査であり、物理Impactを生成する機能ではない。
+
+非接触内部Constraintの全Epoch完了後に、Candidate Unionを用いて現在位置のDiscrete Narrowphaseを再評価し、確定したContact Setを構築する。その後でのみDynamic v_pre_contactを既存規則どおり一度再構築する。Contact Position XPBDも各位置反復を新しいEpochとしてCorrection Motion CCDを実行し、終端で新たに成立したContactをCandidate Union / Contact Setへ追加して次の残り反復で解決する。規定Contact Position反復の最後に新たな有効Contactが追加された場合、またはContact Set Generation / Patchが未収束の場合はContactGeometryUnresolvedとしてREJECTEDにし、未解決Contactを残したままCommitしない。現行v1ではContact Position Iterationを増やす同一Reservation Recovery APIを定義しない。Contact Position correction後にv_pre_contactを再構築してはならない。
+
+Correction Motion CCDは、物理時間、dt_segment、World Substep、TOI Boundary、discovered_toi_split_count、discovered_toi_segment_count、Force / Impulse Event Cursorを変更しない。sを秒へ変換せず、Correction HitからRestitution / Friction Impulse / impact_resolvedを発生させない。TOI prefix内の内部Constraintにも同じ規則を適用し、TOIの物理時間tauと補正経路のnormalized sを混同しない。
 
 ### 9.5 Overflow
 
@@ -601,14 +1173,14 @@ VTとEEの最近接距離を正確に計算し、接触厚み以下だけを接�
 
 Meshごとに`max_initial_repair_distance`を設定し、各Physics Vertexについて初期化開始位置からの修正移動量累積をこの値以下に制限する。Gatherで得た仮の頂点補正について、各頂点ごとに接触Constraint寄与の絶対変位量を総和し、その値と残り修正予算からscaleを計算する。各接触Constraintの全参加頂点scaleの最小値をそのConstraintの共通scaleとする。修正量累積は反復ごとの寄与絶対値の総和とし、異なる反復間で符号相殺させない。その共通scaleをdelta_lambdaと全頂点補正に適用してからλと位置を確定する。これにより双方の補正とλを整合させたまま最大修正量を守る。修正予算を使い切っても残存貫通が許容値を超える場合は警告またはAsset Load Errorとし、初期化状態をCommitしない。
 
-自己衝突除外:
+自己衝突除外はPhysics MeshのStable Vertex / Primitive IDからAsset Build時に生成し、Runtime Broadphase前に適用する。v1の既定除外は次の通り。
 
-- 同一三角形・同一辺
-- 共有頂点・共有辺
-- 隣接面および同一Soft Body四面体近傍
-- 設定した近傍リング数以内のトポロジー隣接
+- 同一Primitive。
+- 同一Mesh内で少なくとも1つのPhysics Vertexを共有するPrimitive Pair（共有Vertex / Edge / Faceを含む、topological 1-ring）。
+- Soft Bodyでは同一Tetに属する境界Face Pair、および共有Physics Vertexを持つ境界Face Pair。
+- Mesh Pair除外リストで明示された組み合わせ。
 
-近傍除外リングを広げすぎると折り畳み部の接触が欠落する。除外数・除外距離・テスト結果を可視化する。
+追加の2-ring / 3-ring除外は任意のScenario設定として保持できるが、既定値は0追加ringとする。これにより折り畳み部の接触を広範囲に抑止しない。除外Pair数・対象距離・残存接触を可視化し、Self CollisionのFold / Edge contact fixtureで偽陰性を検証する。
 
 ## 11. Continuous Collision Detection
 
@@ -618,25 +1190,27 @@ Meshごとに`max_initial_repair_distance`を設定し、各Physics Vertexにつ
 
     length(relative_displacement) > eta * contact_thickness
 
-etaの初期値は0.5。これは候補の選別値であり、CCD自体の正しさを保証する値ではない。薄い布・高速移動試験で見逃し率を測定し、必要なら対象範囲を広げる。
+etaの初期値は0.5。これは候補の選別値であり、CCD自体の正しさを保証する値ではない。薄い布・高速移動試験で見逃し率を測定し、必要なら対象範囲を広げる。離散終端位置が非接触でもSwept AABBがNarrowphase候補を作る場合、相対移動距離が小さいことだけを理由に候補から除外しない。初期接触・persistent contact・初期貫通はこの速度選別の対象外とする。
 
 ### 11.2 Swept AABB
 
-各頂点・辺・三角形の前サブステップ位置と予測位置を含むSwept AABBを生成する。接触厚みで膨張させ、Broadphase候補を絞る。
+Physical Swept AABBは各頂点・辺・三角形のIntegration Segment開始位置と予測位置を含み、接触厚みで膨張させる。Kinematic GeometryはEndpoint Chordを基準形状とし、§5.3の保守的Chord Deviation Boundで膨張する。
+
+XPBD位置補正に対するSweepは§9.4.1のPosition-Writer Epochごとに別途生成する。各Epochのbefore / after頂点位置を含むCorrection Swept AABBを作り、同じContact Thickness規則で膨張してBroadphaseへ追加する。Segment全体のBroadphase EnvelopeはPhysical Swept AABBと全Correction Swept AABBのUnionであり、補正距離の推定スカラーや固定最大Marginで代替しない。Correction Motion CCDのNo-Hit証明は§9.4.2を正とする。
 
 ### 11.3 Conservative Advancement
 
-各候補の軌道をサブステップ内の線形補間とする。これは前Step位置と予測位置を結ぶ離散軌道モデルであり、サブステップ中の曲線軌道を厳密に表すものではない。大きな加速度・高剛性時はCFL制約に従いサブステップを細かくし、近似誤差を抑える。秒単位の時刻tauにおける距離をd(tau)、接触厚みをr、相対速度上限をv_boundとする。
+Dynamic Physics VertexのCCD pathはSemi-implicit Eulerが生成したSegment開始 / 終端状態を結ぶ離散線形軌道とする。各候補のDynamic path速度上限はlength(path_velocity)、Kinematic Vertex / Colliderの速度上限はkinematic_path_speed_boundとする。 VT / EEのv_bound式に使うpath_speed_bound(primitive)は、Dynamic primitiveではlength(path_velocity)、Kinematic primitiveではAnimation / Rigid Transform Evaluatorが返す保守的なkinematic_path_speed_boundである。Kinematic Vertex / ColliderのNarrowphase / Conservative Advancementは各tau時刻でAnimation / Rigid Transform Trajectoryを直接評価した幾何位置を使う。KinematicのEndpoint ChordはSwept AABBの基準形状として使い、全区間の保守的Chord偏差BoundでAABBを膨張させる。CAの距離d(tau)は実Trajectory位置から計算し、速度上限v_boundはDynamic path速度上限とKinematic Trajectoryの区間速度Boundを合成する。秒単位の時刻tauにおける距離をd(tau)、実接触厚みをr、相対速度上限をv_boundとする。
 
 VT:
 
-    v_bound = length(path_velocity_vertex)
-             + max(length(path_velocity_tri0), length(path_velocity_tri1), length(path_velocity_tri2))
+    v_bound = path_speed_bound(vertex)
+             + max(path_speed_bound(tri0), path_speed_bound(tri1), path_speed_bound(tri2))
 
 EE:
 
-    v_bound = max(length(path_velocity_edgeA0), length(path_velocity_edgeA1))
-             + max(length(path_velocity_edgeB0), length(path_velocity_edgeB1))
+    v_bound = max(path_speed_bound(edgeA0), path_speed_bound(edgeA1))
+             + max(path_speed_bound(edgeB0), path_speed_bound(edgeB1))
 
 保守的な進行量:
 
@@ -644,18 +1218,182 @@ EE:
     tau_next = tau + delta_tau
     safety = 0.8  // 初期値
 
-d(tau)<=r+distance_toleranceでTOIを確定する。tau_next>delta_t_substepかつ終端距離がrより大きければ当該サブステップでは接触なし。最大反復回数、最小進行時間tau_tolerance、距離許容誤差distance_toleranceを設定する。進行不能または反復上限に到達した場合、未解決CCDとして診断し、候補を黙って破棄しない。
-
 ### 11.4 TOI処理
 
-同一サブステップ内の最小TOIをGPU Reductionで求める。TOI時刻は秒単位のtauで扱い、0 <= tau <= delta_t_substepとする。衝突判定用の軌道はサブステップ開始位置と予測位置を結ぶ線形補間とし、path_velocity=(position_predicted-position_start)/delta_t_substep、x(tau)=x_start+tau*path_velocityと定義する。v_boundはこのpath_velocityの速度上限から求める。Conservative Advancementの進行量は次とする。
+**Boundary Identity（Normative）**
+
+Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)とする。base_integration_segment_idはtauの相対時間原点となる各CCD対象Segmentに割り当て、TOI後に生成されたResidual Segmentにも新しいIDを割り当てる。同一Dispatch Attempt / 同一Segment / 同一有限float32 tau bitsはContact Groupが異なっても同一Boundaryとする。異なるSegmentはtau bitsが同じでも別Boundaryとする。-0.0は+0.0へ正規化し、NaN / InfinityはInvalid CCD CandidateとしてCommitしない。Retryは新しいdispatch_attempt_idを発行し、Boundary IDを基底Scheduleから再生成する。
+
+**Geometrically Safe Boundary Snap（Normative）**
+
+Candidate tauとSnap先時刻t_bの差をdelta_t=abs(tau-t_b)とする。Snap可否は次の保守的誤差BoundをCandidate / Snap先ごとに算出する。
+
+    E_path_position = v_bound * delta_t + kinematic_path_deviation_bound
+    E_xpbd_position = E_Gcontact + r_p_candidate + r_p_boundary
+    E_total_position = E_path_position + E_xpbd_position
+    E_xpbd_velocity = E_Gv + r_v_candidate + r_v_boundary
+    E_relative_velocity = relative_acceleration_bound * delta_t
+                         + trajectory_derivative_error_bound
+                         + E_xpbd_velocity
+
+XPBDのSnap誤差Boundでは、実装済みSolverのPass順と保存状態を一致させるため、Position写像を内部制約段階と接触位置補正段階へ分離する。Production Solverの順序は次の通りであり、順序変更はこの契約と全ての関連Fixture / Acceptance Gateを同時に改訂しない限り禁止する。
+
+1. Non-contact Internal Constraintsを有限反復で解く。
+2. その結果からDynamic VertexのPre-contact Velocityを再構築し、Contact Position Constraintより前の値として保存する。
+3. Contact Position Constraintsを有限反復で解き、最終Positionを得る。
+4. 保存済みPre-contact Velocityを入力としてCoupled Contact Impulse / Restitution / Frictionを解き、Velocityへ反映する。Contact Position correctionをVelocity再構築へ混入させない。
+
+写像は次のように定義する。
+
+    G_internal(z, dt) = position_after_finite_iteration_non_contact_internal_constraints(z, dt)
+    G_contact(z, dt) = position_after_finite_iteration_contact_position_constraints(
+                           G_internal(z, dt), z, dt)
+    G_v(z, dt) = pre_contact_velocity_response_from_G_internal(
+                     G_internal(z, dt), x_segment_start, dt, trajectory_derivative)
+
+G_internalはNon-contact Internal Constraints完了後かつContact Position Constraints開始前のPositionを返す。G_contactはG_internalを開始状態としてContact Position Constraintsまで完了した最終Positionを返す。G_vはProduction SolverがContact Position Constraints前に保存するPre-contact Velocity写像であり、Dynamic Vertexでは実装規則どおり(G_internal(z,dt) - x_segment_start) / dtから構成する。G_vへG_contactのPosition差分を入力してはならない。VelocityのImpulse更新はこの保存済みG_vを入力として独立した完全Contact Solver Fで評価し、G_contactの位置補正を速度へ再度混入させない。Fixed / Kinematic VertexのG_vは同時刻の解析的Trajectory Derivativeを使い、その区間誤差を別途包含する。dt=0のDynamic Velocity再構築は定義せず、tau=0はSegment-start Dynamic Velocityをそのまま使う。dtは各評価時刻の実際のXPBD Segment時間であり、alpha_tilde = compliance / dt^2をSolverと同じ演算順で再計算する。
+
+zはSolver入力全体を表し、少なくともSegment開始Position / Velocity、Candidate / BoundaryのTrajectory入力、Constraint Gradient、Effective Inverse Mass、Compliance、Rest Data、Constraint Active Set、Projection / Clamp Branch、Iteration設定を含む。UはCandidateとBoundary双方の入力区間を包含し、z_bはBoundary入力とする。
+
+    E_Ginternal = sup { ||G_internal(z, dt) - G_internal(z_b, dt_b)||_2 : z in U }
+    E_Gcontact  = sup { ||G_contact(z, dt) - G_contact(z_b, dt_b)||_2 : z in U }
+    E_Gv        = sup { ||G_v(z, dt) - G_v(z_b, dt_b)||_2 : z in U }
+
+    E_xpbd_position = E_Gcontact + r_p_candidate + r_p_boundary
+    E_xpbd_velocity = E_Gv + r_v_candidate + r_v_boundary
+
+The equations at the start of this section use these exact definitions: position error is evaluated from the final G_contact map, while velocity error is evaluated from the saved Pre-contact Velocity map G_v. G_p is not part of the normative map contract.
+
+E_xpbd_positionはContact Position Constraints後の最終Position誤差を使う。E_xpbd_velocityはContact Position Constraints前に保存されたPre-contact Velocity誤差を使う。E_GinternalはG_contactおよびG_vの中間状態・依存入力の区間伝播を監査するために必ず評価対象へ含める。Contact Impulse / Restitution / FrictionによるVelocity差はE_Gvへ混ぜず、Impact Impulse Error Boundの完全Contact Solver Fで別に評価する。
+
+r_p / r_vは各側の有限反復評価・浮動小数点評価に残るSolver Residual / 数値評価誤差をPosition / Velocity単位へ変換した保守上限である。Position residualはG_contact、Velocity residualはG_vに対応付ける。Residualを既に対応する写像の区間出力へ包含した場合は二重加算しない。従来のxpbd_response_lipschitz_bound、xpbd_dt_sensitivity_*等は、G_internal / G_contact / G_vの完全写像差を証明する分解表現としてのみ使用し、単独の経験係数をBoundとして認めない。
+
+G_internal / G_contact / G_vの区間評価は外向き丸め付きInterval / Affine Arithmetic、または入力全域に対するJacobian / Operator Normと各入力区間幅の伝播で行う。Constraint Gradient / Effective Inverse Mass / Compliance / dtの変動を全反復へ伝播し、Candidate / Boundary双方の全Iteration中間状態を包含する。Active Set、片側Constraintの有効 / 無効、Clamp、Friction / Projection等の分岐がU内で変化し得る場合は、到達可能な全Branchを分割・評価する。全Branchを包含できない、写像が不連続な箇所の有限上界を証明できない、またはResidualを単位変換できない場合は該当Boundをunknownとし、Snapを禁止する。有限個のサンプル最大値や有限差分の観測値は保守Boundとして認めない。
+
+**Impact Impulse Error Bound（Normative）**
+
+Impulse誤差はContact Effective Inverse Mass等の個別値の差を列挙するだけでは証明できない。Candidate時刻とSnap先時刻の両方を含む入力不確かさ集合 U を構築し、同じ決定的な有限反復Contact Solver FをU全域で評価する。FはContact Island内のCoupled Normal / Tangential Impulse、XPBD Support Impulse、Restitution、Friction Projectionおよび固定反復順序を含む。Candidate / BoundaryのContact-relative Velocity入力は、内部制約後かつContact Position Constraints前に保存したG_vから取得する。Contact geometry / positionはG_contact後の状態を用いてよいが、Contact Position correctionを使ってVelocityを再構築してはならない。
+
+Contact IslandのContactをCanonical Contact Key順に並べ、Solverが使用する局所一般化Impulse係数ベクトルqを次の固定順で定義する。
+
+    q = [j_n,0, ..., j_n,N-1,
+         j_t,0,u, j_t,0,v, ..., j_t,N-1,u, j_t,N-1,v]
+
+各j_n,iはContact iのNormal Impulse scalar、j_t,i,u / j_t,i,vはContact iの右手系Tangent Basis上の2D係数である。qは局所Contact座標でDelassus Solverへ入力する係数配列であり、物理的なImpulse Errorの比較対象として直接使用しない。
+
+各Contact iの物理的なWorld-space Impulse Vectorは次で得る。
+
+    I_i = j_n,i * n_i
+        + j_t,i,u * tangent_u_i
+        + j_t,i,v * tangent_v_i
+
+F(z)はCanonical Contact Key順に並べたWorld-space Vectorを返す。
+
+    F(z) = [I_0.x, I_0.y, I_0.z, ..., I_N-1.x, I_N-1.y, I_N-1.z]
+
+したがってF(z)は固定World座標系で表現された3N次元ベクトルであり、E_contact_impulseはそのEuclidean L2 normで評価する。Normal / Tangent Basisの回転による物理Impulse方向の変化もこの出力へ反映する。Contact数がCandidate / Boundaryで異なる、Canonical Contact Key集合が一致しない、または同じBoundaryへSnapするContact Island集合が確定しない場合はImpulse Boundをunknownとし、Snapを禁止する。
+
+    E_contact_impulse = sup { || F_contact_world(z) - F_contact_world(z_boundary) ||_2 : z in U }
+
+Contact-level World-space impulse comparison alone does not prove that the same impulse is applied to the same Physics Vertices. Contact Jacobian rows contain signed VT / EE interpolation coefficients, the Normal / Tangent frame, and the mapping from Contact coordinates to responsive Physics Vertex velocity degrees of freedom. The local generalized coefficient vector q is mapped to the generalized World-space impulse applied to Physics Vertices by:
+
+    P_applied(z) = J(z)^T * q(z)
+
+J(z) is the complete sparse Contact Jacobian in canonical Contact Key and stable Physics Vertex ID order. Its rows use the exact q order: all Contact Normal rows in Canonical Contact Key order, followed by each Contact's tangent_u and tangent_v rows in the same order. Its columns use fixed World-space XYZ components for every responsive Physics Vertex. Each Contact frame is orthonormal and right-handed: normal cross tangent_u = tangent_v (equivalently tangent_u cross tangent_v = normal). Candidate and Boundary use the same stable row / column IDs. Candidate / Boundary must use the same responsive Physics Vertex ID set and ordering. The applied-impulse error is:
+
+    E_applied_impulse = sup { || J(z)^T*q(z) - J(z_boundary)^T*q(z_boundary) ||_2 : z in U }
+
+E_applied_impulse compares the generalized impulse vectors actually distributed to Physics Vertices, in [N*s], over the complete stable Vertex ID set. Its interval evaluation must enclose both q and J over Candidate / Boundary uncertainty, including feature interpolation weights and Normal / Tangent basis variation. Missing Jacobian intervals, mismatched Vertex ID sets, unbounded interpolation changes or non-finite output make E_applied_impulse unknown and forbid Snap.
+
+Uは少なくとも次の変数を包含する。
+
+- Contact Jacobian / Normal Basisとその角度偏差。Candidate / Boundary双方のSparse Jacobian row、符号付きVT / EE interpolation係数、responsive Physics Vertex ID集合を包含する。Contact-level Impulse Fとは別にJ^T*qのApplied Impulse Errorを評価する。
+- Effective Inverse Mass / Delassus Matrixとその区間Bound。Delassus coefficientはJ M^-1 J^Tで定義し、単位は[1/kg]。Responsive subspace上の最小固有値には有限かつ正の下限 K_min [1/kg]を要求する。Candidate / Boundary全域でResponsive subspaceのrankとbasisが変化しないことを証明できない場合はSnapを禁止する。
+- Candidate / Boundary間のContact-relative Normal / Tangential Velocity差。
+- Restitution係数 e の許容区間。
+- Friction係数 mu、Coulomb Disk ProjectionおよびStick / Slip分岐の入力区間。
+- XPBD Support Impulse lambda_n / dt_contact、Compliance / dt依存、Contact Islandの結合入力。
+- 有限反復Solverの全Iteration中間状態と、Candidate / Boundary双方のSolver Residual Bound。
+
+検証済みInterval Arithmetic、Affine Arithmetic、または同等の外向き丸め付き区間評価でF(U)を包含する。解析的Lipschitz Boundを使う場合は、F全体に対するJacobian / Operator Norm上限を証明し、入力各成分の区間幅へ伝播する。有限個のサンプル最大値、有限差分の観測値、経験的な係数は保守Boundとして認めない。
+
+診断可能な上界分解を使う実装では、少なくとも次を満たす。
+
+    E_contact_impulse <= E_normal_scalar
+                + 2 * J_normal_max * sin(theta_normal_max / 2)
+                + E_friction_vector
+                + E_solver_residual
+
+ここでE_normal_scalarはContact Island全体のNormal Impulse scalar stack差のL2上界、J_normal_maxはU全域におけるNormal Impulse stackのL2 norm上界、theta_normal_maxは全Contact NormalのCandidate / Boundary方向角度差の最大上界、E_friction_vectorは全ContactのWorld-space Tangential Impulse Vector stack差のL2上界、E_solver_residualはCandidate / Boundary両評価の残差をWorld-space Impulseへ変換したVector stackのL2上界の和である。接触ごとのNormal方向差に対するBlock-diagonal Rotation Operatorの最大特異値を2*sin(theta_normal_max/2)で抑える。各Contactの誤差上界を個別に算出する場合は、各上界をCanonical Contact Key順に並べてL2集約する。単純な最大値だけで複数Contactを代表してはならない。Tangent座標の係数差だけをWorld-space Tangential Impulse誤差として扱ってはならず、Tangent Basis回転も評価する。
+
+
+**単一Contact / Contactごとに独立した対角Effective Inverse Massの計算可能な特殊ケース**
+
+CouplingがなくNormal / Tangential Effective Inverse Massがスカラー（または各Contact / 方向で独立した対角ブロック）として証明できる場合、Normal Impulseを
+
+    j_n = max(0, -(1 + e) * v_n / K_n)
+
+とし、`K_n`はDelassus対角係数（Effective Inverse Mass）[1/kg]と定義する。U上の上限値を`e_max`、`v_n_max`、正の下限を`K_n_min` [1/kg]、Candidate / Boundary間の区間幅を`Delta_v_n`、`Delta_e`、`Delta_K_n`とする。このときReLUの非拡大性と逆数差のBoundから、
+
+    E_normal_scalar <= ((1 + e_max) * Delta_v_n + v_n_max * Delta_e) / K_n_min
+                       + (1 + e_max) * v_n_max * Delta_K_n / (K_n_min * K_n_min)
+
+
+を使える。ここで`Delta_K_n`はEffective Inverse Massの絶対差上限、`Delta_v_n`はCandidate / Boundary双方のNormal Basisで射影した相対Velocity差を包含する上限である。
+
+摩擦の等方スカラーEffective Mass特殊ケースでは、
+
+    j_t = ProjectDisk(-v_t / K_t, radius = mu * (j_n + lambda_n / dt_contact))
+
+とする。`K_t`もDelassus接線対角係数（Effective Inverse Mass）[1/kg]とする。`K_t_min > 0` [1/kg]、`dt_min > 0`を要求し、`v_t_max`、`Delta_v_t`、`Delta_K_t`、`mu_max`、`Delta_mu`、`lambda_n_max`、`Delta_lambda_n`、`Delta_inverse_dt`をU上の上限とする。Disk Projectionの非拡大性と半径変動Boundから、
+
+    E_friction_coordinates <= Delta_v_t / K_t_min
+                               + v_t_max * Delta_K_t / (K_t_min * K_t_min)
+                               + s_max * Delta_mu
+                               + mu_max * (E_normal_scalar
+                                           + Delta_lambda_n / dt_min
+                                           + lambda_n_max * Delta_inverse_dt)
+
+    E_friction_vector <= E_friction_coordinates
+                         + 2 * J_tangent_max * sin(theta_tangent_max / 2)
+
+
+    s_max = j_n_max + lambda_n_max / dt_min
+
+を使える。`Delta_inverse_dt`は`abs(1/dt_candidate - 1/dt_boundary)`の保守上限とする。`Delta_v_t`はCandidate / BoundaryそれぞれのTangent Basisで表した接線Velocity座標差を包含する上限とする。`J_tangent_max`はU全域のWorld-space Tangential Impulse Vector stackのL2 norm上限、`theta_tangent_max`は対応するTangent Basisの最大回転角である。最後の回転項はTangent Basisの変化によるWorld-space Impulse方向の差を抑える。`E_solver_residual`は両評価のNormal / Tangential Impulse残差をWorld-space Impulseへ変換してL2評価した上界の和である。
+
+この特殊ケース式はNormal / Tangential方向の独立性が証明できる場合だけ適用する。非対角Coupling、共有頂点、複数ContactのProjected Jacobi、異方性摩擦Metric、またはSolverの反復写像が独立スカラー式へ分離できない場合は適用禁止とし、前述の完全なContact-Island関数Fを外向き丸め付き区間評価または検証済みLipschitz Boundで評価する。
+
+`E_normal_scalar`はContact Island全体のNormal Impulse scalar stack差のL2上界とする。`theta_normal_max`はU全域での各Contact Normal方向差の最大角度、`J_normal_max`はU全域のNormal Impulse stack全体のL2 norm上限とする。`E_friction_vector`は全ContactのWorld-space Tangential Impulse Vector stack差のL2上界であり、Tangent Basis回転を含む。単一Contactの対角Effective Inverse Mass特殊ケースでは、まず係数座標の誤差をE_friction_coordinatesで評価し、2*J_tangent_max*sin(theta_tangent_max/2)を加えてWorld-space上界へ変換する。`J_tangent_max`はU全域のWorld-space Tangential Impulse Vector stackのL2 norm上限、`theta_tangent_max`はTangent Basisの最大回転角とする。`E_solver_residual`はCandidate / Boundary各評価のNormal / Tangential残差をWorld-spaceへ変換したVector stackのL2上限を合算したものとする。`K_n` / `K_t`はDelassus対角係数すなわちEffective Inverse Mass [1/kg]を表し、物理的なEffective Mass [kg]とは区別する。単一Contact式の値を複数の独立Contactへ適用する場合は、Contactごとの証明済み上界を同じCanonical Contact Key順でL2集約する。各項の計算方法・単位・区間根拠はFixtureごとに記録する。
+
+Active Contact Set / Stick-Slip Projection BranchがU内で変化する可能性を排除できない場合、変化を含む全分岐を区間評価して有限上界を証明できるときだけSnap候補に残す。Responsive DelassusのK_minが正と証明できない、F(U)が有限に包含できない、反復Solverの残差Boundがない、または上記いずれかの入力区間が欠落する場合は`impulse_error_bound = unknown`とし、Snapを禁止する。独立したContact GroupごとのImpulse誤差を単純に最大値だけで代表してはならず、同じBoundaryへSnapする全Contact Islandのベクトル誤差を評価する。
+
+Snapの許可条件は、時間差 <= tau_snap_tolerance、E_total_position <= distance_tolerance、E_relative_velocity <= relative_velocity_tolerance、E_contact_impulse <= impulse_tolerance、E_applied_impulse <= applied_impulse_toleranceの全てである。distance_tolerance [m]、relative_velocity_tolerance [m/s]、impulse_tolerance [N*s]、applied_impulse_tolerance [N*s]はNumerical Acceptance Profileのtoi_snap_error_budgetにFixture / Workloadごとに必須指定する。Contact-level World-space Impulse差と、Sparse Contact Jacobianを介してPhysics Vertexへ実際に配分されるGeneralized Impulse差は独立して検証する。位置・Velocity・Contact-level Impulse・Applied Generalized ImpulseのいずれかのBoundが不明、未指定、非有限、または保守的に証明できない場合はSnapを禁止し、正確なtauで独立した内部Boundaryを作る。正確なtauのCCDも安全に評価できない場合だけCCDUnresolvedとしてCommitしない。
+
+tau=0はInitial Contact Eventとしてゼロ時間prefix / Velocity Reconstructionを作らない。Dynamic VertexはSegment開始Velocityを保持し、Fixed / Kinematic Vertexはtau=0の解析的Trajectory Derivativeを使う。Impact解決後は残時間dt_segment-tau=dt_segmentの全量を、Impact後Stateを開始Stateとする新しいResidual Integration Segment（新しいbase_integration_segment_id）で一度だけ進める。これはゼロ時間prefixを伴わないContinuation Segmentであり、interior Split Countは増やさないが、追加Segment数とWork Budgetには計上する。tau=dt_segmentはSegment終端Contact Eventとして扱い、残時間Segmentを作らない。端点近傍のPositive-Time Candidateも全Snap Boundを満たす場合だけ端点へSnapし、それ以外は正確なtauを保持。
+
+現在のWorld Integration Segment内の最小TOIをGPU Reductionで求める。TOI時刻は現在のIntegration Segment開始からの秒単位tauで扱い、0 <= tau <= dt_segmentとする。CA time toleranceは`tau_tolerance = max(1e-7 s, 1e-5 * dt_segment)`、Snap / Grouping time toleranceは`tau_snap_tolerance = min(tau_tolerance, 0.25 * dt_segment)`とする。TOI Reductionは最小tau、既存Boundary候補、同時TOI Group候補および各候補のConservative `v_bound` / `kinematic_path_deviation_bound`を返す。Groupに含まれる各Contactを別Splitとして数えてはならない。Dynamic Vertexの離散pathはpath_velocity=(position_predicted-position_segment_start)/dt_segment、x_path(tau)=position_segment_start+tau*path_velocityとする。Kinematic Vertex / Colliderの距離計算とTOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価し、Endpoint ChordはSwept AABBのBroadphase基準形状としてだけ使う。v_boundはDynamic path速度とKinematic Trajectoryの区間速度上限の和を使う。Conservative Advancementの進行量は次とする。
 
     delta_tau = safety * (d(tau) - contact_radius) / max(v_bound, epsilon)
     tau_next = tau + delta_tau
 
-接触が確定したら、予測状態をそのまま部分更新しない。サブステップ開始スナップショットへ戻し、tauまでの区間を再積分する。Clothなど位置ベースの系では、この区間の変位から接触前速度を再構築する。Soft Bodyは積分器が保持するtau時点の速度を使う。tau時点で接触位置制約を解き、続けて法線・Coulomb接線Impulseを一度適用して速度を更新し、contactにimpact_resolvedフラグを立てる。その速度から残時間delta_t_substep-tauを再積分し、必要ならBroadphaseを再構築する。Soft Body内部力とCloth拘束は各区間で再評価する。TOI処理は最大分割数内で繰り返す。TOIを含むStepでは全時間の始点・終点差分から速度を再構築してImpulse結果を上書きせず、最後の区間で得た速度を保持する。
+TOIが確定したら、検出に使った離散軌道と同一の位置・速度をTOI prefix状態として採用する。§6.6のSemi-implicit EulerはSegmentの予測終端Velocityを使ってPositionを更新するため、Dynamic VertexのSegment内CCD pathは次で定義する。
 
-1サブステップ内のTOI分割上限は初期値2回。上限を超えた場合は残時間を進めずCCDIterationLimitとしてステップを未確定にし、時間刻みを細分化して再試行する。CCDの解決不能を貫通許容として扱わない。
+    path_velocity = (position_predicted - position_segment_start) / dt_segment
+    x_path(tau) = position_segment_start + tau * path_velocity
+    v_path(tau) = path_velocity
+
+Endpoint / 既存BoundaryへSnapされなかった内部TOIは、Contact Group化と別に`toi_time_boundary_id`を割り当てる。同じIEEE-754 float32 tauビット列を持つCandidateは、幾何学的位置が異なり別Contact Groupへ分類されても同一時間Boundaryとして扱う。異なるtauのBoundary統合は、§11.4の全Snap条件（時間差、XPBD後位置、dt感度、相対Velocity、Contact Island全体のImpulse誤差）を各Candidateが同時に満たす場合だけ許可する。統合先は最も早いtauとし、誤差Boundは各Candidateから統合先まで個別に評価する。いずれかのCandidate / Contact IslandでBoundまたは許容値が欠落・非有限・証明不能なら統合せず、各Candidateの正確なtauを独立Boundaryとして保持する。`discovered_toi_split_count`は新たに追加された内部`toi_time_boundary_id`ごとに1回だけ増やす。同一Boundaryに属する複数Contact Group / Contactは追加Splitを増やさない。別途`discovered_toi_segment_count`はTOI処理で新規生成したResidual / Continuation Segmentごとに1回増やし、tau=0の全長Continuation Segmentも含める。tau=0はsplit_countを増やさずsegment_countを1増やす。tau=dt_segmentはどちらも増やさない。Contact Event Groupは時間差と各Contactの幾何誤差条件の両方を満たす場合だけ構成し、幾何条件を満たさないContactは別Groupに残す。同一Boundaryの各Groupは同じBoundary Timeで順序付けし、Group内はContact Key順に処理する。TOI候補の並び順によらずBoundary ID / Contact Group / Countを決定的にする。
+
+tau=0のInitial Contact EventではSegment-start state / velocity / Kinematic Trajectory Derivativeを使用し、ゼロ時間prefixを作らず`(x_internal_solved - x_segment_start) / tau`によるVelocity Reconstructionを実行しない。Impact解決後はdt_segment全量を新しいResidual Integration Segmentとして一度だけ処理し、そのSegmentに新しいbase_integration_segment_idを割り当てる。Positive-Timeの内部TOIではprefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを先に解く。Soft Bodyはprefix軌道状態を維持する。Contact Position Constraintを解く前にDynamic VertexのContact前Velocityを(x_internal_solved - x_segment_start) / tauで再構築して保存する。次にTOI Contact Position Constraintを解くが、Contact位置補正後にVelocityを再構築しない。保存済みContact前VelocityをCoupled Projected Jacobiへ渡し、ResidualがAcceptance範囲へ収束した場合だけImpactを一度Commitする。W_ii <= epsilon_inverse_massの非応答ContactはPosition / ImpulseをSkipする。
+
+Kinematic Animation CurveとEndpoint Chordの差は、有限個のサンプル最大値で保証しない。Animation Evaluatorは各Kinematic Geometry Primitive / VertexについてSegment内全時刻のChord偏差上限kinematic_path_deviation_boundと、CA用の区間速度上限kinematic_path_speed_boundを返す。CUBICSPLINEのTranslationはHermite曲線をBezier Control Hullへ変換し、Chordとの差分Bezier Control Pointの最大Normを保守的上限とする。Quaternion / Bone Hierarchy / Skinningを含む変換は区間演算または保守的な導関数Boundを階層合成・Skin Weight合成へ伝播する。固定軸Slerpで動く剛体Colliderの回転Chord偏差は、Collider原点からの最大距離r_maxと角度thetaからsagitta_bound = r_max * (1 - cos(theta / 2))で求める（theta <= piとなるまで分割）。Translation Curveの偏差Boundと回転BoundはSwept AABBへ加算膨張する。Kinematic Trajectoryの区間速度上限はTranslation / Skinningの導関数Boundと、剛体Colliderではmax(|v_linear|) + max(|omega|) * r_maxを使う。
+
+kinematic_path_deviation_boundがdistance_tolerance以下になるまで最大分割深度8で決定的にSegment細分化する。深度8でもBoundが許容値を超える、またはDeviation / Speed Evaluatorが保守的Boundを返せない場合はCCDUnresolvedとしてTickをCommitしない。Conservative AdvancementはChord上の距離ではなく実Trajectory位置で評価した距離d(tau)を使い、v_boundへkinematic_path_speed_boundを含める。TOI prefix位置にはtau時刻のAnimation Target / Rigid Transform Trajectoryを直接評価し、Contact Relative Velocityには同時刻のAnimation Target Trajectory微分、Kinematic Colliderではv_linear + omega cross radiusを使う。実サンプル点の偏差は診断・校正用に計測するが、合否は保守的Boundで決める。Run Manifestへ最大Deviation Bound / Speed Bound・分割深度・未解決数を記録する。
+
+残時間dt_segment-tauはImpact後のPosition / Velocityから新しいWorld Integration Segmentとして進める。tau=0では残時間がdt_segment全量となるため、新しい全長Continuation Segmentを必ず1つ生成する。tau=dt_segmentでは残時間0のSegmentを生成しない。Impact後Velocityは残Segment開始Velocityとして固定し、同じTOI Segmentの末尾で再Velocity Reconstructionしない。新SegmentではSoft Body内部力 / Animation Tracking力 / External Forceを新しいSegment開始状態で評価し、Event Cursorから未消費Eventだけを適用する。必要ならBroadphaseを再構築する。TOIを含むStepではLogical Tick全体の始点・終点差分からVelocityを再構築してImpact結果を上書きせず、最後のSegmentで得たVelocityを保持する。
+
+1 World共通Substep内のPositive-Time TOI分割上限は初期値2回。TOIを同時Eventとしてまとめる時間許容差は`tau_snap_tolerance`とし、各Contactの代表時刻への位置差Boundが個別`distance_tolerance`以下であることを同時Group化の追加条件とする。Event内のImpulseはContact Key順に一度だけ適用する。TOI以前のprefixは§11.4のx_path(tau) / v_path(tau)からWorld全体で構成する。Positive-Time TOI時はEndpoint Contactを確定せず、同じ離散path上のTOI位置でtauをXPBD時間として内部Constraint / Contact Constraintを解き、Impactを適用する。残時間はImpact後の状態から全参加Solver共通の新Segmentとして進める。Solverごとに異なるtauを使う・Contact相手の状態を旧位置へ固定する処理は禁止する。上限を超えた場合は残時間を進めずCCDIterationLimitとしてLogical Tickを未Commitにし、World共通Substep数またはCCD budgetを増やして同じTick開始Snapshotから再試行する。再試行上限はScenario設定に従い、上限到達時はWorldをBlockedByCCD / Failedへ遷移させる。CCDの解決不能を貫通許容として扱わない。
 
 ## 12. Render Vertex Binding
 
@@ -719,32 +1457,42 @@ Paint / Smooth / Average / Eraseを提供する。Paintはtarget_valueへstrengt
 
 ### 14.1 固定時間刻み
 
-描画Delta Timeを直接ソルバーへ渡さない。Accumulatorで固定時間刻みのStep要求を管理する。フレームあたりの最大Step数を超えた場合は遅延を記録し、シミュレーション時間を黙って飛ばさない。
+描画Delta Timeを直接ソルバーへ渡さない。Simulation ManagerがAccumulatorでFixed Delta TimeのLogical Tick要求を管理し、Runtime SchedulerがGPUへのSubmissionを管理する。既存fixed_step_controllerはCPU reference / test環境の同期Callback用として保持し、GPU Production RuntimeのCommit判定へそのまま流用しない。GPUへのSubmission受付とGPU Tick Commitは別の状態である。
+
+フレームあたりの最大Step / GPU in-flight上限に達した場合は遅延を記録し、Accumulatorへ時間を保持する。性能維持のために時間を黙って飛ばさない。GPU完了StatusはEvent Queryと非同期Status Readbackで確認する。Event QueryはCommand完了を示し、Tickが成功したことはGPU Status Bufferで判定する。
 
 ### 14.2 Step / Pause
 
-Pause中のStep要求は固定時間刻みを1回だけ実行する。描画フレーム更新とは独立させる。複数Step要求は要求数分をキューイングする。GPU容量エラー中はStepを保留する。
+single_step要求はPause / Stop中にFixed Delta Timeを1回だけ要求する。GPU実行は非同期であり、APIがSubmissionを受け付けた時点で完了扱いにしない。複数Step要求は受理順にStep Request Queueへ保持する。Pause / Stop中はStep Request Queueをwall-clock Accumulatorより優先し、1要求につき1 Logical TickだけをSubmissionする。Accumulatorにwhole tickやfractional remainderが残っていてもStep Requestを先に処理し、そのAccumulatorは変更しない。GPU容量エラー / CCD Unresolved / 入力不足 / Render Backpressure中はStep Requestを保留し、解消不能ならFailureを返す。
+
+Pauseはwall-clock時間の追加とAccumulator由来の新規Reservationを止め、既にGPUへSubmission済みのTickは安全に完了させる。未割当Accumulatorは保持する。StopはPaused状態へ移行し、未Reservation Step Requestを取消してcancelled_requested_timeへ記録する。Stopも未割当wall-clock Accumulatorと物理Stateは保持する。ResetはInitial Stateへ戻し、Accumulator（whole tick / fractional remainder）、Tick Reservation / Sequence、Step Request Queue、Solver Lambda、Contact / CCD Cache、Requested / Cancelled / Committed / Observed Timeline Counters、診断カウンタを初期化する。in-flight GPU commandのResource退役は同期waitを通常Frameへ入れず、Query / Deferred Releaseで処理する。
 
 ### 14.3 Test Environment操作
 
 Test Environmentは次の操作を提供する。
 
-- Play: 現在状態から時間進行を再開する。
-- Pause: 時間進行を停止し、状態を保持する。
-- Stop: 時間進行と未実行Step要求を停止し、現在状態を保持する。
-- Reset: 保存済みInitial Stateへ復帰し、Accumulatorと診断カウンタを初期化する。
-- Step: Pause / Stop中に固定時間刻みを正確に1回実行する。
+- Play: 現在状態から時間進行を再開し、保持しているwall-clock Accumulatorを処理する。
+- Pause: wall-clock時間の追加とAccumulator由来の新規Reservationを停止し、状態とAccumulatorを保持する。
+- Stop: Pause状態へ移行し、未Reservation Step Requestを取消してcancelled_requested_timeへ記録する。物理Stateとwall-clock Accumulatorは保持する。
+- Reset: 保存済みInitial Stateへ復帰し、Accumulator全体、Step Queue、Timeline / Sequence / Solver Cache / 診断カウンタを初期化する。
+- Step: Pause / Stop中に1 Fixed Tickだけを要求する。複数要求は要求順に処理し、wall-clock Accumulatorより優先する。既存Accumulatorの時間を消費しない。
 - Time Scale: 実時間DeltaをAccumulatorへ加える倍率。固定物理時間刻み自体は変更しない。
 - Fixed Delta Time: シミュレーションの基本時間刻み。
 - Gravity: 重力ベクトルを変更する。
-- Impulse / Force: kind（instant impulse / sustained force）、位置（m）、方向（正規化ベクトル）、強度、半径（m）、継続時間（s）、開始時刻または開始Stepを指定する。Impulseの強度単位はN*s、ForceはNとし、Impulseは瞬間的な運動量変化、Forceは指定時間だけ作用する力として扱う。
+- Impulse / Force: kind（instant impulse / sustained force）、位置（m）、方向（正規化ベクトル）、強度、正の半径（m）、継続時間（s）、World Simulation Time原点からの絶対開始時刻start_timeを指定する。Forceのend_timeはstart_time + durationから導出し、Descriptorで二重指定しない。Impulseはevent_timeの絶対時刻を持ち、duration=0としてWorld共通Segment境界で一度だけ適用する。Impulseの強度単位はN*s、ForceはNとし、Forceは指定時間と各Integration Segmentの重なり時間に応じて積分する。空間分配は§7.1.1の質量測度付きFalloffで行い、対象World / Model / Mesh範囲をDescriptorで明示する。
 - Animation: Clip、再生時刻、速度、Blend、Discontinuity Policyを指定する。
 
-Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。
+Time Scale変更はAccumulatorへの時間供給量にのみ適用する。物理時間刻み変更は別設定とし、変更時はXPBD lambdaをリセットして新しい時間刻みで開始する。World内のSubstep数はLogical Tick開始時に一度決定し、Soft Body / Cloth / Contactが同一Substep時刻・同一dtを使う。§6.8で定義したWorld共通Substepをv1の唯一の時間分割方式とする。
+
+#### 14.3.1 Force / Impulseの適用契約
+
+Force / Impulse Descriptorは対象World / Model / Mesh filter、ワールド空間作用点、正規化方向、Magnitude、正のRadius、開始・終了時刻を持つ。start_time / end_time / event_timeは全てWorld Simulation Time原点からの絶対秒であり、Render Frame時刻・Clip Local Time・Logical Tick indexを直接渡さない。MagnitudeはForce=N、Impulse=N*sとする。対象Physics VertexのRest Lumped MassとWendland C2 Falloffを使い、q_i = m_i * phi(r_i/R)、w_i=q_i/sum(q)として正規化する。Soft BodyはTet Lumped Mass、ClothはTriangle Lumped Massを使い、固定頂点も支持反力を受ける頂点として分配集合へ含める。各Eventのw_i,eは、そのEventの対象Filter内で独立に総和1へ正規化する。分配Weightは各World共通Segmentの開始位置で距離r_iを評価し、Segment途中では変化させない。directionは単位ベクトル、magnitudeはForceならN、ImpulseならN*sである。
+
+ForceはF_i=w_i*F_totalとして連続的に作用し、Force開始・終了時刻でWorld共通Segmentを分割する。各Segment内のForce積分量はF_i*dt_segmentであり、別途Impulseへ変換して重複加算しない。ImpulseだけをJ_i=w_i*J_eventとしてSegment開始時に一度適用する。イベントIDと適用済みTick / Segmentを記録し、Retry時は同じSource State / Input Snapshot / Segment時刻から同じイベントを再適用する。対象頂点が存在しない、Falloff重み総和がepsilon以下、イベント時刻が既にCommit済みTimelineより前に到着して反映できない場合はDiagnosticを返し、イベントを黙って捨てない。
 
 ### 14.4 JSON
 
-トップレベルにschema_version、asset_id、asset_cache_version、asset_generation_settings、solver_settings、initial_state、animation、gravity、forces、collisions、materials、vertex_weights、test_sequence、random_seedを持つ。test_sequenceは開始条件、終了条件、再生・停止・Reset条件、測定区間を保持する。forcesはkind、位置、方向、強度、半径、継続時間、開始Stepを持つ。Impulseでは継続時間を0とし、Forceでは正の継続時間を指定する。collisionsは接触厚み、摩擦、反発、collision_enabled、self_collision_enabled、Mesh Pair除外リストを保持する。solver_settingsはfixed_delta_time、time_scale、substeps、iterationsを保持する。
+トップレベルにschema_version、asset_id、asset_cache_version、asset_generation_settings、solver_settings、initial_state、animation、gravity、forces、collisions、materials、vertex_weights、test_sequence、random_seedを持つ。test_sequenceは開始条件、終了条件、再生・停止・Reset条件、測定区間を保持する。forcesはkind、位置、方向、強度、半径、継続時間、World Simulation Time原点からの絶対start_timeを持つ。Forceのend_timeはstart_time + durationから導出し、二重保存しない。Impulseはduration=0と絶対event_timeを持つ。Step番号をEvent時刻として入力しない。collisionsは接触厚み、摩擦、反発、collision_enabled、self_collision_enabled、Mesh Pair除外リストを保持する。solver_settingsはfixed_delta_time、time_scale、substeps、iterationsを保持する。
 
 未知のschema_version、必須項目欠落、NaN/Infinity、負の時間刻み、範囲外パラメータはロードエラー。未知の任意拡張項目は保持して再保存できる。省略可能項目への既定値適用はログへ記録する。
 
@@ -768,39 +1516,39 @@ Debug ViewはGPU上のPhysics / Render Bufferからデバッグ用線分・点�
 
 ## 15. GPU Pass・同期・Dispatch
 
-### 15.1 サブステップ基本順
+v1のGPU Runtime初期値はpolar iteration最大8回、polar orthogonality residual <=1e-5、CFL factor=0.2、Cloth / Contact Gather relaxation候補omega={0.5, 0.75, 1.0}、CCD safety=0.8、CCD最大32 CA iterations、TOI split<=2 / substepとする。これらは初期Engineering Baselineであり、Numerical Acceptance Profile / Scenario Manifestへ値を記録し、fixture・WARP・物理GPU試験を通過するまで妥当性を確定しない。
 
-1. Animation Target / Animation Velocity Update
-2. Physics Vertex Previous State Snapshot
-3. Soft Body Tet Deformation Gradient
-4. Soft Body Rotation / Stress / Inversion Penalty
-5. Soft Body Tet Force Contribution
-6. Soft Body Vertex Force Gather
-7. Soft Body Velocity / Position Prediction
-8. Cloth Velocity / Position Prediction
-9. Broadphase Count / Scan / Fill / Sort / Group
-10. Candidate Generation / Deduplication
-11. 各ソルバー反復
-    - Cloth Stretch Graph Color Passes
-    - Cloth Animation Tracking Constraint Output / Gather / Apply
-    - Cloth Shear Constraint Output / Gather / Apply
-    - Cloth Bend Constraint Output / Gather / Apply
-    - Contact Narrowphase Refresh
-    - Contact Patch Reduction / Merge
-    - Contact XPBD Output / Gather / Apply
-    - Broadphase Envelope Exceeded Check; 必要時Rebuild
-12. TOI検出・TOI分割処理（CCD対象のみ）
-13. Velocity Reconstruction
-14. Coulomb Friction / Restitution Impulse
-15. State Commit
-16. Render Position Feedback
-17. Render Normal Gather
-18. Render Tangent Update
-19. Diagnostic Timestamp / Counter
+### 15.1 Logical Tick / Substep transaction
+
+Logical Tick全体をGPU Commit transactionとする。Tick開始時のactive_state_bankはRead-onlyで保持し、inactive_state_bankだけを更新するため、active_state_bankがLogical Tick開始Snapshotを兼ねる。Integration Segment開始状態は専用scratchへ保存し、TOI prefix / Event Segment再計算時はinactive_state_bankをそのscratchから復元する。Substep scheduleはLogical Tick Begin時にWorld全体の参加Meshから一度だけ計算し、全Soft Body / Cloth / Contact / Animation Trackingへ共通dt_worldを割り当てる。独立したSolver別Subcyclingは禁止する。Force / Impulse Eventの時刻がSegment内部にある場合もWorld共通Segmentを分割し、全参加Solverを同じ時間だけ進める。すべてのSubstep / Collision / CCD / Render Candidate Validationが成功した後だけGPU Tick Commit Controlを通す。GPU Commit ControlはPhysics State BankとRender Candidate Slotを同時に切り替える。Failure時にWorking State / CandidateをRendererへ公開しない。
+
+基本Pass順序:
+
+1. Logical Tick Begin / Dispatch Plan Gate / Terminal Status Reset。
+2. World Substep Schedule Build / Validate。
+3. Integration Segment境界のAnimation Target / Animation Target Velocity / Root / Kinematic Pose Sample。
+4. External Force / Impulse Event Gather（ForceはSegment内一定、ImpulseはSegment開始時にEvent ID単位で一度だけ適用）。
+5. Segment開始状態のSoft Body FEM Force / Kelvin-Voigt Tracking Force Evaluation / Tet Contribution Gather。
+6. Soft Body / Cloth Velocity / Position Prediction（dt_segment）。
+7. Physical Swept AABB / Broadphase Count / Scan / Fill / Sort / Group / Candidate Dedup / Narrowphase / Contact Patch Build。
+8. CCD Conservative Advancement / Minimum TOI Reduction。
+9. TOIがない場合: Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを解く。位置を書き換える各DispatchをPosition-Writer Epochとし、各Epoch後にCorrection Swept AABB、Broadphase候補のCanonical Union、Correction Motion CCDを実行する。
+10. TOIがある場合: Endpoint Contactを確定せず、Dynamicのx_path(tau) / v_path(tau)とKinematicのtau時刻実Trajectory位置・VelocityでTOI prefixを構成し、tauを使って非接触内部Constraintを解く。Endpoint ChordはDeviation Bound付きSwept AABBにのみ使い、prefix内の位置書込みEpochにもCorrection Motion CCDを適用する。
+11. Candidate Unionを使うFinal Discrete NarrowphaseでContact Setを確定し、Crossing / Unresolvedが0であることを確認してからDynamic VertexのContact前Velocityを再構築してv_pre_contactへ保存する。TOIではtau、通常Segmentではdt_segmentを用いる。Fixed / Kinematic VelocityはAnimation Trajectory微分を維持する。
+12. Discrete / TOI Contact Position XPBDを解く。各位置反復をPosition-Writer EpochとしてCorrection Swept AABB / Correction Motion CCD / Candidate Union / Final Discrete refreshを行い、新規終端Contactを次の残り反復へ渡す。規定反復終了時に新規Contact / Contact Set Generationが未解決ならCommitしない。Contact位置補正はPositionへだけ適用し、v_pre_contactを変更しない。
+13. v_pre_contactとKinematic接触点VelocityからFriction / Restitution Impulseを計算し、Contact ContributionをVertex Gatherで一度適用する。TOI Contactにはimpact_resolvedを設定する。
+14. Broadphase Envelope / Candidate Union / Correction CCD / NonFinite / Capacity / CCD / Physical Quality Gateを検証する。Envelopeは物理Sweepと全Position-Writer Epochの補正SweepのUnionとして検証し、漏れ・未解決・Capacity超過があれば同じReservationをCommitせずBLOCKED / REJECTEDへ分類する。
+15. TOIがある場合はImpact後Velocityから残時間の新しいIntegration Segmentへ進む。TOI後に当該Impact結果をVelocity Reconstructionで上書きしない。
+16. 次Integration Segment / World Substepへ進み、全Logical Tick完了後にRender Feedback Candidate Prepare（Position / Normal / Tangent）。
+17. Render Candidate finite / Binding Validation。
+18. Logical Tick Commit Control（全Physics GateとRender Candidateが成功した場合だけPhysics State GenerationとRender Slotを同時にCOMMITTEDへ切替）。
+19. Diagnostic Timestamp / Counter / Status Copy + Event Query。
+
+Discrete Contact / TOI Contactのいずれでも、Contact Position XPBDとVelocity Impulseを別Pass / 別Snapshotで扱う。Contact Position correctionを含むPosition差分から速度を再構築する処理は禁止する。
 
 ### 15.2 同期・リソースhazard
 
-同じResourceをSRVとUAVへ同時にバインドしない。Pass境界で必要なUAV unbind / SRV bindを行う。読み書きが競合する反復はPing-Pong Bufferを使う。Immediate Contextの発行順序を基本とし、Deferred Contextを使う場合はリソース依存を保つ。
+同じResourceをSRVとUAVへ同時にバインドしない。Pass境界で必要なUAV unbind / SRV bindを行う。読み書きが競合する反復はPing-Pong Bufferを使う。Immediate Contextの発行順序を基本とし、Deferred Contextを使う場合はリソース依存を保つ。Production Runtime v1ではDeferred Contextと複数Submission Threadを使わず、Host RendererとSkinPhysics Runtimeは同一Immediate Contextへ単一Submission Threadから順序付けて発行する。Dispatch間依存はPass境界で解決し、Thread Group間Global Barrierを仮定しない。
 
 Compute Shader thread groupは初期値128 threadsとし、頂点・要素・制約別に64/128/256を実測比較する。Dispatch上限を超える場合は複数Batchに分割する。グループ内同期とDispatch間同期を混同しない。
 
@@ -810,36 +1558,61 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 
 ## 16. 容量・エラー・ステップ状態
 
-シミュレーションインスタンスは少なくとも以下の状態を持つ。
+`WORK_BUDGET_EXCEEDED`はAdmission Limit超過を示す再試行可能な状態であり、Logical Tick Stateは必ず`BLOCKED`とする。TickはCommitせず、同じTick Reservation / Sequence / Input Snapshotを保持する。CPU Preflightで判定した場合は`CPU_PREFLIGHT`、GPU実行中のTOI分割で判定した場合は`GPU_DYNAMIC_TOI`をStatusへ記録する。TOIで報告する`minimum_required_integration_segments`は発見済み追加Segmentだけから証明できる下限値であり、未発見の後続TOIを含む最終総数とは解釈しない。下限は`planned_integration_segments + discovered_toi_segment_count`とし、内部Boundary数を表す`discovered_toi_split_count`とは区別する。Status Field、Poll、Retry、Hard Limitの詳細は [runtime_integration_design.md](runtime_integration_design.md) §3.4 / §5.6を正とする。
 
+シミュレーションインスタンスとGPU Logical Tickは状態を分けて管理する。
+
+World Playback State:
 - Ready
 - Running
 - Paused
 - Stopped
+- BlockedByWorkBudget
 - BlockedByCapacity
 - BlockedByCCD
+- DeviceLost
 - Failed
 
-予測位置と確定位置を分離する。Broadphase/Contact/Contributionのoverflowや非有限状態が検出されたStepはCommitしない。Broadphase envelopeはサブステップ開始位置から予測位置までのSwept AABBを基本とし、設定した最大拘束補正余裕を加える。位置反復後に頂点がこのenvelope外へ移動した場合は、次の反復前にBroadphaseを再構築する。再構築時に容量超過が起きた場合も同じStepをBlock / Retryする。容量を増やして同じStepを再実行するか、Failureとしてユーザーへ通知する。
+Logical Tick State:
+- Pending
+- Submitted
+- GpuExecuting
+- BLOCKED
+- GpuCommitted
+- CpuObserved
+- REJECTED
+- FAILED
+
+状態の意味:
+- `BLOCKED`: Runtimeが定義する回復手順で同一Tickを再実行できる状態。Reservation / Sequence / Input Snapshotを保持し、Committed Stateを変更しない。
+- `REJECTED`: 入力・Asset・物理品質Gate等の不成立により、そのTick Planを自動再試行しない状態。Committed Stateを変更しない。
+- `FAILED`: Device Loss、回復不能なWork Count Overflow、内部実行不能などWorldの継続を止める終端状態。
+
+Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDEDは回復可能な間は`BLOCKED`とし、`REJECTED`へ分類しない。NonFinite / Invalid Asset / ABI mismatchは自動Retryせず`REJECTED`またはLoad Errorとする。DeviceRemovedおよびuint32範囲を超えるWork Countは`FAILED`とする。
+
+ただしCorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure / ContactGeometryUnresolvedは上記一般的な回復可能CCD / Geometry Blockの対象外である。現行v1にはCorrection CCD区間予算やContact Position Iterationを同一Reservationで増加するRecovery APIがないためREJECTEDとする。実Buffer Capacity超過はBroadphaseOverflowとしてBLOCKEDにする。
+
+GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはGPU Event Query完了・COMMITTED Status Readback・連続Tick Prefixの3条件をCPUが確認した状態である。CPU Preflight BlockはGPU Submissionを行わないためEvent Queryを必要とせず、CPU Scheduler Status Queueへ同期記録され、`poll()`が同じ呼出しで観測可能な`BLOCKED`状態として返す。GPU Dynamic TOI BlockはGPU Status BufferとEvent Queryで非同期に回収する。CPU observed completed timeはCpuObserved Prefixから算出し、BlockされたTickでは進めない。
+
+予測位置と確定位置を分離する。Broadphase / Candidate / Contact / Contributionのoverflow、非有限状態、Correction Motion CCD Unresolved、Correction Path Crossing、Contact Geometry Unresolvedが検出されたStepはCommitしない。Broadphase Envelopeは§9.4.1のとおり、物理Segment Swept AABBと全XPBD Position-Writer EpochのCorrection Swept AABBのUnionとする。固定の「最大拘束補正余裕」は使用しない。各Epoch後に補正経路のBroadphase / Correction Motion CCDを実行し、Candidate Unionへ追加する。最終Discrete Candidateを含むUnionに対してContact Setを再構築する。CorrectionPathCrossing / CorrectionCcdUnresolved / BroadphaseCompletenessFailure / ContactGeometryUnresolvedはREJECTEDとし、自動Retryしない。実際のBuffer Capacity超過はBroadphaseOverflowとしてBLOCKEDにし、同じReservation / Input Snapshotを保持してCapacity Retryする。未解決の候補・補正を許容してCommitしたり、有限サンプルをNo-Hit証明へ置換したりしない。
 
 診断コード:
-
 - InvalidAsset / InvalidTopology
 - DegenerateTetrahedron / InvertedTetrahedron
 - InvalidMaterialParameter
-- SkinWeightTransferError
-- RenderBindingError
+- SkinWeightTransferError / RenderBindingError
 - BroadphaseOverflow / ContactOverflow / ContributionOverflow
-- CCDIterationLimit
-- InitialPenetrationLimit
-- NonFiniteState
-- GpuResourceAllocationFailure
+- CCDIterationLimit / WorkBudgetExceeded
+- InitialPenetrationLimit / NonFiniteState
+- ContactGeometryUnresolved / ContactManifoldReductionFailure / CorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure
+- AnimationTimePrecisionUnresolved / NoForceTarget
+- GpuResourceAllocationFailure / DeviceRemoved
 
-警告はMesh ID、Element ID、Pass名、関連カウンタを含む。NonFiniteState発生時は該当StepをCommitしない。
+警告・Block StatusはWorld ID、Model ID、Mesh ID、Element ID、Logical Tick Sequence、Substep、Pass名、関連カウンタ、Block Originを含む。GPU StatusのBLOCKED / REJECTED / FAILEDはSubmission受付成功と混同しない。`WORK_BUDGET_EXCEEDED`は専用Admission Limit更新後に同じReservationを再Planし、実行予算を上げても解決しない他のFailure条件へ状態を混在させない。
 
 ## 17. 初期試験・受け入れ基準案
 
-数値は初期合格基準案。ベンチマーク前に達成済みと扱わない。変更時は理由と比較結果をレビュー記録へ残す。
+数値は初期合格基準案。ベンチマーク前に達成済みと扱わない。GPU float32とCPU doubleの比較には [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) の正規化スケールと初期Engineering Thresholdを適用する。これらは実測校正前の提案値であり、分析fixture・既存Golden Test・低解像度GPU試験で誤判定がないことを確認する。変更時は理由と比較結果をレビュー記録へ残し、Profile Versionを更新する。
 
 | ID | 試験 | 初期合格基準案 |
 |---|---|---|
@@ -899,20 +1672,29 @@ PassごとにD3D11 timestamp query / timestamp disjoint queryを用いる。結�
 11. 品質・性能最適化
     - Pass別計測と代表規模のスケーリング。
 
-各段階でレビューと試験結果を記録する。前段の完了条件を満たさず次段へ進まない。
+12. GPU Runtime Transaction / Async Scheduler / Render Interop
+    - World Global ID、複数Model / Mesh統合、Host-owned Device / Context、GPU Commit / Rollback、Query Ring、Committed Render Binding、Device Lossを接続する。
+    - Gate R0～R6を通し、既存T01～T28のRegressionを維持する。
 
-## 19. 残課題・実装前に確定する項目
+各段階でレビューと試験結果を記録する。前段の完了条件を満たさず次段へ進まない。Phase 12のRuntime境界、API、GPU Commit State Machine、Error / Device Lossは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
-- Corotational Linear Elasticityの適用可能ひずみ範囲と、Neo-Hookean比較が必要となる境界
-- SVD異常要素Passの精度とコスト
-- μ/K/ρの代表材料プリセットと安定時間刻み
-- Soft Body / Cloth材料プリセットの初期値とUI許容範囲の実測調整
-- Bend微分の数値検証・finite difference test
-- Spatial Hashのbase cell width、level数、max_cells_per_primitive
-- Contact Patchの初期閾値と、Conservative Advancementのsafety / tolerance / 最大分割数の実測調整
-- GPUバッファの容量初期値・上限・GTX 1660 SUPER実メモリ予算
-- glTF skin influence・AnimationClipのImporterテストセット
-- 数値受け入れ基準の実測妥当性
+## 19. 実装前に残る実測・校正タスク
+
+以下は設計上の未決定事項ではなく、本書で定義した方式・初期値・モデル適用範囲をGolden Fixture / WARP / Physical GPUで検証するタスクである。閾値を満たさない場合は原因を分類し、設計またはProfile Versionを改訂する。測定前にAcceptance Gateを緩和しない。
+
+- Corotational Linear Elasticityの検証領域（Rigid Rotation、Affine Stretch / Shear、J=0.9 / 1.1、J=0.7 / 1.3、局所押込み、反転直前）での精度・安定性。保証領域外の大変形はv1の品質保証範囲としない。必要ならNeo-Hookeanを別候補として比較する。
+- Polar / SVD fallbackの直交性残差、det(R)、特異値Floor、異常要素比率、GPU時間をNumerical Profileで検証する。
+- μ / K / ρ / E_2D / G_2D / D / tracking stiffness / dampingは単位付きScenario Materialとして入力する。代表値はfixtureごとに固定し、Run Manifestへ記録する。
+- Bend解析勾配とcentral finite differenceの相対誤差 <=1e-3、退化Hinge分岐、Jacobi収束を検証する。
+- Spatial Hashの64 cells / Primitive、最大24 level、positive cell floor、Morton LBVH Large Primitive Bucket、Hash / BVH間Pair Dedupの完全性と候補数を小規模全探索Fixtureで検証する。
+- Contact Patch最大4 Support PointのReduction前後で最大貫通・法線分布・支持範囲を測定し、未縮約Manifold参照と比較する。Patch分割条件もFixtureで検証する。
+- CCD eta / safety / tolerance / CA 32 iteration / TOI 2 splitの見逃し・未解決率をMoving VT / EE Fixtureで測定する。False No-HitとUnresolvedの診断を独立して集計する。
+- GPU Buffer Capacity Growth、旧Resource Set退役時のPeak Bytes、DXGI Local Memory Budget、Render Candidate Ringを含むVRAMピークをGTX 1660 SUPERで確認する。
+- glTFの1 / 4 / 8 Skin Influence、STEP / LINEAR / CUBICSPLINE、複数Skin / Mesh Instance、OBJ Unit Error、未対応Morph / Draco / MeshoptのDiagnostic Fixtureを拡張する。
+- numerical_acceptance_profile_v1.jsonの全閾値を既存Golden Fixture / Analysis Fixture / WARPで校正し、低解像度Hardware GPUでFP32 / Double差を測定する。
+- Fixed Delta変更・Time Scale・Pose履歴不足・複数WorldのTick Scheduler・in-flight 1 / 2 / 4・Render Lease解放のRuntime統合試験を行う。
+- Render Candidate Ringの追加VRAM、Position / Normal / Tangent生成時間、CPU-observed committed-prefix遅延を測定する。
+- Device Loss / World Destroy / Query Ring pressure / Capacity retryをHardware D3D11で検証する。
 
 ## 20. 参考資料
 
@@ -930,6 +1712,59 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.32: CorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure / ContactGeometryUnresolvedのREJECTED分類を一般的な回復可能CCD / Capacity BLOCKED契約から分離。reference normal / sigma_pairをbase_integration_segment_id単位でLatchし、全Epochで同じSideを維持する規則、Segment-start Snapshot / Persistent Cache / epsilon_lengthの使用を明記。Basic v1.27 / Runtime v1.29と同期。
+- 1.31: Correction Motion CCDのSigned Separationを符号正規化Interval h=sigma*gで評価し、sigma<0時の上下端交換を明記。始点・終端だけで途中通過を否定しない契約と負側初期位置の回帰ケースを追加。Basic v1.26 / Runtime v1.28と同期。
+- 1.30: XPBDの全Position-Writer DispatchをEpoch化し、物理Sweepと補正SweepのCandidate Union、VT / EE Correction Motion CCD、Crossing / Unresolved時のFail-Closed Commit Gateを定義。Broadphase Envelopeの任意最大補正Marginを廃止。
+
+- 1.29: configurable `maximum_in_flight_ticks` 1 / 2 / 4をCPU未観測Submission Attempt数として定義し、単一Immediate Context Command Streamでの2-bank直列再利用とRender Candidate Ring N+1容量を同期。
+- 1.29: `maximum_in_flight_ticks` 1 / 2 / 4のCPU未観測Submission Attempt数定義、単一Immediate Context Command Streamでの2-bank交互再利用、Render Candidate Ring N+1容量を詳細Pass契約へ同期。
+- 1.28: Basic Design v1.23 / Runtime Integration Design v1.25の現行正本参照を同期。Basic Designの責務引継ぎ節とRuntime統合参照の整合を確認。
+- 1.27: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
+- 1.26: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
+- 1.25: Contact-level error notationをE_contact_impulseへ統一し、Applied Generalized Impulse E_applied_impulseとは別ゲートとして扱う。Delassus対角係数の差分単位をEffective Inverse Mass [1/kg]へ明確化。
+- 1.24: Contact-level World-space ImpulseとJ^T*q Generalized Applied Impulseを分離。SnapにApplied Impulse toleranceを追加し、Sparse Contact Jacobianとstable Physics Vertex ID集合の区間評価を必須化。
+- 1.23: Impulse Errorの比較空間をWorld-space 3N Vectorへ統一。Delassus Solverの局所係数qと物理Impulse出力Fを分離し、Tangent Basis回転誤差をE_friction_vectorへ追加。
+- 1.22: TOI誤差式のImpulse出力ベクトル順・Contact Island L2集約・Normal方向回転Boundを定義。DelassusをEffective Inverse Mass [1/kg]と明示し、Responsive Subspaceのrank / basis安定性をSnap証明条件に追加。
+- 1.21: Corrected the normative TOI equations to use E_Gcontact and E_Gv with candidate / boundary residuals; removed the stale G_p reference and made the map-to-error-budget binding explicit.
+- 1.20: XPBD写像をG_internal / G_contact / G_vへ分離し、Pre-contact Velocity保存とContact Position correctionの順序を一致。Snap Fixtureを証明未添付時にFail-closedとし、tau=0 / tau=dt端点、Tangential Delassus / Cross Block / Tangent Basis / XPBD Support Impulse入力を追加。Basic / Runtime / Profileの相互参照と履歴を統合。
+- 1.19: XPBD Snap誤差を有限反復Solver写像の不確かさ集合上の差として定義。tau=0の全長Continuation Segmentと、Split Count / 追加Segment Count / Admission下限を分離。
+- 1.18: Contact IslandのCoupled Normal / Tangential Impulseを完全な有限反復Solver写像で評価する契約を追加し、非対角Delassus MatrixへのScalar式流用を禁止。Candidate / Boundary双方のBranchとResidualをSnap判定へ含める。
+- 1.17: TOI時間Boundary Snapの判定を位置誤差だけから相対速度・Impact Impulseを含む総合誤差予算へ拡張。証明できないBoundはunknownとしてSnapを禁止。
+- 1.16: TOI端点 / 既存Boundary / 同時ContactをSnapする条件に保守的な位置誤差Boundを追加。Snap条件不成立時は正確なtauで内部Splitし、0-duration prefixのVelocity Reconstructionを禁止。Runtime v1.13 / Profile v1.8と同期。
+- 1.15: TOI Split Countを一意な内部境界の生成数へ厳密化し、端点 / 既存境界 / 同時TOIの過剰計上を防止。Runtime v1.12 / Profile v1.7と同期。
+- 1.14: Work Budget超過をBLOCKEDへ統一し、TOI時Segment要求を下限値として定義。CPU Preflight / GPU Dynamic TOIのStatus経路とRuntime Hard Limitを追加。Profile v1.6へ同期。
+- 1.13: WORK_BUDGET_EXCEEDEDからの復旧をRuntime契約へ分離し、実行予算変更と物理入力Snapshotの不変性を明記。Numerical Acceptance Profile v1.5のABI正本参照と同期。
+- 1.12: Immutable Span / Track / Channel / Blend / Collider Packetと16-byte Mutable World Cursorを分離。Segment Cursor Advance / TOI Retiming / Snapshot Rollbackを確定。
+- 1.11: Span / Track / Channel / Blend / Colliderの完全なSM5 ABI、Byte Offset / Flags / Node Role / Inverse Bind Index、gpu_float4 / Column-Major Matrix Layout、Rotation / Blend係数の意味、Hierarchy Channel Rangeを確定。
+- 1.10: Shader Model 5固定幅GPU Packet ABI / Byte Offset、CPU double絶対時刻とGPU Span-local float時刻、Segmentごとのu_segment_start更新、逆再生CUBICSPLINE Tangent選択、Collider Recordとfloat時間Precision Errorを追加。
+- 1.9: GPU Animation Trajectory Packetによる任意TOI時刻のBone / Skinning評価、最大2 Track Clip Blendの微分、非応答Contactの有効逆質量判定、複数Contactを結合するProjected Jacobi Impulse、Contact Temporal Quality Limitを追加。
+- 1.8: Contact Position correctionとContact前Velocity / Restitution Impulseを分離し、Impact後Velocityを再構築で上書きしないPass順を定義。Animation Target Velocityの唯一の正本、Kinematic CCDの保守的Chord偏差Bound、Cloth Temporal Quality Limit、World absolute Event Timeを追加。
+- 1.7: Semi-implicit Eulerの離散CCD pathとTOI prefix状態の一致、TOI時のXPBD Segment時間、Impact後残Segmentの再評価を明文化。
+- 1.6: Integration Segment単位のSoft Body / Cloth予測、線形粘性減衰の速度積分、Fixed / Kinematic Velocityの維持、TOI時間変数とSegment Snapshotの整合を明文化。
+- 1.5: World共通Substep、Cloth予測・Force / Impulse分配、Contact Patch品質閾値、退化Contact法線決定、Stackless Morton LBVH構築を明文化。
+- 1.4: Broadphase初期値・Large Primitive処理、Self Collisionの既定Topology Exclusion、Contact Patchを最大4点のManifold Reductionへ改訂、CCD初期許容値、Render Feedback Candidate / Commit Slotの順序、実測校正タスクの区分を明文化。
 - 1.2: 要件定義との整合性レビュー対応。Soft BodyのVolume / Shape Recovery独立調整、物理メッシュ解像度、Asset Cache、Mesh Pair Collision Filter、最大初期修正予算、アニメーション不連続と慣性、Test Environment操作、JSONシナリオ・Run Result、GPUメモリ予算計測、デバッグ可視化、ペイントチャンネルと頂点ウェイト反映規則を明文化。
-- 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
+- 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
+
+## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.29）
+
+本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～49は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
+
+- 配布Targetは既存のSkinPhysics Visual Studio Static Libraryとし、.sln / .vcxprojを正規Build手段にする。CMakeを必須にしない。
+- HostがD3D11 Device / Immediate Contextを生成・破棄する。RuntimeはCOM参照を保持してGPU Resourceを管理する。Host RendererとRuntimeは単一Submission ThreadでImmediate Contextを共有する。
+- 1 Worldに複数Model Instance / Mesh Componentを登録し、Soft Body / Cloth / Noneを混在させる。Contact KeyはWorld / Model / Mesh / Primitive IDを持つ。
+- 既存fixed_step_controllerとsimulation_step_pipelineはCPU Reference / Test Environment用に保持する。非同期GPU Commitの判定やProduction GPU Stateの所有には流用しない。
+- GPUがRuntime Physics Stateの唯一の正。Commit済みRender BindingだけをHostへRead-only公開し、通常FrameでPhysics Vertex / Contact / Lambdaを全量Readbackしない。
+- GPU StatusはLogical Tick単位でPENDING / SUBMITTED / GPU_COMMITTED / BLOCKED / REJECTED / FAILEDを管理する。Capacity / CCD / WORK_BUDGET_EXCEEDEDの回復可能な超過はBLOCKEDとしてReservationを保持する。CPU Preflight BlockはQueryを発行せずCPU Status Queueからpoll()で同期観測し、GPU Dynamic TOI BlockはEvent Query + Status Readbackで観測する。CPU completed timeはGPU Event Query完了、COMMITTED Status Readback、連続Tick Prefixの3条件を満たした範囲だけ進める。
+- `maximum_in_flight_ticks`（1 / 2 / 4）のin-flight Tickはexpected_predecessor_tick_sequence / expected_source_state_generation / expected_source_state_set / dispatch_idを持つImmutable Dispatch Planで連結する。in-flightはGPU Submission済みかつCPU Status未観測の件数であり、GPU上の同時Physics State更新数ではない。全Tickは単一Immediate Contextの順序付きCommand Streamで直列実行し、先行Commit Gate通過後に2つのPersistent State Bankを交互に再利用する。Tick Commit ControlだけがCommitted State Generation / Active State Setを更新し、Rejectでは更新しない。
+- 後続Tickのtick_begin_controlと全Budgeted Physics Passは先行TickのCommit Sequence / State Generationを確認する。先行Tickが失敗した場合、後続TickはPhysics StateのRead / Write前にBLOCKED_BY_PREDECESSORとして停止する。先行TickをRetryしてCommitした後、後続Tickを新しいGenerationで再Submissionする。
+- get_render_bindingはCPUがEvent Query完了とCOMMITTED Status Readbackを確認した最後のCPU-observed committed State Generationを返す。未確認GPU CommitやWorking BufferをRendererへ公開しない。
+- Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDED / NonFinite / Physical Quality Gate失敗はTickをCommitしない。Capacity / CCD / WORK_BUDGET_EXCEEDEDが回復可能な間はBLOCKEDとし、Tick Reservation / Sequence / Input Snapshotを保持する。WORK_BUDGET_EXCEEDEDの回復はRuntime §5.6の専用実行予算APIのみを使い、TOI Dynamic Blockでのminimum_required_integration_segmentsは発見済みTOIに対する下限値として扱い、追加TOIが見つかる場合の複数Retryを許可する。候補や異なる時間境界を黙って捨てない。
+- Render Feedback Candidateは専用SlotへCommit前に生成・検証し、GPU Commit ControlがPhysics StateとRender Slot参照を同時に切り替える。CPU-observed committed prefixのみをHostへ公開する。Render Candidate RingはWorldごとにmaximum_in_flight_ticks + 1 Slotとし、Lease解放前のSlotを再利用しない。追加Buffer / Copy / Dispatch / Ring VRAM / GPU時間をPerformance Runへ含める。
+- Device Loss時は新規Submissionを停止し、Asset / Initial StateからWorldを再構築してTimelineをResetする。毎Frameの全State Readbackで復旧しない。
+- 数値・物理品質の初期比較基準はnumerical_acceptance_profile_v1.jsonを使い、同一Solver Algorithm / Update OrderのCPU Double Referenceと比較する。異なるSolver方式同士はAnalytical FixtureとPhysical Invariantで比較する。
+- Production Runtimeの実装開始は独立Critical ReviewとGate R0～R6の実装計画承認後とする。採用値とReview Checklistは [design_closure.md](design_closure.md) を正とする。
+
+本改訂は設計追加であり、GPU Production Runtimeの実装・Build・Physical GPU Performanceを意味しない。文書状態はINDEPENDENT REVIEW REQUIREDとする。
+

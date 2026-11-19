@@ -1,0 +1,684 @@
+{
+  "schema_version": 1,
+  "golden_policy": {
+    "inputs_immutable": true,
+    "expected_outputs_reviewed": true,
+    "exact_fields": [
+      "topology",
+      "indices",
+      "IDs",
+      "counts",
+      "state_transitions",
+      "schema_version"
+    ],
+    "numeric_tolerance_from_expected_file": true,
+    "automatic_golden_update": false
+  },
+  "phases": [
+    {
+      "phase": 1,
+      "id": "importer",
+      "status": "automated",
+      "acceptance_tests": [
+        "importer OBJ/glTF",
+        "unit and coordinate conversion",
+        "skinning and animation import",
+        "topology validation"
+      ],
+      "cases": [
+        {
+          "id": "P01_OBJ_QUAD",
+          "input": "phase01_importer/quad.obj",
+          "expected": "phase01_importer/obj_quad.expected.json",
+          "checks": [
+            "negative OBJ indices",
+            "quad triangulates to 2 triangles",
+            "explicit centimeter-to-meter scale",
+            "MTL PBR factors",
+            "generated normals and tangents"
+          ]
+        },
+        {
+          "id": "P01_GLTF_SKIN_ANIMATION",
+          "input": "phase01_importer/skinned_triangle.gltf",
+          "expected": "phase01_importer/gltf_skin.expected.json",
+          "checks": [
+            "3 positions and indices",
+            "skin joints and normalized weights",
+            "inverse bind matrix",
+            "custom vertex group",
+            "LINEAR animation keys"
+          ]
+        },
+        {
+          "id": "P01_OBJ_UNIT_ERROR",
+          "input": "phase01_importer/unit_missing.obj",
+          "expected": "phase01_importer/unit_missing.expected.json",
+          "checks": [
+            "missing explicit OBJ unit scale rejected"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "id": "physics_mesh_skin_weights_cache",
+      "status": "partial",
+      "acceptance_tests": [
+        "T13",
+        "T25",
+        "T26"
+      ],
+      "cases": [
+        {
+          "id": "P02_SINGLE_TET",
+          "input": "phase02_physics_mesh/single_tet.msh",
+          "expected": "phase02_physics_mesh/single_tet.expected.json",
+          "checks": [
+            "signed orientation repair",
+            "rest volume and gradients",
+            "quality and dihedral",
+            "boundary count",
+            "mass conservation",
+            "CSR"
+          ]
+        },
+        {
+          "id": "P02_TWO_TET",
+          "input": "phase02_physics_mesh/two_tet_shared_face.msh",
+          "expected": "phase02_physics_mesh/two_tet.expected.json",
+          "checks": [
+            "shared face removed from boundary",
+            "two element mass conservation",
+            "boundary topology"
+          ]
+        },
+        {
+          "id": "P02_CENTER_STAR",
+          "input": "phase02_physics_mesh/center_star.msh",
+          "expected": "phase02_physics_mesh/center_star_skin_weights.expected.json",
+          "checks": [
+            "closest-surface barycentric transfer",
+            "positive graph Laplacian",
+            "PCG convergence and analytical interior weights"
+          ]
+        },
+        {
+          "id": "P02_CACHE",
+          "input": "single_tet PhysicsMesh",
+          "expected": "round-trip identity/checksum assertions",
+          "checks": [
+            "save/load equality",
+            "stale identity needs rebuild",
+            "checksum corruption needs rebuild",
+            "invalid payload rejected"
+          ]
+        },
+        {
+          "id": "P02_RESOLUTION_SETTINGS",
+          "input": "phase02_physics_mesh/resolution.input.json",
+          "expected": "phase02_physics_mesh/resolution.expected.json",
+          "checks": [
+            "target tetrahedron edge length/count recorded",
+            "max_tet_count blocks overflow",
+            "generator options participate in cache identity"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P02_SINGLE_TET",
+        "P02_TWO_TET",
+        "P02_CENTER_STAR",
+        "P02_CACHE",
+        "P02_TETRAHEDRALIZATION_RESOLUTION"
+      ],
+      "unimplemented": [
+        "Running a version-pinned fTetWild executable against representative production surfaces in CI",
+        "Target count is converted into a deterministic characteristic edge length; actual generated count remains fTetWild-version dependent and is recorded",
+        "External binary version detection and production-scale generator calibration"
+      ],
+      "automated_acceptance_tests": [
+        "T13",
+        "T25",
+        "T26"
+      ]
+    },
+    {
+      "phase": 3,
+      "id": "render_binding_feedback",
+      "status": "partial",
+      "acceptance_tests": [
+        "T12",
+        "T27"
+      ],
+      "cases": [
+        {
+          "id": "P03_TET_INTERIOR",
+          "input": "phase03_render_binding/tet_binding.input.json",
+          "expected": "phase03_render_binding/tet_binding.expected.json",
+          "checks": [
+            "four-vertex barycentric binding",
+            "rest pose error",
+            "CPU feedback updates positions while preserving UV/color/material/index attributes"
+          ]
+        },
+        {
+          "id": "P03_BOUNDARY_OFFSET",
+          "input": "phase03_render_binding/tet_binding.input.json",
+          "expected": "phase03_render_binding/tet_binding.expected.json",
+          "checks": [
+            "closest boundary triangle",
+            "Rest Pose offset mapped through local basis"
+          ]
+        },
+        {
+          "id": "P03_INVALID_BINDING",
+          "input": "phase03_render_binding/tet_binding.invalid.json",
+          "expected": "phase03_render_binding/tet_binding.invalid.expected.json",
+          "checks": [
+            "degenerate/too-distant binding is diagnosed"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P03_TET_INTERIOR",
+        "P03_BOUNDARY_OFFSET",
+        "P03_INVALID_BINDING",
+        "P03_WARP_RENDER_FEEDBACK"
+      ],
+      "unimplemented": [
+        "Cloth surface binding and feedback path",
+        "Full production render/physics resource lifecycle integration"
+      ]
+    },
+    {
+      "phase": 4,
+      "id": "test_environment_json_gpu_timing",
+      "status": "partial",
+      "acceptance_tests": [
+        "T24",
+        "T28"
+      ],
+      "cases": [
+        {
+          "id": "P04_FIXED_STEP",
+          "input": "phase04_test_environment/fixed_step.input.json",
+          "expected": "phase04_test_environment/fixed_step.expected.json",
+          "checks": [
+            "fixed dt accumulator",
+            "Pause/Step/Reset/Time Scale",
+            "no dropped simulation time"
+          ]
+        },
+        {
+          "id": "P04_JSON_ROUNDTRIP",
+          "input": "phase04_test_environment/scenario.input.json",
+          "expected": "phase04_test_environment/scenario.expected.json",
+          "checks": [
+            "schema validation",
+            "save-load-save semantic equality",
+            "unknown extension preservation"
+          ]
+        },
+        {
+          "id": "P04_RUN_RESULT",
+          "input": "phase04_test_environment/run_result.input.json",
+          "expected": "phase04_test_environment/run_result.expected.json",
+          "checks": [
+            "scenario hash and IDs",
+            "pass metrics and explicit unavailable GPU counters"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P04_FIXED_STEP",
+        "P04_FIXED_STEP_OVERLOAD",
+        "P04_SCENARIO_JSON_ROUND_TRIP",
+        "P04_RUN_RESULT_JSON",
+        "SIM_PIPELINE_ORDER_AND_COMMIT",
+        "SIM_PIPELINE_ATOMIC_ROLLBACK"
+      ],
+      "unimplemented": [
+        "End-to-end runtime application of scenario data to every concrete solver component",
+        "Interactive scenario editing and run-result comparison UI"
+      ]
+    },
+    {
+      "phase": 5,
+      "id": "cloth_solver",
+      "status": "partial",
+      "acceptance_tests": [
+        "T05",
+        "T06",
+        "T18"
+      ],
+      "cases": [
+        {
+          "id": "P05_STRETCH",
+          "input": "phase05_cloth/cloth_patch.input.json",
+          "expected": "phase05_cloth/cloth_patch.expected.json",
+          "checks": [
+            "edge rest lengths",
+            "compliance monotonicity",
+            "colored and Jacobi paths"
+          ]
+        },
+        {
+          "id": "P05_SHEAR_BEND",
+          "input": "phase05_cloth/cloth_patch.input.json",
+          "expected": "phase05_cloth/cloth_patch.expected.json",
+          "checks": [
+            "shear response",
+            "signed dihedral and analytical gradient",
+            "finite-difference relative error <= 1e-3"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P05_CLOTH_GOLDEN_AND_BEND_GRADIENT",
+        "P05_CLOTH_COMPLIANCE",
+        "P05_WARP_STRETCH",
+        "P05_WARP_SHEAR",
+        "P05_WARP_BEND"
+      ],
+      "unimplemented": [
+        "Full GPU multi-iteration scheduling with graph coloring or Jacobi Gather",
+        "Animation attachment and collision XPBD integration in the same runtime solve"
+      ]
+    },
+    {
+      "phase": 6,
+      "id": "soft_body_fem",
+      "status": "partial",
+      "acceptance_tests": [
+        "T01",
+        "T02",
+        "T03",
+        "T04",
+        "T19"
+      ],
+      "cases": [
+        {
+          "id": "P06_RIGID_ROTATION",
+          "input": "phase06_soft_body/tet_deformation.input.json",
+          "expected": "phase06_soft_body/tet_deformation.expected.json",
+          "checks": [
+            "F=R",
+            "J=1",
+            "zero corotational strain and stress within tolerance"
+          ]
+        },
+        {
+          "id": "P06_COMPRESSION",
+          "input": "phase06_soft_body/tet_deformation.input.json",
+          "expected": "phase06_soft_body/tet_deformation.expected.json",
+          "checks": [
+            "known J and volume",
+            "shape/volume scale independent response"
+          ]
+        },
+        {
+          "id": "P06_INVERSION",
+          "input": "phase06_soft_body/tet_deformation.input.json",
+          "expected": "phase06_soft_body/tet_deformation.expected.json",
+          "checks": [
+            "inversion diagnostic and finite penalty path"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P06_COROTATIONAL_FEM_GOLDEN",
+        "P06_INVERSION_ROLLBACK",
+        "P06_WARP_COROTATIONAL_FEM"
+      ],
+      "unimplemented": [
+        "GPU nodal force accumulation, mass integration and substep scheduling",
+        "GPU inverted-element proper-rotation/SVD fallback; inversion remains CPU-reference validated",
+        "CFL/substep controller and animation-tracking coupling"
+      ]
+    },
+    {
+      "phase": 7,
+      "id": "collision_broadphase",
+      "status": "partial",
+      "acceptance_tests": [
+        "T07",
+        "T08",
+        "T10",
+        "T11",
+        "T17",
+        "T22"
+      ],
+      "cases": [
+        {
+          "id": "P07_VT_CONTACT",
+          "input": "phase07_collision/vt_contact.input.json",
+          "expected": "phase07_collision/vt_contact.expected.json",
+          "checks": [
+            "VT contact geometry and bidirectional correction"
+          ]
+        },
+        {
+          "id": "P07_EE_CONTACT",
+          "input": "phase07_collision/ee_contact.input.json",
+          "expected": "phase07_collision/ee_contact.expected.json",
+          "checks": [
+            "closest segment parameters and EE correction"
+          ]
+        },
+        {
+          "id": "P07_BROADPHASE",
+          "input": "phase07_collision/broadphase.input.json",
+          "expected": "phase07_collision/broadphase.expected.json",
+          "checks": [
+            "candidate set contains exhaustive reference set",
+            "pair filters and self collision"
+          ]
+        },
+        {
+          "id": "P07_OVERFLOW",
+          "input": "phase07_collision/overflow.input.json",
+          "expected": "phase07_collision/overflow.expected.json",
+          "checks": [
+            "overflow blocks step; no candidates silently dropped"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P07_VT_EE_CONTACTS",
+        "P07_BROADPHASE_OVERFLOW",
+        "P07_WARP_VT_NARROWPHASE",
+        "P07_WARP_EE_NARROWPHASE",
+        "P07_WARP_BVH_BROADPHASE_AND_OVERFLOW"
+      ],
+      "unimplemented": [
+        "GPU BVH construction/refit; WARP traversal currently consumes a host-built hierarchy",
+        "Automatic connection of GPU broadphase pairs to VT/EE generation and persistent contact buffers",
+        "Friction/restitution velocity solve, warm start and self-collision adjacency exclusion"
+      ]
+    },
+    {
+      "phase": 8,
+      "id": "ccd_initial_penetration",
+      "status": "partial",
+      "acceptance_tests": [
+        "T09",
+        "T16",
+        "T23"
+      ],
+      "cases": [
+        {
+          "id": "P08_CCD_POINT_TRIANGLE",
+          "input": "phase08_ccd/point_triangle.input.json",
+          "expected": "phase08_ccd/point_triangle.expected.json",
+          "checks": [
+            "analytical TOI",
+            "impact impulse once",
+            "remaining interval reintegration"
+          ]
+        },
+        {
+          "id": "P08_INITIAL_REPAIR_LIMIT",
+          "input": "phase08_ccd/initial_repair.input.json",
+          "expected": "phase08_ccd/initial_repair.expected.json",
+          "checks": [
+            "per-vertex cumulative repair budget",
+            "unrepairable initial state not committed"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P08_CCD_INITIAL_REPAIR",
+        "P08_WARP_POINT_TRIANGLE_CCD"
+      ],
+      "unimplemented": [
+        "Moving-triangle, edge-edge and triangle-triangle continuous collision",
+        "Simultaneous TOI grouping and global substep scheduler",
+        "Initial contact repair coupled to broadphase and iterative constraint solve"
+      ]
+    },
+    {
+      "phase": 9,
+      "id": "animation_tracking",
+      "status": "partial",
+      "acceptance_tests": [
+        "T20",
+        "T21"
+      ],
+      "cases": [
+        {
+          "id": "P09_TRANSLATION",
+          "input": "phase09_animation/target_motion.input.json",
+          "expected": "phase09_animation/target_motion.expected.json",
+          "checks": [
+            "target interpolation and velocity"
+          ]
+        },
+        {
+          "id": "P09_ROTATION_TELEPORT",
+          "input": "phase09_animation/target_motion.input.json",
+          "expected": "phase09_animation/target_motion.expected.json",
+          "checks": [
+            "rotation target",
+            "clip blend and teleport velocity policy"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P09_ANIMATION_TARGET",
+        "P09_WARP_ANIMATION_AND_TELEPORT"
+      ],
+      "unimplemented": [
+        "Multi-key runtime clip sampling, cubic curves and node-hierarchy binding in the GPU path",
+        "Quaternion/angular target velocity interface",
+        "Substepped animation-physics coupling"
+      ]
+    },
+    {
+      "phase": 10,
+      "id": "physics_attribute_paint",
+      "status": "partial",
+      "acceptance_tests": [
+        "paint save/load and remap"
+      ],
+      "cases": [
+        {
+          "id": "P10_PAINT_OPERATIONS",
+          "input": "phase10_paint/paint.input.json",
+          "expected": "phase10_paint/paint.expected.json",
+          "checks": [
+            "Paint/Smooth/Average/Erase",
+            "range clamp",
+            "deterministic remapping after regeneration"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P10_ATTRIBUTE_PAINT",
+        "P10_WARP_ATTRIBUTE_PAINT"
+      ],
+      "unimplemented": [
+        "Editor brush falloff/selection UI and asset-editor persistence integration",
+        "Topology-neighbor Laplacian smoothing and multi-channel skin-weight normalization"
+      ]
+    },
+    {
+      "phase": 11,
+      "id": "performance_quality",
+      "status": "partial",
+      "acceptance_tests": [
+        "T14",
+        "T15"
+      ],
+      "cases": [
+        {
+          "id": "P11_SCALE_SERIES",
+          "input": "phase11_performance/scale_profiles.input.json",
+          "expected": "phase11_performance/scale_profiles.expected.json",
+          "checks": [
+            "2k/8k/32k tet and cloth profiles",
+            "candidate/contact scaling",
+            "pass timing and memory reporting; no fixed FPS golden"
+          ]
+        }
+      ],
+      "automated_cases": [
+        "P11_PERFORMANCE_PROFILE",
+        "P11_WARP_TIMESTAMP_AND_DXGI_MEMORY",
+        "P11_WARP_COMPUTE_PASS_GRAPH"
+      ],
+      "unimplemented": [
+        "Automated 2k/8k/32k solver workloads and performance capture on physical target GPUs",
+        "Cross-vendor hardware/driver performance baselines and memory-budget regression thresholds"
+      ]
+    }
+  ],
+  "gpu_validation_environment": "Windows x64 CI uses D3D11 WARP for shader compilation, dispatch and readback correctness. WARP timings are not physical-GPU performance measurements.",
+  "last_verified_ci": {
+    "commit": "36dab21d16ac3298d56a86d10a9d07262fae6d21",
+    "workflow_run_id": 44327398017,
+    "configuration": "Release x64",
+    "result": "success",
+    "note": "This successful run verifies commit 36dab21 only. Later design-document commits require their own CI verification."
+  },
+  "design_review_regressions": {
+    "status": "specified_not_implemented",
+    "source": "docs/testing_strategy.md",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 cover TOI boundary identity / snap bounds / deployment qualification; Case 48 covers ordered in-flight submissions and two-bank reuse; Case 49 covers XPBD correction-sweep Broadphase completeness, VT / EE Correction Motion CCD, Contact Set refresh, fail-closed unresolved / crossing behavior, signed-side interval arithmetic, and Integration-Segment-latched collision side. Cases 45-49 remain specified_not_implemented until executable assertions consume the corresponding fixtures and CI passes.",
+    "cases": [
+      {
+        "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
+        "test_case": 29
+      },
+      {
+        "id": "DCR_30_ANIMATION_TRAJECTORY_DERIVATIVE",
+        "test_case": 30
+      },
+      {
+        "id": "DCR_31_KINEMATIC_COLLIDER_RIGID_VELOCITY_SWEEP",
+        "test_case": 31
+      },
+      {
+        "id": "DCR_32_GPU_MEMORY_BUDGET_SENTINEL",
+        "test_case": 32
+      },
+      {
+        "id": "DCR_33_CLOTH_TEMPORAL_QUALITY_LIMIT",
+        "test_case": 33
+      },
+      {
+        "id": "DCR_34_WORLD_ABSOLUTE_EVENT_TIME",
+        "test_case": 34
+      },
+      {
+        "id": "DCR_35_GPU_ANIMATION_TRAJECTORY_PACKET",
+        "test_case": 35
+      },
+      {
+        "id": "DCR_36_NON_RESPONSIVE_CONTACT",
+        "test_case": 36
+      },
+      {
+        "id": "DCR_37_COUPLED_CONTACT_IMPULSE",
+        "test_case": 37
+      },
+      {
+        "id": "DCR_38_CONTACT_TEMPORAL_QUALITY_LIMIT",
+        "test_case": 38
+      },
+      {
+        "id": "DCR_39_BLEND_VELOCITY",
+        "test_case": 39
+      },
+      {
+        "id": "DCR_40_INTEGRATION_SEGMENT_BUDGET",
+        "test_case": 40
+      },
+      {
+        "id": "DCR_41_WORK_BUDGET_RECOVERY_RESERVATION_REPLAY",
+        "test_case": 41
+      },
+      {
+        "id": "DCR_42_DEPLOYMENT_CAPABILITY_PROFILE_PROVENANCE",
+        "test_case": 42
+      },
+      {
+        "id": "DCR_43_BLOCKED_RESERVATION_SUBMISSION_LEASE_OWNERSHIP",
+        "test_case": 43
+      },
+      {
+        "id": "DCR_44_TOI_ENDPOINT_SNAP_GEOMETRIC_ERROR_GUARD",
+        "test_case": 44
+      },
+      {
+        "id": "DCR_45_TOI_ZERO_TIME_RUNTIME_PARITY",
+        "test_case": 45,
+        "fixture_ids": [
+          "DCR_45_TAU_ZERO",
+          "DCR_45_TAU_AT_SEGMENT_END"
+        ]
+      },
+      {
+        "id": "DCR_46_TOI_BOUNDARY_ID_AND_FULL_SNAP_ERROR_BUDGET",
+        "test_case": 46,
+        "fixture_ids": [
+          "DCR_46_BOUNDARY_IDENTITY",
+          "DCR_46_SNAP_ERROR_BUDGET_SCALAR_UNCOUPLED",
+          "DCR_46_COUPLED_CONTACT_ISLAND_INTERVAL"
+        ]
+      },
+      {
+        "id": "DCR_47_DEPLOYMENT_PROFILE_SAMPLE_AND_TARGET_LIMIT_QUALIFICATION",
+        "test_case": 47,
+        "fixture_id": "DCR_47_POOLED_RAW_SAMPLE_PERCENTILE"
+      },
+      {
+        "id": "DCR_48_IN_FLIGHT_WINDOW_TWO_BANK_SERIALIZATION",
+        "test_case": 48
+      },
+      {
+        "id": "DCR_49_XPBD_CORRECTION_SWEEP_BROADPHASE_CCD",
+        "test_case": 49,
+        "fixture_ids": [
+          "DCR_49_VT_POINT_THROUGH_TRIANGLE",
+          "DCR_49_EE_EDGE_THROUGH_EDGE",
+          "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE",
+          "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY",
+          "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT",
+          "DCR_49_VT_CERTIFIED_MISS",
+          "DCR_49_CONTACT_SET_CASCADE",
+          "DCR_49_UNRESOLVED_INTERVAL_AND_BOUND",
+          "DCR_49_CORRECTION_CAPACITY_OVERFLOW",
+          "DCR_49_PSEUDO_TIME_ISOLATION",
+          "DCR_49_TOI_PREFIX_PSEUDO_TIME_ISOLATION",
+          "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE"
+        ]
+      }
+    ],
+    "fixture_bundle": "design_review/toi_snap_and_profile.json",
+    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; positive_and_negative_signed_side_interval_vectors_added; Segment_side_latch_vector_added; missing_correction_interval_certificates_fail_closed",
+    "fixture_version": "1.9",
+    "additional_fixture_bundles": [
+      {
+        "path": "design_review/correction_sweep_broadphase.json",
+        "fixture_version": "1.2",
+        "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
+      }
+    ]
+  },
+  "latest_ci_attempt": {
+    "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
+    "workflow_run_id": 44463177125,
+    "job_id": 135354596347,
+    "configuration": "Windows Build / workflow job build-and-test",
+    "workflow_conclusion": "failure",
+    "job_conclusion": "failure",
+    "runner_id": null,
+    "runner_name": null,
+    "steps_reported": 0,
+    "build": "not_verified",
+    "tests": "not_started",
+    "classification": "failed_before_any_reported_job_step",
+    "note": "This workflow run targets the latest design-document commit e0d7ed63af4b371f64df2182e0a643138f2e0d37. The job-step endpoint returned an empty steps array; no compiler or test step ran, and runner identity / pre-step cause are unavailable. This is not evidence of a source-code regression. Cases 45-47 remain specified_not_implemented until executable assertions consume their fixtures and pass CI."
+  }
+}

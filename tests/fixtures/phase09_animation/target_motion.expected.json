@@ -1,0 +1,28 @@
+{
+  "translation_at_sample": [
+    0.5,
+    0,
+    0
+  ],
+  "target_velocity": [
+    2,
+    0,
+    0
+  ],
+  "teleport_target": [
+    10,
+    0,
+    0
+  ],
+  "teleport_velocity": [
+    0,
+    0,
+    0
+  ],
+  "regular_clip_playback_preserves_velocity": true,
+  "tolerances": {
+    "position_absolute": 0.000001,
+    "velocity_absolute": 0.000001,
+    "quaternion_absolute": 0.00001
+  }
+}

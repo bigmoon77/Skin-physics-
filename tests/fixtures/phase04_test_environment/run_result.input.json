@@ -1,0 +1,27 @@
+{
+  "scenario_id": "golden_tetra_character",
+  "scenario_hash": "sha256:fixed-test-hash",
+  "asset_id": "golden_tetra_character",
+  "cache_version": 1,
+  "build_id": "test-build",
+  "gpu": {
+    "available": false,
+    "reason": "CPU fixture test"
+  },
+  "passes": [
+    {
+      "name": "PhysicsMeshBuild",
+      "gpu_time_ms": null,
+      "cpu_time_ms": 0.1
+    }
+  ],
+  "library_allocated_bytes": 4096,
+  "dxgi_current_usage_bytes": null,
+  "dxgi_budget_bytes": null,
+  "candidate_count": 0,
+  "contact_count": 0,
+  "overflow_count": 0,
+  "ccd_count": 0,
+  "maximum_volume_error": 0,
+  "maximum_displacement": 0
+}

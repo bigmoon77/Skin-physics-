@@ -1,0 +1,81 @@
+{
+  "physics_tet": {
+    "positions": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
+    "indices": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "render_vertices": [
+    {
+      "id": "interior_0",
+      "position": [
+        0.1,
+        0.2,
+        0.3
+      ],
+      "class": "inside_tet"
+    },
+    {
+      "id": "outside_0",
+      "position": [
+        0.2,
+        0.2,
+        -0.1
+      ],
+      "class": "outside_tet"
+    }
+  ],
+  "thresholds": {
+    "maximum_rest_error_relative_to_bbox_diagonal": 0.001
+  },
+  "render_attributes": {
+    "uv": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        0
+      ]
+    ],
+    "color": [
+      [
+        1,
+        0,
+        0,
+        1
+      ]
+    ],
+    "material_id": 7,
+    "index_buffer": [
+      0,
+      1,
+      2
+    ]
+  }
+}

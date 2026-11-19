@@ -1,0 +1,475 @@
+{
+  "schema_version": 1,
+  "profile_id": "skin_physics_numerical_acceptance_v1",
+  "profile_version": "1.19",
+  "status": "proposed_initial_engineering_thresholds",
+  "applies_to": {
+    "runtime": "SkinPhysics",
+    "api": "Direct3D 11 Compute Shader Model 5",
+    "precision_under_test": "GPU float32",
+    "reference_precision": "CPU double",
+    "reference_rule": "The CPU reference must use the same algorithm, equations, operation ordering, substep boundaries, solver iteration ordering, and input snapshots as the GPU path. Different algorithms are compared using analytic fixtures and physical invariants, not frame-by-frame trajectory equality."
+  },
+  "execution_budget": {
+    "default_admission_limits": {
+      "maximum_substeps": 128,
+      "maximum_integration_segments_per_tick": 512
+    },
+    "runtime_hard_limits": {
+      "fields": [
+        "runtime_desc.maximum_world_substeps_hard_limit",
+        "runtime_desc.maximum_integration_segments_per_tick_hard_limit"
+      ],
+      "required_at_initialize": true,
+      "immutable_after_initialize": true,
+      "zero_is_invalid": true,
+      "scope": "Runtime-wide Host-configured admission guards applied to every World Admission Limit",
+      "calibration": "These values are immutable Host policy guards, not Runtime-certified GPU-safe maxima. Gate R6 measurements record the adapter, driver, Windows build, Runtime build, shader package and workload envelope used by the Host to choose the values. The Runtime validates only non-zero uint32 values and World Admission Limits <= these values. It does not authenticate a profile, verify a signature, or claim that these two counts bound total GPU work or prevent TDR.",
+      "host_responsibility": "Before initialize, the Host selects the deployment capability profile, verifies that its adapter LUID / vendor and device IDs / driver version / Windows build / Runtime build / shader package identity match the active environment, and applies its own deployment policy. The Runtime receives the selected numeric limits and freezes them for its lifetime.",
+      "bounded_dimensions": [
+        "world_substeps_per_tick",
+        "integration_segments_per_tick"
+      ],
+      "not_bounded_by_these_two_limits": [
+        "dynamic_vertices_or_tetrahedra",
+        "cloth_constraints_and_solver_iterations",
+        "broadphase_candidate_pairs_and_contact_constraints",
+        "dispatch_count_and_per-dispatch GPU execution time",
+        "total GPU execution time or Windows TDR deadline"
+      ],
+      "acceptance": "initialize rejects zero Hard Limits. create_world and set_world_execution_budget reject zero or over-Hard-Limit World Admission Limits without mutating Budget, Revision, Reservation or Timeline. Values above Hard Limits are invalid_argument. These checks do not imply that a within-limit Workload is TDR-safe.",
+      "deployment_profile_template": "deployment_capability_profile_template.json",
+      "deployment_profile_qualification_policy": {
+        "target_fps_range_from_requirements": [
+          3,
+          40
+        ],
+        "frame_budget_rule": "target_frame_time_ms = 1000 / target_fps",
+        "qualification": "A selected calibration trial must satisfy every declared frame-time, GPU-tick, CPU-submission and local-memory budget after the declared headroom is applied. Its measured workload and selected Runtime Hard Limits must come from that same trial. Never combine per-dimension maxima from different trials.",
+        "hard_limit_rule": "selected maximum_world_substeps_hard_limit and maximum_integration_segments_per_tick_hard_limit must be <= the corresponding values tested in the selected passing trial. Selected geometry / constraint / candidate / contact / iteration / memory limits must also be <= the corresponding tested dimensions.",
+        "failure_rule": "Missing policy inputs, identity mismatch, insufficient repetitions, exceeded timing or memory budget, nonzero quality reduction, dropped work, or missing raw measurement evidence makes the profile not_qualified. Host must not use its numeric caps.",
+        "template_version": "1.4",
+        "hard_limit_selection_modes": {
+          "measured_maximum": "selected Runtime Hard Limits equal the same qualified Trial's tested Substep and Integration Segment maxima",
+          "host_conservative_override": "selected Runtime Hard Limits may be lower than the same qualified Trial's tested maxima only when a non-empty Host rationale is recorded before deployment",
+          "prohibition": "No selected limit may exceed the matching tested value; do not combine dimensions from separate calibration trials."
+        },
+        "target_budget_inputs": [
+          "target_fps (3..40)",
+          "target_gpu_tick_time_ms_max",
+          "target_cpu_submission_time_ms_p95_max",
+          "required_performance_headroom_fraction (0..1 exclusive endpoints)",
+          "required_memory_headroom_fraction (0..1 exclusive endpoints)",
+          "minimum_measurement_runs (integer >= 5 independent complete runs)",
+          "target_workload_envelope (complete workload tuple)"
+        ],
+        "test_scene_policy": "The selected calibration trial must include every unique required_test_scene_ids entry from the target_workload_envelope; the exact executed scene IDs are retained in each trial row and raw evidence bundle."
+      }
+    },
+    "deployment_profile_template": "deployment_capability_profile_template.json",
+    "deployment_profile_template_version": "1.4"
+  },
+  "normalization": {
+    "per_mesh": true,
+    "length_reference": "median positive rest-edge length in the Physics Mesh",
+    "mass_reference": "median positive dynamic Physics Vertex mass",
+    "time_reference": "actual Integration Segment duration used by the compared update",
+    "velocity_reference": "length_reference / time_reference",
+    "force_reference": "mass_reference * length_reference / (time_reference * time_reference)",
+    "stress_reference": "max(absolute(mu), absolute(K), 1 Pa)",
+    "energy_reference": "max(stress_reference * tet_rest_volume, 1e-12 J)",
+    "xpbd_lambda_reference": {
+      "length_constraint": "mass_reference * length_reference",
+      "dimensionless_constraint": "mass_reference * length_reference * length_reference"
+    },
+    "normalization_is_computed_per_mesh_and_substep": true,
+    "impulse_reference": "mass_reference * velocity_reference",
+    "contact_mass_reference": "median positive dynamic Physics Vertex mass pooled across every Mesh participating in the World Contact Solver; if no positive dynamic mass exists, all Contacts are NON_RESPONSIVE_CONTACT and no impulse reference is evaluated",
+    "contact_length_reference": "median positive rest-edge length pooled across every Mesh participating in the World Contact Solver",
+    "contact_impulse_reference": "contact_mass_reference * contact_length_reference / actual dt_contact (dt_segment for Discrete Contact; tau for TOI prefix)"
+  },
+  "gpu_float32_vs_cpu_double": {
+    "position": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "length_reference"
+    },
+    "velocity": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "velocity_reference"
+    },
+    "soft_body_force_contribution": {
+      "relative_rms_max": 0.00001,
+      "relative_max_max": 0.0001,
+      "normalization": "force_reference"
+    },
+    "soft_body_first_piola_stress": {
+      "relative_rms_max": 0.00001,
+      "relative_max_max": 0.0001,
+      "normalization": "stress_reference"
+    },
+    "soft_body_energy": {
+      "relative_error_max": 0.00001,
+      "normalization": "energy_reference"
+    },
+    "cloth_xpbd_lambda": {
+      "relative_rms_max": 0.0001,
+      "relative_max_max": 0.001,
+      "normalization": "xpbd_lambda_reference_by_constraint_dimension"
+    },
+    "contact_xpbd_lambda": {
+      "relative_rms_max": 0.0001,
+      "relative_max_max": 0.001,
+      "normalization": "xpbd_lambda_reference_by_constraint_dimension"
+    },
+    "constraint_residual": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "rest_length_for_length_constraints; dimensionless_for_shear; radians_for_bend; rest_length_for_contact"
+    },
+    "animation_trajectory_position": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "length_reference",
+      "reference": "independent CPU-double evaluation of the same Span Packet at identical normalized tau"
+    },
+    "animation_trajectory_velocity": {
+      "normalized_rms_max": 0.00001,
+      "normalized_max_max": 0.0001,
+      "normalization": "velocity_reference",
+      "reference": "analytical derivative of the final blended, hierarchical, skinned trajectory"
+    }
+  },
+  "local_operator_validation": {
+    "deformation_gradient_determinant": {
+      "absolute_error_max": 0.000001,
+      "relative_error_max": 0.00001
+    },
+    "polar_rotation_orthogonality_frobenius": {
+      "max": 0.00001
+    },
+    "polar_rotation_determinant_error": {
+      "max": 0.00001
+    },
+    "first_piola_stress": {
+      "relative_error_max": 0.00001,
+      "normalization": "stress_reference"
+    },
+    "tet_vertex_force_gradient": {
+      "relative_error_max": 0.0001,
+      "normalization": "force_reference"
+    },
+    "cloth_bend_analytic_gradient_vs_central_difference": {
+      "relative_error_max": 0.001,
+      "step_size_policy": "scale perturbation from per-mesh length_reference and avoid degenerate hinge configurations"
+    },
+    "xpbd_projected_lambda_delta_consistency": {
+      "max_absolute_identity_error": 0.000001,
+      "identity": "lambda_next - lambda_old equals applied_delta_lambda; position correction uses that same applied delta"
+    },
+    "animation_packet_derivative": {
+      "normalized_position_derivative_max": 0.00001,
+      "normalization": "velocity_reference",
+      "reference": "central difference of independent CPU-double trajectory at interior tau; do not sample across STEP / Span discontinuities",
+      "normalized_time_mapping_max_absolute_error": 0.000001
+    }
+  },
+  "physical_invariants": {
+    "rest_mass_conservation_relative_error_max": 0.000001,
+    "rest_state_force_normalized_max": 0.000001,
+    "fixed_vertex_position_error_normalized_max": 0.000001,
+    "normalized_weights": {
+      "sum_absolute_error_max": 0.0001,
+      "minimum_weight": 0
+    },
+    "contact_penetration_after_solve": {
+      "maximum_fraction_of_combined_contact_thickness": 0.25,
+      "applies_to": "fixtures whose configured solver iteration and substep budget is expected to converge"
+    },
+    "initial_repair": {
+      "maximum_vertex_displacement": "must not exceed max_initial_repair_distance",
+      "unresolved_penetration": "must reject initial-state commit"
+    },
+    "candidate_completeness": {
+      "small_scene_reference": "broadphase candidates must contain every VT / EE pair found by exhaustive CPU reference",
+      "missing_pair_count": 0
+    },
+    "ccd": {
+      "toi_absolute_error_max": "max(1e-6 seconds, 1e-4 * actual_integration_segment_duration)",
+      "resolved_distance_gap_max": "configured distance_tolerance",
+      "false_no_hit_count": 0,
+      "unresolved_candidate_policy": "reject logical step; never reinterpret unresolved as no-hit"
+    },
+    "invalid_state": {
+      "nan_count": 0,
+      "infinity_count": 0,
+      "out_of_range_index_count": 0,
+      "undetected_capacity_overflow_count": 0,
+      "silent_candidate_drop_count": 0
+    },
+    "contact_projection_velocity_leakage": {
+      "normalized_max_max": 0.000001,
+      "normalization": "velocity_reference",
+      "rule": "v_pre_contact is captured after non-contact constraints and before Contact Position XPBD; Contact positional correction must not change the saved velocity used by Friction / Restitution."
+    },
+    "contact_restitution_energy_source": {
+      "policy": "restitution uses relative velocity sampled before Contact Position correction",
+      "projection_only_kinetic_energy_increase_max": 0.000001,
+      "normalization": "energy_reference",
+      "applies_to": "fixtures with no external force / no incoming normal kinetic energy and restitution=0"
+    },
+    "animation_trajectory_bounds": {
+      "speed_underbound_count": 0,
+      "chord_deviation_underbound_count": 0,
+      "packet_version_mismatch_count": 0,
+      "reference": "independent CPU-double interval bounds plus adversarial dense samples inside every Animation Span",
+      "unbounded_span_policy": "split deterministically up to depth 8; then BLOCKED_BY_INPUT / CCDUnresolved and no commit"
+    },
+    "non_responsive_contact": {
+      "zero_effective_inverse_mass_response_count": 0,
+      "position_correction_count_for_non_responsive_contact": 0,
+      "impulse_contribution_count_for_non_responsive_contact": 0,
+      "diagnostic": "NON_RESPONSIVE_CONTACT exactly once per canonical contact event",
+      "threshold": "epsilon_inverse_mass = 1e-12 / mass_reference_world [1/kg]; mass_reference_world is the median positive dynamic Vertex mass [kg] across participating World meshes. No positive dynamic mass means all contacts are non-responsive."
+    },
+    "coupled_contact_impulse": {
+      "iterations_default": 8,
+      "iterations_max": 16,
+      "relaxation_default": 0.5,
+      "projected_residual_normalized_max": 0.0001,
+      "normalization": "contact_impulse_reference",
+      "residual_definition": {
+        "normal": "abs(j_n - max(0, j_n - (v_n_current - target_normal_velocity) / W_ii))",
+        "tangent": "length(j_t - project_to_disk(j_t - v_t / W_ii, friction * (j_support + j_n)))",
+        "combine": "max(normal_residual, tangent_residual) / contact_impulse_reference"
+      },
+      "unresolved_policy": "CONTACT_IMPULSE_UNRESOLVED rejects the entire Logical Tick; never commit a non-converged impact"
+    },
+    "contact_impulse_energy": {
+      "restitution_range": "0 <= e <= 1",
+      "friction_cone_violation_count": 0,
+      "negative_accumulated_normal_impulse_count": 0,
+      "projection_only_kinetic_energy_increase_max": 0.000001,
+      "normalization": "energy_reference",
+      "applies_to": "isolated contact fixtures without external work; measure post-Impulse velocity after removing positional projection work"
+    },
+    "integration_segment_budget": {
+      "maximum_integration_segments_per_tick_default": 512,
+      "overflow_commit_count": 0,
+      "boundary_coalescing_count_for_distinct_times": 0,
+      "undercounted_dynamic_toi_split_count": 0,
+      "overflow_policy": "WORK_BUDGET_EXCEEDED preserves the Tick Reservation; never merge distinct Animation / Force / Impulse / TOI boundaries"
+    },
+    "animation_gpu_packet_time": {
+      "absolute_world_time_float_cast_count": 0,
+      "normalized_span_cursor_monotonicity_violation_count": 0,
+      "record_stride_mismatch_count": 0,
+      "expected_record_bytes": {
+        "animation_span_gpu_record": 80,
+        "animation_track_gpu_record": 32,
+        "animation_channel_gpu_record": 224,
+        "animation_blend_gpu_record": 48,
+        "kinematic_collider_gpu_record": 128,
+        "animation_span_cursor_gpu_record": 16
+      },
+      "normalized_time_absolute_error_max": 0.000001,
+      "reference": "CPU-double absolute timeline mapped to Span-local normalized u and Segment-relative tau; compare GPU u_tau against an independent CPU-double evaluator at both early and large absolute World Times",
+      "residual_segment_rule": "u_segment_start advances after every positive-duration Segment by dt_segment / span_duration; TOI uses tau / span_duration; at the next Animation Span boundary switch Record and initialize u_segment_start=0",
+      "precision_failure_policy": "split deterministically up to depth 8; then ANIMATION_TIME_PRECISION_UNRESOLVED and no Commit",
+      "track_range_mismatch_count": 0,
+      "blend_track_index_out_of_span_count": 0,
+      "inverse_bind_record_out_of_range_count": 0,
+      "missing_mesh_node_record_count": 0,
+      "missing_joint_ancestor_record_count": 0,
+      "immutable_packet_mutation_count": 0,
+      "cursor_snapshot_restore_mismatch_count": 0,
+      "rejected_tick_cursor_leak_count": 0,
+      "cursor_buffer_role": "Mutable per-World UAV / Working State; not part of the immutable trajectory Packet",
+      "cursor_update_policy": "GPU advances Cursor after each Segment; TOI retime / Retry restore Cursor from Segment Snapshot; Tick Reject discards Working Cursor without mutating committed Packet / Cursor state",
+      "record_roles": {
+        "immutable_packet_records": [
+          "animation_span_gpu_record",
+          "animation_track_gpu_record",
+          "animation_channel_gpu_record",
+          "animation_blend_gpu_record",
+          "kinematic_collider_gpu_record"
+        ],
+        "mutable_world_working_records": [
+          "animation_span_cursor_gpu_record"
+        ],
+        "stride_source": "expected_record_bytes",
+        "contract_source": "docs/detailed_design.md §5.3"
+      }
+    },
+    "toi_snap_error_budget": {
+      "distance_tolerance": "Required per CCD fixture / workload [m]; no default is implied.",
+      "relative_velocity_tolerance": "Required per CCD fixture / workload [m/s]; no default is implied.",
+      "impulse_tolerance": "Required per CCD fixture / workload [N*s]; no default is implied.",
+      "snap_allowed_only_when": "Snap is allowed only when every bound is known, finite, and within its per-fixture tolerance: time_delta <= tau_snap_tolerance; E_total_position <= distance_tolerance using complete G_contact plus position residuals; E_relative_velocity <= relative_velocity_tolerance using saved Pre-contact G_v plus velocity residuals; E_contact_impulse <= impulse_tolerance for canonical World-space per-contact impulse vectors; and E_applied_impulse <= applied_impulse_tolerance for generalized World-space impulses distributed over stable responsive Physics Vertex IDs by J^T*q. G_v is reconstructed from G_internal before Contact Position Constraints; G_contact is used only for final Position. Contact-level and applied-vertex impulse bounds are independent requirements.",
+      "xpbd_solver_map_definition": "Use three distinct finite-iteration maps in the exact production pass order. G_internal(z,dt) returns Position after all non-contact internal constraints and before Contact Position Constraints. G_contact(z,dt) returns final Position after Contact Position Constraints applied to G_internal. G_v(z,dt) returns the saved Pre-contact Velocity response derived from G_internal; for Dynamic Vertex it includes (G_internal(z,dt)-x_segment_start)/dt and only deterministic velocity updates that occur before the saved pre-contact value is consumed. G_v MUST NOT derive from G_contact or include Contact Position correction. Fixed / Kinematic Vertex uses the analytic trajectory derivative at the same time. Contact Impulse / Restitution / Friction updates are bounded separately by the complete Contact Solver F. The maps include production constraint order, iteration count, relaxation, projection, clamp and lambda update rules. z includes segment-start position / velocity, trajectory inputs, constraint gradients, effective inverse masses, compliance, rest data, active set and projection branch. U encloses Candidate and Boundary inputs. E_Ginternal = sup over z in U of ||G_internal(z,dt)-G_internal(z_boundary,dt_boundary)||_2; E_Gcontact and E_Gv are defined analogously. Position error uses E_Gcontact; Pre-contact Velocity error uses E_Gv. G_internal intermediate intervals are still required to propagate the dependency into G_contact and G_v. Add candidate and boundary residual / numerical evaluation bounds in position / velocity units unless already enclosed by the corresponding interval output. Use outward-rounded interval / affine arithmetic or a proven global Jacobian/operator norm propagated over every iteration. Enumerate every reachable active-set / unilateral constraint / clamp / projection branch. If any branch, input interval, finite upper bound or residual conversion cannot be certified, the XPBD bound is unknown and Snap is forbidden. Sample maxima and finite differences are not conservative bounds.",
+      "unknown_or_non_finite_bound_policy": "Snap forbidden; retain exact tau and create an independent interior Boundary. If exact-tau CCD cannot be evaluated safely, reject the Logical Tick as CCDUnresolved. Missing applied_impulse_tolerance, Contact Jacobian intervals, stable Vertex ID correspondence or E_applied_impulse certificate also forbids Snap.",
+      "impulse_bound_definition": "For the complete deterministic finite-iteration coupled Contact Solver F, construct a validated uncertainty set U enclosing Candidate-time and Boundary-time states. The solver-local generalized coefficient vector q is [all N normal scalar impulse coefficients in Canonical Contact Key order, then each contact's two tangent-basis coefficients]. F_contact_world transforms q through Candidate / Boundary contact frames into a canonical fixed-World-space 3N-vector [I_0.x,I_0.y,I_0.z,...,I_N-1.x,I_N-1.y,I_N-1.z]. E_contact_impulse = sup over z in U of ||F_contact_world(z)-F_contact_world(z_boundary)||_2. Evaluate the complete coupled finite-iteration solver, including Normal / Tangential coefficients, the full generalized Delassus matrix, normal and tangent basis, relative velocity sourced from saved G_v, contact geometry from G_contact, restitution, friction projection, XPBD support impulse, compliance/dt, every reachable branch and Candidate / Boundary residuals. A certified diagnostic decomposition may use E_contact_impulse <= E_normal_scalar + 2*J_normal_max*sin(theta_normal_max/2) + E_friction_vector + E_solver_residual. E_normal_scalar is the L2 difference bound of the stacked normal coefficients; J_normal_max is the U-wide L2 norm upper bound of the stacked normal coefficients; theta_normal_max is the maximum Candidate / Boundary normal angle; E_friction_vector is the L2 difference bound of World-space tangent impulse vectors including tangent-basis rotation; E_solver_residual is the combined Candidate / Boundary World-space impulse residual L2 upper bound. The full generalized Delassus matrix is J M^-1 J^T and has units [1/kg]. Its responsive-subspace eigenvalues require finite positive lower bounds [1/kg], with invariant responsive-subspace rank / basis over U. For an uncoupled scalar/diagonal special case only, j_n=max(0,-(1+e)*v_n/K_n) with K_n an effective inverse mass [1/kg], and j_t=ProjectDisk(-v_t/K_t, radius=mu*(j_n+lambda_n/dt_contact)). The scalar bounds must enclose Candidate / Boundary intervals and may not be used for coupled / non-diagonal Contact Islands. For the isotropic scalar tangent case first compute E_friction_coordinates from Delta_v_t/K_t_min + v_t_max*Delta_K_t/(K_t_min^2) + s_max*Delta_mu + mu_max*(E_normal_scalar + Delta_lambda_n/dt_min + lambda_n_max*Delta_inverse_dt), where s_max=j_n_max+lambda_n_max/dt_min; then convert to World space with E_friction_vector <= E_friction_coordinates + 2*J_tangent_max*sin(theta_tangent_max/2). Any missing interval, unknown branch, unbounded responsive subspace, non-finite residual or unproved unit conversion makes E_contact_impulse unknown and forbids Snap. Finite samples and finite differences are not conservative bounds.",
+      "position_error_components": [
+        "CCD trajectory position deviation",
+        "certified complete G_contact map interval bound, including propagated G_internal response",
+        "candidate and boundary position evaluation residuals in position units",
+        "legacy XPBD Lipschitz / dt-compliance sensitivity components are decomposition terms only and are not independently sufficient"
+      ],
+      "relative_velocity_error_components": [
+        "relative acceleration over time shift",
+        "Animation / Kinematic trajectory derivative error",
+        "certified G_v Pre-contact Velocity map interval bound reconstructed from G_internal",
+        "candidate and boundary velocity reconstruction residuals in velocity units",
+        "legacy XPBD velocity / dt-compliance sensitivity components are decomposition terms only and are not independently sufficient"
+      ],
+      "impulse_error_components": [
+        "normal effective-mass / Delassus operator interval variation, including a strictly positive lower eigenvalue bound",
+        "contact normal angular/directional variation and the induced normal-vector impulse rotation error",
+        "relative normal / tangential velocity interval variation",
+        "restitution coefficient interval variation and its effect on the normal impulse",
+        "friction coefficient and Coulomb-disk / stick-slip projection variation, including XPBD support impulse lambda_n / dt_contact",
+        "finite-iteration coupled solver response and certified solver-residual interval for the complete contact island",
+        "restitution and friction response to relative velocity error",
+        "tangent-basis angular variation and the induced World-space tangent impulse rotation error",
+        "Contact Jacobian / signed VT-EE coefficient variation and generalized J^T*q application error"
+      ],
+      "note": "Tolerance values must be supplied by the reviewed fixture / workload profile. Missing values never authorize Snap.",
+      "xpbd_component_policy": "The legacy XPBD post-solve response Lipschitz, dt/compliance sensitivity and solver residual entries are diagnostic decomposition terms only. They never authorize Snap independently. Snap requires certified interval outputs for G_internal, G_contact and G_v over the full Candidate / Boundary uncertainty set with production pass order and all reachable branches enclosed.",
+      "xpbd_map_order": [
+        "Solve non-contact internal constraints to G_internal.",
+        "Reconstruct and save Dynamic Pre-contact Velocity from G_internal.",
+        "Solve Contact Position Constraints to G_contact.",
+        "Solve Contact Impulse / Restitution / Friction from the saved Pre-contact Velocity; do not reconstruct velocity from G_contact."
+      ],
+      "delassus_units": "The Delassus operator is J M^-1 J^T and its coefficients / eigenvalues have units [1/kg] (effective inverse mass). Do not interpret K_n, K_t or K_min as physical effective mass [kg].",
+      "impulse_vector_layout": "Contact-level output: Canonical Contact Key order, each contact contributes a World-space 3D impulse vector [I_x,I_y,I_z]. F_contact_world returns a 3N-vector in a fixed World coordinate frame.",
+      "impulse_error_aggregation": "E_contact_impulse uses L2 across World-space contact vectors; E_applied_impulse uses L2 across World-space responsive Physics Vertex vectors. Do not substitute one for the other or use max-per-contact / max-per-vertex aggregation.",
+      "responsive_subspace_policy": "The full generalized Delassus matrix must have a finite positive lower eigenvalue bound on a responsive subspace whose rank and basis are invariant over the entire Candidate / Boundary uncertainty set. If rank / basis stability or the positive lower bound cannot be certified, the impulse bound is unknown and Snap is forbidden.",
+      "solver_contact_coordinate_layout": "The Delassus solver's local coefficient vector q is [all j_n in Contact Key order, then each Contact's j_t,u / j_t,v]. Transform q through Contact Jacobian J^T to compare applied impulses.",
+      "tangent_basis_rotation_bound": "For the scalar isotropic special case, first bound tangent-coordinate impulse error by E_friction_coordinates, then convert to World-space with E_friction_vector <= E_friction_coordinates + 2 * J_tangent_max * sin(theta_tangent_max / 2). J_tangent_max is the L2 upper bound of the World-space tangent impulse stack; theta_tangent_max is the maximum Candidate / Boundary tangent-frame rotation.",
+      "version_contract": "Snap requires both contact-level impulse_tolerance and applied_impulse_tolerance [N*s]; the first checks per-contact physical impulse vectors and the second checks the actual generalized impulse distribution to responsive Physics Vertices.",
+      "contact_jacobian_bound_definition": "J is the complete sparse Contact Jacobian. Its rows use the exact q order: all Contact Normal rows in Canonical Contact Key order, followed by each Contact's tangent_u and tangent_v rows in the same order. Each Contact frame is orthonormal and right-handed (normal cross tangent_u = tangent_v; tangent_u cross tangent_v = normal). Its columns use stable responsive Physics Vertex IDs with fixed World-space XYZ coordinates. It contains signed VT / EE interpolation coefficients and Candidate / Boundary contact frames. q is the local generalized contact-impulse coefficient vector produced by the finite-iteration solver. E_applied_impulse = sup over z in U of ||J(z)^T*q(z)-J(z_boundary)^T*q(z_boundary)||_2 over the complete stable Physics Vertex DOF set. The interval bound must enclose both J and q, including interpolation-feature changes, signed coefficients, basis rotation and vertex ID correspondence. Mismatched responsive Vertex ID sets, missing Jacobian intervals, non-finite coefficients or unbounded interpolation variation make E_applied_impulse unknown and forbid Snap.",
+      "applied_impulse_tolerance": "Required per CCD fixture / workload [N*s] for the L2 error of generalized impulses distributed to the complete responsive Physics Vertex set. No default is implied.",
+      "applied_impulse_error_components": [
+        "Contact Jacobian signed interpolation coefficient variation",
+        "Candidate / Boundary contact-frame and local-to-World basis variation",
+        "finite-iteration local generalized impulse coefficient difference",
+        "stable responsive Physics Vertex ID mapping and all applied-impulse residuals"
+      ],
+      "applied_impulse_vector_layout": "Applied output: stable responsive Physics Vertex ID order, each vertex contributes a World-space 3D generalized impulse vector. J^T*q returns this vector; E_applied_impulse is its Euclidean L2 error.",
+      "applied_impulse_error_definition": "J is the complete sparse Contact Jacobian. Its rows use Canonical Contact Key order and local Normal / Tangent solver coordinates; its columns use stable responsive Physics Vertex IDs with fixed World-space XYZ coordinates. It includes signed VT / EE interpolation coefficients and Candidate / Boundary contact frames. q is the local generalized contact-impulse coefficient vector from the finite-iteration solver. E_applied_impulse = sup over z in U of ||J(z)^T*q(z)-J(z_boundary)^T*q(z_boundary)||_2 over the complete stable Physics Vertex DOF set. The interval bound must enclose both J and q, including interpolation-feature changes, signed coefficients, basis rotation and vertex ID correspondence. Missing Jacobian intervals, mismatched responsive Vertex ID sets, non-finite values or unbounded interpolation variation make E_applied_impulse unknown and forbid Snap.",
+      "contact_frame_convention": "Each Candidate / Boundary contact frame is a right-handed orthonormal basis with normal cross tangent_u = tangent_v and tangent_u cross tangent_v = normal. Non-orthonormal, non-finite or handedness-inconsistent frames invalidate the interval certificate."
+    }
+  },
+  "reproducibility": {
+    "same_gpu_same_driver_same_build": {
+      "position_rms_max_normalized": 0.0001,
+      "pair_set_comparison": "exact",
+      "topology_and_id_comparison": "exact"
+    },
+    "cross_gpu": {
+      "bitwise_identity_required": false,
+      "use_gpu_float32_vs_cpu_double_and_physical_invariant_gates": true
+    }
+  },
+  "benchmark_policy": {
+    "percentile_method": "nearest_rank",
+    "percentile_definition": "Sort pooled raw samples ascending and select the 1-based observation at rank ceil(0.95 * N); do not interpolate.",
+    "profiles": {
+      "tet_counts": [
+        2000,
+        8000,
+        32000
+      ],
+      "cloth_triangle_counts": [
+        2000,
+        8000,
+        32000
+      ],
+      "mixed_mesh_pairs": "include Soft Body / Soft Body, Cloth / Cloth, Soft Body / Cloth and self-collision cases"
+    },
+    "hardware": "NVIDIA GeForce GTX 1660 SUPER 6GB",
+    "fps_acceptance": "The requirement's 3-40 FPS range is an evaluation target, not a fixed guarantee for every asset profile. Report measured FPS with all quality gates and workload metadata.",
+    "gpu_timing": "Use asynchronous D3D11 timestamp/disjoint queries. Separate CPU submission, GPU pass time, total physics time, Render Feedback time and frame time.",
+    "memory": "Record SkinPhysics-owned allocation bytes separately from DXGI local-memory CurrentUsage and Budget.",
+    "quality_policy": "Do not reduce solver quality, collision scope, substeps or iteration count silently to improve a performance result. Cloth Temporal Quality Limit is a constraint-frequency quality heuristic, not a proof of XPBD stability; its factor is recorded and calibrated separately. Contact Temporal Quality Limit is an explicit timestep cap, default 1/120 s; it is not a stiffness-derived stability proof. GPU Animation Trajectory Packet evaluation must be profiled separately from CPU Packet preparation time. maximum_integration_segments_per_tick counts World Substep, Animation Span, Force / Impulse and dynamically added TOI segments. Exceeding the cap preserves the same Tick Reservation without coalescing boundaries. D3D11 SM5 Animation Packet uses float / uint32 only. Absolute World Time stays CPU double; GPU uses Span-local normalized u and Segment-relative tau. Verify every GPU Record stride against animation_gpu_packet_time.expected_record_bytes; this object is the sole byte-size source. The five immutable Packet Records and the separate mutable 16-byte World Cursor are classified by animation_gpu_packet_time.record_roles. Every Animation Span Record owns explicit Track / Channel / Blend / Collider Buffer Ranges; Blend Source / Target Track indices are Span-relative and range-checked. Each Channel Record carries Node Role and Inverse Bind Static Record Index; invalid references, omitted Mesh Node or omitted Joint Ancestor records fail the animation packet ABI gate. Immutable Packet mutation count, Cursor Snapshot Restore mismatch and rejected-Tick Cursor leak must all remain zero."
+  },
+  "governance": {
+    "thresholds_are_initial_engineering_candidates": true,
+    "must_be_checked_against_existing_golden_fixtures": true,
+    "threshold_changes_require": [
+      "documented false-reject or false-accept evidence",
+      "profile version increment",
+      "independent review",
+      "rerun of all analytical, numerical, physical and integration tests"
+    ],
+    "not_a_claim_of_measured_gpu_accuracy_or_performance": true
+  },
+  "version_history": [
+    {
+      "version": "1.19",
+      "changes": "Completed the normative Contact Jacobian row-order contract to match q and the right-handed frame convention; Candidate / Boundary Jacobian intervals must use the same stable Contact / Physics Vertex ID order."
+    },
+    {
+      "version": "1.18",
+      "changes": "Fixed Contact Jacobian row order to match generalized solver coefficient vector q (all Normal rows, then per-contact tangent_u / tangent_v rows), and made the right-handed orthonormal contact frame convention normative."
+    },
+    {
+      "version": "1.17",
+      "changes": "Normalized contact-level impulse error to E_contact_impulse and separated it from E_applied_impulse in the normative profile. Rewrote the Contact Solver interval definition to eliminate stale mixed E_impulse terminology."
+    },
+    {
+      "version": "1.16",
+      "changes": "Added a separate applied generalized impulse bound E_applied_impulse over stable Physics Vertex IDs using J^T*q. Snap now requires both contact-level World-space impulse tolerance and applied-vertex impulse tolerance, including Candidate / Boundary Contact Jacobian and interpolation intervals."
+    },
+    {
+      "version": "1.15",
+      "changes": "Separated local generalized solver coefficients from the physical World-space impulse vector used by Snap acceptance. Defined World-space 3N output ordering, included tangent-basis rotation in friction error, and retained L2 aggregation over the full Contact Island."
+    },
+    {
+      "version": "1.14",
+      "changes": "Defined the canonical generalized impulse vector and L2 aggregation over complete Contact Islands, clarified the normal-direction rotation operator bound, and specified Delassus / K_n / K_t eigenvalue units as effective inverse mass [1/kg] with stable responsive-subspace rank / basis."
+    },
+    {
+      "version": "1.13",
+      "changes": "Aligned the normative error equations with the separated finite-iteration maps: E_xpbd_position uses E_Gcontact plus position residuals; E_xpbd_velocity uses E_Gv plus velocity residuals. Removed the obsolete G_p wording from the active acceptance contract."
+    },
+    {
+      "version": "1.12",
+      "changes": "Separated G_internal (post-internal, pre-contact-position), G_contact (final post-contact-position) and G_v (saved Pre-contact Velocity reconstructed from G_internal). Clarified that legacy Lipschitz / dt-sensitivity / residual components are not standalone Snap certificates; only complete interval map outputs with all branches and residuals can authorize Snap."
+    },
+    {
+      "version": "1.11",
+      "changes": "Defined complete finite-iteration XPBD position / velocity maps G_p and G_v over Candidate / Boundary uncertainty sets, including active-set and projection branch enclosure. Standardized pooled raw-sample p95 to nearest_rank. Deployment Profile Template v1.4 records the percentile method."
+    },
+    {
+      "version": "1.10",
+      "changes": "Defined a validated full Contact-Island impulse uncertainty-set bound, added computable scalar Effective-Mass / restitution / friction special-case bounds, and prohibited scalar shortcuts for coupled contact islands. Deployment Profile v1.3 stores independent Run records as an array and computes p95 from pooled raw samples."
+    },
+    {
+      "version": "1.9",
+      "changes": "Added mandatory TOI Snap error budgets for post-XPBD position, contact-relative velocity and impact impulse; Snap falls back to exact tau whenever any conservative bound or fixture tolerance is unavailable. Deployment qualification requires at least five independent runs with >=1000 raw samples per measured series and target Substep / Segment dimensions within selected Hard Limits."
+    },
+    {
+      "version": "1.8",
+      "changes": "Clarified measured_maximum as the default Hard Limit selection policy; lower caps require a documented Host conservative override from the same qualified Trial. Template v1.1 defines complete trial schema and target workload mapping. The selected trial must cover every required test scene ID."
+    },
+    {
+      "version": "1.7",
+      "changes": "Clarified Runtime Hard Limits as Host-configured admission guards, added deployment capability profile provenance requirements, removed Runtime-certified/TDR-safe claims, and documented dimensions not bounded by Substep/Segment limits."
+    },
+    {
+      "version": "1.6",
+      "changes": "Added the execution-budget defaults and mandatory immutable Runtime Hard Limit contract with per-deployment GPU/driver calibration requirements."
+    },
+    {
+      "version": "1.5",
+      "changes": "Removed the stale 64 / 208 / 48 / 128 byte stride list. expected_record_bytes is the single ABI byte-size source; immutable Packet records and the mutable World Cursor are explicitly separated."
+    },
+    {
+      "version": "1.4",
+      "changes": "Initial Animation Packet ABI sizes, normalized Span time, Cursor rollback, and non-responsive / coupled contact acceptance thresholds."
+    }
+  ]
+}

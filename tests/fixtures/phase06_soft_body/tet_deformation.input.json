@@ -1,0 +1,89 @@
+{
+  "rest_positions": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      0,
+      1
+    ]
+  ],
+  "tetrahedron": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "mu": 1000,
+  "K": 5000,
+  "density": 1000,
+  "deformation_cases": [
+    {
+      "name": "rigid_rotation_z_90",
+      "current_positions": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          -1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "shape_recovery_scale": 1,
+      "volume_retention_scale": 1
+    },
+    {
+      "name": "compress_x_10_percent",
+      "current_positions": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          0.9,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "shape_recovery_scale": 1,
+      "volume_retention_scale": 1
+    }
+  ]
+}

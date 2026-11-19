@@ -1,0 +1,20 @@
+{
+  "required_fields": [
+    "scenario_id",
+    "scenario_hash",
+    "asset_id",
+    "cache_version",
+    "build_id",
+    "gpu",
+    "passes",
+    "library_allocated_bytes",
+    "candidate_count",
+    "contact_count",
+    "overflow_count",
+    "ccd_count",
+    "maximum_volume_error",
+    "maximum_displacement"
+  ],
+  "unavailable_gpu_measurements_must_be_explicit": true,
+  "same_scenario_hash_runs_comparable": true
+}

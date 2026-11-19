@@ -1,0 +1,13 @@
+{
+  "render_vertices": [
+    {
+      "id": "far_vertex",
+      "position": [
+        10,
+        10,
+        10
+      ]
+    }
+  ],
+  "maximum_surface_distance": 0.001
+}

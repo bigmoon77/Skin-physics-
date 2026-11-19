@@ -1,0 +1,7 @@
+{
+  "success": false,
+  "diagnostic": "InitialPenetrationLimit",
+  "maximum_allowed_correction": 0.25,
+  "state_committed": false,
+  "partial_correction_committed": false
+}

@@ -1,0 +1,1278 @@
+{
+  "fixture_version": "1.9",
+  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Case 46 scalar coefficients include all Effective Inverse Mass inputs needed to reproduce normal and friction bounds; its Candidate / Boundary Jacobians use a right-handed frame and q-compatible row order. E_contact_impulse is independently checked against tolerance, but E_applied_impulse remains uncertified, so Snap is denied. The coupled fixture declares full generalized matrix and Jacobian row-order contracts but remains Snap-disabled pending full certificates.",
+  "cases": [
+    {
+      "id": "DCR_45_TAU_ZERO",
+      "test_case": 45,
+      "input": {
+        "segment_start_dynamic_velocity": [
+          1.25,
+          -2,
+          0.5
+        ],
+        "tau_seconds": 0,
+        "segment_start_kinematic_trajectory_derivative": [
+          3,
+          0,
+          -4
+        ],
+        "dt_segment_seconds": 0.016666666666666666
+      },
+      "expected": {
+        "dynamic_contact_pre_velocity": [
+          1.25,
+          -2,
+          0.5
+        ],
+        "kinematic_contact_pre_velocity": [
+          3,
+          0,
+          -4
+        ],
+        "zero_duration_prefix_created": false,
+        "velocity_reconstruction_divisions_by_tau": 0,
+        "residual_segment_created": true,
+        "residual_segment_duration_seconds": 0.016666666666666666,
+        "residual_segment_has_new_base_integration_segment_id": true,
+        "discovered_toi_split_count_increment": 0,
+        "discovered_toi_segment_count_increment": 1,
+        "remaining_time_processed_exactly_once": true,
+        "residual_segment_duration_formula": "dt_segment_seconds - tau_seconds"
+      }
+    },
+    {
+      "id": "DCR_45_TAU_AT_SEGMENT_END",
+      "test_case": 45,
+      "input": {
+        "dt_segment_seconds": 0.016666666666666666,
+        "tau_seconds": 0.016666666666666666
+      },
+      "expected": {
+        "zero_duration_prefix_created": false,
+        "residual_segment_created": false,
+        "residual_segment_duration_seconds": 0,
+        "residual_segment_duration_formula": "max(0, dt_segment_seconds - tau_seconds)",
+        "residual_segment_has_new_base_integration_segment_id": false,
+        "discovered_toi_split_count_increment": 0,
+        "discovered_toi_segment_count_increment": 0,
+        "remaining_time_processed_exactly_once": true,
+        "segment_end_contact_event": true
+      }
+    },
+    {
+      "id": "DCR_46_BOUNDARY_IDENTITY",
+      "test_case": 46,
+      "input": {
+        "dispatch_attempt_id": 7,
+        "candidates": [
+          {
+            "candidate_id": "same_tau_segment_a_group_1",
+            "base_integration_segment_id": 11,
+            "canonical_tau_bits": "0x3e800000",
+            "contact_group_id": 1
+          },
+          {
+            "candidate_id": "same_tau_segment_a_group_2",
+            "base_integration_segment_id": 11,
+            "canonical_tau_bits": "0x3e800000",
+            "contact_group_id": 2
+          },
+          {
+            "candidate_id": "same_tau_residual_segment",
+            "base_integration_segment_id": 12,
+            "canonical_tau_bits": "0x3e800000",
+            "contact_group_id": 1
+          },
+          {
+            "candidate_id": "different_tau_same_segment",
+            "base_integration_segment_id": 11,
+            "canonical_tau_bits": "0x3e800001",
+            "contact_group_id": 3
+          }
+        ],
+        "retry_dispatch_attempt_id": 8,
+        "signed_zero_inputs": [
+          "-0.0",
+          "+0.0"
+        ],
+        "invalid_tau_inputs": [
+          "NaN",
+          "+Infinity",
+          "-Infinity"
+        ]
+      },
+      "expected": {
+        "same_segment_same_tau_groups_share_boundary": true,
+        "residual_segment_same_tau_has_distinct_boundary": true,
+        "different_tau_same_segment_has_distinct_boundary": true,
+        "retry_rebuilds_all_boundary_ids": true,
+        "negative_zero_canonical_bits": "0x00000000",
+        "non_finite_candidates_rejected": true
+      }
+    },
+    {
+      "id": "DCR_46_SNAP_ERROR_BUDGET_SCALAR_UNCOUPLED",
+      "test_case": 46,
+      "input": {
+        "tau_snap_tolerance_seconds": 0.00001,
+        "tau_delta_seconds": 0.000005,
+        "position_error_components_m": {
+          "path_position": 0.0001
+        },
+        "distance_tolerance_m": 0.001,
+        "relative_velocity_error_components_m_per_s": {
+          "relative_acceleration": 0.0001,
+          "trajectory_derivative": 0.0001
+        },
+        "relative_velocity_tolerance_m_per_s": 0.001,
+        "impulse_error_components_ns": {
+          "normal_direction_max_impulse_ns": 4,
+          "normal_direction_angle_bound_radians": 0.01,
+          "friction_vector_bound": 0.024999958333385416,
+          "normal_scalar_effective_inverse_mass_restitution_bound": 0.02,
+          "coupled_solver_residual_bound_ns": 0.005
+        },
+        "impulse_tolerance_ns": 0.1,
+        "impulse_error_formula_inputs": {
+          "normal_scalar_uncoupled": {
+            "restitution_max": 1,
+            "normal_relative_velocity_max": 1,
+            "delta_normal_relative_velocity": 0.01,
+            "delta_restitution": 0.01,
+            "expected_E_normal_scalar_ns": 0.02,
+            "normal_impulse_l2_max_ns": 4,
+            "effective_inverse_mass_min": 2,
+            "delta_effective_inverse_mass": 0.01,
+            "formula": "E_normal_scalar <= ((1+e_max)*Delta_v_n + v_n_max*Delta_e)/K_n_min + (1+e_max)*v_n_max*Delta_K_n/(K_n_min^2)"
+          },
+          "friction_isotropic_uncoupled": {
+            "tangent_relative_velocity_max": 1,
+            "delta_tangent_relative_velocity": 0.005,
+            "friction_max": 0.5,
+            "friction_delta": 0.001,
+            "support_impulse_plus_lambda_over_dt_max": 1,
+            "normal_impulse_error_ns": 0.02,
+            "delta_lambda_n": 0.002,
+            "contact_dt_min": 1,
+            "lambda_n_max": 0.1,
+            "delta_inverse_contact_dt": 0.01,
+            "expected_E_friction_vector_ns": 0.024999958333385416,
+            "tangent_basis_angle_bound_radians": 0.01,
+            "tangent_impulse_l2_max_ns": 1,
+            "expected_E_friction_coordinates_ns": 0.015,
+            "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.01 / 2)",
+            "tangent_effective_inverse_mass_min": 2,
+            "delta_tangent_effective_inverse_mass": 0,
+            "normal_impulse_max_ns": 0.9,
+            "support_impulse_lambda_over_dt_max_ns": 0.1,
+            "s_max_ns": 1,
+            "formula": "E_friction_coordinates <= Delta_v_t/K_t_min + v_t_max*Delta_K_t/(K_t_min^2) + s_max*Delta_mu + mu_max*(E_normal_scalar + Delta_lambda_n/dt_min + lambda_n_max*Delta_inverse_dt)"
+          },
+          "units": {
+            "normal_and_tangent_effective_inverse_mass": "1/kg",
+            "normal_and_tangent_impulse": "N*s",
+            "relative_velocity": "m/s",
+            "contact_dt": "s"
+          }
+        },
+        "xpbd_solver_map_certificate": {
+          "status": "not_provided",
+          "required_certified_map_outputs": [
+            "G_internal",
+            "G_contact",
+            "G_v"
+          ],
+          "position_map": "G_contact",
+          "pre_contact_velocity_map": "G_v_from_G_internal",
+          "rule": "Scalar component values and impulse special-case formulas are not a substitute for full finite-iteration interval map certification."
+        },
+        "contact_count": 1,
+        "contact_order": [
+          "contact_A"
+        ],
+        "applied_impulse_tolerance_ns": 0.1,
+        "responsive_physics_vertex_ids": [
+          "vertex_A",
+          "vertex_B"
+        ],
+        "contact_jacobian_candidate": [
+          [
+            0,
+            1,
+            0,
+            0,
+            -1,
+            0
+          ],
+          [
+            1,
+            0,
+            0,
+            -1,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            -1,
+            0,
+            0,
+            1
+          ]
+        ],
+        "contact_jacobian_boundary": [
+          [
+            0.009999833334166664,
+            0.9999500004166653,
+            0,
+            -0.009999833334166664,
+            -0.9999500004166653,
+            0
+          ],
+          [
+            0.9999500004166653,
+            -0.009999833334166664,
+            0,
+            -0.9999500004166653,
+            0.009999833334166664,
+            0
+          ],
+          [
+            0,
+            0,
+            -1,
+            0,
+            0,
+            1
+          ]
+        ],
+        "contact_jacobian_row_order": [
+          "contact_A.normal",
+          "contact_A.tangent_u",
+          "contact_A.tangent_v"
+        ],
+        "contact_jacobian_column_order": [
+          "vertex_A.x",
+          "vertex_A.y",
+          "vertex_A.z",
+          "vertex_B.x",
+          "vertex_B.y",
+          "vertex_B.z"
+        ],
+        "contact_jacobian_units": "dimensionless; maps World-space vertex velocity to local contact-coordinate velocity",
+        "applied_impulse_interval_certificate": {
+          "status": "not_provided",
+          "required_output": "L2 upper bound for J^T*q Candidate / Boundary difference in World-space responsive Physics Vertex DOF order"
+        },
+        "contact_jacobian_global_row_order_rule": "For N contacts, rows 0..N-1 are Contact Normal rows in Canonical Contact Key order; rows N..3N-1 are tangent_u / tangent_v rows per Contact in the same order."
+      },
+      "expected": {
+        "normal_direction_error_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
+        "total_impulse_error_bound_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 2*1.0*sin(0.01/2) + 0.005",
+        "snap_allowed": false,
+        "mutation_variants_that_must_disable_snap": [
+          "position_error_exceeds_tolerance",
+          "G_internal_interval_certificate_missing",
+          "G_contact_interval_certificate_missing",
+          "G_v_interval_certificate_missing",
+          "relative_velocity_error_exceeds_tolerance",
+          "impulse_error_exceeds_tolerance",
+          "effective_mass_lower_eigenvalue_not_proven_positive",
+          "active_set_or_friction_projection_branch_not_enclosed",
+          "solver_residual_bound_missing",
+          "any_bound_non_finite",
+          "contact_jacobian_candidate_or_boundary_missing",
+          "responsive_physics_vertex_id_set_mismatch",
+          "applied_impulse_tolerance_missing",
+          "applied_impulse_interval_certificate_missing"
+        ],
+        "scalar_formula_outputs": {
+          "E_normal_scalar_ns": 0.02,
+          "E_normal_direction_rotation_ns": 0.039999833333541665,
+          "E_friction_coordinates_ns": 0.015,
+          "E_tangent_basis_rotation_ns": 0.009999958333385416,
+          "E_friction_vector_ns": 0.024999958333385416,
+          "E_solver_residual_ns": 0.005,
+          "E_contact_impulse_ns": 0.08999979166692709
+        },
+        "snap_disabled_reason": "complete_G_internal_G_contact_G_v_and_J_transpose_q_interval_certificates_missing",
+        "scalar_impulse_formula_is_independently_verified": true,
+        "scalar_formula_outputs_are_not_snap_authorization": true,
+        "impulse_error_decomposition_world_space": {
+          "normal_direction_rotation_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
+          "friction_coordinate_error_ns": 0.015,
+          "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.01 / 2)",
+          "world_space_friction_vector_error_ns": 0.024999958333385416,
+          "solver_residual_l2_upper_ns": 0.005,
+          "total_contact_impulse_error_bound_formula": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 2*1.0*sin(0.01/2) + 0.005"
+        },
+        "applied_impulse_error_must_be_checked_independently": true,
+        "contact_impulse_error_numeric_ns": 0.08999979166692709,
+        "contact_impulse_error_within_tolerance": true,
+        "applied_impulse_error_certificate_status": "not_provided"
+      }
+    },
+    {
+      "id": "DCR_46_COUPLED_CONTACT_ISLAND_INTERVAL",
+      "test_case": 46,
+      "input": {
+        "contact_count": 2,
+        "contact_order": [
+          "contact_A",
+          "contact_B"
+        ],
+        "responsive_subspace_min_eigenvalue_lower_bound_required": "strictly_positive_and_certified_for_the_full_6x6_generalized_delassus_matrix_over_the_entire_candidate_boundary_interval_set",
+        "normal_relative_velocity_intervals_candidate": [
+          [
+            -1.01,
+            -0.99
+          ],
+          [
+            -0.81,
+            -0.79
+          ]
+        ],
+        "normal_relative_velocity_intervals_boundary": [
+          [
+            -1,
+            -0.98
+          ],
+          [
+            -0.8,
+            -0.78
+          ]
+        ],
+        "projection_branch_inputs": {
+          "normal_active_set": [
+            "active",
+            "inactive_if_interval_crosses_zero"
+          ],
+          "friction": [
+            "stick",
+            "slip"
+          ],
+          "coulomb_disk_projection": [
+            "interior",
+            "boundary"
+          ]
+        },
+        "solver": {
+          "algorithm": "deterministic_projected_jacobi",
+          "finite_iteration_count": 8,
+          "fixed_contact_order": [
+            "contact_A",
+            "contact_B"
+          ],
+          "iteration_controls": {
+            "relaxation_factor": 0.75,
+            "warm_start_enabled": false,
+            "normal_projection": "max(0, unconstrained_normal_impulse)",
+            "tangential_projection": "euclidean_coulomb_disk",
+            "coulomb_radius_formula": "mu * (j_n + lambda_n / dt_contact)",
+            "fixed_iteration_order": [
+              "contact_A",
+              "contact_B"
+            ],
+            "iteration_count": 8
+          },
+          "candidate_world_impulse_residual_l2_upper_ns": 0.002,
+          "boundary_world_impulse_residual_l2_upper_ns": 0.002
+        },
+        "required_interval_outputs": [
+          "finite_positive_responsive_delassus_eigenvalue_lower_bound",
+          "all_iteration_intermediate_state_intervals",
+          "all_reachable_normal_active_set_branches",
+          "all_reachable_stick_slip_and_coulomb_projection_branches",
+          "candidate_and_boundary_solver_residual_bounds_in_impulse_units",
+          "complete_contact_island_impulse_error_upper_bound_ns"
+        ],
+        "scalar_uncoupled_formula_permitted": false,
+        "generalized_impulse_coordinate_order": [
+          "contact_A.normal",
+          "contact_B.normal",
+          "contact_A.tangent_u",
+          "contact_A.tangent_v",
+          "contact_B.tangent_u",
+          "contact_B.tangent_v"
+        ],
+        "contact_frame_candidate": [
+          {
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "tangent_u": [
+              1,
+              0,
+              0
+            ],
+            "tangent_v": [
+              0,
+              0,
+              -1
+            ]
+          },
+          {
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "tangent_u": [
+              1,
+              0,
+              0
+            ],
+            "tangent_v": [
+              0,
+              1,
+              0
+            ]
+          }
+        ],
+        "contact_frame_boundary_angular_deviation_intervals_radians": [
+          [
+            0,
+            0.001
+          ],
+          [
+            0,
+            0.001
+          ]
+        ],
+        "tangential_relative_velocity_intervals_candidate_m_per_s": [
+          [
+            [
+              -0.11,
+              -0.09
+            ],
+            [
+              -0.01,
+              0.01
+            ]
+          ],
+          [
+            [
+              0.04,
+              0.06
+            ],
+            [
+              -0.03,
+              -0.01
+            ]
+          ]
+        ],
+        "tangential_relative_velocity_intervals_boundary_m_per_s": [
+          [
+            [
+              -0.1,
+              -0.08
+            ],
+            [
+              -0.015,
+              0.015
+            ]
+          ],
+          [
+            [
+              0.035,
+              0.055
+            ],
+            [
+              -0.035,
+              -0.005
+            ]
+          ]
+        ],
+        "tangential_delassus_matrix_candidate": [
+          [
+            1.2,
+            0.1,
+            0.02,
+            0
+          ],
+          [
+            0.1,
+            1.1,
+            0,
+            0.02
+          ],
+          [
+            0.02,
+            0,
+            1.3,
+            0.12
+          ],
+          [
+            0,
+            0.02,
+            0.12,
+            1.25
+          ]
+        ],
+        "tangential_delassus_matrix_boundary_intervals": [
+          [
+            [
+              1.19,
+              1.21
+            ],
+            [
+              0.09,
+              0.11
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              -0.01,
+              0.01
+            ]
+          ],
+          [
+            [
+              0.09,
+              0.11
+            ],
+            [
+              1.09,
+              1.11
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              0.01,
+              0.03
+            ]
+          ],
+          [
+            [
+              0.01,
+              0.03
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              1.29,
+              1.31
+            ],
+            [
+              0.11,
+              0.13
+            ]
+          ],
+          [
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              0.11,
+              0.13
+            ],
+            [
+              1.24,
+              1.26
+            ]
+          ]
+        ],
+        "normal_tangential_delassus_cross_matrix_candidate": [
+          [
+            0.05,
+            0.01,
+            0.02,
+            0
+          ],
+          [
+            0.01,
+            0.04,
+            0,
+            0.02
+          ]
+        ],
+        "normal_tangential_delassus_cross_matrix_boundary_intervals": [
+          [
+            [
+              0.045,
+              0.055
+            ],
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.015,
+              0.025
+            ],
+            [
+              -0.005,
+              0.005
+            ]
+          ],
+          [
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.035,
+              0.045
+            ],
+            [
+              -0.005,
+              0.005
+            ],
+            [
+              0.015,
+              0.025
+            ]
+          ]
+        ],
+        "normal_impulse_initial_intervals_candidate_ns": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "normal_impulse_initial_intervals_boundary_ns": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "tangential_impulse_initial_intervals_candidate_ns": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "tangential_impulse_initial_intervals_boundary_ns": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "xpbd_support_impulse_lambda_n_candidate_intervals_ns": [
+          [
+            0.09,
+            0.11
+          ],
+          [
+            0.07,
+            0.09
+          ]
+        ],
+        "xpbd_support_impulse_lambda_n_boundary_intervals_ns": [
+          [
+            0.095,
+            0.105
+          ],
+          [
+            0.075,
+            0.085
+          ]
+        ],
+        "contact_dt_candidate_intervals_seconds": [
+          [
+            0.0099,
+            0.0101
+          ],
+          [
+            0.0099,
+            0.0101
+          ]
+        ],
+        "contact_dt_boundary_intervals_seconds": [
+          [
+            0.0099,
+            0.0101
+          ],
+          [
+            0.0099,
+            0.0101
+          ]
+        ],
+        "xpbd_compliance_candidate_intervals": [
+          [
+            0.0009,
+            0.0011
+          ],
+          [
+            0.0009,
+            0.0011
+          ]
+        ],
+        "xpbd_compliance_boundary_intervals": [
+          [
+            0.00095,
+            0.00105
+          ],
+          [
+            0.00095,
+            0.00105
+          ]
+        ],
+        "required_certified_input_blocks": [
+          "normal Delassus block and positive responsive eigenvalue lower bound",
+          "tangential Delassus block",
+          "normal-tangential cross Delassus block and its transpose",
+          "candidate and boundary normal/tangential relative velocity intervals",
+          "candidate frame and boundary tangent-basis angular deviation intervals",
+          "initial normal/tangential impulse intervals",
+          "XPBD support lambda_n and contact dt intervals",
+          "XPBD compliance intervals and fixed finite-iteration controls"
+        ],
+        "xpbd_support_impulse_lambda_n_over_contact_dt_candidate_intervals_n": [
+          [
+            8.910891089108912,
+            11.11111111111111
+          ],
+          [
+            6.9306930693069315,
+            9.09090909090909
+          ]
+        ],
+        "xpbd_support_impulse_lambda_n_over_contact_dt_boundary_intervals_n": [
+          [
+            9.405940594059407,
+            10.606060606060606
+          ],
+          [
+            7.425742574257426,
+            8.585858585858587
+          ]
+        ],
+        "normal_tangential_cross_matrix_symmetry_rule": "The lower-left block of the 6x6 generalized Delassus matrix is the transpose of normal_tangential_delassus_cross_matrix; evaluate the full symmetric matrix enclosure.",
+        "restitution_coefficients_candidate_intervals": [
+          [
+            0,
+            0.02
+          ],
+          [
+            0,
+            0.02
+          ]
+        ],
+        "restitution_coefficients_boundary_intervals": [
+          [
+            0,
+            0.02
+          ],
+          [
+            0,
+            0.02
+          ]
+        ],
+        "friction_coefficients_candidate_intervals": [
+          [
+            0.39,
+            0.41
+          ],
+          [
+            0.39,
+            0.41
+          ]
+        ],
+        "friction_coefficients_boundary_intervals": [
+          [
+            0.39,
+            0.41
+          ],
+          [
+            0.39,
+            0.41
+          ]
+        ],
+        "full_generalized_delassus_interval_certificate": {
+          "status": "not_provided",
+          "required_proof": "finite positive lower eigenvalue bound over the complete Candidate / Boundary 6x6 interval matrix, including normal-tangent cross coupling"
+        },
+        "normal_delassus_matrix_candidate": [
+          [
+            2,
+            0.25
+          ],
+          [
+            0.25,
+            1.5
+          ]
+        ],
+        "normal_delassus_matrix_boundary_intervals": [
+          [
+            [
+              1.99,
+              2.01
+            ],
+            [
+              0.24,
+              0.26
+            ]
+          ],
+          [
+            [
+              0.24,
+              0.26
+            ],
+            [
+              1.49,
+              1.51
+            ]
+          ]
+        ],
+        "generalized_delassus_matrix_candidate": [
+          [
+            2,
+            0.25,
+            0.05,
+            0.01,
+            0.02,
+            0
+          ],
+          [
+            0.25,
+            1.5,
+            0.01,
+            0.04,
+            0,
+            0.02
+          ],
+          [
+            0.05,
+            0.01,
+            1.2,
+            0.1,
+            0.02,
+            0
+          ],
+          [
+            0.01,
+            0.04,
+            0.1,
+            1.1,
+            0,
+            0.02
+          ],
+          [
+            0.02,
+            0,
+            0.02,
+            0,
+            1.3,
+            0.12
+          ],
+          [
+            0,
+            0.02,
+            0,
+            0.02,
+            0.12,
+            1.25
+          ]
+        ],
+        "generalized_delassus_matrix_boundary_intervals": [
+          [
+            [
+              1.99,
+              2.01
+            ],
+            [
+              0.24,
+              0.26
+            ],
+            [
+              0.045,
+              0.055
+            ],
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.015,
+              0.025
+            ],
+            [
+              -0.005,
+              0.005
+            ]
+          ],
+          [
+            [
+              0.24,
+              0.26
+            ],
+            [
+              1.49,
+              1.51
+            ],
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.035,
+              0.045
+            ],
+            [
+              -0.005,
+              0.005
+            ],
+            [
+              0.015,
+              0.025
+            ]
+          ],
+          [
+            [
+              0.045,
+              0.055
+            ],
+            [
+              0.005,
+              0.015
+            ],
+            [
+              1.19,
+              1.21
+            ],
+            [
+              0.09,
+              0.11
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              -0.01,
+              0.01
+            ]
+          ],
+          [
+            [
+              0.005,
+              0.015
+            ],
+            [
+              0.035,
+              0.045
+            ],
+            [
+              0.09,
+              0.11
+            ],
+            [
+              1.09,
+              1.11
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              0.01,
+              0.03
+            ]
+          ],
+          [
+            [
+              0.015,
+              0.025
+            ],
+            [
+              -0.005,
+              0.005
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              1.29,
+              1.31
+            ],
+            [
+              0.11,
+              0.13
+            ]
+          ],
+          [
+            [
+              -0.005,
+              0.005
+            ],
+            [
+              0.015,
+              0.025
+            ],
+            [
+              -0.01,
+              0.01
+            ],
+            [
+              0.01,
+              0.03
+            ],
+            [
+              0.11,
+              0.13
+            ],
+            [
+              1.24,
+              1.26
+            ]
+          ]
+        ],
+        "generalized_delassus_matrix_block_order": [
+          "normal_normal (2x2)",
+          "normal_tangent (2x4)",
+          "tangent_normal = transpose(normal_tangent) (4x2)",
+          "tangent_tangent (4x4)"
+        ],
+        "generalized_delassus_symmetry_rule": "The full 6x6 matrix is symmetric by construction. The lower-left 4x2 block is the exact transpose of the upper-right 2x4 block for candidate data and the interval transpose for boundary data.",
+        "normal_subblock_gershgorin_lower_bound_reference": 1.23,
+        "normal_subblock_gershgorin_scope": "Normal 2x2 block only; it is not a positive-eigenvalue certificate for the full 6x6 coupled matrix.",
+        "boundary_contact_frame_rule": "For each contact, the Boundary normal/tangent frame ranges over every right-handed orthonormal frame within the declared angular-deviation interval of the Candidate frame; the interval evaluator must include the complete frame set.",
+        "responsive_subspace_dimension": 6,
+        "responsive_subspace_basis_candidate": "identity_6x6",
+        "responsive_subspace_rank_and_basis_certificate_status": "not_provided",
+        "generalized_delassus_eigenvalue_units": "1/kg",
+        "normal_delassus_matrix_units": "1/kg",
+        "normal_tangential_delassus_cross_matrix_units": "1/kg",
+        "tangential_delassus_matrix_units": "1/kg",
+        "impulse_vector_layout": "Canonical Contact Key order: all normal scalar components, followed by each contact's tangent_u / tangent_v components.",
+        "solver_local_coordinate_order": [
+          "contact_A.normal",
+          "contact_B.normal",
+          "contact_A.tangent_u",
+          "contact_A.tangent_v",
+          "contact_B.tangent_u",
+          "contact_B.tangent_v"
+        ],
+        "world_space_impulse_output_order": "Canonical Contact Key order: contact_A [I_x,I_y,I_z], contact_B [I_x,I_y,I_z], all in fixed World coordinates.",
+        "world_space_impulse_output_dimension": 6,
+        "generalized_delassus_matrix_coordinate_basis": "Local contact coordinates ordered by solver_local_coordinate_order; the matrix is not itself the Snap impulse error output.",
+        "tangent_basis_boundary_angular_deviation_intervals_radians": [
+          [
+            0,
+            0.001
+          ],
+          [
+            0,
+            0.001
+          ]
+        ],
+        "world_space_impulse_residual_units": "N*s",
+        "tangent_basis_rotation_bound_required": true,
+        "applied_impulse_tolerance_ns": 0.1,
+        "responsive_physics_vertex_ids_candidate": [
+          "vertex_A",
+          "vertex_shared",
+          "vertex_B"
+        ],
+        "responsive_physics_vertex_ids_boundary": [
+          "vertex_A",
+          "vertex_shared",
+          "vertex_B"
+        ],
+        "contact_jacobian_interval_certificate": {
+          "status": "not_provided",
+          "required": "Candidate / Boundary sparse J rows in q order: all Normal rows first, then per-contact tangent_u / tangent_v; every contact frame must be right-handed orthonormal with normal cross tangent_u = tangent_v; columns use stable responsive Physics Vertex ID / World XYZ order."
+        }
+      },
+      "expected": {
+        "interval_evaluation_required": true,
+        "scalar_formula_must_be_rejected": true,
+        "snap_allowed": false,
+        "snap_disabled_reason": "full_solver_contact_jacobian_and_applied_impulse_certificates_missing",
+        "do_not_infer_a_numeric_impulse_error_bound_from_the_matrix_samples": true,
+        "all_reachable_branches_must_be_enclosed": true,
+        "mutation_variants_that_must_disable_snap": [
+          "responsive_eigenvalue_lower_bound_missing_or_non_positive",
+          "iteration_intermediate_interval_missing",
+          "stick_slip_branch_not_enclosed",
+          "normal_active_set_branch_not_enclosed",
+          "candidate_residual_bound_missing",
+          "boundary_residual_bound_missing",
+          "complete_island_impulse_bound_non_finite",
+          "tangential_delassus_interval_missing",
+          "normal_tangential_cross_delassus_interval_missing",
+          "candidate_or_boundary_tangential_velocity_missing",
+          "tangent_basis_or_angular_deviation_missing",
+          "xpbd_support_lambda_or_contact_dt_interval_missing",
+          "xpbd_compliance_interval_missing",
+          "initial_tangent_impulse_interval_missing",
+          "lambda_n_over_contact_dt_interval_missing",
+          "normal_tangential_cross_transpose_inconsistent",
+          "candidate_or_boundary_restitution_interval_missing",
+          "candidate_or_boundary_friction_coefficient_interval_missing",
+          "full_generalized_delassus_positive_eigenvalue_certificate_missing",
+          "full_6x6_generalized_delassus_interval_missing",
+          "full_6x6_positive_eigenvalue_lower_bound_missing",
+          "candidate_boundary_frame_set_not_enclosed",
+          "responsive_subspace_rank_or_basis_changes_over_uncertainty_set",
+          "contact_key_set_mismatch_between_candidate_and_boundary",
+          "per_contact_error_bounds_aggregated_by_max_instead_of_l2",
+          "world_space_impulse_transform_missing",
+          "tangent_basis_rotation_bound_missing",
+          "world_space_impulse_residual_bound_missing",
+          "applied_impulse_tolerance_missing",
+          "candidate_or_boundary_contact_jacobian_interval_missing",
+          "responsive_physics_vertex_id_set_mismatch",
+          "J_transpose_q_applied_impulse_bound_non_finite"
+        ],
+        "all_normal_tangential_projection_inputs_present": true,
+        "generalized_delassus_blocks_must_be_evaluated_together": true,
+        "normal_subblock_conservative_gershgorin_eigenvalue_lower_bound": 1.23,
+        "full_generalized_delassus_positive_eigenvalue_proven": false,
+        "full_matrix_positivity_must_not_be_inferred_from_normal_subblock": true,
+        "required_interval_outputs": [
+          "full_6x6_generalized_delassus_interval_enclosure",
+          "finite_positive_responsive_eigenvalue_lower_bound_for_full_6x6_interval_matrix",
+          "all_iteration_intermediate_state_intervals",
+          "all_reachable_normal_active_set_branches",
+          "all_reachable_stick_slip_and_coulomb_projection_branches",
+          "candidate_and_boundary_solver_residual_bounds_in_impulse_units",
+          "complete_contact_island_impulse_error_upper_bound_ns",
+          "candidate_boundary_responsive_subspace_rank_and_basis_invariance_certificate",
+          "canonical_contact_key_l2_impulse_error_aggregation",
+          "world_space_3N_impulse_output_interval",
+          "tangent_basis_world_space_rotation_error_bound",
+          "candidate_and_boundary_world_space_impulse_residual_l2_bounds",
+          "J_transpose_q_generalized_applied_impulse_interval",
+          "applied_impulse_l2_error_upper_bound_ns_over_stable_physics_vertex_ids"
+        ],
+        "normal_subblock_eigenvalue_reference_is_not_full_matrix_certificate": true,
+        "local_generalized_impulse_coefficients_are_not_snap_error_output": true,
+        "applied_impulse_certificate_present": false
+      }
+    },
+    {
+      "id": "DCR_47_POOLED_RAW_SAMPLE_PERCENTILE",
+      "test_case": 47,
+      "input": {
+        "minimum_complete_independent_runs": 5,
+        "samples_per_metric_per_run": 1000,
+        "percentile_method": "nearest_rank",
+        "runs": [
+          {
+            "run_id": "run-001",
+            "independent_session_id": "session-001",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-002",
+            "independent_session_id": "session-002",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-003",
+            "independent_session_id": "session-003",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-004",
+            "independent_session_id": "session-004",
+            "sample_generator": {
+              "count": 1000,
+              "value_ms": 1
+            }
+          },
+          {
+            "run_id": "run-005",
+            "independent_session_id": "session-005",
+            "sample_generator": {
+              "segments": [
+                {
+                  "count": 900,
+                  "value_ms": 1
+                },
+                {
+                  "count": 100,
+                  "value_ms": 100
+                }
+              ]
+            }
+          }
+        ],
+        "repeat_for_metrics": [
+          "frame_time",
+          "gpu_tick_time",
+          "cpu_submission_time"
+        ],
+        "required_raw_artifact_categories": [
+          "frame_time_samples",
+          "gpu_tick_samples",
+          "cpu_submission_samples"
+        ]
+      },
+      "expected": {
+        "pooled_sample_count_per_metric": 5000,
+        "pooled_p95_ms": 1,
+        "average_of_five_run_level_p95_ms_must_not_be_used": 20.8,
+        "reject_when_any_run_has_fewer_than_1000_samples": true,
+        "reject_when_fewer_than_five_complete_independent_runs": true,
+        "reject_when_any_raw_artifact_uri_missing": true,
+        "reject_duplicate_run_or_session_identity": true,
+        "percentile_definition": "sort pooled raw values ascending; rank = ceil(0.95 * N); select that 1-based observation; no interpolation",
+        "pooled_p95_rank": 4750
+      }
+    }
+  ]
+}

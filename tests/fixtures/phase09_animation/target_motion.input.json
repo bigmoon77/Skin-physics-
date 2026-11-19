@@ -1,0 +1,57 @@
+{
+  "fixed_delta_time": 0.25,
+  "translation_track": {
+    "times": [
+      0,
+      1
+    ],
+    "values": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0
+      ]
+    ],
+    "interpolation": "linear"
+  },
+  "rotation_track": {
+    "times": [
+      0,
+      1
+    ],
+    "values": [
+      [
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0.7071067811865476,
+        0,
+        0.7071067811865476
+      ]
+    ],
+    "interpolation": "linear"
+  },
+  "sample_time": 0.25,
+  "teleport": {
+    "from": [
+      2,
+      0,
+      0
+    ],
+    "to": [
+      10,
+      0,
+      0
+    ],
+    "policy": "zero_velocity"
+  }
+}

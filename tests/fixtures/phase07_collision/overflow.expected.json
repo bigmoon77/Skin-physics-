@@ -1,0 +1,13 @@
+{
+  "first_attempt": {
+    "status": "BlockedByCapacity",
+    "committed": false,
+    "dropped_candidates": 0,
+    "initial_state_hash_after": "before"
+  },
+  "retry": {
+    "status": "success",
+    "committed": true,
+    "candidate_count": 2
+  }
+}

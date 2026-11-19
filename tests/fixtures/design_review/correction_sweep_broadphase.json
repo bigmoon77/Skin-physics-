@@ -1,0 +1,642 @@
+{
+  "fixture_version": "1.2",
+  "purpose": "Persistent deterministic geometry and state vectors for design-review regression Case 49. This file is a reviewed specification input only; it is not an executable assertion or evidence of a production GPU implementation. Includes both positive and negative initial-side signed-separation crossing cases.",
+  "normative_sources": [
+    "docs/detailed_design.md §9.4.1",
+    "docs/detailed_design.md §9.4.2",
+    "docs/detailed_design.md §11.2",
+    "docs/runtime_integration_design.md §7.1",
+    "docs/runtime_integration_design.md §7.2.1"
+  ],
+  "policy": {
+    "position_writer_epoch": "Every XPBD dispatch that writes Physics Position is a distinct epoch: Graph Coloring color dispatch, Gather Jacobi position iteration, Contact Position XPBD iteration, and the same passes inside a TOI prefix.",
+    "correction_path": "x(s) = x_before + s * (x_after - x_before), 0 <= s <= 1",
+    "pseudo_time_unit": "dimensionless normalized-s; never seconds",
+    "contact_thickness_source": "Pair contact_thickness from the same VT / EE material and collision settings used by the discrete Contact XPBD",
+    "distance_tolerance_source": "Detailed Design §11.4 distance_tolerance",
+    "max_interval_evaluations": 32,
+    "no_hit_rule": "Every interval must have an outward-rounded distance lower bound greater than pair contact thickness + distance_tolerance.",
+    "unresolved_rule": "Missing / non-finite displacement or distance bounds, unstable feature / normal mapping, or interval budget exhaustion returns CorrectionCcdUnresolved and REJECTED; v1 defines no same-Reservation interval-budget recovery API.",
+    "candidate_union": "physical_swept_candidates UNION all_epoch_correction_candidates UNION final_discrete_candidates, keyed by the canonical pair key",
+    "correction_hit_effect": "Candidate discovery only; never creates a physical TOI, restitution / friction impulse, or impact_resolved event.",
+    "capacity_rule": "Actual AABB / Candidate Buffer Capacity overflow returns BroadphaseOverflow and BLOCKED; preserve the same Reservation and retry only after Capacity admission succeeds."
+  },
+  "cases": [
+    {
+      "id": "DCR_49_VT_POINT_THROUGH_TRIANGLE",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "triangle_vertices_before": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "triangle_vertices_after": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "point_before": [
+          0.25,
+          0.25,
+          1
+        ],
+        "point_after": [
+          0.25,
+          0.25,
+          -1
+        ],
+        "stable_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "contact_thickness_m": 0.02,
+        "physical_swept_candidate_present": false,
+        "position_writer_epoch_id": 1
+      },
+      "expected": {
+        "correction_swept_aabb_contains_contact_path": true,
+        "correction_candidate_added_to_canonical_union": true,
+        "correction_motion_ccd": "HIT",
+        "endpoint_signed_separation_m": -1,
+        "crossing": "CorrectionPathCrossing",
+        "tick_state": "REJECTED",
+        "commit": false,
+        "physical_toi_created": false,
+        "physical_impulse_created": false
+      }
+    },
+    {
+      "id": "DCR_49_EE_EDGE_THROUGH_EDGE",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "EE",
+        "edge_a_before": [
+          [
+            -1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ]
+        ],
+        "edge_a_after": [
+          [
+            -1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ]
+        ],
+        "edge_b_before": [
+          [
+            0,
+            -1,
+            -1
+          ],
+          [
+            0,
+            1,
+            -1
+          ]
+        ],
+        "edge_b_after": [
+          [
+            0,
+            -1,
+            1
+          ],
+          [
+            0,
+            1,
+            1
+          ]
+        ],
+        "stable_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "contact_thickness_m": 0.02,
+        "physical_swept_candidate_present": false,
+        "position_writer_epoch_id": 2
+      },
+      "expected": {
+        "correction_swept_aabb_contains_contact_path": true,
+        "correction_candidate_added_to_canonical_union": true,
+        "correction_motion_ccd": "HIT",
+        "correction_witness_s": "0.5",
+        "endpoint_signed_separation_changes_side": true,
+        "crossing": "CorrectionPathCrossing",
+        "tick_state": "REJECTED",
+        "commit": false
+      }
+    },
+    {
+      "id": "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "triangle_vertices_before": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "triangle_vertices_after": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "point_before": [
+          0.25,
+          0.25,
+          -1
+        ],
+        "point_after": [
+          0.25,
+          0.25,
+          1
+        ],
+        "stable_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "initial_signed_separation_m": -1,
+        "contact_thickness_m": 0.02,
+        "physical_swept_candidate_present": false,
+        "position_writer_epoch_id": 6
+      },
+      "expected": {
+        "initial_side_sigma": -1,
+        "signed_interval_endpoint_order_reversed": true,
+        "correction_swept_aabb_contains_contact_path": true,
+        "correction_candidate_added_to_canonical_union": true,
+        "correction_motion_ccd": "HIT",
+        "endpoint_signed_separation_m": 1,
+        "crossing": "CORRECTION_PATH_CROSSING",
+        "tick_state": "REJECTED",
+        "commit": false,
+        "physical_toi_created": false,
+        "physical_impulse_created": false
+      }
+    },
+    {
+      "id": "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "triangle_vertices_before": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "triangle_vertices_after": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "point_before": [
+          -1,
+          0.2,
+          0.01
+        ],
+        "point_after": [
+          2,
+          0.2,
+          0.01
+        ],
+        "stable_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "contact_thickness_m": 0.02,
+        "position_writer_epoch_id": 3
+      },
+      "expected": {
+        "correction_motion_ccd": "HIT",
+        "endpoint_active_contact": false,
+        "signed_side_preserved": true,
+        "contact_set_add": false,
+        "candidate_union_retains_pair": true,
+        "crossing": false,
+        "commit_allowed_when_all_other_gates_pass": true
+      }
+    },
+    {
+      "id": "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "triangle_vertices_before": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "triangle_vertices_after": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "point_before": [
+          0.25,
+          0.25,
+          1
+        ],
+        "point_after": [
+          0.25,
+          0.25,
+          0.01
+        ],
+        "stable_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "contact_thickness_m": 0.02,
+        "position_writer_epoch_id": 4
+      },
+      "expected": {
+        "correction_motion_ccd": "HIT",
+        "endpoint_active_contact": true,
+        "contact_set_add": true,
+        "next_contact_position_iteration_receives_pair": true,
+        "crossing": false
+      }
+    },
+    {
+      "id": "DCR_49_VT_CERTIFIED_MISS",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "triangle_vertices_before": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "triangle_vertices_after": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "point_before": [
+          1.5,
+          0.2,
+          1
+        ],
+        "point_after": [
+          1.5,
+          0.2,
+          0.5
+        ],
+        "contact_thickness_m": 0.02,
+        "position_writer_epoch_id": 5
+      },
+      "expected": {
+        "correction_motion_ccd": "NO_HIT",
+        "every_interval_certified_clear": true,
+        "candidate_silently_dropped": false
+      }
+    },
+    {
+      "id": "DCR_49_CONTACT_SET_CASCADE",
+      "test_case": 49,
+      "input": {
+        "position_writer_epochs": [
+          {
+            "epoch_id": 10,
+            "writer": "contact_position_iteration_0",
+            "new_endpoint_contact": "pair_BC"
+          },
+          {
+            "epoch_id": 11,
+            "writer": "contact_position_iteration_1",
+            "new_endpoint_contact": null
+          }
+        ],
+        "contact_position_iteration_limit": 2
+      },
+      "expected": {
+        "pair_BC_added_to_candidate_union_after_epoch_10": true,
+        "pair_BC_in_next_contact_set_generation": true,
+        "pair_BC_solved_by_remaining_iteration": true,
+        "final_contact_set_generation_stable": true,
+        "commit_allowed_when_all_other_gates_pass": true
+      },
+      "mutation": {
+        "position_writer_epochs": [
+          {
+            "epoch_id": 10,
+            "writer": "contact_position_iteration_1",
+            "new_endpoint_contact": "pair_BC"
+          }
+        ],
+        "contact_position_iteration_limit": 1
+      },
+      "mutation_expected": {
+        "diagnostic": "ContactGeometryUnresolved",
+        "tick_state": "REJECTED",
+        "commit": false
+      }
+    },
+    {
+      "id": "DCR_49_UNRESOLVED_INTERVAL_AND_BOUND",
+      "test_case": 49,
+      "input": {
+        "max_interval_evaluations": 32,
+        "variants": [
+          "interval_budget_exhausted",
+          "distance_interval_missing",
+          "displacement_bound_non_finite",
+          "normal_mapping_unstable",
+          "closest_feature_mapping_unproven"
+        ]
+      },
+      "expected": {
+        "diagnostic": "CorrectionCcdUnresolved",
+        "result_is_no_hit": false,
+        "tick_state": "REJECTED",
+        "commit": false
+      }
+    },
+    {
+      "id": "DCR_49_CORRECTION_CAPACITY_OVERFLOW",
+      "test_case": 49,
+      "input": {
+        "correction_aabb_required_count": 129,
+        "correction_aabb_capacity": 128,
+        "candidate_required_count": 257,
+        "candidate_capacity": 256
+      },
+      "expected": {
+        "fill_truncation": false,
+        "missing_pair_count": 0,
+        "diagnostic": "BroadphaseOverflow",
+        "tick_state": "BLOCKED",
+        "reservation_preserved": true,
+        "commit": false
+      }
+    },
+    {
+      "id": "DCR_49_PSEUDO_TIME_ISOLATION",
+      "test_case": 49,
+      "input": {
+        "dt_segment_seconds": 0.016666666666666666,
+        "correction_pseudo_time_start": 0,
+        "correction_pseudo_time_end": 1,
+        "toi_tau_seconds": 0.004,
+        "discovered_toi_split_count_before": 2,
+        "discovered_toi_segment_count_before": 3,
+        "force_impulse_event_cursor_before": 19,
+        "v_pre_contact_before": [
+          0.4,
+          -0.2,
+          0.1
+        ],
+        "contact_impulse_before": [
+          0,
+          0,
+          0
+        ]
+      },
+      "expected": {
+        "dt_segment_seconds_after": 0.016666666666666666,
+        "world_time_advance_from_s": 0,
+        "toi_tau_seconds_unchanged": true,
+        "discovered_toi_split_count_after": 2,
+        "discovered_toi_segment_count_after": 3,
+        "force_impulse_event_cursor_after": 19,
+        "v_pre_contact_after": [
+          0.4,
+          -0.2,
+          0.1
+        ],
+        "contact_impulse_after": [
+          0,
+          0,
+          0
+        ],
+        "impact_resolved_created": false,
+        "correction_hit_creates_physical_impact": false
+      }
+    },
+    {
+      "id": "DCR_49_TOI_PREFIX_PSEUDO_TIME_ISOLATION",
+      "test_case": 49,
+      "input": {
+        "integration_segment_kind": "positive_time_toi_prefix",
+        "toi_tau_seconds": 0.003,
+        "correction_pseudo_time_interval": [
+          0,
+          1
+        ]
+      },
+      "expected": {
+        "physical_prefix_duration_seconds": 0.003,
+        "correction_pseudo_time_is_seconds": false,
+        "physical_tau_and_correction_s_are_independent": true,
+        "correction_s_does_not_increment_toi_split_or_segment_count": true
+      }
+    },
+    {
+      "id": "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "base_integration_segment_id": 21,
+        "segment_start_point": [
+          0.25,
+          0.25,
+          0.5
+        ],
+        "triangle_vertices_segment_start": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "latched_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "latched_sigma_pair": 1,
+        "position_writer_epochs": [
+          {
+            "epoch_id": 20,
+            "point_before": [
+              0.25,
+              0.25,
+              -0.005
+            ],
+            "point_after": [
+              0.25,
+              0.25,
+              -0.015
+            ]
+          }
+        ],
+        "contact_thickness_m": 0.02,
+        "physical_swept_candidate_present": true
+      },
+      "expected": {
+        "sigma_pair_used_by_epoch_20": 1,
+        "sigma_is_reinitialized_from_epoch_before": false,
+        "correction_motion_ccd": "HIT",
+        "normalized_signed_separation_interval_is_opposite_side": true,
+        "crossing": "CORRECTION_PATH_CROSSING",
+        "tick_state": "REJECTED",
+        "commit": false
+      },
+      "mutation": {
+        "sigma_pair_recomputed_from_epoch_before": -1
+      },
+      "mutation_expected": {
+        "test_must_fail": "per_epoch_side_reinitialization would incorrectly classify this pair as same-side",
+        "accepted_result": false
+      }
+    }
+  ],
+  "fixture_status": "specified_not_implemented"
+}

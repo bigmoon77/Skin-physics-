@@ -1,0 +1,9 @@
+{
+  "initial_penetration_depth": 0.4,
+  "max_initial_repair_distance_per_vertex": 0.25,
+  "participant_vertex_ids": [
+    1,
+    2
+  ],
+  "retry_after_mesh_adjustment": false
+}

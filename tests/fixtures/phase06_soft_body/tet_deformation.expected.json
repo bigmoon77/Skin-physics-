@@ -1,0 +1,56 @@
+{
+  "rigid_rotation_z_90": {
+    "F": [
+      [
+        0,
+        -1,
+        0
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
+    "determinant": 1,
+    "corotational_strain_frobenius_squared": 0,
+    "elastic_energy": 0
+  },
+  "compress_x_10_percent": {
+    "F": [
+      [
+        0.9,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
+    "determinant": 0.9,
+    "current_volume": 0.15,
+    "volume_error_relative": 0.1
+  },
+  "inversion_case": {
+    "expected_diagnostic": "InvertedTetrahedron",
+    "finite_penalty": true,
+    "state_commit": false
+  },
+  "tolerances": {
+    "determinant_absolute": 0.000001,
+    "energy_absolute": 0.00001,
+    "rotation_strain_absolute": 0.00001
+  }
+}

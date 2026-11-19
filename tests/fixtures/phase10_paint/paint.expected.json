@@ -1,0 +1,24 @@
+{
+  "after_paint": [
+    0.55,
+    0.75,
+    0.95
+  ],
+  "after_smooth": [
+    0.75,
+    0.75,
+    0.75
+  ],
+  "after_average": [
+    0.75,
+    0.75,
+    0.75
+  ],
+  "after_erase": [
+    0.375,
+    0.375,
+    0.375
+  ],
+  "all_values_in_range": true,
+  "save_load_exact": true
+}

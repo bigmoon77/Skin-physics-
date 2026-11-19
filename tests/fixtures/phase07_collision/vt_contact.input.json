@@ -1,0 +1,35 @@
+{
+  "triangle": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0
+    ]
+  ],
+  "vertex_position": [
+    0.25,
+    0.25,
+    0.05
+  ],
+  "vertex_radius": 0.1,
+  "inverse_masses": {
+    "vertex": 1,
+    "triangle_vertices": [
+      1,
+      1,
+      1
+    ]
+  },
+  "friction": 0,
+  "restitution": 0
+}

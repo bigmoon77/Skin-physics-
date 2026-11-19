@@ -1,0 +1,19 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+ipch/
+
+# Build output
+bin/
+.build/
+out/
+x64/
+Debug/
+Release/
+
+# IDE / OS
+.DS_Store
+Thumbs.db

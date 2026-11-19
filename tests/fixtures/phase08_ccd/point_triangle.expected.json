@@ -1,0 +1,20 @@
+{
+  "first_contact_toi_seconds": 0.4,
+  "first_contact_center": [
+    0.25,
+    0.25,
+    0.2
+  ],
+  "contact_normal": [
+    0,
+    0,
+    1
+  ],
+  "discrete_endpoint_is_penetrating": true,
+  "impact_impulse_application_count": 1,
+  "remaining_interval_seconds": 0.6,
+  "tolerances": {
+    "toi_seconds": 0.00001,
+    "position_absolute": 0.00001
+  }
+}

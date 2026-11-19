@@ -1,0 +1,24 @@
+{
+  "closest_point": [
+    0.25,
+    0.25,
+    0
+  ],
+  "barycentric": [
+    0.5,
+    0.25,
+    0.25
+  ],
+  "normal": [
+    0,
+    0,
+    1
+  ],
+  "penetration_depth": 0.05,
+  "correction_conserved_momentum_weighted": true,
+  "post_solve_penetration_max": 0.025,
+  "tolerances": {
+    "position_absolute": 0.00001,
+    "penetration_absolute": 0.00001
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "exact_reference_candidate_set": [
+    [
+      0,
+      1
+    ]
+  ],
+  "candidate_set_must_be_superset": true,
+  "excluded_pair_absent": true,
+  "self_collision_pair_filter_applied": true,
+  "no_duplicate_candidate_ids": true
+}

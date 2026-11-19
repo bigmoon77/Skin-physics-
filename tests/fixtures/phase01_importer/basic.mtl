@@ -1,0 +1,4 @@
+newmtl cloth
+Kd 0.2 0.4 0.8
+Pr 0.7
+Pm 0.1

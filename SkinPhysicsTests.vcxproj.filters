@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{B1493353-5959-440A-A17B-66E8BE8E0100}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Tests">
+      <UniqueIdentifier>{B1493353-5959-440A-A17B-66E8BE8E0101}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="tests\asset_tests.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\physics_mesh_tests.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\simulation_tests.cpp">
+      <Filter>Tests</Filter>
+    </ClCompile>
+    <ClInclude Include="tests\test_support.hpp">
+      <Filter>Tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\json_test_support.hpp">
+      <Filter>Tests</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,28 @@
+{
+  "fixed_delta_time": 0.02,
+  "time_scale": 1,
+  "frame_delta_times": [
+    0.01,
+    0.01,
+    0.035,
+    0.005
+  ],
+  "operations": [
+    {
+      "frame": 0,
+      "op": "play"
+    },
+    {
+      "frame": 2,
+      "op": "pause"
+    },
+    {
+      "frame": 2,
+      "op": "step"
+    },
+    {
+      "frame": 3,
+      "op": "reset"
+    }
+  ]
+}
