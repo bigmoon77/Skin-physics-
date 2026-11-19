@@ -2583,6 +2583,46 @@ namespace
             ee_state.position_writer_epoch_generation == 0,
             "An EE correction crossing must reject the entire Epoch before Contact Set or CSR publication.");
 
+        correction_ccd_settings contact_capacity_settings = endpoint_settings;
+        contact_capacity_settings.contact_set_capacity = 0;
+        auto contact_capacity_state_result =
+            create_correction_segment_candidate_state(7005, {}, 16);
+        auto contact_capacity_state = contact_capacity_state_result.state;
+        const correction_writer_epoch_result contact_capacity_epoch =
+            process_correction_position_writer_epoch(
+                contact_capacity_state, 7005, 1,
+                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                {}, make_correction_epoch_broadphase_settings(),
+                contact_capacity_settings);
+        require(contact_capacity_epoch.status == correction_writer_epoch_status::blocked &&
+            contact_capacity_epoch.capacity_overflow &&
+            contact_capacity_epoch.required_contacts == 1 &&
+            !contact_capacity_epoch.state_committed &&
+            contact_capacity_state.candidates.empty() &&
+            contact_capacity_state.side_latches.empty() &&
+            contact_capacity_state.position_writer_epoch_generation == 0,
+            "Active Contact Set Capacity overflow must BLOCK the complete Epoch without publishing Candidate or Side-Latch state.");
+
+        correction_ccd_settings csr_capacity_settings = endpoint_settings;
+        csr_capacity_settings.vertex_contact_csr_capacity = 0;
+        auto csr_capacity_state_result =
+            create_correction_segment_candidate_state(7006, {}, 16);
+        auto csr_capacity_state = csr_capacity_state_result.state;
+        const correction_writer_epoch_result csr_capacity_epoch =
+            process_correction_position_writer_epoch(
+                csr_capacity_state, 7006, 1,
+                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                {}, make_correction_epoch_broadphase_settings(),
+                csr_capacity_settings);
+        require(csr_capacity_epoch.status == correction_writer_epoch_status::blocked &&
+            csr_capacity_epoch.capacity_overflow &&
+            csr_capacity_epoch.required_vertex_contact_indices == 4 &&
+            !csr_capacity_epoch.state_committed &&
+            csr_capacity_state.candidates.empty() &&
+            csr_capacity_state.side_latches.empty() &&
+            csr_capacity_state.position_writer_epoch_generation == 0,
+            "Vertex-to-Contact CSR Capacity overflow must BLOCK the complete Epoch without publishing Candidate or Contact state.");
+
         auto blocked_state_result =
             create_correction_segment_candidate_state(7005, {}, 16);
         auto blocked_state = blocked_state_result.state;
