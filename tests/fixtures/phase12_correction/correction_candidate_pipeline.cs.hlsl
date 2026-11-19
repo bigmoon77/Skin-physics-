@@ -267,9 +267,7 @@ void correction_candidate_validate_primitives(uint3 dispatch_id : SV_DispatchThr
         all(isfinite(bounds.minimum.xyz)) &&
         all(isfinite(bounds.maximum.xyz)) &&
         all(bounds.minimum.xyz <= bounds.maximum.xyz);
-    if (!correction_primitive_valid(primitive) ||
-        primitive.mesh_id >= mesh_count ||
-        !valid_bounds)
+    if (!correction_primitive_valid(primitive) || !valid_bounds)
     {
         uint previous = 0u;
         InterlockedOr(correction_candidate_totals[1], 2u, previous);
