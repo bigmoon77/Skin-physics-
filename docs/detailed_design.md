@@ -1631,6 +1631,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.27: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.26: Contact Jacobianの行順をqの一般化Impulse係数順（全Normal行の後にContactごとのTangent u/v）へ固定し、Contact Basisの右手系条件normal cross tangent_u = tangent_vを明記。Candidate / BoundaryでStable Vertex IDと行集合を共有する契約を追加。
 - 1.25: Contact-level error notationをE_contact_impulseへ統一し、Applied Generalized Impulse E_applied_impulseとは別ゲートとして扱う。Delassus対角係数の差分単位をEffective Inverse Mass [1/kg]へ明確化。
 - 1.24: Contact-level World-space ImpulseとJ^T*q Generalized Applied Impulseを分離。SnapにApplied Impulse toleranceを追加し、Sparse Contact Jacobianとstable Physics Vertex ID集合の区間評価を必須化。
