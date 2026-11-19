@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -2010,6 +2011,7 @@ namespace skin_physics::physics
             return result;
         }
 
+        std::set<std::tuple<uint64_t, uint32_t, uint32_t>> primitive_identities;
         std::vector<broadphase_primitive> broadphase_primitives;
         std::vector<correction_primitive_role> roles;
         broadphase_primitives.reserve(primitives.size());
@@ -2048,6 +2050,18 @@ namespace skin_physics::physics
                 });
                 return result;
             }
+            if (!primitive_identities.emplace(
+                primitive.stable_id, primitive.mesh_id,
+                primitive.primitive_id).second)
+            {
+                result.diagnostics.push_back({
+                    collision_error::invalid_geometry,
+                    static_cast<uint32_t>(index),
+                    "Correction Broadphase primitive Stable / Mesh / Primitive identity must be unique."
+                });
+                return result;
+            }
+
             std::vector<uint64_t> vertex_ids = primitive.vertex_stable_ids;
             std::sort(vertex_ids.begin(), vertex_ids.end());
             if (std::adjacent_find(vertex_ids.begin(), vertex_ids.end()) !=
