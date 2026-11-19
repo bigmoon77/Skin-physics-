@@ -1,10 +1,10 @@
-# Skin Physics 設計閉鎖書（v3.8）
+# Skin Physics 設計閉鎖書（v3.9）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.23
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.28
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.25
+- 基本設計: [basic_design.md](basic_design.md) v1.24
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.29
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.26
 - Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 - Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.4
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
@@ -261,7 +261,8 @@ Runtime Model Root TransformはTranslation + Rotationのみの剛体Transformと
 
 - 1 Runtimeに複数の独立Worldを持てる。World間のCollision / Physics Couplingは行わない。
 - 1 Worldに複数Model Instance / Mesh Component / Colliderを登録できる。
-- Worldごとのmaximum_in_flight_ticksの既定値は2、設定可能値は1 / 2 / 4。
+- Worldごとのmaximum_in_flight_ticksの既定値は2、設定可能値は1 / 2 / 4。in-flightはGPU Submission済みかつCPU Status未観測の件数であり、GPU上の同時Physics State更新数ではない。
+- 全Tickは単一Immediate Contextの順序付きCommand Streamで直列実行する。先行Commit Gate通過後に2つのPersistent State Bankを交互に再利用するため、in-flight上限4でも同一WorldのPhysics State更新は並列化しない。
 - 1 PhysicsSubmissionBatch = 1 Logical Tick。
 - 各Worldは2つのPersistent Physics State Bankを持つ。active bankはTick中immutable、inactive bankへ全Physics結果を書き、全Gate成功時にCommit Controlでactive bankとGenerationを切り替える。
 - Reject / Blockではactive bank / Generationを維持し、inactive bankを再利用する。Substep / CCD Segment用SnapshotはWorldごとの再利用Scratchであり、3つ目のPersistent State Bankではない。
@@ -317,7 +318,7 @@ Render Candidate SlotはTick Reservationごとに確保する。Slotがなけれ
 
 Render Candidate Ring:
 - Slot数 = world_desc.maximum_in_flight_ticks + 1。
-- 既定in-flight 2の場合は3 Slots。CPU-observed直前Committed Slot 1つと、最大2件のin-flight / 未観測Candidateを保持する。
+- Slot数は`maximum_in_flight_ticks + 1`。既定in-flight 2の場合は3 Slots、上限4の場合は5 Slots。CPU-observed直前Committed Slot 1つと、設定上限までのin-flight / 未観測Candidateを保持する。
 - Query / Status未回収、in-flight Tick、Host Leaseが存在するSlotは上書きしない。
 - get_render_bindingの最初の成功呼出しでWorld単位のLeaseを取得し、返すlease_generationを全Mesh共通にする。
 - release_render_bindings(world, lease_generation)は現在Leaseと一致する世代だけを解放する。古い / 二重ReleaseはSTALE_HANDLE。
@@ -331,10 +332,10 @@ Render Candidate Ring:
 ### 4.5 Model / World / Runtime Resource Lifecycle
 
 - destroy_model / destroy_colliderは対象Worldのin-flight Tickが0件、対象Resourceを参照するTick Reservationが存在せず、Host Render Leaseが存在しない場合だけ成功する。BLOCKED_BY_INPUT / Render Backpressure中の未Submission要求はModel / Collider Snapshotを固定していないため、Destroy後の次回Scheduler評価で現在のWorld構成を使う。条件不足はBUSY。成功するまでHandle / Resourceは有効。
-- reset_worldはin-flight Tick = 0、Host Leaseなしでのみ成功する。Pending Reservation / Accumulator / Step Queue / Contact Cache / Lambda / Diagnostic / requested / cancelled / committed / observed timeline countersをResetし、保存済みInitial Stateへ戻る。
+- reset_worldはGPU Submission Lease / Event Query / GPU Commandが未完了のTick = 0、CPU Status Queue / GPU Status Bufferの未観測Status = 0、Host Render Leaseなしでのみ成功する。CPU Preflight / GPU Dynamic TOIのBlocked Statusはpoll()で観測してからResetする。観測後に残るBlocked Reservationは明示的なReset対象として破棄できる。Pending Reservation / Accumulator / Step Queue / Contact Cache / Lambda / Diagnostic / requested / cancelled / committed / observed timeline countersをResetし、保存済みInitial Stateへ戻る。
 - destroy_worldはPaused / Stopped、in-flight Query / Tick = 0、Host Lease = 0、Pending Reservation / Pending Step Request = 0、未割当Accumulator = 0でのみ成功する。条件不足はBUSY。残時間の破棄はStop / Resetによる明示操作とし、whole tick / fractional remainderの取消しをDiagnosticへ残す。
 - GPU Command / Queryが参照したResourceはCompletion QueryまでDeferred Release Listで保持する。
-- drain()は明示的な非Frame API。新規Submissionを停止し、既にSubmission済みGPU Tick / Queryの完了とDeferred Releaseを待つ。未割当Accumulator whole tick、未処理Step Request、Host Leaseがある場合はBUSYを返す。Host Leaseを強制Releaseしない。
+- drain()は明示的な非Frame API。新規Submissionを停止し、既にSubmission済みGPU Tick / Queryの完了とDeferred Releaseを待つ。未割当Accumulator whole tick、未処理Step Request、Blocked Reservation、Host Leaseがある場合はBUSYを返す。Blocked Reservationを自動Retry / Cancelせず、Host Leaseも強制Releaseしない。
 - shutdown()は全WorldがDestroy済み、Query Ring Idle、Deferred Release List空、Host Lease=0の時だけCOM Resourceを解放してOK。条件不足ならBUSYを返し、Runtime状態を壊さない。Runtime Destructor前にshutdown成功が必要。
 - 通常Frame PathにFlush / 同期Waitを入れない。明示drainのみGPU Query完了待ちを許可する。
 
@@ -439,6 +440,8 @@ Render Candidate Ring:
 **追跡上の注意:** 要件§5のImporter形式は「複数形式」という抽象要件を満たすためv1具体形式をOBJ / glTF 2.0 / GLBへ固定した。FBX / Morph / Draco / Meshoptはv1未対応として明示Errorにする。§13の未確定事項は基本・詳細設計で具体化済みであり、残る数値は設計未決定ではなく測定・校正タスクである。
 
 ## 7. バージョン履歴
+
+- 3.9: in-flight 1 / 2 / 4のCPU未観測件数定義と直列2-bank実行を統一。Render Candidate Ring容量をN+1へ一般化し、Reset / DrainのStatus観測・Blocked Reservation条件をRuntime契約へ同期。
 
 - 3.8: Synchronized Basic / Detailed / Runtime current-version references and repaired the stale Basic Design handoff paragraph.
 - 3.7: Fixed q-compatible Contact Jacobian row order and right-handed contact-frame convention; made scalar inverse-mass and unit-bearing residual fixture inputs reproducible.
