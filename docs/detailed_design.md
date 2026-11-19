@@ -765,7 +765,7 @@ Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraint
 6. 全参加Physics MeshのSwept AABBを作り、Broadphase / Narrowphase / CCD候補を生成する。Soft Body / Cloth / Contactは同じSegmentの予測時刻を参照する。
 7. TOIがない場合は、Cloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを規定反復数だけ解く。Graph Coloringの各Color DispatchおよびGather Jacobiの各Position DispatchをPosition-Writer Epochとして扱い、各Dispatch直後に§9.4.1のCorrection Swept AABB / Candidate追加と§9.4.2のCorrection Motion CCDを実行する。Hitの終端Contactは次のContact Solveに渡し、Crossing / Unresolved / Capacity ErrorはCommitを止める。
 8. TOI Candidateは§11.4のGeometrically Safe Boundary SnapとBoundary Identity規則に従う。Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_bits)。base_integration_segment_idはtauの相対時間原点となるCCD対象Segment（Residual Segmentを含む）ごとに一意とする。同一Segment内の同じ有限float32 tau bitsはContact Groupが異なっても1 Boundary、異なるSegmentは同じtau bitsでも別Boundaryとする。-0.0は+0.0へ正規化し、NaN / InfinityはCommitしない。tau=0 / tau=dt_segmentと安全な既存Schedule BoundaryへのSnapは追加Splitを作らない。異なるtauをSnap / Mergeするには時間差、XPBD後位置応答、接触相対Velocity、Impulseの全誤差Boundを満たす必要がある。証明できなければ正確なtauを維持して独立内部Boundaryを作る。Split Countは一意Boundary IDごとに1回だけ増やす。
-9. Discrete / TOIの双方で、非接触内部Constraint後にCandidate Unionを用いたFinal Discrete Narrowphaseを実行し、接触が成立しているContact Setを確定する。Correction Motion CCDで未解決のCrossing / Unresolvedが0であること、Candidate Set / Contact Set Generationが確定していることを確認した後にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、Positive-Time TOI prefixではtauを使う。tau=0 Initial Contact EventはSegment-start velocity / Kinematic Trajectory Derivativeを使い、ゼロ時間prefixのVelocity Reconstructionを行わない。Contact Position XPBDの各位置反復もPosition-Writer Epochとし、各反復後にCorrection Motion CCD / Candidate Union / Final Discrete refreshを行う。新規終端Contactは次の残り反復で解決する。規定反復の最後に新規Contactまたは未確定Generationが残る場合はCONTACT_GEOMETRY_UNRESOLVEDとしてCommitしない。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
+9. Discrete / TOIの双方で、非接触内部Constraint後にCandidate Unionを用いたFinal Discrete Narrowphaseを実行し、接触が成立しているContact Setを確定する。Correction Motion CCDで未解決のCrossing / Unresolvedが0であること、Candidate Set / Contact Set Generationが確定していることを確認した後にDynamic Contact前Velocityを再構築して保存する。通常Segmentではdt_segment、Positive-Time TOI prefixではtauを使う。tau=0 Initial Contact EventはSegment-start velocity / Kinematic Trajectory Derivativeを使い、ゼロ時間prefixのVelocity Reconstructionを行わない。Contact Position XPBDの各位置反復もPosition-Writer Epochとし、各反復後にCorrection Motion CCD / Candidate Union / Final Discrete refreshを行う。新規終端Contactは次の残り反復で解決する。規定反復の最後に新規Contactまたは未確定Generationが残る場合はContactGeometryUnresolvedとしてCommitしない。Contact位置補正はPositionのみを変更し、保存済みContact前Velocityを変更しない。
 10. 保存済みContact前VelocityとKinematic接触点VelocityからFriction / Restitution Impulseを一度適用する。TOI Impactはimpact_resolvedに記録し、Impact後Velocityから残時間の新Segmentを開始する。Contact位置補正後またはImpact後に同じSegmentのVelocity Reconstructionを実行しない。TOI候補がprefix再検査で成立しない場合はImpactを発生させず、tau位置から残時間を継続し、必要ならCCD候補を再構築する。
 
 Soft BodyとClothの内部解法は異なるが、時間境界・Force / Impulse Eventの意味・Kinematic Velocity所有者はWorld共通である。各Substepの単純な1回更新へ戻す実装、Solverごとの異なるSegment時間、固定頂点への差分Velocity上書きは禁止する。
@@ -1044,7 +1044,7 @@ Discrete ContactとTOI Contactで同じCoupled Solverを使う。TOI Eventは同
 3. Rest Poseの面法線 / Hinge Binormalを現在の局所変形基底で写した参照方向。
 4. 相対速度ベクトル。速度がepsilon以下の場合は利用しない。
 
-候補法線はContactの正規向き（VTは三角形Bから頂点A、EEはCanonical PairのBからA）へ符号を統一する。候補間で向きが矛盾する場合は前回法線との内積で連続性を優先する。上記を適用しても法線が定まらない、または退化幾何によりNarrowphaseの距離・勾配が有限に計算できない場合はCONTACT_GEOMETRY_UNRESOLVEDとしてLogical TickをCommitしない。Stable IDから任意軸を生成して押し出す処理は禁止する。
+候補法線はContactの正規向き（VTは三角形Bから頂点A、EEはCanonical PairのBからA）へ符号を統一する。候補間で向きが矛盾する場合は前回法線との内積で連続性を優先する。上記を適用しても法線が定まらない、または退化幾何によりNarrowphaseの距離・勾配が有限に計算できない場合はContactGeometryUnresolvedとしてLogical TickをCommitしない。Stable IDから任意軸を生成して押し出す処理は禁止する。
 
 Contact Cacheに法線があってもMesh Topology / Contact Key / Patch Generationが変化した場合は流用しない。無効Cacheを検出した場合は再評価し、失敗すればUnresolvedとする。
 
@@ -1108,7 +1108,7 @@ Broadphase Envelopeは次の集合として定義する。
         B_physical_swept
         UNION (UNION over every Position-Writer Epoch e of B_correction_swept[e])
 
-B_physical_sweptは§11.2のSegment開始位置からPrediction位置までのSweep、B_correction_swept[e]は当該Epochのbefore / after位置Sweepである。以前の「最大拘束補正余裕」のような任意スカラーMarginは使用しない。各EpochのCorrection Swept AABBを実際に生成できない、または生成したBoundが実際のbefore / after状態を包含しない場合はBroadphase Completeness Failureとし、Commitを禁止する。
+B_physical_sweptは§11.2のSegment開始位置からPrediction位置までのSweep、B_correction_swept[e]は当該Epochのbefore / after位置Sweepである。以前の「最大拘束補正余裕」のような任意スカラーMarginは使用しない。各EpochのCorrection Swept AABBを実際に生成できない、または生成したBoundが実際のbefore / after状態を包含しない場合はBroadphaseCompletenessFailureとしてREJECTEDにし、Commitを禁止する。実際のCount / AABB / Candidate Capacity超過は既存のBroadphaseOverflowとしてBLOCKEDにする。
 
 各EpochのCorrection Swept AABBを既存のCount / Scan / Capacity Check / Fill / Sort / Pair Dedup Pipelineへ入力し、Physical Swept候補へCanonical Pair Keyで追加する。Final Discrete Narrowphase候補も同じCandidate Setへ追加する。Segmentの候補集合は次のUnionであり、候補をEpoch終了時に破棄しない。
 
@@ -1138,7 +1138,7 @@ v_corr_boundの単位はmeter / normalized-sである。全区間で有限かつ
     d_interval_lower =
         max(0, d_mid_lower - v_corr_bound * (b - a) / 2)
 
-d_interval_lower > r_pair + distance_toleranceなら、その区間全体をNo-Hitと証明できる。中点の外向き丸め済み距離上限d_mid_upper <= r_pair + distance_toleranceならHit Witnessを記録する。それ以外は区間を二分し、左区間、右区間の順で決定的に検査する。全区間がNo-Hitと証明された場合だけCorrection Motion No-Hitとする。最大32区間評価でHit / No-Hitを確定できない場合、距離区間・変位Boundが非有限または未証明の場合はCORRECTION_CCD_UNRESOLVEDとし、No-Hitへフォールバックしない。距離計算の単純なfloat32サンプル値、有限サンプルの最大値、経験的な安全係数だけを保守的Boundとして扱わない。
+d_interval_lower > r_pair + distance_toleranceなら、その区間全体をNo-Hitと証明できる。中点の外向き丸め済み距離上限d_mid_upper <= r_pair + distance_toleranceならHit Witnessを記録する。それ以外は区間を二分し、左区間、右区間の順で決定的に検査する。全区間がNo-Hitと証明された場合だけCorrection Motion No-Hitとする。最大32区間評価でHit / No-Hitを確定できない場合、距離区間・変位Boundが非有限または未証明の場合はCorrectionCcdUnresolvedとしてREJECTEDにし、No-Hitへフォールバックしない。現行v1に追加のCorrection CCD interval budget Recovery APIはないため、自動Retryしない。距離計算の単純なfloat32サンプル値、有限サンプルの最大値、経験的な安全係数だけを保守的Boundとして扱わない。
 
 Hit WitnessにはDispatch Attempt ID、Integration Segment ID、Position-Writer Epoch ID、Canonical Primitive Pair Key、normalized s、Closest Feature Parameter、Normalおよび距離区間を記録する。始点ですでに接触しているPairはPersistent Contact Cacheまたは同時刻の直前Discrete Contactの安定法線を使用する。対応する安定法線・Feature Mappingを得られない退化PairはUnresolvedとする。
 
@@ -1148,12 +1148,12 @@ Side判定はHit WitnessのNormal n_refをCorrection Epoch内で固定したSign
 
 - 終端で非貫通接触が成立するPairはContact Candidate Setへ追加し、次のContact Position XPBD反復で解決する。
 - 前段のSigned Separation区間検査で全経路が同じ分離側に留まることを証明でき、終端にActive Contactがない一過性の近接はActive Contactへ追加しない。ただしCandidate Unionと診断記録には保持する。
-- Signed Separation区間検査で反対側への通過が証明された場合はCORRECTION_PATH_CROSSINGとする。終端だけでなく経路途中の反対側滞在も対象とする。Physical Timeを進めずに位置補正が衝突面を通過させたため、そのLogical TickをREJECTEDにしCommitしない。
-- 両側判定に必要な法線・Feature Mapping・符号連続性を証明できない場合はCORRECTION_CCD_UNRESOLVEDとしてBLOCKEDにし、Commitしない。
+- Signed Separation区間検査で反対側への通過が証明された場合はCorrectionPathCrossingとする。終端だけでなく経路途中の反対側滞在も対象とする。Physical Timeを進めずに位置補正が衝突面を通過させたため、そのLogical TickをREJECTEDにしCommitしない。
+- 両側判定に必要な法線・Feature Mapping・符号連続性を証明できない場合はCorrectionCcdUnresolvedとしてREJECTEDにし、Commitしない。
 
 VTのSigned SeparationはHit Witnessの安定法線で頂点と三角形Closest Pointの符号付き距離を評価する。EEもHit Witness法線とClosest Point Pairで同じ符号規則を用いる。法線の向きが区間内で連続と証明できない、またはFeatureが切り替わる区間を保守的に包含できない場合はUnresolvedとする。Correction Motion CCDは誤ったNo-Hitを許さないfail-closed検査であり、物理Impactを生成する機能ではない。
 
-非接触内部Constraintの全Epoch完了後に、Candidate Unionを用いて現在位置のDiscrete Narrowphaseを再評価し、確定したContact Setを構築する。その後でのみDynamic v_pre_contactを既存規則どおり一度再構築する。Contact Position XPBDも各位置反復を新しいEpochとしてCorrection Motion CCDを実行し、終端で新たに成立したContactをCandidate Union / Contact Setへ追加して次の残り反復で解決する。規定Contact Position反復の最後に新たな有効Contactが追加された場合、またはContact Set Generation / Patchが未収束の場合はCONTACT_GEOMETRY_UNRESOLVEDとしてBLOCKEDにし、未解決Contactを残したままCommitしない。Contact Position correction後にv_pre_contactを再構築してはならない。
+非接触内部Constraintの全Epoch完了後に、Candidate Unionを用いて現在位置のDiscrete Narrowphaseを再評価し、確定したContact Setを構築する。その後でのみDynamic v_pre_contactを既存規則どおり一度再構築する。Contact Position XPBDも各位置反復を新しいEpochとしてCorrection Motion CCDを実行し、終端で新たに成立したContactをCandidate Union / Contact Setへ追加して次の残り反復で解決する。規定Contact Position反復の最後に新たな有効Contactが追加された場合、またはContact Set Generation / Patchが未収束の場合はContactGeometryUnresolvedとしてREJECTEDにし、未解決Contactを残したままCommitしない。現行v1ではContact Position Iterationを増やす同一Reservation Recovery APIを定義しない。Contact Position correction後にv_pre_contactを再構築してはならない。
 
 Correction Motion CCDは、物理時間、dt_segment、World Substep、TOI Boundary、discovered_toi_split_count、discovered_toi_segment_count、Force / Impulse Event Cursorを変更しない。sを秒へ変換せず、Correction HitからRestitution / Friction Impulse / impact_resolvedを発生させない。TOI prefix内の内部Constraintにも同じ規則を適用し、TOIの物理時間tauと補正経路のnormalized sを混同しない。
 
@@ -1592,7 +1592,7 @@ Capacity Overflow / CCD Unresolved / WORK_BUDGET_EXCEEDEDは回復可能な間�
 
 GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはGPU Event Query完了・COMMITTED Status Readback・連続Tick Prefixの3条件をCPUが確認した状態である。CPU Preflight BlockはGPU Submissionを行わないためEvent Queryを必要とせず、CPU Scheduler Status Queueへ同期記録され、`poll()`が同じ呼出しで観測可能な`BLOCKED`状態として返す。GPU Dynamic TOI BlockはGPU Status BufferとEvent Queryで非同期に回収する。CPU observed completed timeはCpuObserved Prefixから算出し、BlockされたTickでは進めない。
 
-予測位置と確定位置を分離する。Broadphase / Candidate / Contact / Contributionのoverflow、非有限状態、Correction Motion CCD Unresolved、Correction Path Crossing、Contact Geometry Unresolvedが検出されたStepはCommitしない。Broadphase Envelopeは§9.4.1のとおり、物理Segment Swept AABBと全XPBD Position-Writer EpochのCorrection Swept AABBのUnionとする。固定の「最大拘束補正余裕」は使用しない。各Epoch後に補正経路のBroadphase / Correction Motion CCDを実行し、Candidate Unionへ追加する。最終Discrete Candidateを含むUnionに対してContact Setを再構築する。CrossingはREJECTED、距離 / Feature / Envelopeの証明不能または容量超過はBLOCKEDとし、同じReservation / Input Snapshotを保持する。未解決の候補・補正を許容してCommitしたり、有限サンプルをNo-Hit証明へ置換したりしない。
+予測位置と確定位置を分離する。Broadphase / Candidate / Contact / Contributionのoverflow、非有限状態、Correction Motion CCD Unresolved、Correction Path Crossing、Contact Geometry Unresolvedが検出されたStepはCommitしない。Broadphase Envelopeは§9.4.1のとおり、物理Segment Swept AABBと全XPBD Position-Writer EpochのCorrection Swept AABBのUnionとする。固定の「最大拘束補正余裕」は使用しない。各Epoch後に補正経路のBroadphase / Correction Motion CCDを実行し、Candidate Unionへ追加する。最終Discrete Candidateを含むUnionに対してContact Setを再構築する。CorrectionPathCrossing / CorrectionCcdUnresolved / BroadphaseCompletenessFailure / ContactGeometryUnresolvedはREJECTEDとし、自動Retryしない。実際のBuffer Capacity超過はBroadphaseOverflowとしてBLOCKEDにし、同じReservation / Input Snapshotを保持してCapacity Retryする。未解決の候補・補正を許容してCommitしたり、有限サンプルをNo-Hit証明へ置換したりしない。
 
 診断コード:
 - InvalidAsset / InvalidTopology
@@ -1602,7 +1602,7 @@ GpuCommittedはGPU Commit Controlが書いた状態、CpuObservedはGPU Event Qu
 - BroadphaseOverflow / ContactOverflow / ContributionOverflow
 - CCDIterationLimit / WorkBudgetExceeded
 - InitialPenetrationLimit / NonFiniteState
-- ContactGeometryUnresolved / ContactManifoldReductionFailure
+- ContactGeometryUnresolved / ContactManifoldReductionFailure / CorrectionCcdUnresolved / CorrectionPathCrossing / BroadphaseCompletenessFailure
 - AnimationTimePrecisionUnresolved / NoForceTarget
 - GpuResourceAllocationFailure / DeviceRemoved
 
