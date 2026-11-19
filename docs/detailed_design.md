@@ -1207,10 +1207,6 @@ TOIが確定したら、検出に使った離散軌道と同一の位置・速�
     x_path(tau) = position_segment_start + tau * path_velocity
     v_path(tau) = path_velocity
 
-Snap判定は§11.4の全Bound（XPBD後位置応答・dt感度・相対Velocity・Impulse）を唯一の正本とし、位置誤差Bound単独では許可しない。
-
-Snap判定は§11.4の全Bound（XPBD後位置応答・dt感度・相対Velocity・Impulse）を唯一の正本とし、位置誤差Bound単独では許可しない。
-
 Endpoint / 既存BoundaryへSnapされなかった内部TOIは、Contact Group化と別に`toi_time_boundary_id`を割り当てる。同じIEEE-754 float32 tauビット列を持つCandidateは、幾何学的位置が異なり別Contact Groupへ分類されても同一時間Boundaryとして扱う。異なるtauのBoundary統合は、§11.4の全Snap条件（時間差、XPBD後位置、dt感度、相対Velocity、Contact Island全体のImpulse誤差）を各Candidateが同時に満たす場合だけ許可する。統合先は最も早いtauとし、誤差Boundは各Candidateから統合先まで個別に評価する。いずれかのCandidate / Contact IslandでBoundまたは許容値が欠落・非有限・証明不能なら統合せず、各Candidateの正確なtauを独立Boundaryとして保持する。`discovered_toi_split_count`は新たに追加された`toi_time_boundary_id`ごとに1回だけ増やす。同一Boundaryに属する複数Contact Group / Contactは追加Splitを増やさない。Contact Event Groupは時間差と各Contactの幾何誤差条件の両方を満たす場合だけ構成し、幾何条件を満たさないContactは別Groupに残す。同一Boundaryの各Groupは同じBoundary Timeで順序付けし、Group内はContact Key順に処理する。TOI候補の並び順によらずBoundary ID / Contact Group / Countを決定的にする。
 
 tau=0のInitial Contact EventではSegment-start state / velocity / Kinematic Trajectory Derivativeを使用し、ゼロ時間prefixを作らず`(x_internal_solved - x_segment_start) / tau`によるVelocity Reconstructionを実行しない。Positive-Timeの内部TOIではprefix状態の構成後、tauをXPBD Integration Segment時間としてCloth Stretch / Shear / Bend / Animation Tracking等の非接触内部Constraintを先に解く。Soft Bodyはprefix軌道状態を維持する。Contact Position Constraintを解く前にDynamic VertexのContact前Velocityを(x_internal_solved - x_segment_start) / tauで再構築して保存する。次にTOI Contact Position Constraintを解くが、Contact位置補正後にVelocityを再構築しない。保存済みContact前VelocityをCoupled Projected Jacobiへ渡し、ResidualがAcceptance範囲へ収束した場合だけImpactを一度Commitする。W_ii <= epsilon_inverse_massの非応答ContactはPosition / ImpulseをSkipする。
