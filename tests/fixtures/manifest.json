@@ -645,6 +645,6 @@
     "build": "not_verified",
     "tests": "not_started",
     "classification": "failed_before_any_reported_job_step",
-    "note": "The workflow run for this exact branch head failed before reporting any job steps. The job-step endpoint returned an empty steps array; runner identity and the underlying pre-step cause are unavailable. No compiler or test result exists, so this run is not evidence of a source-code regression."
+    "note": "The latest available workflow run is for commit b6b7652b52f59ff2400465dec2a37e776507df4f. It failed before reporting any job steps; the job-step endpoint returned an empty steps array, and runner identity / pre-step cause are unavailable. Subsequent documentation / fixture commits are not covered by this run. No compiler or test result exists, so this is not evidence of a source-code regression."
   }
 }
