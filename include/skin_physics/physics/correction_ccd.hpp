@@ -126,6 +126,16 @@ namespace skin_physics::physics
         std::string diagnostic;
     };
 
+    struct correction_primitive_epoch_input
+    {
+        uint64_t stable_id = 0;
+        uint32_t mesh_id = 0;
+        uint32_t primitive_id = 0;
+        correction_primitive_role role = correction_primitive_role::vertex;
+        std::vector<correction_vertex_motion> vertex_motions;
+        std::vector<asset::vec3> segment_start_positions;
+    };
+
     struct correction_segment_candidate_state
     {
         uint64_t base_integration_segment_id = 0;
@@ -206,6 +216,34 @@ namespace skin_physics::physics
         asset::vec3 persistent_contact_normal;
     };
 
+    enum class correction_writer_epoch_status : uint8_t
+    {
+        accepted,
+        blocked,
+        rejected
+    };
+
+    struct correction_writer_epoch_ccd_record
+    {
+        correction_candidate_pair_key candidate;
+        correction_ccd_result result;
+    };
+
+    struct correction_writer_epoch_result
+    {
+        correction_writer_epoch_status status = correction_writer_epoch_status::blocked;
+        bool state_committed = false;
+        uint64_t candidate_generation = 0;
+        uint64_t position_writer_epoch_generation = 0;
+        std::size_t required_cell_records = 0;
+        std::size_t required_candidates = 0;
+        bool capacity_overflow = false;
+        std::vector<correction_writer_epoch_ccd_record> correction_ccd_results;
+        std::vector<correction_candidate_pair_key> active_contacts;
+        std::vector<collision_diagnostic> diagnostics;
+        std::string diagnostic;
+    };
+
     correction_candidate_pair_key make_canonical_correction_candidate_key(
         correction_contact_type contact_type,
         uint64_t stable_id_a,
@@ -260,6 +298,15 @@ namespace skin_physics::physics
         const std::vector<correction_vertex_motion>& vertex_motions,
         float contact_thickness,
         collision_aabb& output_bounds);
+
+    correction_writer_epoch_result process_correction_position_writer_epoch(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        uint32_t position_writer_epoch_id,
+        const std::vector<correction_primitive_epoch_input>& primitives,
+        const std::vector<broadphase_mesh_pair>& mesh_pairs,
+        const broadphase_settings& broadphase_settings,
+        const correction_ccd_settings& ccd_settings);
 
     correction_ccd_result detect_vertex_triangle_correction_motion(
         const vertex_triangle_correction_motion& motion,
