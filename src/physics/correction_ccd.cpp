@@ -1918,10 +1918,26 @@ namespace skin_physics::physics
                 "Segment Candidate Union is not strictly sorted and unique.");
         }
 
-        if (state.contact_set.size() > state.candidates.size())
+        if (state.contact_set.size() > state.candidates.size() ||
+            !std::is_sorted(
+                state.contact_set.begin(), state.contact_set.end(),
+                [](const correction_discrete_contact& left,
+                    const correction_discrete_contact& right)
+                {
+                    return left.key < right.key;
+                }))
         {
             return reject(
-                "Active Contact Set contains more Contacts than the Segment Candidate Union.");
+                "Active Contact Set is not a sorted subset of the Segment Candidate Union.");
+        }
+        for (std::size_t index = 1; index < state.contact_set.size(); ++index)
+        {
+            if (state.contact_set[index - 1u].key ==
+                state.contact_set[index].key)
+            {
+                return reject(
+                    "Active Contact Set contains a duplicate Canonical Pair Key.");
+            }
         }
         for (const correction_discrete_contact& contact : state.contact_set)
         {
@@ -2034,15 +2050,33 @@ namespace skin_physics::physics
         {
             const correction_segment_side_latch& latch =
                 state.side_latches[index];
+            const real normal_length_squared =
+                static_cast<real>(latch.reference_normal.x) *
+                    static_cast<real>(latch.reference_normal.x) +
+                static_cast<real>(latch.reference_normal.y) *
+                    static_cast<real>(latch.reference_normal.y) +
+                static_cast<real>(latch.reference_normal.z) *
+                    static_cast<real>(latch.reference_normal.z);
+            std::vector<uint64_t> topology_vertex_ids =
+                latch.topology_vertex_stable_ids;
+            std::sort(topology_vertex_ids.begin(), topology_vertex_ids.end());
             if ((latch.allowed_side_sign != -1 &&
                     latch.allowed_side_sign != 1) ||
                 !finite(latch.reference_normal) ||
-                latch.topology_vertex_stable_ids.empty() ||
+                !finite(normal_length_squared) ||
+                std::abs(normal_length_squared - 1.0L) > 1.0e-3L ||
+                latch.topology_vertex_stable_ids.size() != 4u ||
+                std::adjacent_find(
+                    topology_vertex_ids.begin(),
+                    topology_vertex_ids.end()) != topology_vertex_ids.end() ||
+                !std::binary_search(
+                    state.candidates.begin(), state.candidates.end(),
+                    latch.key) ||
                 (index > 0 &&
                     state.side_latches[index - 1u].key == latch.key))
             {
                 return reject(
-                    "Segment Side Latch is invalid, duplicated, or missing its topology signature.");
+                    "Segment Side Latch is invalid, duplicated, outside the Candidate Union, or missing a unique four-Vertex topology signature.");
             }
         }
 
