@@ -157,6 +157,13 @@ namespace skin_physics::physics
                 std::isfinite(value.z);
         }
 
+        bool same_position(const vec3& left, const vec3& right)
+        {
+            return left.x == right.x &&
+                left.y == right.y &&
+                left.z == right.z;
+        }
+
         vector3 normalized(const vector3& value)
         {
             const real magnitude = length(value);
@@ -1434,6 +1441,65 @@ namespace skin_physics::physics
         result.candidates = std::move(merged);
         result.success = true;
         return result;
+    }
+
+    bool initialize_correction_segment_geometry(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        const std::vector<correction_segment_vertex_snapshot>&
+            segment_start_vertex_positions,
+        const collision_aabb& physical_swept_bounds)
+    {
+        if (base_integration_segment_id == 0 ||
+            state.base_integration_segment_id != base_integration_segment_id ||
+            state.segment_geometry_initialized ||
+            state.last_position_writer_epoch_id != 0 ||
+            state.position_writer_epoch_generation != 0)
+        {
+            return false;
+        }
+
+        if (!finite(physical_swept_bounds.minimum) ||
+            !finite(physical_swept_bounds.maximum) ||
+            physical_swept_bounds.minimum.x > physical_swept_bounds.maximum.x ||
+            physical_swept_bounds.minimum.y > physical_swept_bounds.maximum.y ||
+            physical_swept_bounds.minimum.z > physical_swept_bounds.maximum.z)
+        {
+            return false;
+        }
+
+        std::vector<correction_segment_vertex_snapshot> sorted_positions =
+            segment_start_vertex_positions;
+        for (const correction_segment_vertex_snapshot& snapshot :
+            sorted_positions)
+        {
+            if (!finite(snapshot.position))
+            {
+                return false;
+            }
+        }
+
+        std::sort(sorted_positions.begin(), sorted_positions.end(),
+            [](const correction_segment_vertex_snapshot& left,
+                const correction_segment_vertex_snapshot& right)
+            {
+                return left.stable_vertex_id < right.stable_vertex_id;
+            });
+        for (std::size_t index = 1; index < sorted_positions.size(); ++index)
+        {
+            if (sorted_positions[index - 1u].stable_vertex_id ==
+                sorted_positions[index].stable_vertex_id)
+            {
+                return false;
+            }
+        }
+
+        state.segment_start_vertex_positions = sorted_positions;
+        state.latest_vertex_positions = std::move(sorted_positions);
+        state.segment_geometry_initialized = true;
+        state.segment_broadphase_envelope = physical_swept_bounds;
+        state.segment_broadphase_envelope_initialized = true;
+        return true;
     }
 
     correction_segment_candidate_state_result create_correction_segment_candidate_state(
