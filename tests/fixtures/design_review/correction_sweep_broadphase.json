@@ -1,5 +1,5 @@
 {
-  "fixture_version": "1.1",
+  "fixture_version": "1.2",
   "purpose": "Persistent deterministic geometry and state vectors for design-review regression Case 49. This file is a reviewed specification input only; it is not an executable assertion or evidence of a production GPU implementation. Includes both positive and negative initial-side signed-separation crossing cases.",
   "normative_sources": [
     "docs/detailed_design.md §9.4.1",
@@ -566,6 +566,75 @@
         "correction_pseudo_time_is_seconds": false,
         "physical_tau_and_correction_s_are_independent": true,
         "correction_s_does_not_increment_toi_split_or_segment_count": true
+      }
+    },
+    {
+      "id": "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE",
+      "test_case": 49,
+      "input": {
+        "primitive_pair": "VT",
+        "base_integration_segment_id": 21,
+        "segment_start_point": [
+          0.25,
+          0.25,
+          0.5
+        ],
+        "triangle_vertices_segment_start": [
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            0
+          ]
+        ],
+        "latched_reference_normal": [
+          0,
+          0,
+          1
+        ],
+        "latched_sigma_pair": 1,
+        "position_writer_epochs": [
+          {
+            "epoch_id": 20,
+            "point_before": [
+              0.25,
+              0.25,
+              -0.005
+            ],
+            "point_after": [
+              0.25,
+              0.25,
+              -0.015
+            ]
+          }
+        ],
+        "contact_thickness_m": 0.02,
+        "physical_swept_candidate_present": true
+      },
+      "expected": {
+        "sigma_pair_used_by_epoch_20": 1,
+        "sigma_is_reinitialized_from_epoch_before": false,
+        "correction_motion_ccd": "HIT",
+        "normalized_signed_separation_interval_is_opposite_side": true,
+        "crossing": "CORRECTION_PATH_CROSSING",
+        "tick_state": "REJECTED",
+        "commit": false
+      },
+      "mutation": {
+        "sigma_pair_recomputed_from_epoch_before": -1
+      },
+      "mutation_expected": {
+        "test_must_fail": "per_epoch_side_reinitialization would incorrectly classify this pair as same-side",
+        "accepted_result": false
       }
     }
   ],
