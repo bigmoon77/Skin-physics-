@@ -141,34 +141,37 @@ sequenceDiagram
     participant H as Host
     participant API as SkinPhysics API
     participant C as Runtime CPU Control
+    participant L as Transient Submission Lease
     participant Q as Query / Status Ring
     participant G as GPU Tick Scheduler
     participant D as D3D11 GPU
 
     alt CPU Preflight exceeds Substep / planned Segment Admission Limit
-        C->>C: keep head Tick Reservation; record exact planned counts
-        C->>C: release unused Query Slot / Render Candidate Slot
+        C->>C: keep logical Tick Reservation / Sequence / Input Snapshot
+        C->>L: release in-flight token + unused Query Slot + Render Candidate Slot
         C->>C: enqueue BLOCKED + cpu_preflight in CPU Status Queue
-        Note over C,Q: No GPU Dispatch and no Event Query for this Tick
+        Note over C,Q: No GPU Upload / Dispatch / Event Query for this Tick
+        H->>API: advance() returns ok + CPU Preflight report
         H->>API: poll()
-        API-->>H: synchronous CPU_PREFLIGHT BLOCKED status
+        API-->>H: synchronous CPU_PREFLIGHT BLOCKED world_status
     else GPU Dynamic TOI residual exceeds Segment Admission Limit
         G->>D: suppress residual Segment / Render Publish / Commit
         G->>D: write BLOCKED + gpu_dynamic_toi + executed count + minimum required lower bound
         G->>Q: Status Copy + Event Query
         C->>Q: poll until Query completes
         Q-->>C: Status Buffer mapped; committed State Generation unchanged
+        C->>L: release Query Slot + Render Candidate Slot + in-flight token
     end
+    Note over C,L: Blocked Reservation persists but owns no Transient Submission Lease and is not counted in in_flight_tick_count
     C->>C: observe all submitted descendant BLOCKED_BY_PREDECESSOR statuses
     H->>API: set_world_execution_budget(world, raised_limits)
-    API->>C: validate Blocked Reservation, observed status, finite Hard Limits
-    alt GPU / Query pending, pending unreserved demand, invalid / over-hard-limit update, or Reservation is UNSATISFIABLE
+    API->>C: validate Blocked Reservation, observed status, finite Host Hard Limits
+    alt GPU / Query pending, pending unreserved demand, invalid update, or Reservation is UNSATISFIABLE
         API-->>H: BUSY / invalid_argument / invalid_state; no mutation
     else budget accepted
         C->>C: atomically update limits + Budget Revision
         C->>C: retain Reservation / Input / Packet / Cursor / Event Snapshot
-        C->>Q: reacquire Query Ring Slot
-        C->>C: reacquire Render Candidate Slot and in-flight Tick capacity
+        C->>L: reacquire in-flight token + Query Slot + Render Candidate Slot
         alt a required resource is unavailable
             C->>C: preserve same Reservation; remain BLOCKED; no Plan / dispatch_id / GPU work
         else all resources admitted
@@ -183,9 +186,21 @@ sequenceDiagram
             G->>C: retry later descendants only after predecessor commit
         end
     end
+    opt explicit reset of a Blocked / UNSATISFIABLE Reservation
+        H->>API: reset_world()
+        API->>C: require GPU commands / Event Queries / Submission Leases / unobserved CPU/GPU Status = 0 / Host Render Lease = 0
+        C-->>API: discard logical Reservation and restore Initial State
+        API-->>H: ok; uncommitted Reservation time is not committed
+    end
 ```
 
-The CPU Preflight result is a Scheduler-owned synchronous Status record; it does not wait for or fabricate an Event Query. The GPU Dynamic TOI result is asynchronous and cannot be changed until its Query and Status have been CPU-observed. After observation, Query and Render Candidate Slots are released. Every Retry passes through Query / Render Candidate / in-flight Resource Admission again; a missing slot keeps the same Reservation BLOCKED and issues no GPU work. A new Plan and `dispatch_id` are created only after all required slots are reacquired and the retry is actually submitted. `minimum_required_integration_segments` is a lower bound at the current discovery point, not a prediction of undiscovered future TOIs; `discovered_toi_split_count` counts unique new interior boundaries only, excludes endpoints / existing boundaries, and groups simultaneous contacts once. The API changes admission caps only; it does not change material parameters, solver quality, Fixed Delta, Substep / Segment boundary schedule, or event times. It is CPU-only and does not call the Immediate Context, Flush, or Wait. A successful update retains the same Tick Reservation and Input / Packet / Event identity.
+The logical Tick Reservation owns simulation time, Sequence, Input Snapshot, Packet Version and Event identity. It is independent of the transient in-flight token / Query Slot / Render Candidate Slot. `in_flight_tick_count` counts only GPU-submitted Attempts whose Status has not yet been CPU-observed. CPU Preflight Block releases all three transient resources before returning its synchronous status. GPU Dynamic TOI Block releases them only after its Event Query completes and `poll()` observes the Status. A Blocked Reservation continues to gate later Physics Submission in its own World but consumes no Runtime-global Query / Candidate / in-flight capacity; other Worlds may use the released resources.
+
+`advance_report` contains only CPU Preflight Blocks synchronously observed during the corresponding `advance()` call. GPU Dynamic TOI and the final Logical Tick result are reported in `world_status` after `poll()`. `advance()` / `poll()` return `ok` when their API operation succeeds; they do not map a Logical Tick Block to an API-call failure.
+
+Every Retry passes through Query / Render Candidate / in-flight Resource Admission again. A missing Lease keeps the same Reservation BLOCKED and issues no GPU work. A new Plan and `dispatch_id` are created only after all required resources are reacquired and the retry is actually submitted. If a GPU Dynamic TOI Status is not yet observed, `reset_world()` returns BUSY. Once the GPU command and Query are complete, Status is observed, all transient Submission Leases are released, and Host Render Lease is zero, `reset_world()` may explicitly discard the remaining Blocked Reservation, including an UNSATISFIABLE one. `drain()` returns BUSY while a Blocked Reservation exists; it never retries or cancels that Reservation.
+
+TOI Split Count is based on unique new interior time-boundary IDs after Geometrically Safe Boundary Snap, not on Contact Event Group count. The Snap window is `tau_snap_tolerance = min(max(1e-7 s, 1e-5 * dt_segment), 0.25 * dt_segment)`; a candidate is snapped / merged only when `v_bound * abs(tau_candidate - tau_boundary) + kinematic_path_deviation_bound <= distance_tolerance`. If the geometric bound exceeds tolerance, the exact tau is retained and a new interior time boundary is counted even when it lies inside the time window. Endpoint / existing-boundary Snap adds no Split Count. Candidates with identical float32 tau bits share one time-boundary ID even when different Contact Geometry forces separate Contact Groups. Distinct tau values share a boundary only when every candidate satisfies the conservative geometric snap bound; otherwise exact-time boundaries remain separate. Multiple Contact Groups sharing one time-boundary ID count one Split only.
 
 ## 4. Submission and completion state
 
@@ -208,8 +223,9 @@ stateDiagram-v2
     GpuExecuting --> BlockedByPredecessor: previous Tick not committed
     GpuExecuting --> Rejected: invalid input / NonFinite / non-retryable physical gate
     GpuExecuting --> Failed: device removed / unrepresentable work count / terminal runtime failure
-    BlockedByWorkBudget --> Preflight: set_world_execution_budget; reacquire Query / Render Candidate / in-flight slots; allocate dispatch_id only at submission
-    BlockedByWorkBudget --> BlockedByWorkBudget: required Work > Runtime Hard Limit; resolution=hard_limit_reached; reset_world only
+    BlockedByWorkBudget --> Preflight: set_world_execution_budget; reacquire transient Query / Render Candidate / in-flight leases; allocate dispatch_id only at submission
+    BlockedByWorkBudget --> BlockedByWorkBudget: required Work > Runtime Hard Limit; resolution=hard_limit_reached; no retry
+    BlockedByWorkBudget --> Ready: reset_world after GPU / Query / Submission Lease / Host Lease are clear; discard Reservation
     BlockedByCapacity --> Reserved: capacity grown; same Reservation replay
     BlockedByCCD --> Reserved: common Substep budget raised; same Reservation replay
     BlockedByPredecessor --> Reserved: predecessor committed; rebuild source generation

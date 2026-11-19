@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "REPLACE_WITH_STABLE_PROFILE_ID",
-  "status": "template_not_measured",
+  "status": "not_qualified",
   "created_utc": null,
   "target_environment": {
     "adapter": {
@@ -27,10 +27,10 @@
     "cloth_constraints": null,
     "broadphase_candidate_pairs_per_tick": null,
     "contact_constraints_per_tick": null,
-    "maximum_world_substeps_hard_limit": null,
-    "maximum_integration_segments_per_tick_hard_limit": null,
     "maximum_solver_iterations": null,
-    "maximum_gpu_resource_bytes": null
+    "maximum_gpu_resource_bytes": null,
+    "tested_maximum_world_substeps": null,
+    "tested_maximum_integration_segments_per_tick": null
   },
   "measurements": {
     "run_count": 0,
@@ -51,7 +51,10 @@
     "selected_maximum_integration_segments_per_tick_hard_limit": null,
     "profile_identity_verified_by_host": false,
     "host_policy_id": null,
-    "notes": null
+    "notes": null,
+    "profile_artifact_sha256_sidecar_uri": null,
+    "host_reserved_gpu_bytes": null,
+    "hard_limit_selection_mode": "measured_maximum"
   },
   "limitations": {
     "substep_and_segment_limits_bound_only_their_named_scheduler_dimensions": true,
@@ -60,11 +63,104 @@
     "tdr_guarantee_note": "This profile is measurement provenance and Host policy input. It is not a GPU watchdog/TDR certificate. A measured workload does not guarantee safe execution for workloads outside its recorded envelope."
   },
   "completion_requirements": [
-    "Replace every required null with a measured value; do not invent or copy values from another adapter/driver combination.",
-    "Record exact adapter LUID, vendor/device IDs, driver version, Windows build, Runtime build and shader package SHA-256.",
-    "Record the maximum tested workload envelope and exact Runtime Hard Limit values selected by Host policy.",
-    "Attach raw timing and memory artifacts with repeat count and measurement timestamp.",
-    "Host must verify profile identity against the active environment before passing selected limits to runtime_desc.",
-    "Do not describe the profile or the two Hard Limits as a TDR-prevention guarantee."
-  ]
+    "Set target_fps within the requirements range 3..40 and record target GPU Tick / CPU Submission time budgets before measurement.",
+    "Set positive required_performance_headroom_fraction and required_memory_headroom_fraction values below 1 before measurement; set minimum_measurement_runs to a positive integer.",
+    "Measure every candidate as a complete workload tuple on the exact adapter / driver / OS / Runtime / shader identity. Preserve all trial rows and raw artifacts.",
+    "Select one passing source_trial_id. The top-level workload_envelope, summary measurements and selected Hard Limits must be taken from that same trial; never compose maxima from different trials.",
+    "Verify p95 frame / CPU Submission, maximum GPU Tick and peak local memory against the declared budgets after headroom.",
+    "Reject the profile if any correctness test fails, Work remains silently dropped, or quality / substep / iteration / collision scope is reduced.",
+    "Verify profile identity against the active environment before passing selected numeric limits to runtime_desc.",
+    "Record a detached SHA-256 for the canonical profile artifact. Do not place a self-referential checksum inside the hashed JSON.",
+    "Do not describe the profile or the two Hard Limits as a GPU watchdog / TDR prevention guarantee.",
+    "Use hard_limit_selection_mode=measured_maximum by default. Select lower values only with host_conservative_override and a recorded reason in host_policy.notes.",
+    "Record exact test_scene_ids in every calibration trial and require the selected trial to contain every required_test_scene_ids entry."
+  ],
+  "qualification_policy": {
+    "target_fps": null,
+    "target_frame_time_ms": null,
+    "target_gpu_tick_time_ms_max": null,
+    "target_cpu_submission_time_ms_p95_max": null,
+    "required_performance_headroom_fraction": null,
+    "required_memory_headroom_fraction": null,
+    "minimum_measurement_runs": null,
+    "target_workload_envelope": {
+      "world_count": null,
+      "soft_body_dynamic_vertices": null,
+      "soft_body_tetrahedra": null,
+      "cloth_dynamic_vertices": null,
+      "cloth_triangles": null,
+      "cloth_constraints": null,
+      "broadphase_candidate_pairs_per_tick": null,
+      "contact_constraints_per_tick": null,
+      "tested_maximum_world_substeps": null,
+      "tested_maximum_integration_segments_per_tick": null,
+      "maximum_solver_iterations": null,
+      "maximum_gpu_resource_bytes": null,
+      "required_test_scene_ids": []
+    },
+    "selected_source_trial_id": null,
+    "rules": {
+      "target_fps": "Required, 3 <= target_fps <= 40 as specified by requirements.md. target_frame_time_ms is derived as 1000 / target_fps.",
+      "timing": "For the selected trial, p95 frame time <= target_frame_time_ms * (1 - required_performance_headroom_fraction); maximum GPU Physics Tick time <= target_gpu_tick_time_ms_max * (1 - required_performance_headroom_fraction); and p95 CPU Submission time <= target_cpu_submission_time_ms_p95_max * (1 - required_performance_headroom_fraction).",
+      "memory": "peak_skin_physics_gpu_bytes + host_reserved_gpu_bytes <= dxgi_local_memory_budget_bytes * (1 - required_memory_headroom_fraction). If the DXGI budget is unavailable or changes during the measurement, the trial is not qualified.",
+      "sample_count": "selected trial run_count >= minimum_measurement_runs. The required count and headroom fractions must be declared before running measurements; no implicit default is permitted.",
+      "workload": "Every target_workload_envelope dimension must be <= the corresponding workload dimension in the selected trial. The top-level workload_envelope and measurements summary must match that selected_source_trial_id exactly; do not combine maximum values from separate trials. Each calibration_trials row must conform to calibration_trial_schema. Every required_test_scene_ids entry must exist in the selected trial's test_scene_ids.",
+      "limits": "In measured_maximum mode, selected_maximum_world_substeps_hard_limit must equal selected_source_trial.workload.tested_maximum_world_substeps and selected_maximum_integration_segments_per_tick_hard_limit must equal selected_source_trial.workload.tested_maximum_integration_segments_per_tick. In host_conservative_override mode, each selected value may be lower only; a non-empty host_policy.notes must justify the override and have been recorded before deployment. Neither value may exceed the matching tested value. Selected vertex / tetrahedron / cloth constraint / candidate / contact / iteration / resource caps must also be <= that same trial's tested values.",
+      "correctness": "A trial is rejected if any correctness fixture fails, any Work Budget / Capacity / CCD block remains unresolved, any candidate or contact is silently dropped, or solver quality / substep / iteration / collision scope is reduced to meet the time budget.",
+      "identity": "The Host verifies Adapter LUID, Vendor / Device IDs, Driver Version, Windows Build, Runtime Build and Shader Package SHA-256 before applying selected limits.",
+      "profile_status": "status is qualified only after every required field and rule passes. status=not_qualified or template_not_measured must never provide Runtime Hard Limit values to runtime_desc.",
+      "selection": "Host must select exactly one passing selected_source_trial_id that covers every target_workload_envelope dimension and satisfies every timing / memory budget. The default host_policy.hard_limit_selection_mode=measured_maximum uses that same trial's tested Substep / Segment maximum values exactly. A lower conservative override requires explicit mode and a non-empty reason in host_policy.notes. Never compose maxima across trials."
+    },
+    "derived_values": {
+      "target_frame_time_ms": "1000 / target_fps"
+    },
+    "validation": {
+      "target_fps": "finite and within [3, 40]",
+      "target_gpu_tick_time_ms_max": "finite and > 0",
+      "target_cpu_submission_time_ms_p95_max": "finite and > 0",
+      "required_performance_headroom_fraction": "finite and strictly between 0 and 1",
+      "required_memory_headroom_fraction": "finite and strictly between 0 and 1",
+      "minimum_measurement_runs": "integer and >= 1",
+      "selected_source_trial_id": "must resolve to exactly one calibration_trials row",
+      "target_workload_envelope": "all workload dimensions are positive integers; a dimension may be zero only when the product policy explicitly declares it unused",
+      "hard_limit_selection_mode": "measured_maximum or host_conservative_override",
+      "host_conservative_override": "host_policy.notes is non-empty and records the pre-deployment reason for choosing lower values",
+      "required_test_scene_ids": "non-empty array of unique non-empty strings"
+    }
+  },
+  "calibration_trials": [],
+  "template_version": "1.1",
+  "calibration_trial_schema": {
+    "trial_id": "stable string identifier unique within this profile",
+    "workload": {
+      "world_count": "integer",
+      "soft_body_dynamic_vertices": "integer",
+      "soft_body_tetrahedra": "integer",
+      "cloth_dynamic_vertices": "integer",
+      "cloth_triangles": "integer",
+      "cloth_constraints": "integer",
+      "broadphase_candidate_pairs_per_tick": "integer",
+      "contact_constraints_per_tick": "integer",
+      "tested_maximum_world_substeps": "integer",
+      "tested_maximum_integration_segments_per_tick": "integer",
+      "maximum_solver_iterations": "integer",
+      "maximum_gpu_resource_bytes": "integer"
+    },
+    "run_count": "integer; number of complete repeated runs with the same workload and build identity",
+    "gpu_total_tick_time_ms_p50": "number; median across runs",
+    "gpu_total_tick_time_ms_p95": "number; p95 across runs",
+    "gpu_total_tick_time_ms_max": "number; maximum across runs",
+    "cpu_submission_time_ms_p95": "number; p95 across runs",
+    "frame_time_ms_p95": "number; p95 across runs",
+    "peak_skin_physics_gpu_bytes": "integer; maximum across runs",
+    "dxgi_local_memory_budget_bytes": "integer; must represent the sampled budget for all accepted runs",
+    "correctness_failure_count": "integer; must be 0",
+    "unresolved_work_budget_count": "integer; must be 0",
+    "unresolved_capacity_count": "integer; must be 0",
+    "unresolved_ccd_count": "integer; must be 0",
+    "silent_drop_count": "integer; must be 0",
+    "quality_reduction_count": "integer; must be 0",
+    "raw_measurement_artifact_uri": "string; immutable raw result bundle",
+    "test_scene_ids": "unique, non-empty strings naming the exact Gate R6 / acceptance scenes executed in this trial"
+  }
 }

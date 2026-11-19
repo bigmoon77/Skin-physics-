@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.7",
+  "profile_version": "1.8",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -37,9 +37,37 @@
         "dispatch_count_and_per-dispatch GPU execution time",
         "total GPU execution time or Windows TDR deadline"
       ],
-      "acceptance": "initialize rejects zero Hard Limits. create_world and set_world_execution_budget reject zero or over-Hard-Limit World Admission Limits without mutating Budget, Revision, Reservation or Timeline. Values above Hard Limits are invalid_argument. These checks do not imply that a within-limit Workload is TDR-safe."
+      "acceptance": "initialize rejects zero Hard Limits. create_world and set_world_execution_budget reject zero or over-Hard-Limit World Admission Limits without mutating Budget, Revision, Reservation or Timeline. Values above Hard Limits are invalid_argument. These checks do not imply that a within-limit Workload is TDR-safe.",
+      "deployment_profile_template": "deployment_capability_profile_template.json",
+      "deployment_profile_qualification_policy": {
+        "target_fps_range_from_requirements": [
+          3,
+          40
+        ],
+        "frame_budget_rule": "target_frame_time_ms = 1000 / target_fps",
+        "qualification": "A selected calibration trial must satisfy every declared frame-time, GPU-tick, CPU-submission and local-memory budget after the declared headroom is applied. Its measured workload and selected Runtime Hard Limits must come from that same trial. Never combine per-dimension maxima from different trials.",
+        "hard_limit_rule": "selected maximum_world_substeps_hard_limit and maximum_integration_segments_per_tick_hard_limit must be <= the corresponding values tested in the selected passing trial. Selected geometry / constraint / candidate / contact / iteration / memory limits must also be <= the corresponding tested dimensions.",
+        "failure_rule": "Missing policy inputs, identity mismatch, insufficient repetitions, exceeded timing or memory budget, nonzero quality reduction, dropped work, or missing raw measurement evidence makes the profile not_qualified. Host must not use its numeric caps.",
+        "template_version": "1.1",
+        "hard_limit_selection_modes": {
+          "measured_maximum": "selected Runtime Hard Limits equal the same qualified Trial's tested Substep and Integration Segment maxima",
+          "host_conservative_override": "selected Runtime Hard Limits may be lower than the same qualified Trial's tested maxima only when a non-empty Host rationale is recorded before deployment",
+          "prohibition": "No selected limit may exceed the matching tested value; do not combine dimensions from separate calibration trials."
+        },
+        "target_budget_inputs": [
+          "target_fps (3..40)",
+          "target_gpu_tick_time_ms_max",
+          "target_cpu_submission_time_ms_p95_max",
+          "required_performance_headroom_fraction (0..1 exclusive endpoints)",
+          "required_memory_headroom_fraction (0..1 exclusive endpoints)",
+          "minimum_measurement_runs (positive integer)",
+          "target_workload_envelope (complete workload tuple)"
+        ],
+        "test_scene_policy": "The selected calibration trial must include every unique required_test_scene_ids entry from the target_workload_envelope; the exact executed scene IDs are retained in each trial row and raw evidence bundle."
+      }
     },
-    "deployment_profile_template": "deployment_capability_profile_template.json"
+    "deployment_profile_template": "deployment_capability_profile_template.json",
+    "deployment_profile_template_version": "1.1"
   },
   "normalization": {
     "per_mesh": true,
@@ -318,6 +346,10 @@
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
   },
   "version_history": [
+    {
+      "version": "1.8",
+      "changes": "Clarified measured_maximum as the default Hard Limit selection policy; lower caps require a documented Host conservative override from the same qualified Trial. Template v1.1 defines complete trial schema and target workload mapping. The selected trial must cover every required test scene ID."
+    },
     {
       "version": "1.7",
       "changes": "Clarified Runtime Hard Limits as Host-configured admission guards, added deployment capability profile provenance requirements, removed Runtime-certified/TDR-safe claims, and documented dimensions not bounded by Substep/Segment limits."

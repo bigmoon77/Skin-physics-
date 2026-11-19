@@ -1,11 +1,12 @@
-# Skin Physics 設計閉鎖書（v2.5）
+# Skin Physics 設計閉鎖書（v2.6）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.13
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.15
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.12
-- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.7
+- 基本設計: [basic_design.md](basic_design.md) v1.14
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.16
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.13
+- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.8
+- Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.1
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
 
@@ -164,7 +165,7 @@ Additional 2-ring / 3-ring除外は既定0。折り畳み部の接触見逃し�
 - Boundを計算できない場合はSegmentを決定的に細分化する。最大深度8でもdistance_tolerance以下を証明できない場合はCCDUnresolvedとしてTickをCommitしない。
 - Kinematic TOI位置はtau時刻のAnimation / Rigid Transform Trajectoryを直接評価する。Contact Relative Velocityには同時刻のAnimation Target Trajectory微分、Rigid Colliderではv_linear + omega cross radiusを使う。Chord速度へ置換しない。
 - TOI prefixでは非接触内部Constraintを先に解き、Contact前Velocityを保存してからContact Position correction / Impactを行う。Contact位置補正後にVelocityを再構築しない。
-- 同時TOI Group tolerance = max(1e-7 s, 1e-5 * dt_segment)。ImpactはContact Key順に一度だけ適用。
+- TOI Snap / Grouping tolerance = `tau_snap_tolerance = min(max(1e-7 s, 1e-5 * dt_segment), 0.25 * dt_segment)`。Snap / Contact Group化は各Candidateの保守的位置誤差Bound <= distance_toleranceの場合だけ許可する。ImpactはContact Key順に一度だけ適用。
 - 分割上限超過 / UnresolvedはTickをCommitせず、同じTick ReservationからRetryする。Retry上限到達時はBlockedByCCD / Failed。
 ### 2.7 World共通Substep / 外力イベント
 
@@ -180,7 +181,7 @@ v1ではWorld内のSoft Body / Cloth / Contact / Animation Trackingが同一時�
 
 を算出する。contact_max_substep_delta_time=0およびworld_max_substep_delta_time=0は+infinityとして扱う。Cloth Temporal Quality LimitはXPBDの安定保証ではなく、拘束振動数omega_c = sqrt(k_c * sum_i(inverse_mass_i * |gradient_i|^2))に基づく品質上限である。Runtime Descriptorのenable_cloth_temporal_quality_limitは初期値true、cloth_temporal_quality_factorは初期値0.2とする。dt_limit_cloth_quality = cloth_temporal_quality_factor / max(omega_cloth_max, epsilon_omega)とし、解像度・反復収束試験で校正する。enable_cloth_temporal_quality_limit=falseの場合だけその項を無限大とする。Contact Compliance 0に固有振動数を割り当てず、contact_max_substep_delta_timeで時間品質を管理する。初期値は1/120 s、0は明示無効。無効時はworld_max_substep_delta_timeを適用する。Contact Temporal Quality LimitもXPBDの安定保証ではなく品質上限とする。
 
-CPU PreflightでWorld Substep / Clip Key / Loop / Blend Weight / Root Transform / Force / Impulse境界を統合した予定Segment総数を算出し、maximum_integration_segments_per_tick（初期値512）以下であることを確認する。maximum_substepsも同じPreflightで検証する。上限超過時はBLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflightとして同一Reservationを保持し、GPU Physics Upload / Dispatch / Event Queryを発行しない。TOIで基底Segmentをprefix / residualへ分けるたびにdiscovered_toi_split_countを増やし、minimum_required_integration_segments = planned_integration_segments + discovered_toi_split_countを現在の下限値としてStatusへ報告する。上限超過時は残SegmentをDispatchせずBLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toiとし、同一Reservationで追加Retryを許可する。未知の後続TOIは下限値に含まない。異なる時刻のKey / Event境界は結合・省略しない。
+CPU PreflightでWorld Substep / Clip Key / Loop / Blend Weight / Root Transform / Force / Impulse境界を統合した予定Segment総数を算出し、maximum_integration_segments_per_tick（初期値512）以下であることを確認する。maximum_substepsも同じPreflightで検証する。上限超過時はBLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflightとして同一Reservationを保持し、GPU Physics Upload / Dispatch / Event Queryを発行しない。TOIはDetailed Design §7.1.2 / §11.4のGeometrically Safe Boundary Snapで端点 / 既存Boundary / simultaneous Contact Event Groupを分類する。保守的なSnap位置誤差Boundがdistance_tolerance以下の場合だけ既存Boundaryへマージし、許容値を超える場合は正確なtauに内部Splitを作る。`discovered_toi_split_count`はContact Group数ではなく、新しい内部時間Boundary IDごとに1回だけ増やす。同じfloat32 tauを持つContactがGeometryにより別Contact Groupへ分かれてもSplitを二重計上しない。`minimum_required_integration_segments = planned_integration_segments + discovered_toi_split_count`を下限として報告する。上限超過時は残SegmentをDispatchせずBLOCKED / WORK_BUDGET_EXCEEDED / gpu_dynamic_toiとし、同一Reservationで追加Retryを許可する。未知の後続TOIは下限値に含まない。異なる時刻のKey / Event境界は結合・省略しない。
 
 制限が全て未指定ならN_world=minimum_substeps。minimum_substeps初期値1、maximum_substeps初期値128。world_max_substep_delta_timeは全Solverへ適用する共通dt上限とする。N_worldがmaximum_substepsを超えた場合はBLOCKED / WORK_BUDGET_EXCEEDED / cpu_preflightとして予定Substep数をStatusへ記録し、同じReservationを保持する。Cloth / Contact XPBD Complianceは各Integration Segmentのdt_segmentを使う。Force / Impulse Event境界とTOIでWorld全体をSegment分割し、全参加Solverを同じSegment時間だけ進める。XPBD LambdaはSegmentごとにResetし、Segment内だけ累積する。
 
@@ -337,17 +338,19 @@ Render Candidate Ring:
 
 ### 4.6 WORK_BUDGET_EXCEEDED Recovery
 
-- `WORK_BUDGET_EXCEEDED`はLogical Tick State=`BLOCKED`とし、Reservation / Tick Sequence / Input Snapshotを保持する。`REJECTED`や`FAILED`へ分類しない。`advance()` / `poll()`の戻り値はAPI操作成否、Logical Tick結果は`advance_report` / `world_status.last_tick_status`で返す。
-- CPU Preflightは正確な`planned_substeps` / `planned_integration_segments`をStatusへ記録し、GPU Physics Dispatch / Event Queryを発行しない。未使用Query / Render Candidate Slotを解放し、CPU Status Queueへ同期記録する。poll()で同じ呼出し中に観測可能とする。
-- GPU Dynamic TOIは`executed_integration_segments`と`minimum_required_integration_segments`をStatusへ記録する。後者は現在のDispatch Attempt内で発見済みTOI分割と残Segmentに対する下限値であり、`planned_integration_segments + discovered_toi_split_count`とする。Countはtauが内部にあり、既存境界と異なる一意な時間境界を作るTOI Groupごとに1増やす。端点TOI / 既存境界一致は0、時間許容差内の同時Contact Groupは1とする。未知の後続TOIを含む最終総数ではない。新しいRetry Planでは分割Countを初期化し、追加TOIが発見されるたびに同じReservationを再Blockできる。
+- `WORK_BUDGET_EXCEEDED`はLogical Tick State=`BLOCKED`とし、Reservation / Tick Sequence / Input Snapshotを保持する。`REJECTED`や`FAILED`へ分類しない。`advance()` / `poll()`の戻り値はAPI操作成否、Logical Tick結果は`world_status.last_tick_status`で返す。`advance_report`が報告するのは同期CPU Preflight Blockだけとし、GPU Dynamic TOIは`poll()`後の`world_status`で観測する。
+- CPU Preflightは正確な`planned_substeps` / `planned_integration_segments`をStatusへ記録し、GPU Physics Dispatch / Event Queryを発行しない。未使用Query / Render Candidate / in-flight Submission Leaseを解放し、Reservationだけを保持してCPU Status Queueへ同期記録する。`advance_report` / `poll()`から同期観測可能とする。
+- GPU Dynamic TOIは`executed_integration_segments`と`minimum_required_integration_segments`をStatusへ記録し、Event Query完了とCPU Status観測後にQuery / Render Candidate / in-flight Submission Leaseを全て解放する。後者は現在のDispatch Attempt内で発見済みTOI分割と残Segmentに対する下限値であり、`planned_integration_segments + discovered_toi_split_count`とする。Countはtauが内部にあり、新しい`toi_time_boundary_id`を作る場合に1増やす。同じfloat32 tauを持つ複数Contact GroupはGeometry条件により分離されても同一時間Boundaryとして1回だけ数える。端点 / 既存境界へ安全にSnapできるTOIは0、異なるtauは保守的Snap誤差Boundが各distance_tolerance以下の場合だけ同一Boundaryへマージする。未知の後続TOIを含む最終総数ではない。新しいRetry Planでは分割Countを初期化し、追加TOIが発見されるたびに同じReservationを再Blockできる。
 - `work_budget_block_origin`はCPU Preflight / GPU Dynamic TOIを明示し、flags bit0/1/2でSubstep / Preflight Segment / Dynamic TOI Segment超過を識別する。
 - Runtime初期化時に`maximum_world_substeps_hard_limit`と`maximum_integration_segments_per_tick_hard_limit`を必須指定し、Runtime lifetime中は変更不可とする。これらはHost-configured Admission Guardであり、Runtimeは0 / World Admission Limit超過を検証する。Deployment Capability Profileは実測環境・Workload・選択値のProvenance Recordであり、認証済みHard LimitやTDR保証を意味しない。HostがProfileのHardware / Driver / OS / Shader identityを実行環境と照合し、採用値を決定する。Substep / Segment数だけではGPU総Work量を上限化できないため、TDR安全性を主張しない。
 - `set_world_execution_budget`のBlocked Reservation更新は上限引上げのみとし、報告された予定数 / TOI下限値以上かつHard Limit以下を要求する。いずれかのAdmission Limitを減らす要求は`invalid_argument`で無変更とする。Work量がHard Limitを超えた場合は`last_tick_status=work_budget_unsatisfiable` / `work_budget_resolution=hard_limit_reached`を報告し、当該ReservationのBudget Retryを禁止する。Hostの明示的`reset_world`のみがReservationを破棄してInitial Stateへ戻す。Idle Worldの増減は未Reservation Whole Tick / Step Request / Reservation / GPU Submissionがない場合だけ許可する。Pending Demandがある場合は`BUSY`で無変更とする。
 - Budget超過でBlockされたTickはTick Sequence / Reservation時間 / Input Snapshot / Animation Packet Version / Cursor開始Snapshot / Event IDを保持する。
-- Retryでは同じReservationをTick開始Committed Stateから再実行する。CPU Preflightで解放したQuery / Render Candidate Slot、GPU Dynamic TOIのStatus観測後に解放したQuery / Render Candidate Slot、in-flight枠を標準Submission Admissionで再取得してからPlanを生成する。Slot不足中は同じReservationを保持してBLOCKEDを継続し、Slotが取得できるまで新dispatch_id / GPU Dispatchを発行しない。Planは新しいBudget Revisionと結び付ける。後続Tickは先行Commit後に新Source Generationで再Planする。
+- Retryでは同じReservationをTick開始Committed Stateから再実行する。CPU Preflight / GPU Dynamic TOI Block後に解放したQuery / Render Candidate / in-flight Submission Leaseを標準Submission Admissionで再取得してからPlanを生成する。Blocked Reservation自体はin-flight数へ算入しない。したがってHard Limit UnsatisfiableでもGPU Command / Query / Submission LeaseとHost Render Leaseが0であれば、`reset_world`で当該Reservationを明示的に破棄できる。Slot不足中は同じReservationを保持してBLOCKEDを継続し、Slotが取得できるまで新dispatch_id / GPU Dispatchを発行しない。Planは新しいBudget Revisionと結び付ける。後続Tickは先行Commit後に新Source Generationで再Planする。
 - 更新対象はAdmission Limitだけ。物理材料、Compliance、Contact品質、Fixed Delta、Substep / Segment境界の意味は変更しない。
-- `advance()`は時間要求の受付、`poll()`はStatus観測が成功すれば`ok`を返し、Block理由は`advance_report` / `world_status`へ返す。CPU Preflight Blockは`advance()`が`ok`でも発生し得る。`poll()`は`ok`と`tick_state=BLOCKED`、`last_tick_status=work_budget_exceeded`を同時に表現する。
-- Retry Resource AdmissionでQuery / Render Candidate / in-flight枠を再取得できない場合はReservationを維持する。Hard Limit到達時はRetry不能として明示し、Reset以外で時間・物理状態を暗黙に破棄しない。
+- `advance()`は時間要求の受付、`poll()`はStatus観測が成功すれば`ok`を返す。`advance_report`はCPU Preflight Blockのみ、GPU Dynamic TOIと最終Logical Tick状態は`world_status`で返す。CPU Preflight Blockは`advance()`が`ok`でも発生し得る。`poll()`は`ok`と`tick_state=BLOCKED`、`last_tick_status=work_budget_exceeded`を同時に表現する。
+- Retry Resource AdmissionでQuery / Render Candidate / in-flight Submission Leaseを再取得できない場合はReservationを維持する。Hard Limit到達時はRetry不能として明示する。Block後のTransient Leaseが解放され、CPU / GPU Statusを`poll()`で観測済みであり、Host Render Leaseもなければ、ResetでReservationを明示的に破棄できる。
+
+- Deployment Capability Profile qualificationは、対象FPS 3～40、Target Frame / GPU Tick / CPU Submission Budget、Performance / Memory Headroom、最小測定回数を測定前に宣言して行う。p95 Frame / CPU Submission、最大GPU Tick、Peak Library GPU MemoryがHeadroom適用後のBudgetを満たし、Correctness Gateを全て通るTrialだけを採用する。Workload Envelope / Hard Limit / Timing Summaryは同一Trialから採用し、異なるTrialのDimension最大値を合成しない。詳細はRuntime Gate R6とProfile Template v1.1を正とする。
 
 ## 5. Validation / Acceptance
 
@@ -392,7 +395,7 @@ Render Candidate Ring:
 - [ ] GPU Animation Trajectory PacketがTOI任意tauのBone / Skinning Position / VelocityとKinematic Collider Transform / Contact Point Velocityを評価し、Clip Key Span / Blend / Collider Sample / Boundが同一Versionである。
 - [ ] WORK_BUDGET_EXCEEDEDはBLOCKEDに統一され、CPU Preflight同期StatusとGPU Dynamic TOI Query Statusが別経路でpoll可能。
 - [ ] TOI時のminimum_required_integration_segmentsは証明可能な下限値として扱い、複数回のTOI再Block / 再Retryを検証する。
-- [ ] Host-configured Runtime Hard Limitは初期化時に固定され、0 / 上限超過設定はinvalid_argumentで無変更。Deployment Capability Profileは測定ProvenanceとしてGate R6で作成し、Runtimeによる認証検証・TDR保証を主張しない。
+- [ ] Host-configured Runtime Hard Limitは初期化時に固定され、0 / 上限超過設定はinvalid_argumentで無変更。Deployment Capability ProfileはGate R6のTarget Budget / Headroom / same-trial policyに合格した場合のみqualifiedとなり、Hostが環境照合した後に採用する。Runtimeによる認証検証・TDR保証を主張しない。
 - [ ] Pending Whole Tick / Step Request / Reservation中の予算更新はBUSYで無変更。Blocked ReservationのRetryは同じTick Reservation / Input / Packet / Eventを保持する。
 - [ ] SM5 GPU PacketはAbsolute World TimeをfloatへCastせず、CPU doubleからSpan-local normalized u / Segment-relative tauへ変換する。Record Byte Size / Offsets / Stridesとu_segment_startの単調進行を検証する。 Immutable PacketのMutation Count=0、CursorのSnapshot Restore Mismatch=0、Rejected TickからのCursor Leak=0も検証する。
 - [ ] Animation Target Velocityは最終Skinning Trajectoryの時間微分とし、STEP / LINEAR / CUBICSPLINE / Blendの規則が一意。
@@ -431,6 +434,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
+- 2.6: Logical Reservation / Transient Submission Lease所有権、Reset / Drain条件、TOI端点Snapの幾何誤差Guard、Contact Groupと時間Boundary Countの分離、CPU-only advance_report、同一Trial / Budget / Headroom選定によるDeployment Profile qualificationを反映。Profile v1.8 / Template v1.1と各設計書の版番号を同期.
 - 2.5: Retry Resource Re-Admission、Unique TOI Split Count、Hard Limit Unsatisfiable / Reset、API戻り値とTick Statusの分離、Host-configured Guardと測定Profileの責務を統一。Profile v1.7と各設計書の版番号を同期。
 - 2.4: Work BudgetのBLOCKED状態、CPU Preflight / GPU Dynamic TOIのStatus観測、TOI要求下限値、Runtime Hard Limit、BUSY no-mutationを統一。Numerical Acceptance Profile v1.6と各設計書の版番号を同期。
 - 2.3: WORK_BUDGET_EXCEEDEDのStatus / Required Count / 実行予算再設定 / 同一Reservation RetryをRuntime API・Validation Checklistへ追加。Numerical Acceptance Profile v1.5と各設計書の版番号を同期。

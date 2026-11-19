@@ -601,6 +601,14 @@
       {
         "id": "DCR_42_DEPLOYMENT_CAPABILITY_PROFILE_PROVENANCE",
         "test_case": 42
+      },
+      {
+        "id": "DCR_43_BLOCKED_RESERVATION_SUBMISSION_LEASE_OWNERSHIP",
+        "test_case": 43
+      },
+      {
+        "id": "DCR_44_TOI_ENDPOINT_SNAP_GEOMETRIC_ERROR_GUARD",
+        "test_case": 44
       }
     ]
   },
