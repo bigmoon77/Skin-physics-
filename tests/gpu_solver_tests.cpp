@@ -5,6 +5,7 @@
 #include "skin_physics/physics/animation_track.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
 #include "skin_physics/physics/ccd.hpp"
+#include "skin_physics/physics/correction_ccd.hpp"
 #include "skin_physics/simulation/d3d11_timestamp_profiler.hpp"
 #include "skin_physics/simulation/d3d11_compute_graph.hpp"
 #include "test_support.hpp"
@@ -758,6 +759,22 @@ namespace
         uint32_t y = 0;
     };
 
+    struct gpu_correction_primitive_input
+    {
+        uint32_t vertex_indices[4] = {};
+        uint32_t vertex_count = 0;
+        uint32_t reserved[3] = {};
+    };
+
+    struct alignas(16) gpu_correction_parameters
+    {
+        uint32_t primitive_count = 0;
+        uint32_t vertex_count = 0;
+        float contact_thickness = 0.0f;
+        uint32_t reserved = 0;
+    };
+
+
     struct alignas(16) gpu_collision_parameters
     {
         float contact_radius = 0.0f;
@@ -1120,6 +1137,196 @@ namespace
             cpu_reference.candidates[0].primitive_b == 1,
             "Fixture CPU reference pair ordering must remain stable.");
         std::cout << "[PASS] P07_WARP_BVH_BROADPHASE_AND_OVERFLOW\n";
+    }
+
+    void test_phase12_warp_correction_swept_aabb(
+        ID3D11Device* device,
+        ID3D11DeviceContext* context,
+        ID3D11ComputeShader* shader)
+    {
+        const float contact_thickness = 0.02f;
+        const std::vector<vec3> positions_before = {
+            { 0.25f, 0.25f, 1.0f },
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f }
+        };
+        const std::vector<vec3> positions_after = {
+            { 0.25f, 0.25f, -1.0f },
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f }
+        };
+
+        std::vector<gpu_float4> gpu_before;
+        std::vector<gpu_float4> gpu_after;
+        for (const vec3& position : positions_before)
+        {
+            gpu_before.push_back(to_gpu_float4(position));
+        }
+        for (const vec3& position : positions_after)
+        {
+            gpu_after.push_back(to_gpu_float4(position));
+        }
+
+        std::vector<gpu_correction_primitive_input> primitives(2);
+        primitives[0].vertex_indices[0] = 0;
+        primitives[0].vertex_count = 1;
+        primitives[1].vertex_indices[0] = 1;
+        primitives[1].vertex_indices[1] = 2;
+        primitives[1].vertex_indices[2] = 3;
+        primitives[1].vertex_count = 3;
+
+        const std::vector<gpu_aabb> initial_bounds(2);
+        const std::vector<uint32_t> initial_status(2, 0xffffffffu);
+        const ComPtr<ID3D11Buffer> before_buffer =
+            create_structured_buffer(device, gpu_before, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> after_buffer =
+            create_structured_buffer(device, gpu_after, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> primitive_buffer =
+            create_structured_buffer(device, primitives, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> bounds_buffer =
+            create_structured_buffer(device, initial_bounds, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(device, initial_status, D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11ShaderResourceView> before_view =
+            create_structured_srv<gpu_float4>(device, before_buffer.Get(), 4);
+        const ComPtr<ID3D11ShaderResourceView> after_view =
+            create_structured_srv<gpu_float4>(device, after_buffer.Get(), 4);
+        const ComPtr<ID3D11ShaderResourceView> primitive_view =
+            create_structured_srv<gpu_correction_primitive_input>(
+                device, primitive_buffer.Get(), 2);
+        const ComPtr<ID3D11UnorderedAccessView> bounds_view =
+            create_structured_uav<gpu_aabb>(device, bounds_buffer.Get(), 2);
+        const ComPtr<ID3D11UnorderedAccessView> status_view =
+            create_structured_uav<uint32_t>(device, status_buffer.Get(), 2);
+
+        gpu_correction_parameters parameters;
+        parameters.primitive_count = 2;
+        parameters.vertex_count = 4;
+        parameters.contact_thickness = contact_thickness;
+        const ComPtr<ID3D11Buffer> constants =
+            create_constant_buffer(device, &parameters, sizeof(parameters));
+
+        ID3D11ShaderResourceView* resources[] = {
+            before_view.Get(), after_view.Get(), primitive_view.Get()
+        };
+        ID3D11UnorderedAccessView* unordered_views[] = {
+            bounds_view.Get(), status_view.Get()
+        };
+        context->CSSetShader(shader, nullptr, 0);
+        context->CSSetShaderResources(6, 3, resources);
+        context->CSSetUnorderedAccessViews(4, 2, unordered_views, nullptr);
+        ID3D11Buffer* constant_buffer = constants.Get();
+        context->CSSetConstantBuffers(1, 1, &constant_buffer);
+        context->Dispatch(1, 1, 1);
+
+        ID3D11ShaderResourceView* null_resources[] = {
+            nullptr, nullptr, nullptr
+        };
+        ID3D11UnorderedAccessView* null_unordered[] = { nullptr, nullptr };
+        ID3D11Buffer* null_constants[] = { nullptr };
+        context->CSSetShaderResources(6, 3, null_resources);
+        context->CSSetUnorderedAccessViews(4, 2, null_unordered, nullptr);
+        context->CSSetConstantBuffers(1, 1, null_constants);
+        context->CSSetShader(nullptr, nullptr, 0);
+
+        const std::vector<gpu_aabb> gpu_bounds =
+            readback_structured_buffer<gpu_aabb>(
+                device, context, bounds_buffer.Get(), 2);
+        const std::vector<uint32_t> gpu_status =
+            readback_structured_buffer<uint32_t>(
+                device, context, status_buffer.Get(), 2);
+        require(gpu_status[0] == 0u && gpu_status[1] == 0u,
+            "WARP correction Swept AABB must complete both valid primitives without diagnostics.");
+
+        skin_physics::physics::collision_aabb cpu_point_bounds;
+        skin_physics::physics::collision_aabb cpu_triangle_bounds;
+        const std::vector<skin_physics::physics::correction_vertex_motion> point_motion = {
+            { positions_before[0], positions_after[0] }
+        };
+        std::vector<skin_physics::physics::correction_vertex_motion> triangle_motion;
+        for (std::size_t index = 1; index < 4; ++index)
+        {
+            triangle_motion.push_back({
+                positions_before[index], positions_after[index]
+            });
+        }
+        require(skin_physics::physics::build_correction_swept_aabb(
+            point_motion, contact_thickness, cpu_point_bounds) &&
+            skin_physics::physics::build_correction_swept_aabb(
+                triangle_motion, contact_thickness, cpu_triangle_bounds),
+            "CPU correction Swept AABB references must build from the same before/after inputs.");
+
+        const auto compare_bounds = [](const gpu_aabb& actual,
+            const skin_physics::physics::collision_aabb& expected)
+        {
+            const float actual_minimum[3] = {
+                actual.minimum.x, actual.minimum.y, actual.minimum.z
+            };
+            const float actual_maximum[3] = {
+                actual.maximum.x, actual.maximum.y, actual.maximum.z
+            };
+            const float expected_minimum[3] = {
+                expected.minimum.x, expected.minimum.y, expected.minimum.z
+            };
+            const float expected_maximum[3] = {
+                expected.maximum.x, expected.maximum.y, expected.maximum.z
+            };
+            for (std::size_t axis = 0; axis < 3; ++axis)
+            {
+                if (actual_minimum[axis] > expected_minimum[axis] ||
+                    actual_maximum[axis] < expected_maximum[axis])
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+        require(compare_bounds(gpu_bounds[0], cpu_point_bounds) &&
+            compare_bounds(gpu_bounds[1], cpu_triangle_bounds),
+            "WARP Correction Swept AABBs must enclose the CPU outward-rounded reference bounds.");
+
+        primitives[1].vertex_indices[2] = 99;
+        const ComPtr<ID3D11Buffer> invalid_primitive_buffer =
+            create_structured_buffer(device, primitives, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> invalid_primitive_view =
+            create_structured_srv<gpu_correction_primitive_input>(
+                device, invalid_primitive_buffer.Get(), 2);
+        ID3D11ShaderResourceView* invalid_resources[] = {
+            before_view.Get(), after_view.Get(), invalid_primitive_view.Get()
+        };
+        const std::vector<gpu_aabb> reset_bounds(2);
+        const std::vector<uint32_t> reset_status(2, 0xffffffffu);
+        const ComPtr<ID3D11Buffer> invalid_bounds_buffer =
+            create_structured_buffer(device, reset_bounds, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> invalid_status_buffer =
+            create_structured_buffer(device, reset_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> invalid_bounds_view =
+            create_structured_uav<gpu_aabb>(device, invalid_bounds_buffer.Get(), 2);
+        const ComPtr<ID3D11UnorderedAccessView> invalid_status_view =
+            create_structured_uav<uint32_t>(device, invalid_status_buffer.Get(), 2);
+        ID3D11UnorderedAccessView* invalid_unordered[] = {
+            invalid_bounds_view.Get(), invalid_status_view.Get()
+        };
+        context->CSSetShader(shader, nullptr, 0);
+        context->CSSetShaderResources(6, 3, invalid_resources);
+        context->CSSetUnorderedAccessViews(4, 2, invalid_unordered, nullptr);
+        context->CSSetConstantBuffers(1, 1, &constant_buffer);
+        context->Dispatch(1, 1, 1);
+        context->CSSetShaderResources(6, 3, null_resources);
+        context->CSSetUnorderedAccessViews(4, 2, null_unordered, nullptr);
+        context->CSSetConstantBuffers(1, 1, null_constants);
+        context->CSSetShader(nullptr, nullptr, 0);
+
+        const std::vector<uint32_t> invalid_status =
+            readback_structured_buffer<uint32_t>(
+                device, context, invalid_status_buffer.Get(), 2);
+        require(invalid_status[0] == 0u && invalid_status[1] == 2u,
+            "WARP Correction Swept AABB must fail closed on an out-of-range primitive vertex index.");
+
+        std::cout << "[PASS] P12_WARP_CORRECTION_SWEPT_AABB\n";
     }
 
     void test_phase08_warp_point_triangle_ccd()
