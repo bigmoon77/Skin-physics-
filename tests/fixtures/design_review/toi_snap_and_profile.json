@@ -1,5 +1,5 @@
 {
-  "fixture_version": "1.0",
+  "fixture_version": "1.1",
   "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications; they do not claim executable test coverage.",
   "cases": [
     {
@@ -31,7 +31,12 @@
         ],
         "zero_duration_prefix_created": false,
         "velocity_reconstruction_divisions_by_tau": 0,
-        "residual_segment_created": false
+        "residual_segment_created": true,
+        "residual_segment_duration_seconds": 0.016666666666666666,
+        "residual_segment_has_new_base_integration_segment_id": true,
+        "discovered_toi_split_count_increment": 0,
+        "discovered_toi_segment_count_increment": 1,
+        "remaining_time_processed_exactly_once": true
       }
     },
     {
@@ -86,7 +91,7 @@
       }
     },
     {
-      "id": "DCR_46_SNAP_ERROR_BUDGET",
+      "id": "DCR_46_SNAP_ERROR_BUDGET_SCALAR_UNCOUPLED",
       "test_case": 46,
       "input": {
         "tau_snap_tolerance_seconds": 0.00001,
@@ -160,6 +165,146 @@
           "E_solver_residual_ns": 0.005,
           "full_E_impulse_ns": "0.02 + 2*4.0*sin(0.01/2) + 0.015 + 0.005"
         }
+      }
+    },
+    {
+      "id": "DCR_46_COUPLED_CONTACT_ISLAND_INTERVAL",
+      "test_case": 46,
+      "input": {
+        "contact_count": 2,
+        "contact_order": [
+          "contact_A",
+          "contact_B"
+        ],
+        "delassus_matrix_candidate": [
+          [
+            2,
+            0.25
+          ],
+          [
+            0.25,
+            1.5
+          ]
+        ],
+        "delassus_matrix_boundary_intervals": [
+          [
+            [
+              1.99,
+              2.01
+            ],
+            [
+              0.24,
+              0.26
+            ]
+          ],
+          [
+            [
+              0.24,
+              0.26
+            ],
+            [
+              1.49,
+              1.51
+            ]
+          ]
+        ],
+        "responsive_subspace_min_eigenvalue_lower_bound_required": 0,
+        "normal_relative_velocity_intervals_candidate": [
+          [
+            -1.01,
+            -0.99
+          ],
+          [
+            -0.81,
+            -0.79
+          ]
+        ],
+        "normal_relative_velocity_intervals_boundary": [
+          [
+            -1,
+            -0.98
+          ],
+          [
+            -0.8,
+            -0.78
+          ]
+        ],
+        "restitution_intervals": [
+          [
+            0,
+            0.02
+          ],
+          [
+            0,
+            0.02
+          ]
+        ],
+        "friction_coefficient_intervals": [
+          [
+            0.39,
+            0.41
+          ],
+          [
+            0.39,
+            0.41
+          ]
+        ],
+        "projection_branch_inputs": {
+          "normal_active_set": [
+            "active",
+            "inactive_if_interval_crosses_zero"
+          ],
+          "friction": [
+            "stick",
+            "slip"
+          ],
+          "coulomb_disk_projection": [
+            "interior",
+            "boundary"
+          ]
+        },
+        "solver": {
+          "algorithm": "deterministic_projected_jacobi",
+          "finite_iteration_count": 8,
+          "fixed_contact_order": [
+            "contact_A",
+            "contact_B"
+          ],
+          "candidate_residual_interval_ns": [
+            0,
+            0.002
+          ],
+          "boundary_residual_interval_ns": [
+            0,
+            0.002
+          ]
+        },
+        "required_interval_outputs": [
+          "finite_positive_responsive_delassus_eigenvalue_lower_bound",
+          "all_iteration_intermediate_state_intervals",
+          "all_reachable_normal_active_set_branches",
+          "all_reachable_stick_slip_and_coulomb_projection_branches",
+          "candidate_and_boundary_solver_residual_bounds_in_impulse_units",
+          "complete_contact_island_impulse_error_upper_bound_ns"
+        ],
+        "scalar_uncoupled_formula_permitted": false
+      },
+      "expected": {
+        "interval_evaluation_required": true,
+        "scalar_formula_must_be_rejected": true,
+        "snap_allowed": false,
+        "snap_disabled_reason": "no_certified_coupled_interval_result_attached",
+        "do_not_infer_a_numeric_impulse_error_bound_from_the_matrix_samples": true,
+        "all_reachable_branches_must_be_enclosed": true,
+        "mutation_variants_that_must_disable_snap": [
+          "responsive_eigenvalue_lower_bound_missing_or_non_positive",
+          "iteration_intermediate_interval_missing",
+          "stick_slip_branch_not_enclosed",
+          "normal_active_set_branch_not_enclosed",
+          "candidate_residual_bound_missing",
+          "boundary_residual_bound_missing",
+          "complete_island_impulse_bound_non_finite"
+        ]
       }
     },
     {
@@ -237,7 +382,9 @@
         "reject_when_any_run_has_fewer_than_1000_samples": true,
         "reject_when_fewer_than_five_complete_independent_runs": true,
         "reject_when_any_raw_artifact_uri_missing": true,
-        "reject_duplicate_run_or_session_identity": true
+        "reject_duplicate_run_or_session_identity": true,
+        "percentile_definition": "sort pooled raw values ascending; rank = ceil(0.95 * N); select that 1-based observation; no interpolation",
+        "pooled_p95_rank": 4750
       }
     }
   ]
