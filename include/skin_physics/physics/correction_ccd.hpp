@@ -88,6 +88,37 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    struct correction_segment_candidate_state
+    {
+        uint64_t base_integration_segment_id = 0;
+        uint64_t candidate_generation = 0;
+        uint64_t contact_set_candidate_generation = 0;
+        uint64_t vertex_contact_csr_candidate_generation = 0;
+        bool contact_set_current = false;
+        bool vertex_contact_csr_current = false;
+        std::vector<correction_candidate_pair_key> candidates;
+    };
+
+    struct correction_segment_candidate_state_result
+    {
+        correction_segment_candidate_state state;
+        std::size_t required_count = 0;
+        bool capacity_overflow = false;
+        bool success = false;
+        std::string diagnostic;
+    };
+
+    struct correction_segment_candidate_update_result
+    {
+        std::size_t required_count = 0;
+        bool changed = false;
+        bool capacity_overflow = false;
+        bool wrong_segment = false;
+        bool generation_overflow = false;
+        bool success = false;
+        std::string diagnostic;
+    };
+
     struct correction_ccd_result
     {
         correction_ccd_status status = correction_ccd_status::invalid_input;
@@ -142,6 +173,21 @@ namespace skin_physics::physics
         const std::vector<correction_candidate_pair_key>& existing_candidates,
         const std::vector<correction_candidate_pair_key>& incoming_candidates,
         std::size_t capacity);
+
+    correction_segment_candidate_state_result create_correction_segment_candidate_state(
+        uint64_t base_integration_segment_id,
+        const std::vector<correction_candidate_pair_key>& physical_swept_candidates,
+        std::size_t capacity);
+
+    correction_segment_candidate_update_result merge_correction_position_writer_epoch_candidates(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        const std::vector<correction_candidate_pair_key>& epoch_candidates,
+        std::size_t capacity);
+
+    bool mark_correction_segment_contact_set_and_csr_current(
+        correction_segment_candidate_state& state,
+        uint64_t candidate_generation);
 
     // Input envelope bounds must already include the per-primitive Contact Thickness expansion.
     // settings.contact_thickness must be zero so the existing Broadphase does not expand twice.
