@@ -1,11 +1,11 @@
-# Skin Physics 設計閉鎖書（v3.0）
+# Skin Physics 設計閉鎖書（v3.1）
 
 - 状態: **DESIGN CLOSURE CANDIDATE / NOT APPROVED**
 - 正本要件: [requirements.md](requirements.md) v1.1
-- 基本設計: [basic_design.md](basic_design.md) v1.15
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.20
-- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.17
-- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.12
+- 基本設計: [basic_design.md](basic_design.md) v1.16
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.21
+- Runtime API / Device / Async Scheduler: [runtime_integration_design.md](runtime_integration_design.md) v1.18
+- Numerical Acceptance: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.13
 - Deployment Capability Profile Template: [deployment_capability_profile_template.json](deployment_capability_profile_template.json) v1.4
 - Test Strategy: [testing_strategy.md](testing_strategy.md)
 - Runtime UML: [uml/phase12_gpu_runtime.md](uml/phase12_gpu_runtime.md)
@@ -440,6 +440,7 @@ Render Candidate Ring:
 
 ## 7. バージョン履歴
 
+- 3.1: Corrected TOI Snap equations to use G_contact and G_v residual-inclusive bounds; synchronized Basic / Detailed / Runtime / Profile references and strictly descending version histories.
 - 3.0: XPBD mapをG_internal / G_contact / G_vへ分離し、Pre-contact Velocityと最終Contact Positionの評価順序を同期。Snap許可Fixtureを証明未添付時にFail-closedとし、Coupled Contact IslandのTangential / Cross Delassus、Tangent Basis、XPBD Support Impulse入力を追加。tau=0 / tau=dt両端点と文書間の版参照・履歴を統合。
 - 2.9: TOI時間Boundary SnapとContact Group Formationを分離。XPBD / Coupled Impulseを含む全Snap条件を参照し、tau=0 Continuation SegmentとWork Budget Countを定義。
 - 2.8: XPBD有限反復Solver応答とCandidate / Boundary不確かさ集合、Solver Residual / 分岐網羅をSnap誤差Boundへ統合。Coupled Contact Islandは完全Solver区間評価を必須とし、未証明時はSnapを禁止。
