@@ -1,12 +1,13 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.14
+- 文書バージョン: 1.15
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.13
-- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md)
-- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json)
+- 前版: 1.14
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.20
+- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.17
+- 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.12
 
 ## 1. 設計方針
 
@@ -295,7 +296,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 14. 詳細設計との責務境界・校正への引継ぎ
 
-本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.16および[runtime_integration_design.md](runtime_integration_design.md) v1.13で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
+本書で示した基本アーキテクチャに対する数式・GPUデータ構造・失敗時契約は、[detailed_design.md](detailed_design.md) v1.20および[runtime_integration_design.md](runtime_integration_design.md) v1.17で具体化済みである。以下は実装者が独自に方式を選ぶ未決定事項ではなく、詳細設計に定義された契約を実装し、Fixture / WARP / Physical GPUで検証する対象である。
 
 - Soft Body Corotational FEM、応力・内部力・Segment積分・減衰: detailed_design.md §6。
 - Cloth Stretch / Shear / Bend / XPBD Lambda、外力・Impulse、World Integration Segment: detailed_design.md §7。
@@ -305,7 +306,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - Animation Target / Velocity、Render Binding、属性保持: detailed_design.md §5-6 / §12-13。
 - GPU Pass、Tick Transaction、Capacity、JSON、再現性、Gate R0-R6: detailed_design.md §14-19、runtime_integration_design.md §5-10。
 - WORK_BUDGET_EXCEEDEDの回復は、Logical Tick ReservationとTransient Submission Leaseを分離するruntime_integration_design.md §5.3 / §5.6を正とする。Block後はin-flight / Query / Render Candidate Leaseを解放し、Reservationだけを保持する。Retry時は3 Leaseを再AdmissionしてからPlan / dispatch_idを生成する。LeaseがないBlocked Reservationはin-flight数へ算入せず、Host Render Leaseもなければ`reset_world`で明示的に破棄できる。Hard Limit到達は`work_budget_unsatisfiable`として明示する。Retry途中に物理品質・材料・時間分割条件を変更しない。
-- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.6を正とする。
+- 残る数値校正・実機計測はdetailed_design.md §19、testing_strategy.md、numerical_acceptance_profile_v1.json v1.12を正とする。
 
 ## 15. 参考OSS・技術資料
 
@@ -326,6 +327,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.15: 詳細設計 v1.20 / Runtime統合設計 v1.17 / Numerical Acceptance Profile v1.12への参照を同期し、実装前のTOI Snap評価写像とPre-contact Velocity順序を明確化。
 - 1.14: Logical Reservation / Transient Submission Leaseの分離、Block後Lease解放とReset条件、幾何誤差Guard付きTOI端点Snap、CPU-only advance_report StatusとDeployment Profile qualification policyを反映。
 - 1.13: Work Budget RetryのResource Re-Admission、Hard Limit Unsatisfiable / Reset、TOI Unique Split Count、API StatusとTick Statusの分離を反映。
 - 1.12: Numerical Acceptance ProfileのGPU Packet ABI参照を単一化し、WORK_BUDGET_EXCEEDEDからのReservation維持・実行予算再設定契約を追加.
@@ -341,7 +343,7 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 - 1.4: World共通SubstepによるSoft Body / Cloth / Contact / CCDの時間整合、Cloth動力学予測、Runtime Tickの時間予約、Render Lease・Resource Lifecycle契約を追加.
 
 
-## 17. GPU Runtime / Library統合方針（v1.11）
+## 17. GPU Runtime / Library統合方針（初回統合方針 v1.11・現行正本 runtime_integration_design.md v1.17）
 
 Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Direct3D 11専用の静的Libraryとして提供する。CMakeを必須化しない。Host ApplicationがWindow、Input、UI、Scene / Game Logic、Renderer、D3D11 Device / Immediate Contextを所有し、SkinPhysics RuntimeはSimulation World、GPU Physics State、Compute Resource、Tick Scheduler、Commit / Rollback、非同期Queryを所有する。
 
