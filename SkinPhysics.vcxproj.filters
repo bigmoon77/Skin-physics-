@@ -134,6 +134,9 @@
     <ClInclude Include="include\skin_physics\physics\ccd.hpp">
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
+    <ClInclude Include="include\skin_physics\physics\correction_ccd.hpp">
+      <Filter>Header Files\Physics</Filter>
+    </ClInclude>
     <ClInclude Include="include\skin_physics\physics\animation_track.hpp">
       <Filter>Header Files\Physics</Filter>
     </ClInclude>
