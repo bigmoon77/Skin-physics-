@@ -1,0 +1,1333 @@
+#include "skin_physics/physics/correction_ccd.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <utility>
+#include <vector>
+
+namespace skin_physics::physics
+{
+    namespace
+    {
+        using real = long double;
+        using asset::vec3;
+
+        constexpr real zero = 0.0L;
+        constexpr real one = 1.0L;
+        constexpr real interval_error_factor = 128.0L;
+
+        struct vector3
+        {
+            real x = 0.0L;
+            real y = 0.0L;
+            real z = 0.0L;
+        };
+
+        struct interval
+        {
+            real lower = 0.0L;
+            real upper = 0.0L;
+            bool valid = true;
+        };
+
+        struct interval_vector3
+        {
+            interval x;
+            interval y;
+            interval z;
+        };
+
+        struct segment
+        {
+            real lower = 0.0L;
+            real upper = 1.0L;
+        };
+
+        struct distance_sample
+        {
+            bool valid = false;
+            real distance_lower = 0.0L;
+            real distance_upper = 0.0L;
+            vector3 point_a;
+            vector3 point_b;
+            std::array<real, 3> barycentric = {};
+            real parameter_a = 0.0L;
+            real parameter_b = 0.0L;
+        };
+
+        real negative_infinity()
+        {
+            return -std::numeric_limits<real>::infinity();
+        }
+
+        real positive_infinity()
+        {
+            return std::numeric_limits<real>::infinity();
+        }
+
+        real round_down(real value)
+        {
+            return std::nextafter(value, negative_infinity());
+        }
+
+        real round_up(real value)
+        {
+            return std::nextafter(value, positive_infinity());
+        }
+
+        real clamp_real(real value, real minimum, real maximum)
+        {
+            return std::max(minimum, std::min(maximum, value));
+        }
+
+        vector3 to_vector(const vec3& value)
+        {
+            return {
+                static_cast<real>(value.x),
+                static_cast<real>(value.y),
+                static_cast<real>(value.z)
+            };
+        }
+
+        vec3 to_asset_vector(const vector3& value)
+        {
+            return {
+                static_cast<float>(value.x),
+                static_cast<float>(value.y),
+                static_cast<float>(value.z)
+            };
+        }
+
+        vector3 add(const vector3& left, const vector3& right)
+        {
+            return { left.x + right.x, left.y + right.y, left.z + right.z };
+        }
+
+        vector3 subtract(const vector3& left, const vector3& right)
+        {
+            return { left.x - right.x, left.y - right.y, left.z - right.z };
+        }
+
+        vector3 multiply(const vector3& value, real scalar)
+        {
+            return { value.x * scalar, value.y * scalar, value.z * scalar };
+        }
+
+        real dot(const vector3& left, const vector3& right)
+        {
+            return left.x * right.x + left.y * right.y + left.z * right.z;
+        }
+
+        vector3 cross(const vector3& left, const vector3& right)
+        {
+            return {
+                left.y * right.z - left.z * right.y,
+                left.z * right.x - left.x * right.z,
+                left.x * right.y - left.y * right.x
+            };
+        }
+
+        real length_squared(const vector3& value)
+        {
+            return dot(value, value);
+        }
+
+        real length(const vector3& value)
+        {
+            return std::sqrt(std::max(zero, length_squared(value)));
+        }
+
+        bool finite(real value)
+        {
+            return std::isfinite(value) != 0;
+        }
+
+        bool finite(const vector3& value)
+        {
+            return finite(value.x) && finite(value.y) && finite(value.z);
+        }
+
+        bool finite(const vec3& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) &&
+                std::isfinite(value.z);
+        }
+
+        vector3 normalized(const vector3& value)
+        {
+            const real magnitude = length(value);
+            if (!finite(magnitude) || magnitude <= 0.0L)
+            {
+                return {};
+            }
+            return multiply(value, one / magnitude);
+        }
+
+        real maximum_coordinate_magnitude(const vector3& a)
+        {
+            return std::max({
+                1.0L,
+                std::abs(a.x),
+                std::abs(a.y),
+                std::abs(a.z)
+            });
+        }
+
+        real maximum_coordinate_magnitude(const vector3& a, const vector3& b)
+        {
+            return std::max(maximum_coordinate_magnitude(a),
+                maximum_coordinate_magnitude(b));
+        }
+
+        real distance_error(const vector3& a, const vector3& b, real distance)
+        {
+            const real scale = std::max(maximum_coordinate_magnitude(a, b),
+                std::abs(distance));
+            return round_up(interval_error_factor *
+                std::numeric_limits<real>::epsilon() * scale);
+        }
+
+        interval make_interval(real lower, real upper)
+        {
+            interval result;
+            result.lower = lower;
+            result.upper = upper;
+            result.valid = finite(lower) && finite(upper) && lower <= upper;
+            return result;
+        }
+
+        interval exact_interval(real value)
+        {
+            return make_interval(value, value);
+        }
+
+        interval interval_add(const interval& a, const interval& b)
+        {
+            if (!a.valid || !b.valid) return { 0.0L, 0.0L, false };
+            return make_interval(
+                round_down(a.lower + b.lower),
+                round_up(a.upper + b.upper));
+        }
+
+        interval interval_subtract(const interval& a, const interval& b)
+        {
+            if (!a.valid || !b.valid) return { 0.0L, 0.0L, false };
+            return make_interval(
+                round_down(a.lower - b.upper),
+                round_up(a.upper - b.lower));
+        }
+
+        interval interval_multiply(const interval& a, const interval& b)
+        {
+            if (!a.valid || !b.valid) return { 0.0L, 0.0L, false };
+            const real products[4] = {
+                a.lower * b.lower,
+                a.lower * b.upper,
+                a.upper * b.lower,
+                a.upper * b.upper
+            };
+            const real minimum = *std::min_element(products, products + 4);
+            const real maximum = *std::max_element(products, products + 4);
+            if (!finite(minimum) || !finite(maximum))
+            {
+                return { 0.0L, 0.0L, false };
+            }
+            return make_interval(round_down(minimum), round_up(maximum));
+        }
+
+        interval interval_scale(const interval& value, real scalar)
+        {
+            return interval_multiply(value, exact_interval(scalar));
+        }
+
+        interval interval_square(const interval& value)
+        {
+            if (!value.valid) return { 0.0L, 0.0L, false };
+            const real maximum = std::max(
+                value.lower * value.lower, value.upper * value.upper);
+            real minimum = 0.0L;
+            if (value.lower > 0.0L || value.upper < 0.0L)
+            {
+                minimum = std::min(
+                    value.lower * value.lower, value.upper * value.upper);
+            }
+            return make_interval(
+                std::max(0.0L, round_down(minimum)),
+                round_up(maximum));
+        }
+
+        interval interval_sqrt(const interval& value)
+        {
+            if (!value.valid || value.upper < 0.0L)
+            {
+                return { 0.0L, 0.0L, false };
+            }
+            const real lower_value = std::sqrt(std::max(0.0L, value.lower));
+            const real upper_value = std::sqrt(std::max(0.0L, value.upper));
+            return make_interval(
+                std::max(0.0L, round_down(lower_value)),
+                round_up(upper_value));
+        }
+
+        interval interval_dot(
+            const interval_vector3& a,
+            const vector3& b)
+        {
+            const interval x = interval_scale(a.x, b.x);
+            const interval y = interval_scale(a.y, b.y);
+            const interval z = interval_scale(a.z, b.z);
+            return interval_add(interval_add(x, y), z);
+        }
+
+        interval_vector3 interval_add(
+            const interval_vector3& a,
+            const interval_vector3& b)
+        {
+            return {
+                interval_add(a.x, b.x),
+                interval_add(a.y, b.y),
+                interval_add(a.z, b.z)
+            };
+        }
+
+        interval_vector3 interval_subtract(
+            const interval_vector3& a,
+            const interval_vector3& b)
+        {
+            return {
+                interval_subtract(a.x, b.x),
+                interval_subtract(a.y, b.y),
+                interval_subtract(a.z, b.z)
+            };
+        }
+
+        interval_vector3 interval_cross(
+            const interval_vector3& a,
+            const interval_vector3& b)
+        {
+            return {
+                interval_subtract(
+                    interval_multiply(a.y, b.z),
+                    interval_multiply(a.z, b.y)),
+                interval_subtract(
+                    interval_multiply(a.z, b.x),
+                    interval_multiply(a.x, b.z)),
+                interval_subtract(
+                    interval_multiply(a.x, b.y),
+                    interval_multiply(a.y, b.x))
+            };
+        }
+
+        interval interval_vector_length(const interval_vector3& value)
+        {
+            const interval squared = interval_add(
+                interval_add(
+                    interval_square(value.x),
+                    interval_square(value.y)),
+                interval_square(value.z));
+            return interval_sqrt(squared);
+        }
+
+        interval interval_component(
+            real before,
+            real after,
+            const segment& range)
+        {
+            const interval s = make_interval(
+                round_down(range.lower), round_up(range.upper));
+            const interval delta = interval_subtract(
+                exact_interval(after), exact_interval(before));
+            return interval_add(exact_interval(before),
+                interval_multiply(delta, s));
+        }
+
+        interval_vector3 interval_lerp(
+            const vector3& before,
+            const vector3& after,
+            const segment& range)
+        {
+            return {
+                interval_component(before.x, after.x, range),
+                interval_component(before.y, after.y, range),
+                interval_component(before.z, after.z, range)
+            };
+        }
+
+        vector3 lerp(const vector3& before, const vector3& after, real s)
+        {
+            return add(before, multiply(subtract(after, before), s));
+        }
+
+        bool valid_settings(const correction_ccd_settings& settings)
+        {
+            return std::isfinite(settings.contact_thickness) &&
+                settings.contact_thickness >= 0.0f &&
+                std::isfinite(settings.distance_tolerance) &&
+                settings.distance_tolerance > 0.0f &&
+                std::isfinite(settings.epsilon_length) &&
+                settings.epsilon_length > 0.0f &&
+                settings.maximum_interval_evaluations > 0 &&
+                settings.maximum_interval_evaluations <= 32;
+        }
+
+        real maximum_displacement(
+            const correction_vertex_motion& motion)
+        {
+            return length(subtract(
+                to_vector(motion.after), to_vector(motion.before)));
+        }
+
+        real maximum_displacement(
+            const std::array<correction_vertex_motion, 3>& motions)
+        {
+            return std::max({
+                maximum_displacement(motions[0]),
+                maximum_displacement(motions[1]),
+                maximum_displacement(motions[2])
+            });
+        }
+
+        real maximum_displacement(
+            const std::array<correction_vertex_motion, 2>& motions)
+        {
+            return std::max(
+                maximum_displacement(motions[0]),
+                maximum_displacement(motions[1]));
+        }
+
+        real conservative_speed_bound(real value)
+        {
+            const real error = interval_error_factor *
+                std::numeric_limits<real>::epsilon() * std::max(1.0L, value);
+            return round_up(value + error);
+        }
+
+        bool valid_vt_motion(const vertex_triangle_correction_motion& motion)
+        {
+            if (!finite(motion.point.before) || !finite(motion.point.after) ||
+                !finite(motion.segment_start_point))
+            {
+                return false;
+            }
+            for (std::size_t index = 0; index < 3; ++index)
+            {
+                if (!finite(motion.triangle[index].before) ||
+                    !finite(motion.triangle[index].after) ||
+                    !finite(motion.segment_start_triangle[index]))
+                {
+                    return false;
+                }
+            }
+            return !motion.has_persistent_contact_cache ||
+                finite(motion.persistent_contact_normal);
+        }
+
+        bool valid_ee_motion(const edge_edge_correction_motion& motion)
+        {
+            for (std::size_t index = 0; index < 2; ++index)
+            {
+                if (!finite(motion.edge_a[index].before) ||
+                    !finite(motion.edge_a[index].after) ||
+                    !finite(motion.edge_b[index].before) ||
+                    !finite(motion.edge_b[index].after) ||
+                    !finite(motion.segment_start_edge_a[index]) ||
+                    !finite(motion.segment_start_edge_b[index]))
+                {
+                    return false;
+                }
+            }
+            return !motion.has_persistent_contact_cache ||
+                finite(motion.persistent_contact_normal);
+        }
+
+        real clamp_unit(real value)
+        {
+            return clamp_real(value, 0.0L, 1.0L);
+        }
+
+        vector3 closest_point_on_segment(
+            const vector3& point,
+            const vector3& start,
+            const vector3& end,
+            real& parameter)
+        {
+            const vector3 direction = subtract(end, start);
+            const real denominator = length_squared(direction);
+            parameter = denominator > 0.0L
+                ? clamp_unit(dot(subtract(point, start), direction) / denominator)
+                : 0.0L;
+            return add(start, multiply(direction, parameter));
+        }
+
+        bool closest_point_triangle(
+            const vector3& point,
+            const std::array<vector3, 3>& triangle,
+            real epsilon_length,
+            vector3& closest,
+            std::array<real, 3>& barycentric)
+        {
+            const vector3 ab = subtract(triangle[1], triangle[0]);
+            const vector3 ac = subtract(triangle[2], triangle[0]);
+            const vector3 normal = cross(ab, ac);
+            const real area_squared = length_squared(normal);
+            const real epsilon_area = epsilon_length * epsilon_length;
+            if (!finite(area_squared) || area_squared <=
+                epsilon_area * epsilon_area)
+            {
+                return false;
+            }
+
+            const vector3 relative = subtract(point, triangle[0]);
+            const real d00 = dot(ab, ab);
+            const real d01 = dot(ab, ac);
+            const real d11 = dot(ac, ac);
+            const real d20 = dot(relative, ab);
+            const real d21 = dot(relative, ac);
+            const real denominator = d00 * d11 - d01 * d01;
+            if (!finite(denominator) || denominator <= epsilon_area * epsilon_area)
+            {
+                return false;
+            }
+
+            const real projected_v = (d11 * d20 - d01 * d21) / denominator;
+            const real projected_w = (d00 * d21 - d01 * d20) / denominator;
+            const real projected_u = 1.0L - projected_v - projected_w;
+            if (projected_u >= 0.0L && projected_v >= 0.0L &&
+                projected_w >= 0.0L)
+            {
+                barycentric = { projected_u, projected_v, projected_w };
+                closest = add(triangle[0],
+                    add(multiply(ab, projected_v), multiply(ac, projected_w)));
+                return finite(closest);
+            }
+
+            real best_distance_squared = positive_infinity();
+            const vector3 edge_starts[3] = {
+                triangle[0], triangle[1], triangle[2]
+            };
+            const vector3 edge_ends[3] = {
+                triangle[1], triangle[2], triangle[0]
+            };
+            const std::array<std::array<real, 3>, 3> endpoint_weights = {{
+                {{ 1.0L, 0.0L, 0.0L }},
+                {{ 0.0L, 1.0L, 0.0L }},
+                {{ 0.0L, 0.0L, 1.0L }}
+            }};
+            const std::size_t edge_indices[3][2] = {
+                { 0, 1 }, { 1, 2 }, { 2, 0 }
+            };
+
+            for (std::size_t edge = 0; edge < 3; ++edge)
+            {
+                real parameter = 0.0L;
+                const vector3 candidate = closest_point_on_segment(
+                    point, edge_starts[edge], edge_ends[edge], parameter);
+                const real distance_squared =
+                    length_squared(subtract(point, candidate));
+                if (distance_squared < best_distance_squared)
+                {
+                    best_distance_squared = distance_squared;
+                    closest = candidate;
+                    const std::size_t first = edge_indices[edge][0];
+                    const std::size_t second = edge_indices[edge][1];
+                    barycentric = {};
+                    barycentric[first] = 1.0L - parameter;
+                    barycentric[second] = parameter;
+                }
+            }
+
+            return finite(closest) && finite(best_distance_squared);
+        }
+
+        bool closest_points_segments(
+            const vector3& a0,
+            const vector3& a1,
+            const vector3& b0,
+            const vector3& b1,
+            real epsilon_length,
+            vector3& closest_a,
+            vector3& closest_b,
+            real& parameter_a,
+            real& parameter_b)
+        {
+            const vector3 direction_a = subtract(a1, a0);
+            const vector3 direction_b = subtract(b1, b0);
+            const vector3 relative = subtract(a0, b0);
+            const real length_a_squared = length_squared(direction_a);
+            const real length_b_squared = length_squared(direction_b);
+            const real epsilon_squared = epsilon_length * epsilon_length;
+            if (!finite(length_a_squared) || !finite(length_b_squared) ||
+                length_a_squared <= epsilon_squared ||
+                length_b_squared <= epsilon_squared)
+            {
+                return false;
+            }
+
+            const real a = length_a_squared;
+            const real e = length_b_squared;
+            const real b = dot(direction_a, direction_b);
+            const real c = dot(direction_a, relative);
+            const real f = dot(direction_b, relative);
+            const real denominator = a * e - b * b;
+
+            parameter_a = denominator > epsilon_squared * epsilon_squared
+                ? clamp_unit((b * f - c * e) / denominator)
+                : 0.0L;
+            parameter_b = (b * parameter_a + f) / e;
+
+            if (parameter_b < 0.0L)
+            {
+                parameter_b = 0.0L;
+                parameter_a = clamp_unit(-c / a);
+            }
+            else if (parameter_b > 1.0L)
+            {
+                parameter_b = 1.0L;
+                parameter_a = clamp_unit((b - c) / a);
+            }
+
+            closest_a = add(a0, multiply(direction_a, parameter_a));
+            closest_b = add(b0, multiply(direction_b, parameter_b));
+            return finite(closest_a) && finite(closest_b);
+        }
+
+        real coordinate_scale(
+            const vector3& a,
+            const vector3& b,
+            const vector3& c)
+        {
+            return std::max({
+                maximum_coordinate_magnitude(a),
+                maximum_coordinate_magnitude(b),
+                maximum_coordinate_magnitude(c)
+            });
+        }
+
+        real aabb_gap(
+            real a_minimum,
+            real a_maximum,
+            real b_minimum,
+            real b_maximum)
+        {
+            if (a_maximum < b_minimum) return b_minimum - a_maximum;
+            if (b_maximum < a_minimum) return a_minimum - b_maximum;
+            return 0.0L;
+        }
+
+        real distance_lower_from_aabb(
+            const vector3& point,
+            const std::array<vector3, 3>& triangle)
+        {
+            real minimum[3] = {
+                triangle[0].x, triangle[0].y, triangle[0].z
+            };
+            real maximum[3] = {
+                triangle[0].x, triangle[0].y, triangle[0].z
+            };
+            const real coordinates[3][3] = {
+                { triangle[0].x, triangle[1].x, triangle[2].x },
+                { triangle[0].y, triangle[1].y, triangle[2].y },
+                { triangle[0].z, triangle[1].z, triangle[2].z }
+            };
+            const real point_coordinates[3] = { point.x, point.y, point.z };
+            for (std::size_t axis = 0; axis < 3; ++axis)
+            {
+                minimum[axis] = *std::min_element(coordinates[axis],
+                    coordinates[axis] + 3);
+                maximum[axis] = *std::max_element(coordinates[axis],
+                    coordinates[axis] + 3);
+            }
+            const real gap_x = aabb_gap(point_coordinates[0], point_coordinates[0],
+                minimum[0], maximum[0]);
+            const real gap_y = aabb_gap(point_coordinates[1], point_coordinates[1],
+                minimum[1], maximum[1]);
+            const real gap_z = aabb_gap(point_coordinates[2], point_coordinates[2],
+                minimum[2], maximum[2]);
+            const real distance = std::sqrt(
+                gap_x * gap_x + gap_y * gap_y + gap_z * gap_z);
+            const real error = interval_error_factor *
+                std::numeric_limits<real>::epsilon() *
+                std::max(coordinate_scale(point, triangle[0], triangle[1]),
+                    maximum_coordinate_magnitude(triangle[2]));
+            return std::max(0.0L, round_down(distance - error));
+        }
+
+        real distance_lower_from_aabb(
+            const std::array<vector3, 2>& edge_a,
+            const std::array<vector3, 2>& edge_b)
+        {
+            real minimum_a[3] = {
+                std::min(edge_a[0].x, edge_a[1].x),
+                std::min(edge_a[0].y, edge_a[1].y),
+                std::min(edge_a[0].z, edge_a[1].z)
+            };
+            real maximum_a[3] = {
+                std::max(edge_a[0].x, edge_a[1].x),
+                std::max(edge_a[0].y, edge_a[1].y),
+                std::max(edge_a[0].z, edge_a[1].z)
+            };
+            real minimum_b[3] = {
+                std::min(edge_b[0].x, edge_b[1].x),
+                std::min(edge_b[0].y, edge_b[1].y),
+                std::min(edge_b[0].z, edge_b[1].z)
+            };
+            real maximum_b[3] = {
+                std::max(edge_b[0].x, edge_b[1].x),
+                std::max(edge_b[0].y, edge_b[1].y),
+                std::max(edge_b[0].z, edge_b[1].z)
+            };
+            const real gap_x = aabb_gap(
+                minimum_a[0], maximum_a[0], minimum_b[0], maximum_b[0]);
+            const real gap_y = aabb_gap(
+                minimum_a[1], maximum_a[1], minimum_b[1], maximum_b[1]);
+            const real gap_z = aabb_gap(
+                minimum_a[2], maximum_a[2], minimum_b[2], maximum_b[2]);
+            const real distance = std::sqrt(
+                gap_x * gap_x + gap_y * gap_y + gap_z * gap_z);
+            const real scale = std::max({
+                maximum_coordinate_magnitude(edge_a[0]),
+                maximum_coordinate_magnitude(edge_a[1]),
+                maximum_coordinate_magnitude(edge_b[0]),
+                maximum_coordinate_magnitude(edge_b[1])
+            });
+            const real error = interval_error_factor *
+                std::numeric_limits<real>::epsilon() * scale;
+            return std::max(0.0L, round_down(distance - error));
+        }
+
+        distance_sample sample_vertex_triangle(
+            const vector3& point,
+            const std::array<vector3, 3>& triangle,
+            real epsilon_length)
+        {
+            distance_sample result;
+            vector3 closest;
+            if (!closest_point_triangle(
+                point, triangle, epsilon_length, closest, result.barycentric))
+            {
+                return result;
+            }
+            const real distance = length(subtract(point, closest));
+            if (!finite(distance)) return result;
+            const real error = distance_error(point, closest, distance);
+            result.valid = true;
+            result.distance_lower = std::max(
+                0.0L, round_down(distance - error));
+            result.distance_upper = round_up(distance + error);
+            result.point_a = point;
+            result.point_b = closest;
+            return result;
+        }
+
+        distance_sample sample_edge_edge(
+            const std::array<vector3, 2>& edge_a,
+            const std::array<vector3, 2>& edge_b,
+            real epsilon_length)
+        {
+            distance_sample result;
+            vector3 closest_a;
+            vector3 closest_b;
+            if (!closest_points_segments(
+                edge_a[0], edge_a[1], edge_b[0], edge_b[1],
+                epsilon_length, closest_a, closest_b,
+                result.parameter_a, result.parameter_b))
+            {
+                return result;
+            }
+            const real distance = length(subtract(closest_a, closest_b));
+            if (!finite(distance)) return result;
+            const real error = distance_error(closest_a, closest_b, distance);
+            result.valid = true;
+            result.distance_lower = std::max(
+                0.0L, round_down(distance - error));
+            result.distance_upper = round_up(distance + error);
+            result.point_a = closest_a;
+            result.point_b = closest_b;
+            return result;
+        }
+
+        bool latch_reference_side(
+            const vector3& initial_normal,
+            const vector3& side_vector,
+            bool has_cache,
+            const vec3& cached_normal,
+            real epsilon_length,
+            vector3& reference_normal,
+            int8_t& side_sign,
+            int& orientation_sign)
+        {
+            const real initial_normal_length = length(initial_normal);
+            if (!finite(initial_normal_length) ||
+                initial_normal_length <= epsilon_length * epsilon_length)
+            {
+                return false;
+            }
+
+            if (has_cache)
+            {
+                if (!finite(cached_normal)) return false;
+                reference_normal = normalized(to_vector(cached_normal));
+                if (length_squared(reference_normal) <= epsilon_length * epsilon_length)
+                {
+                    return false;
+                }
+                const real orientation = dot(initial_normal, reference_normal);
+                if (!finite(orientation) ||
+                    std::abs(orientation) <= epsilon_length * initial_normal_length)
+                {
+                    return false;
+                }
+                orientation_sign = orientation < 0.0L ? -1 : 1;
+            }
+            else
+            {
+                reference_normal = multiply(initial_normal,
+                    one / initial_normal_length);
+                orientation_sign = 1;
+            }
+
+            const real signed_distance = dot(reference_normal, side_vector);
+            if (!finite(signed_distance) ||
+                std::abs(signed_distance) <= epsilon_length)
+            {
+                return false;
+            }
+            side_sign = signed_distance < 0.0L ? -1 : 1;
+            return true;
+        }
+
+        struct candidate_search_result
+        {
+            bool hit = false;
+            bool unresolved = false;
+            distance_sample witness;
+            real witness_s = 0.0L;
+            uint32_t evaluations = 0;
+        };
+
+        template<typename SampleFunction, typename LowerBoundFunction>
+        candidate_search_result search_correction_candidate(
+            real speed_bound,
+            real contact_threshold,
+            uint32_t maximum_evaluations,
+            SampleFunction sample_function,
+            LowerBoundFunction lower_bound_function)
+        {
+            candidate_search_result result;
+            std::vector<segment> pending;
+            pending.push_back({ 0.0L, 1.0L });
+
+            while (!pending.empty())
+            {
+                if (result.evaluations >= maximum_evaluations)
+                {
+                    result.unresolved = true;
+                    return result;
+                }
+
+                const segment current = pending.back();
+                pending.pop_back();
+                const real midpoint = (current.lower + current.upper) * 0.5L;
+                if (midpoint <= current.lower || midpoint >= current.upper)
+                {
+                    result.unresolved = true;
+                    return result;
+                }
+
+                ++result.evaluations;
+                const distance_sample sample = sample_function(midpoint);
+                const real aabb_lower = lower_bound_function(midpoint);
+                if (!sample.valid || !finite(aabb_lower))
+                {
+                    result.unresolved = true;
+                    return result;
+                }
+
+                const real half_width = (current.upper - current.lower) * 0.5L;
+                const real movement_bound = round_up(speed_bound * half_width);
+                const real interval_distance_lower = std::max(
+                    0.0L, round_down(aabb_lower - movement_bound));
+
+                if (interval_distance_lower > contact_threshold)
+                {
+                    continue;
+                }
+
+                if (sample.distance_upper <= contact_threshold)
+                {
+                    result.hit = true;
+                    result.witness = sample;
+                    result.witness_s = midpoint;
+                    return result;
+                }
+
+                const segment left = { current.lower, midpoint };
+                const segment right = { midpoint, current.upper };
+                pending.push_back(right);
+                pending.push_back(left);
+            }
+
+            return result;
+        }
+
+        enum class side_proof_status : uint8_t
+        {
+            same_side,
+            crossing,
+            unresolved
+        };
+
+        template<typename SideIntervalFunction>
+        side_proof_status prove_correction_side(
+            uint32_t& evaluations,
+            uint32_t maximum_evaluations,
+            SideIntervalFunction side_interval_function)
+        {
+            std::vector<segment> pending;
+            pending.push_back({ 0.0L, 1.0L });
+
+            while (!pending.empty())
+            {
+                if (evaluations >= maximum_evaluations)
+                {
+                    return side_proof_status::unresolved;
+                }
+
+                const segment current = pending.back();
+                pending.pop_back();
+                ++evaluations;
+                const auto bounds = side_interval_function(current);
+
+                if (!bounds.alignment.valid || !bounds.normal_length.valid ||
+                    !bounds.phi.valid)
+                {
+                    return side_proof_status::unresolved;
+                }
+
+                if (bounds.alignment.upper <= 0.0L ||
+                    bounds.normal_length.lower <= 0.0L)
+                {
+                    const real midpoint = (current.lower + current.upper) * 0.5L;
+                    if (bounds.alignment.upper <= 0.0L ||
+                        midpoint <= current.lower || midpoint >= current.upper)
+                    {
+                        return side_proof_status::unresolved;
+                    }
+                }
+                else if (bounds.phi.upper < 0.0L)
+                {
+                    return side_proof_status::crossing;
+                }
+                else if (bounds.phi.lower >= 0.0L)
+                {
+                    continue;
+                }
+
+                const real midpoint = (current.lower + current.upper) * 0.5L;
+                if (midpoint <= current.lower || midpoint >= current.upper)
+                {
+                    return side_proof_status::unresolved;
+                }
+                pending.push_back({ midpoint, current.upper });
+                pending.push_back({ current.lower, midpoint });
+            }
+
+            return side_proof_status::same_side;
+        }
+
+        struct side_interval_bounds
+        {
+            interval alignment;
+            interval normal_length;
+            interval phi;
+        };
+
+        side_interval_bounds make_side_interval(
+            const interval_vector3& oriented_normal,
+            const interval_vector3& separation_vector,
+            const vector3& reference_normal,
+            int8_t side_sign,
+            real distance_tolerance)
+        {
+            side_interval_bounds result;
+            result.alignment = interval_dot(oriented_normal, reference_normal);
+            result.normal_length = interval_vector_length(oriented_normal);
+            const interval signed_numerator = interval_scale(
+                interval_dot(oriented_normal, separation_vector),
+                static_cast<real>(side_sign));
+            const interval tolerance_term = interval_scale(
+                result.normal_length, distance_tolerance);
+            result.phi = interval_add(signed_numerator, tolerance_term);
+            return result;
+        }
+
+        correction_ccd_result make_unresolved(
+            correction_ccd_result result,
+            const std::string& diagnostic)
+        {
+            result.status = correction_ccd_status::unresolved;
+            result.diagnostic = diagnostic;
+            return result;
+        }
+
+        bool prepare_vt_reference(
+            const vertex_triangle_correction_motion& motion,
+            const correction_ccd_settings& settings,
+            vector3& reference_normal,
+            int8_t& side_sign,
+            int& orientation_sign)
+        {
+            const vector3 point = to_vector(motion.segment_start_point);
+            const vector3 a = to_vector(motion.segment_start_triangle[0]);
+            const vector3 b = to_vector(motion.segment_start_triangle[1]);
+            const vector3 c = to_vector(motion.segment_start_triangle[2]);
+            const vector3 initial_normal = cross(subtract(b, a), subtract(c, a));
+            return latch_reference_side(
+                initial_normal, subtract(point, a),
+                motion.has_persistent_contact_cache,
+                motion.persistent_contact_normal,
+                settings.epsilon_length,
+                reference_normal, side_sign, orientation_sign);
+        }
+
+        bool prepare_ee_reference(
+            const edge_edge_correction_motion& motion,
+            const correction_ccd_settings& settings,
+            vector3& reference_normal,
+            int8_t& side_sign,
+            int& orientation_sign)
+        {
+            const vector3 a0 = to_vector(motion.segment_start_edge_a[0]);
+            const vector3 a1 = to_vector(motion.segment_start_edge_a[1]);
+            const vector3 b0 = to_vector(motion.segment_start_edge_b[0]);
+            const vector3 b1 = to_vector(motion.segment_start_edge_b[1]);
+            const vector3 initial_normal = cross(
+                subtract(a1, a0), subtract(b1, b0));
+            return latch_reference_side(
+                initial_normal, subtract(a0, b0),
+                motion.has_persistent_contact_cache,
+                motion.persistent_contact_normal,
+                settings.epsilon_length,
+                reference_normal, side_sign, orientation_sign);
+        }
+
+        std::array<vector3, 3> evaluate_triangle(
+            const std::array<correction_vertex_motion, 3>& motion,
+            real s)
+        {
+            return {
+                lerp(to_vector(motion[0].before), to_vector(motion[0].after), s),
+                lerp(to_vector(motion[1].before), to_vector(motion[1].after), s),
+                lerp(to_vector(motion[2].before), to_vector(motion[2].after), s)
+            };
+        }
+
+        std::array<vector3, 2> evaluate_edge(
+            const std::array<correction_vertex_motion, 2>& motion,
+            real s)
+        {
+            return {
+                lerp(to_vector(motion[0].before), to_vector(motion[0].after), s),
+                lerp(to_vector(motion[1].before), to_vector(motion[1].after), s)
+            };
+        }
+
+        interval_vector3 interval_motion(
+            const correction_vertex_motion& motion,
+            const segment& range)
+        {
+            return interval_lerp(
+                to_vector(motion.before), to_vector(motion.after), range);
+        }
+
+        interval_vector3 interval_difference(
+            const interval_vector3& a,
+            const interval_vector3& b)
+        {
+            return interval_subtract(a, b);
+        }
+
+        interval_vector3 interval_scale_vector(
+            const interval_vector3& value,
+            real scalar)
+        {
+            return {
+                interval_scale(value.x, scalar),
+                interval_scale(value.y, scalar),
+                interval_scale(value.z, scalar)
+            };
+        }
+    }
+
+    correction_ccd_result detect_vertex_triangle_correction_motion(
+        const vertex_triangle_correction_motion& motion,
+        const correction_ccd_settings& settings)
+    {
+        correction_ccd_result result;
+        if (!valid_settings(settings) || !valid_vt_motion(motion))
+        {
+            result.status = correction_ccd_status::invalid_input;
+            result.diagnostic = "Correction VT input or settings are invalid or non-finite.";
+            return result;
+        }
+
+        vector3 reference_normal;
+        int8_t side_sign = 0;
+        int orientation_sign = 1;
+        if (!prepare_vt_reference(motion, settings,
+            reference_normal, side_sign, orientation_sign))
+        {
+            return make_unresolved(result,
+                "Correction VT Segment-start normal or allowed side cannot be established.");
+        }
+
+        result.reference_normal = to_asset_vector(reference_normal);
+        result.allowed_side_sign = side_sign;
+        const real movement_bound = conservative_speed_bound(
+            length(subtract(to_vector(motion.point.after), to_vector(motion.point.before))) +
+            maximum_displacement(motion.triangle));
+
+        if (!finite(movement_bound))
+        {
+            return make_unresolved(result,
+                "Correction VT displacement bound is not finite.");
+        }
+
+        const real threshold = static_cast<real>(settings.contact_thickness) +
+            static_cast<real>(settings.distance_tolerance);
+        const candidate_search_result candidate = search_correction_candidate(
+            movement_bound,
+            threshold,
+            settings.maximum_interval_evaluations,
+            [&motion, &settings](real s)
+            {
+                return sample_vertex_triangle(
+                    lerp(to_vector(motion.point.before),
+                        to_vector(motion.point.after), s),
+                    evaluate_triangle(motion.triangle, s),
+                    settings.epsilon_length);
+            },
+            [&motion](real s)
+            {
+                return distance_lower_from_aabb(
+                    lerp(to_vector(motion.point.before),
+                        to_vector(motion.point.after), s),
+                    evaluate_triangle(motion.triangle, s));
+            });
+        result.interval_evaluations = candidate.evaluations;
+
+        if (candidate.unresolved)
+        {
+            return make_unresolved(result,
+                "Correction VT distance interval could not be certified within the interval budget.");
+        }
+        if (!candidate.hit)
+        {
+            result.status = correction_ccd_status::no_hit;
+            result.diagnostic = "Every correction VT interval is certified outside the contact thickness.";
+            return result;
+        }
+
+        result.hit_witness_valid = true;
+        result.witness_s = static_cast<float>(candidate.witness_s);
+        result.witness_distance_lower = static_cast<float>(
+            candidate.witness.distance_lower);
+        result.witness_distance_upper = static_cast<float>(
+            candidate.witness.distance_upper);
+        result.witness_point_a = to_asset_vector(candidate.witness.point_a);
+        result.witness_point_b = to_asset_vector(candidate.witness.point_b);
+        result.witness_barycentric = {
+            static_cast<float>(candidate.witness.barycentric[0]),
+            static_cast<float>(candidate.witness.barycentric[1]),
+            static_cast<float>(candidate.witness.barycentric[2])
+        };
+        const vector3 witness_separation = subtract(
+            candidate.witness.point_a, candidate.witness.point_b);
+        const real witness_distance = length(witness_separation);
+        result.witness_normal = to_asset_vector(
+            witness_distance > settings.epsilon_length
+                ? multiply(witness_separation, one / witness_distance)
+                : multiply(reference_normal, static_cast<real>(side_sign)));
+
+        const side_proof_status side_status = prove_correction_side(
+            result.interval_evaluations,
+            settings.maximum_interval_evaluations,
+            [&motion, &reference_normal, side_sign, orientation_sign,
+                &settings](const segment& range)
+            {
+                const interval_vector3 point =
+                    interval_motion(motion.point, range);
+                const interval_vector3 a =
+                    interval_motion(motion.triangle[0], range);
+                const interval_vector3 b =
+                    interval_motion(motion.triangle[1], range);
+                const interval_vector3 c =
+                    interval_motion(motion.triangle[2], range);
+                const interval_vector3 u = interval_difference(b, a);
+                const interval_vector3 v = interval_difference(c, a);
+                const interval_vector3 normal = interval_scale_vector(
+                    interval_cross(u, v),
+                    static_cast<real>(orientation_sign));
+                const interval_vector3 separation = interval_difference(point, a);
+                return make_side_interval(
+                    normal, separation, reference_normal, side_sign,
+                    settings.distance_tolerance);
+            });
+
+        if (side_status == side_proof_status::crossing)
+        {
+            result.status = correction_ccd_status::path_crossing;
+            result.diagnostic = "Correction VT path crossed the Segment-latched allowed side.";
+            return result;
+        }
+        if (side_status == side_proof_status::unresolved)
+        {
+            return make_unresolved(result,
+                "Correction VT normal hemisphere or signed-side interval is unresolved.");
+        }
+
+        result.status = correction_ccd_status::hit;
+        result.diagnostic = "Correction VT hit witness is valid and the full path remains on the Segment-latched side.";
+        return result;
+    }
+
+    correction_ccd_result detect_edge_edge_correction_motion(
+        const edge_edge_correction_motion& motion,
+        const correction_ccd_settings& settings)
+    {
+        correction_ccd_result result;
+        if (!valid_settings(settings) || !valid_ee_motion(motion))
+        {
+            result.status = correction_ccd_status::invalid_input;
+            result.diagnostic = "Correction EE input or settings are invalid or non-finite.";
+            return result;
+        }
+
+        vector3 reference_normal;
+        int8_t side_sign = 0;
+        int orientation_sign = 1;
+        if (!prepare_ee_reference(motion, settings,
+            reference_normal, side_sign, orientation_sign))
+        {
+            return make_unresolved(result,
+                "Correction EE Segment-start normal or allowed side cannot be established.");
+        }
+
+        const vector3 start_a0 = to_vector(motion.segment_start_edge_a[0]);
+        const vector3 start_a1 = to_vector(motion.segment_start_edge_a[1]);
+        const vector3 start_b0 = to_vector(motion.segment_start_edge_b[0]);
+        const vector3 start_b1 = to_vector(motion.segment_start_edge_b[1]);
+        if (length(subtract(start_a1, start_a0)) <= settings.epsilon_length ||
+            length(subtract(start_b1, start_b0)) <= settings.epsilon_length)
+        {
+            return make_unresolved(result,
+                "Correction EE contains a degenerate Segment-start edge.");
+        }
+
+        result.reference_normal = to_asset_vector(reference_normal);
+        result.allowed_side_sign = side_sign;
+        const real movement_bound = conservative_speed_bound(
+            maximum_displacement(motion.edge_a) +
+            maximum_displacement(motion.edge_b));
+        if (!finite(movement_bound))
+        {
+            return make_unresolved(result,
+                "Correction EE displacement bound is not finite.");
+        }
+
+        const real threshold = static_cast<real>(settings.contact_thickness) +
+            static_cast<real>(settings.distance_tolerance);
+        const candidate_search_result candidate = search_correction_candidate(
+            movement_bound,
+            threshold,
+            settings.maximum_interval_evaluations,
+            [&motion, &settings](real s)
+            {
+                return sample_edge_edge(
+                    evaluate_edge(motion.edge_a, s),
+                    evaluate_edge(motion.edge_b, s),
+                    settings.epsilon_length);
+            },
+            [&motion](real s)
+            {
+                return distance_lower_from_aabb(
+                    evaluate_edge(motion.edge_a, s),
+                    evaluate_edge(motion.edge_b, s));
+            });
+        result.interval_evaluations = candidate.evaluations;
+
+        if (candidate.unresolved)
+        {
+            return make_unresolved(result,
+                "Correction EE distance interval could not be certified within the interval budget.");
+        }
+        if (!candidate.hit)
+        {
+            result.status = correction_ccd_status::no_hit;
+            result.diagnostic = "Every correction EE interval is certified outside the contact thickness.";
+            return result;
+        }
+
+        result.hit_witness_valid = true;
+        result.witness_s = static_cast<float>(candidate.witness_s);
+        result.witness_distance_lower = static_cast<float>(
+            candidate.witness.distance_lower);
+        result.witness_distance_upper = static_cast<float>(
+            candidate.witness.distance_upper);
+        result.witness_point_a = to_asset_vector(candidate.witness.point_a);
+        result.witness_point_b = to_asset_vector(candidate.witness.point_b);
+        result.witness_parameter_a = static_cast<float>(
+            candidate.witness.parameter_a);
+        result.witness_parameter_b = static_cast<float>(
+            candidate.witness.parameter_b);
+        const vector3 witness_separation = subtract(
+            candidate.witness.point_a, candidate.witness.point_b);
+        const real witness_distance = length(witness_separation);
+        result.witness_normal = to_asset_vector(
+            witness_distance > settings.epsilon_length
+                ? multiply(witness_separation, one / witness_distance)
+                : multiply(reference_normal, static_cast<real>(side_sign)));
+
+        const side_proof_status side_status = prove_correction_side(
+            result.interval_evaluations,
+            settings.maximum_interval_evaluations,
+            [&motion, &reference_normal, side_sign, orientation_sign,
+                &settings](const segment& range)
+            {
+                const interval_vector3 a0 =
+                    interval_motion(motion.edge_a[0], range);
+                const interval_vector3 a1 =
+                    interval_motion(motion.edge_a[1], range);
+                const interval_vector3 b0 =
+                    interval_motion(motion.edge_b[0], range);
+                const interval_vector3 b1 =
+                    interval_motion(motion.edge_b[1], range);
+                const interval_vector3 direction_a = interval_difference(a1, a0);
+                const interval_vector3 direction_b = interval_difference(b1, b0);
+                const interval_vector3 normal = interval_scale_vector(
+                    interval_cross(direction_a, direction_b),
+                    static_cast<real>(orientation_sign));
+                const interval_vector3 separation = interval_difference(a0, b0);
+                return make_side_interval(
+                    normal, separation, reference_normal, side_sign,
+                    settings.distance_tolerance);
+            });
+
+        if (side_status == side_proof_status::crossing)
+        {
+            result.status = correction_ccd_status::path_crossing;
+            result.diagnostic = "Correction EE path crossed the Segment-latched allowed side.";
+            return result;
+        }
+        if (side_status == side_proof_status::unresolved)
+        {
+            return make_unresolved(result,
+                "Correction EE normal hemisphere or signed-side interval is unresolved.");
+        }
+
+        result.status = correction_ccd_status::hit;
+        result.diagnostic = "Correction EE hit witness is valid and the full path remains on the Segment-latched side.";
+        return result;
+    }
+}
