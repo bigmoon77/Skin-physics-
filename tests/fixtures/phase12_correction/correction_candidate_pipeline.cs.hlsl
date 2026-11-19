@@ -26,9 +26,10 @@ struct CorrectionCandidatePair
 StructuredBuffer<CorrectionCandidatePrimitive> correction_primitives : register(t0);
 StructuredBuffer<CorrectionAabb> correction_bounds : register(t1);
 StructuredBuffer<uint> correction_mesh_pair_filter : register(t2);
-StructuredBuffer<uint2> correction_excluded_pairs : register(t3);
-StructuredBuffer<uint> correction_candidate_flags_srv : register(t4);
-StructuredBuffer<uint> correction_candidate_prefix_srv : register(t5);
+StructuredBuffer<uint2> correction_candidate_pair_seeds : register(t3);
+StructuredBuffer<uint2> correction_excluded_pairs : register(t4);
+StructuredBuffer<uint> correction_candidate_flags_srv : register(t5);
+StructuredBuffer<uint> correction_candidate_prefix_srv : register(t6);
 
 RWStructuredBuffer<uint> correction_candidate_flags : register(u0);
 RWStructuredBuffer<uint> correction_candidate_prefix : register(u1);
@@ -216,16 +217,24 @@ void correction_candidate_count(uint3 dispatch_id : SV_DispatchThreadID)
     if (pair_index >= pair_count) return;
     correction_candidate_flags[pair_index] = 0u;
 
-    if (primitive_count == 0u || pair_count != primitive_count * primitive_count)
+    if (primitive_count == 0u)
     {
         uint previous = 0u;
         InterlockedOr(correction_candidate_totals[1], 2u, previous);
         return;
     }
 
-    uint primitive_a_index = pair_index / primitive_count;
-    uint primitive_b_index = pair_index % primitive_count;
-    if (primitive_a_index >= primitive_b_index) return;
+    uint2 seed_pair = correction_candidate_pair_seeds[pair_index];
+    uint primitive_a_index = seed_pair.x;
+    uint primitive_b_index = seed_pair.y;
+    if (primitive_a_index >= primitive_count ||
+        primitive_b_index >= primitive_count ||
+        primitive_a_index == primitive_b_index)
+    {
+        uint previous = 0u;
+        InterlockedOr(correction_candidate_totals[1], 2u, previous);
+        return;
+    }
 
     CorrectionCandidatePrimitive primitive_a =
         correction_primitives[primitive_a_index];
@@ -326,8 +335,9 @@ void correction_candidate_fill(uint3 dispatch_id : SV_DispatchThreadID)
         return;
     }
 
-    uint primitive_a_index = pair_index / primitive_count;
-    uint primitive_b_index = pair_index % primitive_count;
+    uint2 seed_pair = correction_candidate_pair_seeds[pair_index];
+    uint primitive_a_index = seed_pair.x;
+    uint primitive_b_index = seed_pair.y;
     CorrectionCandidatePrimitive primitive_a =
         correction_primitives[primitive_a_index];
     CorrectionCandidatePrimitive primitive_b =
