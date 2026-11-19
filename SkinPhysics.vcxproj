@@ -124,6 +124,7 @@
     <ClInclude Include="include\skin_physics\physics\soft_body_fem.hpp" />
     <ClInclude Include="include\skin_physics\physics\collision.hpp" />
     <ClInclude Include="include\skin_physics\physics\ccd.hpp" />
+    <ClInclude Include="include\skin_physics\physics\correction_ccd.hpp" />
     <ClInclude Include="include\skin_physics\physics\animation_track.hpp" />
     <ClInclude Include="include\skin_physics\physics\attribute_paint.hpp" />
     <ClInclude Include="include\skin_physics\physics\performance_metrics.hpp" />
