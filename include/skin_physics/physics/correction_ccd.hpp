@@ -132,6 +132,7 @@ namespace skin_physics::physics
         uint32_t mesh_id = 0;
         uint32_t primitive_id = 0;
         correction_primitive_role role = correction_primitive_role::vertex;
+        std::vector<uint64_t> vertex_stable_ids;
         std::vector<correction_vertex_motion> vertex_motions;
         std::vector<asset::vec3> segment_start_positions;
     };
