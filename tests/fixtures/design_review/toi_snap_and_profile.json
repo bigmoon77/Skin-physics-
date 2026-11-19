@@ -1,6 +1,6 @@
 {
-  "fixture_version": "1.4",
-  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Scalar formulas are algebra-only special cases with explicitly named Effective Inverse Mass units and do not authorize Snap without certified XPBD maps. Coupled Island inputs provide the complete 6x6 generalized Delassus matrix blocks, but no positive-eigenvalue / responsive-subspace certificate, so Snap remains disabled.",
+  "fixture_version": "1.5",
+  "purpose": "Persistent deterministic input vectors for design-review regression cases 45-47. These vectors are specifications, not executable assertions. Scalar formulas are algebra-only special cases with Effective Inverse Mass units and fixed-frame rotation bounds; they do not authorize Snap without certified XPBD maps. The coupled fixture has a full 6x6 local-coordinate Delassus matrix, but Snap compares transformed World-space per-contact Impulse vectors and remains disabled until full solver, basis-rotation, residual and responsive-subspace interval certificates are provided.",
   "cases": [
     {
       "id": "DCR_45_TAU_ZERO",
@@ -141,8 +141,7 @@
             "delta_normal_relative_velocity": 0.01,
             "delta_restitution": 0.01,
             "expected_E_normal_scalar_ns": 0.02,
-            "effective_inverse_mass_min": 2,
-            "delta_effective_inverse_mass": 0.01
+            "normal_impulse_l2_max_ns": 4
           },
           "friction_isotropic_uncoupled": {
             "tangent_relative_velocity_max": 1,
@@ -156,8 +155,8 @@
             "lambda_n_max": 0.1,
             "delta_inverse_contact_dt": 0.01,
             "expected_E_friction_vector_ns": 0.015,
-            "tangent_effective_inverse_mass_min": 2,
-            "delta_tangent_effective_inverse_mass": 0
+            "tangent_basis_angle_bound_radians": 0,
+            "tangent_impulse_l2_max_ns": 1
           },
           "units": {
             "normal_and_tangent_effective_inverse_mass": "1/kg",
@@ -206,7 +205,13 @@
         },
         "snap_disabled_reason": "complete_G_internal_G_contact_G_v_interval_certificates_missing",
         "scalar_impulse_formula_is_independently_verified": true,
-        "scalar_formula_outputs_are_not_snap_authorization": true
+        "scalar_formula_outputs_are_not_snap_authorization": true,
+        "impulse_error_decomposition_world_space": {
+          "normal_direction_rotation_bound_ns": "2 * 4.0 * sin(0.01 / 2)",
+          "tangent_basis_rotation_bound_ns": "2 * 1.0 * sin(0.0 / 2)",
+          "friction_coordinate_error_ns": 0.015,
+          "world_space_friction_vector_error_ns": 0.015
+        }
       }
     },
     {
@@ -260,14 +265,6 @@
             "contact_A",
             "contact_B"
           ],
-          "candidate_residual_interval_ns": [
-            0,
-            0.002
-          ],
-          "boundary_residual_interval_ns": [
-            0,
-            0.002
-          ],
           "iteration_controls": {
             "relaxation_factor": 0.75,
             "warm_start_enabled": false,
@@ -279,7 +276,9 @@
               "contact_B"
             ],
             "iteration_count": 8
-          }
+          },
+          "candidate_world_impulse_residual_l2_upper_ns": 0.002,
+          "boundary_world_impulse_residual_l2_upper_ns": 0.002
         },
         "required_interval_outputs": [
           "finite_positive_responsive_delassus_eigenvalue_lower_bound",
@@ -988,7 +987,30 @@
         "normal_delassus_matrix_units": "1/kg",
         "normal_tangential_delassus_cross_matrix_units": "1/kg",
         "tangential_delassus_matrix_units": "1/kg",
-        "impulse_vector_layout": "Canonical Contact Key order: all normal scalar components, followed by each contact's tangent_u / tangent_v components."
+        "impulse_vector_layout": "Canonical Contact Key order: all normal scalar components, followed by each contact's tangent_u / tangent_v components.",
+        "solver_local_coordinate_order": [
+          "contact_A.normal",
+          "contact_B.normal",
+          "contact_A.tangent_u",
+          "contact_A.tangent_v",
+          "contact_B.tangent_u",
+          "contact_B.tangent_v"
+        ],
+        "world_space_impulse_output_order": "Canonical Contact Key order: contact_A [I_x,I_y,I_z], contact_B [I_x,I_y,I_z], all in fixed World coordinates.",
+        "world_space_impulse_output_dimension": 6,
+        "generalized_delassus_matrix_coordinate_basis": "Local contact coordinates ordered by solver_local_coordinate_order; the matrix is not itself the Snap impulse error output.",
+        "tangent_basis_boundary_angular_deviation_intervals_radians": [
+          [
+            0,
+            0.001
+          ],
+          [
+            0,
+            0.001
+          ]
+        ],
+        "world_space_impulse_residual_units": "N*s",
+        "tangent_basis_rotation_bound_required": true
       },
       "expected": {
         "interval_evaluation_required": true,
@@ -1022,7 +1044,10 @@
           "candidate_boundary_frame_set_not_enclosed",
           "responsive_subspace_rank_or_basis_changes_over_uncertainty_set",
           "contact_key_set_mismatch_between_candidate_and_boundary",
-          "per_contact_error_bounds_aggregated_by_max_instead_of_l2"
+          "per_contact_error_bounds_aggregated_by_max_instead_of_l2",
+          "world_space_impulse_transform_missing",
+          "tangent_basis_rotation_bound_missing",
+          "world_space_impulse_residual_bound_missing"
         ],
         "all_normal_tangential_projection_inputs_present": true,
         "generalized_delassus_blocks_must_be_evaluated_together": true,
@@ -1038,9 +1063,13 @@
           "candidate_and_boundary_solver_residual_bounds_in_impulse_units",
           "complete_contact_island_impulse_error_upper_bound_ns",
           "candidate_boundary_responsive_subspace_rank_and_basis_invariance_certificate",
-          "canonical_contact_key_l2_impulse_error_aggregation"
+          "canonical_contact_key_l2_impulse_error_aggregation",
+          "world_space_3N_impulse_output_interval",
+          "tangent_basis_world_space_rotation_error_bound",
+          "candidate_and_boundary_world_space_impulse_residual_l2_bounds"
         ],
-        "normal_subblock_eigenvalue_reference_is_not_full_matrix_certificate": true
+        "normal_subblock_eigenvalue_reference_is_not_full_matrix_certificate": true,
+        "local_generalized_impulse_coefficients_are_not_snap_error_output": true
       }
     },
     {
