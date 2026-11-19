@@ -1705,7 +1705,7 @@ namespace
 
             add_pass("correction_candidate_exclusive_scan",
                 scan_shader,
-                { { 4, flags_srv.Get() } },
+                { { 5, flags_srv.Get() } },
                 {
                     { 1, prefix_uav.Get() },
                     { 3, totals_uav.Get() }
