@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.18",
+  "profile_version": "1.19",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -349,7 +349,7 @@
       "solver_contact_coordinate_layout": "The Delassus solver's local coefficient vector q is [all j_n in Contact Key order, then each Contact's j_t,u / j_t,v]. Transform q through Contact Jacobian J^T to compare applied impulses.",
       "tangent_basis_rotation_bound": "For the scalar isotropic special case, first bound tangent-coordinate impulse error by E_friction_coordinates, then convert to World-space with E_friction_vector <= E_friction_coordinates + 2 * J_tangent_max * sin(theta_tangent_max / 2). J_tangent_max is the L2 upper bound of the World-space tangent impulse stack; theta_tangent_max is the maximum Candidate / Boundary tangent-frame rotation.",
       "version_contract": "Snap requires both contact-level impulse_tolerance and applied_impulse_tolerance [N*s]; the first checks per-contact physical impulse vectors and the second checks the actual generalized impulse distribution to responsive Physics Vertices.",
-      "contact_jacobian_bound_definition": "J is the complete sparse Contact Jacobian whose rows use canonical local Normal / Tangent solver-coordinate order and whose columns use stable responsive Physics Vertex IDs with fixed World-space XYZ coordinates. It contains signed VT / EE interpolation coefficients and the Candidate / Boundary contact frames. q is the local generalized contact-impulse coefficient vector produced by the finite-iteration solver. E_applied_impulse = sup over z in U of ||J(z)^T*q(z)-J(z_boundary)^T*q(z_boundary)||_2, over the complete stable Physics Vertex DOF set. The interval bound must enclose both J and q, including interpolation-feature changes, signed coefficients, basis rotation and vertex ID correspondence. A mismatched responsive vertex ID set, missing Jacobian interval, non-finite coefficient or unbounded interpolation variation makes E_applied_impulse unknown and forbids Snap.",
+      "contact_jacobian_bound_definition": "J is the complete sparse Contact Jacobian. Its rows use the exact q order: all Contact Normal rows in Canonical Contact Key order, followed by each Contact's tangent_u and tangent_v rows in the same order. Each Contact frame is orthonormal and right-handed (normal cross tangent_u = tangent_v; tangent_u cross tangent_v = normal). Its columns use stable responsive Physics Vertex IDs with fixed World-space XYZ coordinates. It contains signed VT / EE interpolation coefficients and Candidate / Boundary contact frames. q is the local generalized contact-impulse coefficient vector produced by the finite-iteration solver. E_applied_impulse = sup over z in U of ||J(z)^T*q(z)-J(z_boundary)^T*q(z_boundary)||_2 over the complete stable Physics Vertex DOF set. The interval bound must enclose both J and q, including interpolation-feature changes, signed coefficients, basis rotation and vertex ID correspondence. Mismatched responsive Vertex ID sets, missing Jacobian intervals, non-finite coefficients or unbounded interpolation variation make E_applied_impulse unknown and forbid Snap.",
       "applied_impulse_tolerance": "Required per CCD fixture / workload [N*s] for the L2 error of generalized impulses distributed to the complete responsive Physics Vertex set. No default is implied.",
       "applied_impulse_error_components": [
         "Contact Jacobian signed interpolation coefficient variation",
@@ -407,6 +407,10 @@
     "not_a_claim_of_measured_gpu_accuracy_or_performance": true
   },
   "version_history": [
+    {
+      "version": "1.19",
+      "changes": "Completed the normative Contact Jacobian row-order contract to match q and the right-handed frame convention; Candidate / Boundary Jacobian intervals must use the same stable Contact / Physics Vertex ID order."
+    },
     {
       "version": "1.18",
       "changes": "Fixed Contact Jacobian row order to match generalized solver coefficient vector q (all Normal rows, then per-contact tangent_u / tangent_v rows), and made the right-handed orthonormal contact frame convention normative."
