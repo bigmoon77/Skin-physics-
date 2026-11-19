@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "skin_physics_numerical_acceptance_v1",
-  "profile_version": "1.9",
+  "profile_version": "1.10",
   "status": "proposed_initial_engineering_thresholds",
   "applies_to": {
     "runtime": "SkinPhysics",
@@ -308,6 +308,7 @@
       "impulse_tolerance": "Required per CCD fixture / workload [N*s]; no default is implied.",
       "snap_allowed_only_when": "time delta <= tau_snap_tolerance AND conservative total post-XPBD position error <= distance_tolerance AND conservative Contact-relative Velocity error <= relative_velocity_tolerance AND conservative post-Restitution/Friction Impulse error <= impulse_tolerance.",
       "unknown_or_non_finite_bound_policy": "Snap forbidden; retain exact tau and create an independent interior Boundary. If exact-tau CCD cannot be evaluated safely, reject the Logical Tick as CCDUnresolved.",
+      "impulse_bound_definition": "For the complete deterministic finite-iteration coupled contact solve F, construct a validated input uncertainty set U enclosing both candidate-time and snap-boundary states. E_impulse = sup over z in U of ||F(z)-F(z_boundary)||_2, with the interval enclosure including normal and tangential impulse components, Delassus/effective-mass matrix, normal basis, relative velocity, restitution, friction, XPBD support impulse, compliance/dt inputs and both solver residuals. A certified decomposition may use E_impulse <= E_normal_scalar + 2*J_normal_max*sin(theta_normal_max/2) + E_friction_vector + E_solver_residual. E_normal_scalar and E_friction_vector must be validated upper bounds over U, not sampled estimates. The solver must prove finite positive lower bounds for the responsive Delassus eigenvalues and enclose every iteration. If the contact active set / projection branch cannot be enclosed, a coupled solve is unbounded, or any interval is missing, Snap is forbidden.",
       "position_error_components": [
         "CCD trajectory position deviation",
         "XPBD post-solve response Lipschitz bound",
@@ -321,8 +322,12 @@
         "XPBD dt/compliance sensitivity bound"
       ],
       "impulse_error_components": [
-        "effective mass variation",
-        "contact normal variation",
+        "normal effective-mass / Delassus operator interval variation, including a strictly positive lower eigenvalue bound",
+        "contact normal angular/directional variation and the induced normal-vector impulse rotation error",
+        "relative normal / tangential velocity interval variation",
+        "restitution coefficient interval variation and its effect on the normal impulse",
+        "friction coefficient and Coulomb-disk / stick-slip projection variation, including XPBD support impulse lambda_n / dt_contact",
+        "finite-iteration coupled solver response and certified solver-residual interval for the complete contact island",
         "restitution and friction response to relative velocity error"
       ],
       "note": "Tolerance values must be supplied by the reviewed fixture / workload profile. Missing values never authorize Snap."
