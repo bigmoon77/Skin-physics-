@@ -143,10 +143,17 @@ namespace skin_physics::physics
         const std::vector<correction_candidate_pair_key>& incoming_candidates,
         std::size_t capacity);
 
+    // Input envelope bounds must already include the per-primitive Contact Thickness expansion.
+    // settings.contact_thickness must be zero so the existing Broadphase does not expand twice.
     correction_broadphase_result generate_correction_broadphase_candidates(
         const std::vector<correction_broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
         const broadphase_settings& settings = {});
+
+    bool union_correction_envelope_aabb(
+        const collision_aabb& first,
+        const collision_aabb& second,
+        collision_aabb& output_bounds);
 
     bool build_correction_swept_aabb(
         const std::vector<correction_vertex_motion>& vertex_motions,
