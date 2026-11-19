@@ -1445,18 +1445,65 @@ namespace skin_physics::physics
         return result;
     }
 
+    correction_segment_candidate_update_result begin_correction_position_writer_epoch(
+        correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        uint32_t position_writer_epoch_id)
+    {
+        correction_segment_candidate_update_result result;
+        if (base_integration_segment_id == 0 ||
+            state.base_integration_segment_id != base_integration_segment_id)
+        {
+            result.wrong_segment = true;
+            result.diagnostic =
+                "Position-Writer Epoch belongs to a different Integration Segment.";
+            return result;
+        }
+        if (position_writer_epoch_id == 0 ||
+            position_writer_epoch_id <= state.last_position_writer_epoch_id)
+        {
+            result.invalid_epoch_order = true;
+            result.diagnostic =
+                "Position-Writer Epoch ID must be non-zero and strictly increasing within the Integration Segment.";
+            return result;
+        }
+        if (state.position_writer_epoch_generation ==
+            std::numeric_limits<uint64_t>::max())
+        {
+            result.epoch_generation_overflow = true;
+            result.diagnostic =
+                "Position-Writer Epoch Generation overflow; Segment State was not mutated.";
+            return result;
+        }
+
+        state.last_position_writer_epoch_id = position_writer_epoch_id;
+        ++state.position_writer_epoch_generation;
+        state.contact_set_current = false;
+        state.vertex_contact_csr_current = false;
+        result.changed = true;
+        result.success = true;
+        return result;
+    }
+
     bool mark_correction_segment_contact_set_and_csr_current(
         correction_segment_candidate_state& state,
-        uint64_t candidate_generation)
+        uint64_t candidate_generation,
+        uint64_t position_writer_epoch_generation)
     {
         if (state.base_integration_segment_id == 0 ||
-            candidate_generation != state.candidate_generation)
+            candidate_generation != state.candidate_generation ||
+            position_writer_epoch_generation !=
+                state.position_writer_epoch_generation)
         {
             return false;
         }
 
         state.contact_set_candidate_generation = candidate_generation;
+        state.contact_set_position_writer_epoch_generation =
+            position_writer_epoch_generation;
         state.vertex_contact_csr_candidate_generation = candidate_generation;
+        state.vertex_contact_csr_position_writer_epoch_generation =
+            position_writer_epoch_generation;
         state.contact_set_current = true;
         state.vertex_contact_csr_current = true;
         return true;
