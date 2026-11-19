@@ -2087,6 +2087,160 @@ namespace
             candidate_overflow.candidates.empty(),
             "Candidate Union capacity overflow must return no partial replacement set.");
 
+        const auto make_vt_epoch_primitives =
+            [](const test_json::value& input,
+                uint64_t point_stable_id,
+                uint64_t triangle_stable_id)
+                -> std::vector<skin_physics::physics::correction_primitive_epoch_input>
+        {
+            std::vector<skin_physics::physics::correction_primitive_epoch_input> result;
+            skin_physics::physics::correction_primitive_epoch_input point;
+            point.stable_id = point_stable_id;
+            point.mesh_id = 1;
+            point.primitive_id = 0;
+            point.role = skin_physics::physics::correction_primitive_role::vertex;
+            point.vertex_motions.push_back({
+                read_vec3(input.at("point_before")),
+                read_vec3(input.at("point_after"))
+            });
+            point.segment_start_positions.push_back(
+                read_vec3(input.at("point_before")));
+            result.push_back(point);
+
+            const auto triangle_before = read_vec3_triplet(
+                input.at("triangle_vertices_before"));
+            const auto triangle_after = read_vec3_triplet(
+                input.at("triangle_vertices_after"));
+            skin_physics::physics::correction_primitive_epoch_input triangle;
+            triangle.stable_id = triangle_stable_id;
+            triangle.mesh_id = 2;
+            triangle.primitive_id = 0;
+            triangle.role = skin_physics::physics::correction_primitive_role::triangle;
+            for (std::size_t index = 0; index < 3; ++index)
+            {
+                triangle.vertex_motions.push_back({
+                    triangle_before[index], triangle_after[index]
+                });
+                triangle.segment_start_positions.push_back(triangle_before[index]);
+            }
+            result.push_back(triangle);
+            return result;
+        };
+
+        const std::vector<skin_physics::physics::broadphase_mesh_pair>
+            epoch_mesh_pairs = { { 1, 2, true } };
+        skin_physics::physics::broadphase_settings epoch_broadphase_settings;
+        epoch_broadphase_settings.cell_size = 0.25f;
+        epoch_broadphase_settings.contact_thickness = 0.0f;
+        epoch_broadphase_settings.max_cells_per_primitive = 4096;
+        epoch_broadphase_settings.cell_record_capacity = 4096;
+        epoch_broadphase_settings.candidate_capacity = 16;
+        epoch_broadphase_settings.self_collision_enabled = false;
+
+        auto crossing_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3001, {}, 16);
+        require(crossing_epoch_state_result.success,
+            "CPU Position-Writer Epoch integration test must initialize an empty Segment Candidate State.");
+        auto crossing_epoch_state = crossing_epoch_state_result.state;
+        const auto crossing_epoch_primitives = make_vt_epoch_primitives(
+            vt_crossing.at("input"), 3100, 3200);
+        const auto crossing_epoch = 
+            skin_physics::physics::process_correction_position_writer_epoch(
+                crossing_epoch_state, 3001, 1, crossing_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(crossing_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::rejected &&
+            !crossing_epoch.state_committed &&
+            crossing_epoch.correction_ccd_results.size() == 1 &&
+            crossing_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::path_crossing &&
+            crossing_epoch_state.position_writer_epoch_generation == 0 &&
+            crossing_epoch_state.candidates.empty(),
+            "A Position-Writer Epoch that crosses the latched side must reject atomically without appending Candidates or advancing Segment state.");
+
+        const auto transient_epoch_primitives = make_vt_epoch_primitives(
+            transient.at("input"), 3300, 3400);
+        auto transient_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3002, {}, 16);
+        auto transient_epoch_state = transient_epoch_state_result.state;
+        const auto transient_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                transient_epoch_state, 3002, 1, transient_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(transient.at("input")));
+        require(transient_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::accepted &&
+            transient_epoch.state_committed &&
+            transient_epoch.correction_ccd_results.size() == 1 &&
+            transient_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::hit &&
+            transient_epoch.active_contacts.empty() &&
+            transient_epoch_state.candidates.size() == 1 &&
+            transient_epoch_state.candidate_generation == 2 &&
+            transient_epoch_state.position_writer_epoch_generation == 1 &&
+            !transient_epoch_state.contact_set_current,
+            "A same-side transient proximity must remain in the Segment Candidate Union without becoming an endpoint Active Contact.");
+
+        const auto endpoint_epoch_primitives = make_vt_epoch_primitives(
+            endpoint.at("input"), 3500, 3600);
+        auto endpoint_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3003, {}, 16);
+        auto endpoint_epoch_state = endpoint_epoch_state_result.state;
+        const auto endpoint_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                endpoint_epoch_state, 3003, 1, endpoint_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(endpoint.at("input")));
+        require(endpoint_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::accepted &&
+            endpoint_epoch.state_committed &&
+            endpoint_epoch.active_contacts.size() == 1 &&
+            endpoint_epoch_state.candidates.size() == 1,
+            "A Correction Hit that remains active at s=1 must be returned as an endpoint Contact candidate.");
+
+        const auto miss_epoch_primitives = make_vt_epoch_primitives(
+            miss.at("input"), 3700, 3800);
+        auto miss_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3004, {}, 16);
+        auto miss_epoch_state = miss_epoch_state_result.state;
+        const auto miss_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                miss_epoch_state, 3004, 1, miss_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(miss.at("input")));
+        require(miss_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::accepted &&
+            miss_epoch.state_committed &&
+            miss_epoch.correction_ccd_results.empty() &&
+            miss_epoch_state.candidates.empty() &&
+            miss_epoch_state.position_writer_epoch_generation == 1,
+            "A certified Broadphase miss must still advance the Position-Writer Epoch while leaving the Candidate Union empty.");
+
+        skin_physics::physics::broadphase_settings epoch_capacity_settings =
+            epoch_broadphase_settings;
+        epoch_capacity_settings.candidate_capacity = 0;
+        auto blocked_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3005, {}, 16);
+        auto blocked_epoch_state = blocked_epoch_state_result.state;
+        const auto blocked_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                blocked_epoch_state, 3005, 1, crossing_epoch_primitives,
+                epoch_mesh_pairs, epoch_capacity_settings,
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(blocked_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::blocked &&
+            !blocked_epoch.state_committed &&
+            blocked_epoch.capacity_overflow &&
+            blocked_epoch_state.position_writer_epoch_generation == 0 &&
+            blocked_epoch_state.candidates.empty(),
+            "Correction Broadphase Capacity exhaustion must BLOCK the same Epoch without partial Candidate or Generation mutation.");
+
         skin_physics::physics::correction_ccd_settings limited_settings =
             read_correction_ccd_settings(vt_crossing.at("input"));
         limited_settings.maximum_interval_evaluations = 2;
