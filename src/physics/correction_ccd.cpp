@@ -974,6 +974,22 @@ namespace skin_physics::physics
             return result;
         }
 
+        bool is_interior_edge_parameter(
+            real parameter,
+            real edge_length,
+            real epsilon_length)
+        {
+            if (!finite(parameter) || !finite(edge_length) ||
+                edge_length <= epsilon_length)
+            {
+                return false;
+            }
+            const real parameter_tolerance = std::min(
+                0.25L, epsilon_length / edge_length);
+            return parameter > parameter_tolerance &&
+                parameter < one - parameter_tolerance;
+        }
+
         bool prepare_vt_reference(
             const vertex_triangle_correction_motion& motion,
             const correction_ccd_settings& settings,
@@ -1005,10 +1021,30 @@ namespace skin_physics::physics
             const vector3 a1 = to_vector(motion.segment_start_edge_a[1]);
             const vector3 b0 = to_vector(motion.segment_start_edge_b[0]);
             const vector3 b1 = to_vector(motion.segment_start_edge_b[1]);
-            const vector3 initial_normal = cross(
-                subtract(a1, a0), subtract(b1, b0));
+            const vector3 direction_a = subtract(a1, a0);
+            const vector3 direction_b = subtract(b1, b0);
+
+            vector3 closest_a;
+            vector3 closest_b;
+            real parameter_a = 0.0L;
+            real parameter_b = 0.0L;
+            if (!closest_points_segments(
+                a0, a1, b0, b1, settings.epsilon_length,
+                closest_a, closest_b, parameter_a, parameter_b) ||
+                !is_interior_edge_parameter(
+                    parameter_a, length(direction_a), settings.epsilon_length) ||
+                !is_interior_edge_parameter(
+                    parameter_b, length(direction_b), settings.epsilon_length))
+            {
+                // Endpoint-clamped EE features require a separately certified
+                // persistent/witness normal. The current CPU reference only
+                // implements the Interior-Interior feature contract.
+                return false;
+            }
+
+            const vector3 initial_normal = cross(direction_a, direction_b);
             return latch_reference_side(
-                initial_normal, subtract(a0, b0),
+                initial_normal, subtract(closest_a, closest_b),
                 motion.has_persistent_contact_cache,
                 motion.persistent_contact_normal,
                 settings.epsilon_length,
@@ -1272,6 +1308,25 @@ namespace skin_physics::physics
             result.status = correction_ccd_status::no_hit;
             result.diagnostic = "Every correction EE interval is certified outside the contact thickness.";
             return result;
+        }
+
+        const std::array<vector3, 2> witness_edge_a =
+            evaluate_edge(motion.edge_a, candidate.witness_s);
+        const std::array<vector3, 2> witness_edge_b =
+            evaluate_edge(motion.edge_b, candidate.witness_s);
+        const real witness_edge_a_length = length(subtract(
+            witness_edge_a[1], witness_edge_a[0]));
+        const real witness_edge_b_length = length(subtract(
+            witness_edge_b[1], witness_edge_b[0]));
+        if (!is_interior_edge_parameter(
+                candidate.witness.parameter_a,
+                witness_edge_a_length, settings.epsilon_length) ||
+            !is_interior_edge_parameter(
+                candidate.witness.parameter_b,
+                witness_edge_b_length, settings.epsilon_length))
+        {
+            return make_unresolved(result,
+                "Correction EE witness is endpoint-clamped; a certified persistent feature normal is required.");
         }
 
         result.hit_witness_valid = true;
