@@ -1956,9 +1956,16 @@ int run_gpu_solver_tests()
         const ComPtr<ID3D11ComputeShader> broadphase_shader = compile_compute_shader(
             device.Get(), test_support::fixture_path("phase07_collision/collision_gpu.cs.hlsl"),
             "bvh_broadphase");
+        const ComPtr<ID3D11ComputeShader> correction_swept_aabb_shader =
+            compile_compute_shader(
+                device.Get(),
+                test_support::fixture_path("phase07_collision/collision_gpu.cs.hlsl"),
+                "correction_swept_aabb");
         test_phase07_warp_vertex_triangle_contact(device.Get(), context.Get(), vt_shader.Get());
         test_phase07_warp_edge_edge_contact(device.Get(), context.Get(), ee_shader.Get());
         test_phase07_warp_hierarchical_broadphase(device.Get(), context.Get(), broadphase_shader.Get());
+        test_phase12_warp_correction_swept_aabb(
+            device.Get(), context.Get(), correction_swept_aabb_shader.Get());
     }
     test_phase08_warp_point_triangle_ccd();
     test_phase09_warp_animation_target();
