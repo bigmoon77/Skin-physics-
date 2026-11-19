@@ -5,14 +5,14 @@
     #include <d3d11.h>
     #include "skin_physics/asset/types.hpp"
 
-- 文書バージョン: 1.16
+- 文書バージョン: 1.17
 - 状態: DESIGN CLOSURE CANDIDATE / INDEPENDENT CRITICAL REVIEW REQUIRED
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.14
-- 対応詳細設計: detailed_design.md 1.19
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.11
+- 対応基本設計: basic_design.md 1.15
+- 対応詳細設計: detailed_design.md 1.20
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.12
 - Deployment Capability Profile形式: deployment_capability_profile_template.json v1.4
-- 前版: 1.15
+- 前版: 1.16
 - 実装基点: feature/phase1-importer
 - 対象ビルド: SkinPhysics.sln / SkinPhysics.vcxproj（x64、C++17、D3D11）
 
@@ -976,6 +976,10 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 
 ## 14. バージョン履歴
 
+- 1.17: Basic Design v1.15 / Detailed Design v1.20 / Numerical Acceptance Profile v1.12との相互参照を同期。Runtimeの所有権・Submission Lease・Commit / Rollback契約は本書を正本として維持。
+- 1.16: tau=0の全長Continuation Segmentを明文化し、内部TOI Split Countと追加Segment Countを分離。Admission下限を追加Segment Count基準へ統一。
+- 1.15: TOI時間BoundaryとContact Group形成を分離し、同一Segment / 同一tauのBoundary共有と、Segment IDを跨ぐBoundary分離を定義。
+- 1.14: Retry時のQuery / Render Candidate / in-flight Leaseの再Admissionを明確化し、Blocked ReservationとTransient Submission Leaseの所有期間、Reset / Drain条件を分離。
 - 1.13: Logical ReservationとTransient Submission Leaseを分離し、Block後のLease解放、Reset / Drain条件、TOI端点Snapの幾何誤差Guard、Contact Groupとは独立した一意な時間Boundary Count、Status Field正本、CPU-only advance_report、同一Trial / Target Budget / Headroom / Test Scene IDによるDeployment Qualificationを定義。Detailed Design v1.16 / Profile v1.8 / Profile Template v1.1と同期。
 - 1.12: Retry時のQuery / Render Candidate Slot再取得、TOIの一意な内部Split Count、Hard Limit到達時のUnsatisfiable / Reset経路、advance / poll戻り値の分離、Host-configured Hard LimitとDeployment Profileの責務を明確化。
 - 1.11: WORK_BUDGET_EXCEEDEDをBLOCKEDへ統一。CPU Preflight / GPU Dynamic TOIのStatus経路、TOI Segment下限値、Runtime初期化時に固定する有限Hard Limit、Pending Demand時のBUSY、BLOCKED / REJECTED / FAILEDを定義。
@@ -991,7 +995,3 @@ Device Removed / Reset時は新規Submissionを停止し、WorldをDEVICE_LOST�
 - 1.1: 複数WorldのQuery Ring集約、Model Transform / Material / Paint API、Pose履歴不足時のBLOCKED_BY_INPUT、Fixed Delta fractional remainder、Capacity Growth / Memory Budget、Render Candidate Ring / Host Lease、Physics State Bank 2枚とSubstep Snapshotの分離を明文化。
 - 1.0: Runtime / Library境界、Public API、D3D11 Device / Context所有権、Fixed Step Scheduler、GPU Commit / Rollback、Render Binding、Device Loss、R0-R6 Gateの初版。
 
-
-## Revision History
-
-- v1.16: tau=0の全長Continuation Segmentを明文化し、内部TOI Split Countと追加Segment Countを分離。Admission下限を追加Segment Count基準へ統一。
