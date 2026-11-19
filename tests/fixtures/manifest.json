@@ -544,7 +544,7 @@
   "design_review_regressions": {
     "status": "specified_not_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Case 46 separates local generalized Delassus solver coefficients from World-space per-contact impulse vectors used for Snap error. The coupled fixture supplies the full 6x6 local-coordinate Delassus interval, but has no certified World-space output, tangent-basis rotation, residual or responsive-subspace interval bounds; Snap remains disabled. Cases 45-47 remain specified_not_implemented until executable assertions consume the fixture vectors and pass CI.",
+    "purpose": "Track senior-engineer design-review regression cases. Case 46 separates contact-level World-space impulse error from the generalized applied impulse J^T*q over stable responsive Physics Vertex IDs. The scalar fixture supplies Candidate / Boundary Contact Jacobians but no certified applied-impulse interval result; the coupled fixture has no complete Jacobian interval. Snap remains disabled until both contact and applied impulse certificates, full XPBD map bounds, and full 6x6 Delassus responsive-subspace bounds are proven. Cases 45-47 remain specified_not_implemented until executable assertions consume the fixture vectors and pass CI.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -634,8 +634,8 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; world_space_impulse_and_full_6x6_responsive_subspace_certificates_not_provided; Snap_authorization_fixtures_fail_closed",
-    "fixture_version": "1.5"
+    "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented; contact_and_applied_impulse_certificates_not_provided; Snap_authorization_fixtures_fail_closed",
+    "fixture_version": "1.6"
   },
   "latest_ci_attempt": {
     "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
