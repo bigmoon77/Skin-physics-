@@ -6,6 +6,7 @@ on:
       - main
       - feature/phase1-importer
       - feature/integrated-gpu-runtime-design
+      - feature/gpu-runtime-implementation
   pull_request:
     branches:
       - main
