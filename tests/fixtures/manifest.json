@@ -601,9 +601,9 @@
     ]
   },
   "latest_ci_attempt": {
-    "commit": "69fced4a72eb4407053bf0c744c770191dd3e5d7",
-    "workflow_run_id": 44432264366,
-    "job_id": 135252323946,
+    "commit": "2fd52360216486f2a9cd25a245a2ea14916c8fb2",
+    "workflow_run_id": 44432556442,
+    "job_id": 135253298270,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
@@ -614,6 +614,6 @@
     "tests": "not_started",
     "logs_available": false,
     "classification": "runner_not_assigned",
-    "note": "The most recent observed run targets commit 69fced4. The job completed with runner_id 0, an empty runner_name, no reported steps, and no logs URL, so it ended before a Windows runner was assigned. No compiler or test execution occurred; this is not evidence of a source-code or design-document failure. The last successful verified CI remains commit 36dab21 / run 44327398017. Commits after 69fced4 are not covered by this run."
+    "note": "The most recent observed run targets commit 2fd5236. The job completed with runner_id 0, an empty runner_name, no reported steps, and no logs URL, so it ended before a Windows runner was assigned. No compiler or test execution occurred; this is not evidence of a source-code or design-document failure. The last successful verified CI remains commit 36dab21 / run 44327398017. Commits after 2fd5236 are not covered by this run."
   }
 }
