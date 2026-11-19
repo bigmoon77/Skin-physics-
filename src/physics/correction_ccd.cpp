@@ -2200,6 +2200,32 @@ namespace skin_physics::physics
                 return result;
             }
 
+            std::vector<uint64_t> unique_vertex_ids =
+                primitive.vertex_stable_ids;
+            std::sort(unique_vertex_ids.begin(), unique_vertex_ids.end());
+            if (std::adjacent_find(
+                    unique_vertex_ids.begin(), unique_vertex_ids.end()) !=
+                unique_vertex_ids.end())
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Position-Writer Epoch Primitive contains duplicate Stable Vertex IDs.";
+                return result;
+            }
+
+            std::vector<correction_primitive_identity> sorted_exclusions =
+                primitive.excluded_primitive_ids;
+            std::sort(sorted_exclusions.begin(), sorted_exclusions.end());
+            if (std::adjacent_find(
+                    sorted_exclusions.begin(), sorted_exclusions.end()) !=
+                sorted_exclusions.end())
+            {
+                result.status = correction_writer_epoch_status::rejected;
+                result.diagnostic =
+                    "Position-Writer Epoch Primitive contains duplicate topology exclusions.";
+                return result;
+            }
+
             const primitive_key key = {
                 primitive.stable_id, primitive.mesh_id, primitive.primitive_id
             };
