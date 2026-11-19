@@ -147,12 +147,12 @@
       "maximum_gpu_resource_bytes": "integer"
     },
     "run_count": "integer >= minimum_measurement_runs (minimum 5); number of independent complete runs with identical workload and build identity",
-    "gpu_total_tick_time_ms_p50": "number; median across runs",
-    "gpu_total_tick_time_ms_p95": "number; p95 across runs",
-    "gpu_total_tick_time_ms_max": "number; maximum across runs",
-    "cpu_submission_time_ms_p95": "number; p95 across runs",
-    "frame_time_ms_p95": "number; p95 across runs",
-    "peak_skin_physics_gpu_bytes": "integer; maximum across runs",
+    "gpu_total_tick_time_ms_p50": "number; median of pooled raw per-Tick samples across all complete independent runs",
+    "gpu_total_tick_time_ms_p95": "number; p95 from pooled raw per-Tick samples across all complete independent runs; never aggregate run-level p95 summaries",
+    "gpu_total_tick_time_ms_max": "number; maximum across every raw per-Tick sample in all complete independent runs",
+    "cpu_submission_time_ms_p95": "number; p95 from pooled raw CPU Submission samples across all complete independent runs; never aggregate run-level p95 summaries",
+    "frame_time_ms_p95": "number; p95 from pooled raw frame-time samples across all complete independent runs; never aggregate run-level p95 summaries",
+    "peak_skin_physics_gpu_bytes": "integer; maximum observed across every sample in all complete independent runs",
     "dxgi_local_memory_budget_bytes": "integer; must represent the sampled budget for all accepted runs",
     "correctness_failure_count": "integer; must be 0",
     "unresolved_work_budget_count": "integer; must be 0",
@@ -163,14 +163,20 @@
     "raw_measurement_artifact_uri": "string; immutable raw result bundle",
     "test_scene_ids": "unique, non-empty strings naming the exact Gate R6 / acceptance scenes executed in this trial",
     "per_run_samples": {
-      "run_id": "stable unique run identifier",
-      "measured_frame_sample_count": "integer >= 1000 after warm-up",
-      "gpu_tick_sample_count": "integer >= 1000 after warm-up",
-      "cpu_submission_sample_count": "integer >= 1000 after warm-up",
-      "frame_time_samples_artifact_uri": "immutable raw frame-time sample series",
-      "gpu_tick_samples_artifact_uri": "immutable raw per-Tick GPU timestamp sample series",
-      "cpu_submission_samples_artifact_uri": "immutable raw CPU submission sample series"
+      "type": "array",
+      "minimum_items": 5,
+      "unique_key": "run_id",
+      "items": {
+        "run_id": "required stable unique identifier; unique within selected trial",
+        "run_identity": "required independent process / session identity and start timestamp; duplicate sessions are not independent runs",
+        "measured_frame_sample_count": "integer >= 1000 after warm-up; must equal the number of raw frame samples in the artifact",
+        "gpu_tick_sample_count": "integer >= 1000 after warm-up; must equal the number of raw GPU Tick samples in the artifact",
+        "cpu_submission_sample_count": "integer >= 1000 after warm-up; must equal the number of raw CPU Submission samples in the artifact",
+        "frame_time_samples_artifact_uri": "required immutable raw frame-time sample series URI",
+        "gpu_tick_samples_artifact_uri": "required immutable raw per-Tick GPU timestamp sample series URI",
+        "cpu_submission_samples_artifact_uri": "required immutable raw CPU submission sample series URI"
+      }
     },
-    "p95_method": "Compute p95 from pooled raw per-frame / per-Tick / per-submission samples across all complete runs in the selected trial; do not compute p95 from run-level p95 summaries. Maximum GPU Tick and Peak Library GPU Memory are maxima over all runs and samples."
+    "p95_method": "Pool every raw per-frame / per-Tick / per-submission sample from all complete independent runs in the selected trial, then compute each p95 once over the pooled population. Never average, pool, or otherwise aggregate per-run p95 summaries. Maximum GPU Tick and Peak Library GPU Memory are maxima over all samples / runs."
   }
 }
