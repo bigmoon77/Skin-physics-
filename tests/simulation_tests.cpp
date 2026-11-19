@@ -1894,6 +1894,24 @@ namespace
             }),
             "Shared-vertex and explicit one-ring topology pairs must be excluded before Canonical Candidate output.");
 
+        auto duplicate_primitive_identity =
+            correction_primitives;
+        duplicate_primitive_identity[4].stable_id =
+            correction_primitives[1].stable_id;
+        duplicate_primitive_identity[4].mesh_id =
+            correction_primitives[1].mesh_id;
+        duplicate_primitive_identity[4].primitive_id =
+            correction_primitives[1].primitive_id;
+        const auto duplicate_identity_broadphase =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                duplicate_primitive_identity, {},
+                correction_broadphase_settings);
+        require(!duplicate_identity_broadphase.success &&
+            !duplicate_identity_broadphase.diagnostics.empty() &&
+            duplicate_identity_broadphase.diagnostics[0].code ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "Standalone Correction Broadphase must reject duplicate Stable / Mesh / Primitive identities.");
+
         skin_physics::physics::broadphase_settings double_expansion_settings =
             correction_broadphase_settings;
         double_expansion_settings.contact_thickness = 0.02f;
