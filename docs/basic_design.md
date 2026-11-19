@@ -1,12 +1,12 @@
 # Skin Physics 基本設計書
 
-- 文書バージョン: 1.23
+- 文書バージョン: 1.24
 - 状態: 要件整合・設計閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
 - 対象: Skin Physics
-- 前版: 1.22
-- 詳細設計: [detailed_design.md](detailed_design.md) v1.28
-- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.25
+- 前版: 1.23
+- 詳細設計: [detailed_design.md](detailed_design.md) v1.29
+- Runtime統合設計: [runtime_integration_design.md](runtime_integration_design.md) v1.26
 - 数値・物理受け入れProfile: [numerical_acceptance_profile_v1.json](numerical_acceptance_profile_v1.json) v1.19
 
 ## 1. 設計方針
@@ -327,6 +327,8 @@ Phase 1～11の既存Fixture / Testと依存関係を維持する。Phase 12は�
 
 ## 16. バージョン履歴
 
+- 1.24: Detailed Design v1.29 / Runtime Integration Design v1.26との参照を同期し、in-flight上限1 / 2 / 4の意味と2-bank直列実行契約を明確化。
+
 - 1.23: Detailed Design v1.28 / Runtime Integration Design v1.25への現行正本参照を統一し、責務引継ぎ節の旧版参照を解消。
 - 1.22: Detailed Design v1.27 / Runtime Integration Design v1.24 / Numerical Acceptance Profile v1.19を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を同期。
 - 1.21: Detailed Design v1.26 / Runtime Integration Design v1.23 / Numerical Acceptance Profile v1.18を参照し、Contact Jacobianの右手系Basisと一般化Impulse行順を明確化。
@@ -363,6 +365,7 @@ Skin Physicsは既存のVisual Studio Target `SkinPhysics` をC++17 / x64 / Dire
 - Hostが利用できるGPUデータはCommitted State専用のRead-only Render Bindingとする。Render BindingはPosition / Normal / TangentのSRV、Stride / Count / Resource Generationを持つ。内部Solver Buffer / Scratch / Writable UAVを公開しない。
 - Fixed Delta TimeはTest Environmentから設定可能。初期値は既存の1/60秒とし、Time ScaleはAccumulatorへの時間供給倍率として扱う。Soft BodyのCFL / Tracking、Cloth Temporal Quality Limit、Contact Temporal Quality Limit、World設定上限を集約してWorld共通Substep数を決定し、Soft Body / Cloth / Contact / Animation Trackingへ同一Substep時間を適用する。Contact capの初期値は1/120秒、0は明示無効。Animation Span Key / Loop / Blend / Root、Force / Impulse Event境界とTOIでIntegration Segmentへ分割し、maximum_integration_segments_per_tick（初期値512）を超える場合はReservationを保持してBlockする。全参加Solverを同じSegment時間で進め、v1ではSolverごとの独立Subcyclingを行わない。
 - in-flight GPU Tickは既定2件、設定可能範囲1 / 2 / 4件とする。各TickのImmutable Dispatch Planと先行Tick Gateを必須とし、Status Query Ring容量は設定上限以上とする。性能比較で変更する場合は同じR0 Gateを再実行する。
+  ここでのin-flightはGPUへSubmission済みでCPU Status未観測のLogical Tick数を表し、GPU上で複数TickのPhysics State更新を並列実行する意味ではない。全Tickは単一Immediate Contextの順序付きCommand Streamで実行し、先行Commit Gate通過後に2つのState Bankを交互に再利用する。
 - GTX 1660 SUPER 6GBで3～40 FPSをWorkloadごとに測定する。全Asset規模に対する固定保証値を設けない。品質・衝突範囲・Iteration・Substep・時間を黙って削減しない。
 - CPU Reference / Analytical Fixture / WARPはCorrectness検証、物理GPUは性能・Memory検証と明確に分離する。
 
