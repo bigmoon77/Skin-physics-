@@ -1186,6 +1186,41 @@ Uは少なくとも次の変数を包含する。
                 + E_friction_vector
                 + E_solver_residual
 
+
+**単一Contact / 対角Effective Massの計算可能な特殊ケース**
+
+CouplingがなくNormal / Tangential Effective Massがスカラー（または各方向で独立した対角ブロック）として証明できる場合、Normal Impulseを
+
+    j_n = max(0, -(1 + e) * v_n / K_n)
+
+とし、U上の上限値を`e_max`、`v_n_max`、正の下限を`K_n_min`、Candidate / Boundary間の区間幅を`Delta_v_n`、`Delta_e`、`Delta_K_n`とする。このときReLUの非拡大性と逆数差のBoundから、
+
+    E_normal_scalar <= ((1 + e_max) * Delta_v_n + v_n_max * Delta_e) / K_n_min
+                       + (1 + e_max) * v_n_max * Delta_K_n / (K_n_min * K_n_min)
+                       + E_normal_solver_residual
+
+を使える。ここで`Delta_K_n`はEffective Massの絶対差上限、`E_normal_solver_residual`はNormal Impulse単位へ換算した両評価の残差Boundの和である。
+
+摩擦の等方スカラーEffective Mass特殊ケースでは、
+
+    j_t = ProjectDisk(-v_t / K_t, radius = mu * (j_n + lambda_n / dt_contact))
+
+とする。`K_t_min > 0`、`dt_min > 0`を要求し、`v_t_max`、`Delta_v_t`、`Delta_K_t`、`mu_max`、`Delta_mu`、`lambda_n_max`、`Delta_lambda_n`、`Delta_inverse_dt`をU上の上限とする。Disk Projectionの非拡大性と半径変動Boundから、
+
+    E_friction_vector <= Delta_v_t / K_t_min
+                         + v_t_max * Delta_K_t / (K_t_min * K_t_min)
+                         + s_max * Delta_mu
+                         + mu_max * (E_normal_scalar
+                                     + Delta_lambda_n / dt_min
+                                     + lambda_n_max * Delta_inverse_dt)
+                         + E_friction_solver_residual
+
+    s_max = j_n_max + lambda_n_max / dt_min
+
+を使える。`Delta_inverse_dt`は`abs(1/dt_candidate - 1/dt_boundary)`の保守上限とする。`E_friction_solver_residual`は両評価のTangential Impulse残差を合算した上界である。
+
+この特殊ケース式はNormal / Tangential方向の独立性が証明できる場合だけ適用する。非対角Coupling、共有頂点、複数ContactのProjected Jacobi、異方性摩擦Metric、またはSolverの反復写像が独立スカラー式へ分離できない場合は適用禁止とし、前述の完全なContact-Island関数Fを外向き丸め付き区間評価または検証済みLipschitz Boundで評価する。
+
 `E_normal_scalar`はEffective Mass / Delassus、Normal Velocity、Restitutionの変動を含むNormal Impulseスカラー差の上界とする。`theta_normal_max`はU全域のNormal方向角度差上限、`J_normal_max`はU全域のNormal Impulse絶対値上限とする。`E_friction_vector`はTangential Effective Mass、Tangential Velocity、Friction係数、Coulomb Projection、XPBD Support Impulseを含む摩擦Impulseベクトル差の上界とする。`E_solver_residual`は両時刻の有限反復Solver残差をImpulse単位へ変換した上界の和とする。各項の計算方法・単位・区間根拠はFixtureごとに記録する。
 
 Active Contact Set / Stick-Slip Projection BranchがU内で変化する可能性を排除できない場合、変化を含む全分岐を区間評価して有限上界を証明できるときだけSnap候補に残す。Responsive DelassusのK_minが正と証明できない、F(U)が有限に包含できない、反復Solverの残差Boundがない、または上記いずれかの入力区間が欠落する場合は`impulse_error_bound = unknown`とし、Snapを禁止する。独立したContact GroupごとのImpulse誤差を単純に最大値だけで代表してはならず、同じBoundaryへSnapする全Contact Islandのベクトル誤差を評価する。
