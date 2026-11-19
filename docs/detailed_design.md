@@ -1,12 +1,12 @@
 # Skin Physics 詳細設計書
 
-- 文書バージョン: 1.19
+- 文書バージョン: 1.20
 - 状態: 要件整合・実装前契約閉鎖候補 / 独立Critical Review待ち
 - 対応要件: requirements.md 1.1
-- 対応基本設計: basic_design.md 1.14
-- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.16
-- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.11
-- 前版: 1.18
+- 対応基本設計: basic_design.md 1.15
+- Runtime境界・非同期GPU Tick: runtime_integration_design.md v1.17
+- 数値・物理受け入れProfile: numerical_acceptance_profile_v1.json v1.12
+- 前版: 1.19
 - 実装対象API: Direct3D 11 / HLSL Shader Model 5
 - 言語・ビルド: C++17 / Visual Studio .sln・.vcxproj
 
@@ -1156,21 +1156,37 @@ Candidate tauとSnap先時刻t_bの差をdelta_t=abs(tau-t_b)とする。Snap可
                          + trajectory_derivative_error_bound
                          + E_xpbd_velocity
 
-XPBDのSnap誤差Boundは、次の有限反復Solver写像をCandidate時刻とBoundary時刻で比較して求める。写像は実装が実行するConstraint順序、反復数、Relaxation、Projection、Clamp、Lambda更新規則を完全に固定したものとする。
+XPBDのSnap誤差Boundでは、実装済みSolverのPass順と保存状態を一致させるため、Position写像を内部制約段階と接触位置補正段階へ分離する。Production Solverの順序は次の通りであり、順序変更はこの契約と全ての関連Fixture / Acceptance Gateを同時に改訂しない限り禁止する。
 
-    G_p(z, dt) = finite_iteration_xpbd_position_solver(z, dt)
-    G_v(z, dt) = velocity_response_from_xpbd_state(G_p(z, dt), x_segment_start, dt, trajectory_derivative)
+1. Non-contact Internal Constraintsを有限反復で解く。
+2. その結果からDynamic VertexのPre-contact Velocityを再構築し、Contact Position Constraintより前の値として保存する。
+3. Contact Position Constraintsを有限反復で解き、最終Positionを得る。
+4. 保存済みPre-contact Velocityを入力としてCoupled Contact Impulse / Restitution / Frictionを解き、Velocityへ反映する。Contact Position correctionをVelocity再構築へ混入させない。
 
-ここでzはSolver入力全体を表し、少なくともSegment開始Position / Velocity、Candidate / BoundaryのTrajectory入力、Constraint Gradient、Effective Inverse Mass、Compliance、Rest Data、Constraint Active Set、Projection / Clamp Branch、Iteration設定を含む。Dynamic VertexのG_vは実装規則どおり`(G_p(z,dt) - x_segment_start) / dt`から構成し、追加の速度応答がある場合はその決定的な写像も含める。Fixed / Kinematic VertexのG_vは同時刻の解析的Trajectory Derivativeを使い、その区間誤差を別途包含する。dt=0のDynamic Velocity再構築は定義せず、tau=0はSegment-start Dynamic Velocityをそのまま使う。dtは各評価時刻の実際のXPBD Segment時間であり、alpha_tilde = compliance / dt^2をSolverと同じ演算順で再計算する。UはCandidateとBoundary双方の入力区間を包含する不確かさ集合、z_bはBoundary入力とする。
+写像は次のように定義する。
 
-    E_Gp = sup { ||G_p(z, dt) - G_p(z_b, dt_b)||_2 : z in U }
-    E_Gv = sup { ||G_v(z, dt) - G_v(z_b, dt_b)||_2 : z in U }
-    E_xpbd_position = E_Gp + r_p_candidate + r_p_boundary
+    G_internal(z, dt) = position_after_finite_iteration_non_contact_internal_constraints(z, dt)
+    G_contact(z, dt) = position_after_finite_iteration_contact_position_constraints(
+                           G_internal(z, dt), z, dt)
+    G_v(z, dt) = pre_contact_velocity_response_from_G_internal(
+                     G_internal(z, dt), x_segment_start, dt, trajectory_derivative)
+
+G_internalはNon-contact Internal Constraints完了後かつContact Position Constraints開始前のPositionを返す。G_contactはG_internalを開始状態としてContact Position Constraintsまで完了した最終Positionを返す。G_vはProduction SolverがContact Position Constraints前に保存するPre-contact Velocity写像であり、Dynamic Vertexでは実装規則どおり(G_internal(z,dt) - x_segment_start) / dtから構成する。G_vへG_contactのPosition差分を入力してはならない。VelocityのImpulse更新はこの保存済みG_vを入力として独立した完全Contact Solver Fで評価し、G_contactの位置補正を速度へ再度混入させない。Fixed / Kinematic VertexのG_vは同時刻の解析的Trajectory Derivativeを使い、その区間誤差を別途包含する。dt=0のDynamic Velocity再構築は定義せず、tau=0はSegment-start Dynamic Velocityをそのまま使う。dtは各評価時刻の実際のXPBD Segment時間であり、alpha_tilde = compliance / dt^2をSolverと同じ演算順で再計算する。
+
+zはSolver入力全体を表し、少なくともSegment開始Position / Velocity、Candidate / BoundaryのTrajectory入力、Constraint Gradient、Effective Inverse Mass、Compliance、Rest Data、Constraint Active Set、Projection / Clamp Branch、Iteration設定を含む。UはCandidateとBoundary双方の入力区間を包含し、z_bはBoundary入力とする。
+
+    E_Ginternal = sup { ||G_internal(z, dt) - G_internal(z_b, dt_b)||_2 : z in U }
+    E_Gcontact  = sup { ||G_contact(z, dt) - G_contact(z_b, dt_b)||_2 : z in U }
+    E_Gv        = sup { ||G_v(z, dt) - G_v(z_b, dt_b)||_2 : z in U }
+
+    E_xpbd_position = E_Gcontact + r_p_candidate + r_p_boundary
     E_xpbd_velocity = E_Gv + r_v_candidate + r_v_boundary
 
-r_p / r_vは各側の有限反復評価・浮動小数点評価に残るSolver Residual / 数値評価誤差をPosition / Velocity単位へ変換した保守上限である。Residualを既にG_p / G_vの区間出力へ包含した場合は二重加算しない。従来式のxpbd_response_lipschitz_bound、xpbd_dt_sensitivity_*は、この完全写像差を証明する分解表現としてのみ使用し、単独の経験係数をBoundとして認めない。
+E_xpbd_positionはContact Position Constraints後の最終Position誤差を使う。E_xpbd_velocityはContact Position Constraints前に保存されたPre-contact Velocity誤差を使う。E_GinternalはG_contactおよびG_vの中間状態・依存入力の区間伝播を監査するために必ず評価対象へ含める。Contact Impulse / Restitution / FrictionによるVelocity差はE_Gvへ混ぜず、Impact Impulse Error Boundの完全Contact Solver Fで別に評価する。
 
-G_p / G_vの区間評価は外向き丸め付きInterval / Affine Arithmetic、または入力全域に対するJacobian / Operator Normと各入力区間幅の伝播で行う。Constraint Gradient / Effective Inverse Mass / Compliance / dtの変動を全反復へ伝播し、Candidate / Boundary双方の全Iteration中間状態を包含する。Active Set、片側Constraintの有効 / 無効、Clamp、Friction / Projection等の分岐がU内で変化し得る場合は、到達可能な全Branchを分割・評価する。全Branchを包含できない、写像が不連続な箇所の有限上界を証明できない、またはResidualを単位変換できない場合は該当Boundをunknownとし、Snapを禁止する。有限個のサンプル最大値や有限差分の観測値は保守Boundとして認めない。
+r_p / r_vは各側の有限反復評価・浮動小数点評価に残るSolver Residual / 数値評価誤差をPosition / Velocity単位へ変換した保守上限である。Position residualはG_contact、Velocity residualはG_vに対応付ける。Residualを既に対応する写像の区間出力へ包含した場合は二重加算しない。従来のxpbd_response_lipschitz_bound、xpbd_dt_sensitivity_*等は、G_internal / G_contact / G_vの完全写像差を証明する分解表現としてのみ使用し、単独の経験係数をBoundとして認めない。
+
+G_internal / G_contact / G_vの区間評価は外向き丸め付きInterval / Affine Arithmetic、または入力全域に対するJacobian / Operator Normと各入力区間幅の伝播で行う。Constraint Gradient / Effective Inverse Mass / Compliance / dtの変動を全反復へ伝播し、Candidate / Boundary双方の全Iteration中間状態を包含する。Active Set、片側Constraintの有効 / 無効、Clamp、Friction / Projection等の分岐がU内で変化し得る場合は、到達可能な全Branchを分割・評価する。全Branchを包含できない、写像が不連続な箇所の有限上界を証明できない、またはResidualを単位変換できない場合は該当Boundをunknownとし、Snapを禁止する。有限個のサンプル最大値や有限差分の観測値は保守Boundとして認めない。
 
 **Impact Impulse Error Bound（Normative）**
 
@@ -1580,6 +1596,10 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 ## 21. バージョン履歴
 
+- 1.20: XPBD写像をG_internal / G_contact / G_vへ分離し、Pre-contact Velocity保存とContact Position correctionの順序を一致。Snap Fixtureを証明未添付時にFail-closedとし、tau=0 / tau=dt端点、Tangential Delassus / Cross Block / Tangent Basis / XPBD Support Impulse入力を追加。Basic / Runtime / Profileの相互参照と履歴を統合。
+- 1.19: XPBD Snap誤差を有限反復Solver写像の不確かさ集合上の差として定義。tau=0の全長Continuation Segmentと、Split Count / 追加Segment Count / Admission下限を分離。
+- 1.18: Contact IslandのCoupled Normal / Tangential Impulseを完全な有限反復Solver写像で評価する契約を追加し、非対角Delassus MatrixへのScalar式流用を禁止。Candidate / Boundary双方のBranchとResidualをSnap判定へ含める。
+- 1.17: TOI時間Boundary Snapの判定を位置誤差だけから相対速度・Impact Impulseを含む総合誤差予算へ拡張。証明できないBoundはunknownとしてSnapを禁止。
 - 1.16: TOI端点 / 既存Boundary / 同時ContactをSnapする条件に保守的な位置誤差Boundを追加。Snap条件不成立時は正確なtauで内部Splitし、0-duration prefixのVelocity Reconstructionを禁止。Runtime v1.13 / Profile v1.8と同期。
 - 1.15: TOI Split Countを一意な内部境界の生成数へ厳密化し、端点 / 既存境界 / 同時TOIの過剰計上を防止。Runtime v1.12 / Profile v1.7と同期。
 - 1.14: Work Budget超過をBLOCKEDへ統一し、TOI時Segment要求を下限値として定義。CPU Preflight / GPU Dynamic TOIのStatus経路とRuntime Hard Limitを追加。Profile v1.6へ同期。
@@ -1597,7 +1617,7 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 - 1.1: 批判的レビュー対応。Corotational応力式、μ/Kの独立定義、反転ペナルティ、CFL推定、glTF Skin MatrixとPhysics Mesh skin weight転送、Cloth Shear/Bend、XPBD Jacobiのλ緩和、Contact Patch、TOI時Impulse、階層Spatial Hash、Collision-only Collider、Soft Body内部ペイント転送、overflow時の同一Step再試行を修正・具体化。
 - 1.0: 初版。初期アルゴリズム、数式、GPU Pass、データ構造、エラー処理、試験仕様を定義。
 
-## 22. GPU Runtime / Library Integration（v1.11）
+## 22. GPU Runtime / Library Integration（初回統合仕様 v1.11・現行正本 runtime_integration_design.md v1.17）
 
 本書の数式・既存Solver ABI・T01～T28を維持したまま、Production GPU RuntimeのAPI境界と非同期状態管理を追加する。設計Review Regression Case 29～41は仕様登録済みであり、実行可能Fixture / Assertionの追加とCI通過までは実装済みと扱わない。詳細なPublic API、Host / Runtimeの所有権、World Global ID、Fixed Step Scheduler、GPU Tick State Machine、Commit / Rollback、Render Binding、Device Loss、Error Contractは [runtime_integration_design.md](runtime_integration_design.md) を正とする。
 
@@ -1618,7 +1638,3 @@ HLSL Shader Model 5のInterlockedAddはint / uintを対象とする。浮動小�
 
 本改訂は設計追加であり、GPU Production Runtimeの実装・Build・Physical GPU Performanceを意味しない。文書状態はINDEPENDENT REVIEW REQUIREDとする。
 
-
-## 改訂履歴
-
-- v1.19: XPBD Snap誤差を有限反復Solver写像G_p / G_vの不確かさ集合上の差として定義。tau=0の全長Continuation Segmentと、Split Count / 追加Segment Count / Admission下限を分離。
