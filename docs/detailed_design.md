@@ -1150,14 +1150,11 @@ Boundary Keyは(dispatch_attempt_id, base_integration_segment_id, canonical_tau_
 Candidate tauとSnap先時刻t_bの差をdelta_t=abs(tau-t_b)とする。Snap可否は次の保守的誤差BoundをCandidate / Snap先ごとに算出する。
 
     E_path_position = v_bound * delta_t + kinematic_path_deviation_bound
-    E_xpbd_position = xpbd_response_lipschitz_bound * E_path_position
-                         + xpbd_dt_sensitivity_position_bound * delta_t
-                         + 2 * xpbd_solver_residual_position_bound
+    E_xpbd_position = certified_bound_from_G_p
     E_total_position = E_path_position + E_xpbd_position
     E_relative_velocity = relative_acceleration_bound * delta_t
                          + trajectory_derivative_error_bound
-                         + xpbd_velocity_response_bound
-                         + xpbd_dt_sensitivity_velocity_bound * delta_t
+                         + E_xpbd_velocity
 
 XPBDのSnap誤差Boundは、次の有限反復Solver写像をCandidate時刻とBoundary時刻で比較して求める。写像は実装が実行するConstraint順序、反復数、Relaxation、Projection、Clamp、Lambda更新規則を完全に固定したものとする。
 
