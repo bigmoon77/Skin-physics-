@@ -906,22 +906,25 @@ namespace skin_physics::physics
                 }
 
                 if (bounds.alignment.upper <= 0.0L ||
-                    bounds.normal_length.lower <= 0.0L)
+                    bounds.normal_length.upper <= 0.0L)
                 {
-                    const real midpoint = (current.lower + current.upper) * 0.5L;
-                    if (bounds.alignment.upper <= 0.0L ||
-                        midpoint <= current.lower || midpoint >= current.upper)
+                    return side_proof_status::unresolved;
+                }
+
+                // The signed separation inequalities are meaningful only while
+                // the complete interval proves a non-degenerate Normal in the
+                // reference Normal's positive hemisphere.
+                if (bounds.alignment.lower > 0.0L &&
+                    bounds.normal_length.lower > 0.0L)
+                {
+                    if (bounds.phi.upper < 0.0L)
                     {
-                        return side_proof_status::unresolved;
+                        return side_proof_status::crossing;
                     }
-                }
-                else if (bounds.phi.upper < 0.0L)
-                {
-                    return side_proof_status::crossing;
-                }
-                else if (bounds.phi.lower >= 0.0L)
-                {
-                    continue;
+                    if (bounds.phi.lower >= 0.0L)
+                    {
+                        continue;
+                    }
                 }
 
                 const real midpoint = (current.lower + current.upper) * 0.5L;
@@ -1098,8 +1101,8 @@ namespace skin_physics::physics
                 "Correction VT displacement bound is not finite.");
         }
 
-        const real threshold = static_cast<real>(settings.contact_thickness) +
-            static_cast<real>(settings.distance_tolerance);
+        const real threshold = round_up(static_cast<real>(settings.contact_thickness) +
+            static_cast<real>(settings.distance_tolerance));
         const candidate_search_result candidate = search_correction_candidate(
             movement_bound,
             threshold,
