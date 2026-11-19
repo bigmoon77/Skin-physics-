@@ -156,6 +156,7 @@ namespace skin_physics::physics
         correction_candidate_pair_key key;
         asset::vec3 reference_normal;
         int8_t allowed_side_sign = 0;
+        std::vector<uint64_t> topology_vertex_stable_ids;
     };
 
     struct correction_segment_candidate_state
