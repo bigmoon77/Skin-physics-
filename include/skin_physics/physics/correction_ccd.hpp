@@ -31,6 +31,8 @@ namespace skin_physics::physics
         float distance_tolerance = 1.0e-5f;
         float epsilon_length = 1.0e-7f;
         uint32_t maximum_interval_evaluations = 32;
+        std::size_t contact_set_capacity = 1u << 20;
+        std::size_t vertex_contact_csr_capacity = 1u << 22;
     };
 
     enum class correction_contact_type : uint8_t
@@ -133,8 +135,11 @@ namespace skin_physics::physics
         std::size_t active_contact_count = 0;
         uint64_t candidate_generation = 0;
         uint64_t position_writer_epoch_generation = 0;
+        std::size_t required_contact_count = 0;
+        std::size_t required_vertex_contact_indices = 0;
         bool generation_mismatch = false;
         bool invalid_input = false;
+        bool capacity_overflow = false;
         bool success = false;
         std::string diagnostic;
     };
