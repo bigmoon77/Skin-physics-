@@ -2465,6 +2465,7 @@ namespace skin_physics::physics
             generate_correction_broadphase_candidates(
                 correction_primitives, mesh_pairs, broadphase_settings);
         result.required_cell_records = correction_broadphase.required_cell_records;
+        result.required_candidates = correction_broadphase.required_candidates;
         result.capacity_overflow = correction_broadphase.overflow;
         result.diagnostics = correction_broadphase.diagnostics;
         if (!correction_broadphase.success)
@@ -2490,6 +2491,9 @@ namespace skin_physics::physics
         result.required_cell_records = std::max(
             result.required_cell_records,
             final_discrete_broadphase.required_cell_records);
+        result.required_candidates = std::max(
+            result.required_candidates,
+            final_discrete_broadphase.required_candidates);
         if (!final_discrete_broadphase.success)
         {
             result.status = final_discrete_broadphase.overflow
