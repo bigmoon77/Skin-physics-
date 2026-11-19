@@ -1575,6 +1575,23 @@ namespace
             ee_result.hit_witness_valid,
             "Correction EE crossing must produce a hit witness and REJECTED crossing status.");
 
+        auto endpoint_clamped_ee = make_ee_correction_motion(
+            ee_crossing.at("input"));
+        endpoint_clamped_ee.segment_start_edge_a = {
+            skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 2.0f, 0.0f, 0.0f }
+        };
+        endpoint_clamped_ee.segment_start_edge_b = {
+            skin_physics::asset::vec3{ 0.0f, 1.0f, -1.0f },
+            skin_physics::asset::vec3{ 0.0f, 2.0f, -1.0f }
+        };
+        const auto endpoint_clamped_result =
+            skin_physics::physics::detect_edge_edge_correction_motion(
+                endpoint_clamped_ee,
+                read_correction_ccd_settings(ee_crossing.at("input")));
+        require(endpoint_clamped_result.status == correction_ccd_status::unresolved,
+            "Endpoint-clamped EE features must remain unresolved until a certified endpoint normal is implemented.");
+
         const auto& transient = find_correction_fixture_case(
             fixture, "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY");
         const auto transient_result =
