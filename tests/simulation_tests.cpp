@@ -1891,6 +1891,9 @@ namespace
             !segment_state.vertex_contact_csr_current,
             "A newly discovered Epoch candidate must advance the Candidate Generation and invalidate Contact Set / CSR.");
 
+        require(!skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
+            segment_state, 1, 2),
+            "A Contact Set built from an older Candidate Generation must not be accepted for the current Position-Writer Epoch.");
         require(skin_physics::physics::mark_correction_segment_contact_set_and_csr_current(
             segment_state, 2, 2) &&
             segment_state.contact_set_current &&
@@ -1939,6 +1942,18 @@ namespace
             !segment_state.contact_set_current &&
             !segment_state.vertex_contact_csr_current,
             "Candidate Capacity Retry must preserve the previous Candidate Set while keeping geometry-dependent Contact/CSR data stale for the active Epoch.");
+
+        auto generation_exhausted_state = segment_state;
+        generation_exhausted_state.candidate_generation =
+            std::numeric_limits<uint64_t>::max();
+        const auto generation_overflow =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                generation_exhausted_state, 1001, { new_capacity_candidate }, 4);
+        require(!generation_overflow.success &&
+            generation_overflow.generation_overflow &&
+            generation_exhausted_state.candidates.size() == 2 &&
+            generation_exhausted_state.position_writer_epoch_generation == 3,
+            "Candidate Generation overflow must fail without replacing the prior Segment Candidate Set.");
 
         const auto candidate_overflow =
             skin_physics::physics::merge_correction_candidate_union(
