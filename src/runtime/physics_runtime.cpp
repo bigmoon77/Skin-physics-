@@ -881,6 +881,8 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_tetrahedron_ids_srv;
             Microsoft::WRL::ComPtr<ID3D11Buffer> inverse_mass_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> inverse_mass_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_damping_rate_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_damping_rate_srv;
             Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_force_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_force_srv;
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> vertex_force_uav;
@@ -1144,15 +1146,19 @@ namespace skin_physics::runtime
             const mesh_physics_parameters& parameters,
             std::vector<gpu_soft_body_tet_input>& out_inputs,
             float& out_damping_rate,
+            std::vector<float>& out_vertex_damping_rates,
             std::string& diagnostic) const
         {
             diagnostic.clear();
             out_inputs.clear();
+            out_vertex_damping_rates.clear();
             if (mesh.tetrahedra.empty() ||
                 mesh.tetrahedra.size() >
-                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
+                mesh.vertex_attribute_weights.size() != mesh.rest_positions.size())
             {
-                diagnostic = "Soft Body Tet count is empty or exceeds uint32.";
+                diagnostic =
+                    "Soft Body Tet count or transferred per-vertex Physics Attribute Weight layout is invalid.";
                 return false;
             }
 
@@ -1191,21 +1197,52 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            out_vertex_damping_rates.resize(mesh.rest_positions.size());
+            for (std::size_t vertex_index = 0u;
+                vertex_index < mesh.vertex_attribute_weights.size();
+                ++vertex_index)
+            {
+                const float weight =
+                    mesh.vertex_attribute_weights[vertex_index][damping_channel];
+                const float damping_rate = out_damping_rate * weight;
+                if (!finite_float(weight) || weight < 0.0f || weight > 1.0f ||
+                    !finite_float(damping_rate) || damping_rate < 0.0f)
+                {
+                    diagnostic =
+                        "Soft Body per-vertex Damping Paint produced an invalid damping rate.";
+                    return false;
+                }
+                out_vertex_damping_rates[vertex_index] = damping_rate;
+            }
+
             out_inputs.resize(mesh.tetrahedra.size());
             for (std::size_t tet_index = 0;
                 tet_index < mesh.tetrahedra.size(); ++tet_index)
             {
                 const physics::tetrahedron& source = mesh.tetrahedra[tet_index];
                 gpu_soft_body_tet_input& destination = out_inputs[tet_index];
+                float average_shape_recovery = 0.0f;
+                float average_volume_retention = 0.0f;
                 for (uint32_t local_vertex = 0u; local_vertex < 4u; ++local_vertex)
                 {
-                    destination.vertex_ids[local_vertex] = source.vertices[local_vertex];
+                    const uint32_t vertex_index = source.vertices[local_vertex];
+                    if (vertex_index >= mesh.vertex_attribute_weights.size())
+                    {
+                        diagnostic = "Soft Body Tet references an invalid Physics Attribute Weight vertex.";
+                        return false;
+                    }
+
+                    destination.vertex_ids[local_vertex] = vertex_index;
                     const asset::vec3& gradient =
                         source.rest_shape_gradients[local_vertex];
                     destination.rest_gradients[local_vertex][0] = gradient.x;
                     destination.rest_gradients[local_vertex][1] = gradient.y;
                     destination.rest_gradients[local_vertex][2] = gradient.z;
                     destination.rest_gradients[local_vertex][3] = 0.0f;
+                    average_shape_recovery +=
+                        mesh.vertex_attribute_weights[vertex_index][shape_channel] * 0.25f;
+                    average_volume_retention +=
+                        mesh.vertex_attribute_weights[vertex_index][volume_channel] * 0.25f;
                 }
 
                 for (uint32_t row = 0u; row < 3u; ++row)
@@ -1221,8 +1258,10 @@ namespace skin_physics::runtime
                 destination.material0[0] = source.rest_volume;
                 destination.material0[1] = shear_modulus;
                 destination.material0[2] = bulk_modulus;
-                destination.material0[3] = shape_multiplier;
-                destination.material1[0] = volume_multiplier;
+                destination.material0[3] =
+                    shape_multiplier * average_shape_recovery;
+                destination.material1[0] =
+                    volume_multiplier * average_volume_retention;
                 destination.material1[1] = parameters.young_modulus;
                 destination.material1[2] = 0.1f;
                 destination.material1[3] = 0.0f;
@@ -1303,8 +1342,10 @@ namespace skin_physics::runtime
             const mesh_physics_parameters default_parameters;
             std::vector<gpu_soft_body_tet_input> tet_inputs;
             float damping_rate = 0.0f;
+            std::vector<float> initial_vertex_damping_rates;
             if (!build_soft_body_tet_inputs(
-                    mesh, default_parameters, tet_inputs, damping_rate, diagnostic))
+                    mesh, default_parameters, tet_inputs, damping_rate,
+                    initial_vertex_damping_rates, diagnostic))
             {
                 return false;
             }
@@ -1504,11 +1545,13 @@ namespace skin_physics::runtime
             }
 
             std::vector<gpu_soft_body_tet_input> tet_inputs;
+            std::vector<float> vertex_damping_rates;
             if (!build_soft_body_tet_inputs(
                     asset_iterator->physics_mesh,
                     parameters,
                     tet_inputs,
                     out_damping_rate,
+                    vertex_damping_rates,
                     diagnostic))
             {
                 return false;
@@ -1543,12 +1586,21 @@ namespace skin_physics::runtime
                 inverse_mass = static_cast<float>(remapped);
             }
 
+            if (vertex_damping_rates.size() != gpu_mesh.vertex_count)
+            {
+                diagnostic = "Soft Body vertex damping-rate count changed after GPU resource creation.";
+                return false;
+            }
+
             immediate_context->UpdateSubresource(
                 gpu_mesh.tetrahedron_buffer.Get(), 0u, nullptr,
                 tet_inputs.data(), 0u, 0u);
             immediate_context->UpdateSubresource(
                 gpu_mesh.inverse_mass_buffer.Get(), 0u, nullptr,
                 remapped_inverse_masses.data(), 0u, 0u);
+            immediate_context->UpdateSubresource(
+                gpu_mesh.vertex_damping_rate_buffer.Get(), 0u, nullptr,
+                vertex_damping_rates.data(), 0u, 0u);
             return true;
         }
 
