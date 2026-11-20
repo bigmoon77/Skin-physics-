@@ -2,17 +2,26 @@
 
 #include "skin_physics/asset/importer.hpp"
 #include "skin_physics/simulation/d3d11_status_ring.hpp"
+#include "skin_physics/simulation/d3d11_compute_graph.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <thread>
 #include <unordered_set>
 #include <utility>
+
+#include <d3dcompiler.h>
+#include <windows.h>
+
+#pragma comment(lib, "d3dcompiler.lib")
 
 namespace skin_physics::runtime
 {
@@ -43,6 +52,50 @@ namespace skin_physics::runtime
 
         static_assert(sizeof(gpu_tick_status_record) == 80,
             "GPU Tick Status ABI must remain 80 bytes.");
+
+        struct alignas(16) gpu_tick_dispatch_plan
+        {
+            uint32_t expected_predecessor_sequence_low = 0u;
+            uint32_t expected_predecessor_sequence_high = 0u;
+            uint32_t expected_source_generation_low = 0u;
+            uint32_t expected_source_generation_high = 0u;
+            uint32_t expected_source_state_set = 0u;
+            uint32_t destination_state_set = 0u;
+            uint32_t tick_sequence_low = 0u;
+            uint32_t tick_sequence_high = 0u;
+            uint32_t dispatch_id_low = 0u;
+            uint32_t dispatch_id_high = 0u;
+            uint32_t reservation_token_low = 0u;
+            uint32_t reservation_token_high = 0u;
+            uint32_t required_validation_mask = 0u;
+            uint32_t flags = 0u;
+            uint32_t reserved[2] = {};
+        };
+
+        struct alignas(16) gpu_tick_commit_control
+        {
+            uint32_t committed_sequence_low = 0u;
+            uint32_t committed_sequence_high = 0u;
+            uint32_t state_generation_low = 1u;
+            uint32_t state_generation_high = 0u;
+            uint32_t active_state_set = 0u;
+            uint32_t terminal_state = 0u;
+            uint32_t terminal_failure = 0u;
+            uint32_t validation_mask = 0u;
+            uint32_t required_validation_mask = 1u;
+            uint32_t dispatch_id_low = 0u;
+            uint32_t dispatch_id_high = 0u;
+            uint32_t reservation_token_low = 0u;
+            uint32_t reservation_token_high = 0u;
+            uint32_t last_gate_state = 0u;
+            uint32_t diagnostic = 0u;
+            uint32_t reserved = 0u;
+        };
+
+        static_assert(sizeof(gpu_tick_dispatch_plan) == 64,
+            "GPU Tick Dispatch Plan ABI must remain 64 bytes.");
+        static_assert(sizeof(gpu_tick_commit_control) == 64,
+            "GPU Tick Commit Control ABI must remain 64 bytes.");
 
         struct transform_sample
         {
@@ -140,6 +193,161 @@ namespace skin_physics::runtime
                 return 0u;
             }
             return value + 1u;
+        }
+
+        bool create_structured_buffer(
+            ID3D11Device* device,
+            uint32_t byte_width,
+            uint32_t structure_stride,
+            UINT bind_flags,
+            const void* initial_data,
+            ID3D11Buffer** out_buffer)
+        {
+            if (device == nullptr || out_buffer == nullptr ||
+                byte_width == 0u || structure_stride == 0u ||
+                (byte_width % structure_stride) != 0u)
+            {
+                return false;
+            }
+
+            D3D11_BUFFER_DESC description = {};
+            description.ByteWidth = byte_width;
+            description.Usage = D3D11_USAGE_DEFAULT;
+            description.BindFlags = bind_flags;
+            description.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+            description.StructureByteStride = structure_stride;
+
+            D3D11_SUBRESOURCE_DATA initial = {};
+            initial.pSysMem = initial_data;
+            return SUCCEEDED(device->CreateBuffer(
+                &description,
+                initial_data != nullptr ? &initial : nullptr,
+                out_buffer));
+        }
+
+        bool create_structured_srv(
+            ID3D11Device* device,
+            ID3D11Buffer* buffer,
+            uint32_t element_count,
+            ID3D11ShaderResourceView** out_view)
+        {
+            if (device == nullptr || buffer == nullptr ||
+                out_view == nullptr || element_count == 0u)
+            {
+                return false;
+            }
+
+            D3D11_SHADER_RESOURCE_VIEW_DESC description = {};
+            description.Format = DXGI_FORMAT_UNKNOWN;
+            description.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+            description.Buffer.FirstElement = 0u;
+            description.Buffer.NumElements = element_count;
+            return SUCCEEDED(device->CreateShaderResourceView(
+                buffer, &description, out_view));
+        }
+
+        bool create_structured_uav(
+            ID3D11Device* device,
+            ID3D11Buffer* buffer,
+            uint32_t element_count,
+            ID3D11UnorderedAccessView** out_view)
+        {
+            if (device == nullptr || buffer == nullptr ||
+                out_view == nullptr || element_count == 0u)
+            {
+                return false;
+            }
+
+            D3D11_UNORDERED_ACCESS_VIEW_DESC description = {};
+            description.Format = DXGI_FORMAT_UNKNOWN;
+            description.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+            description.Buffer.FirstElement = 0u;
+            description.Buffer.NumElements = element_count;
+            return SUCCEEDED(device->CreateUnorderedAccessView(
+                buffer, &description, out_view));
+        }
+
+        bool compile_runtime_compute_shader(
+            ID3D11Device* device,
+            const std::filesystem::path& shader_path,
+            const char* entry_point,
+            ID3D11ComputeShader** out_shader,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            if (device == nullptr || entry_point == nullptr ||
+                out_shader == nullptr ||
+                !std::filesystem::is_regular_file(shader_path))
+            {
+                diagnostic = "Runtime Compute Shader source file does not exist.";
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3DBlob> bytecode;
+            Microsoft::WRL::ComPtr<ID3DBlob> errors;
+            const HRESULT compile_result = D3DCompileFromFile(
+                shader_path.c_str(),
+                nullptr,
+                D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                entry_point,
+                "cs_5_0",
+                D3DCOMPILE_ENABLE_STRICTNESS,
+                0u,
+                bytecode.GetAddressOf(),
+                errors.GetAddressOf());
+
+            if (FAILED(compile_result))
+            {
+                if (errors)
+                {
+                    diagnostic.assign(
+                        static_cast<const char*>(errors->GetBufferPointer()),
+                        errors->GetBufferSize());
+                }
+                else
+                {
+                    diagnostic = "D3DCompileFromFile failed without an error blob.";
+                }
+                return false;
+            }
+
+            const HRESULT shader_result = device->CreateComputeShader(
+                bytecode->GetBufferPointer(),
+                bytecode->GetBufferSize(),
+                nullptr,
+                out_shader);
+            if (FAILED(shader_result))
+            {
+                diagnostic = "D3D11 CreateComputeShader failed for a compiled Runtime shader.";
+                return false;
+            }
+            return true;
+        }
+
+        std::filesystem::path resolve_shader_package_root(
+            const std::string& configured_root,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            std::filesystem::path root(configured_root);
+            if (root.is_absolute())
+            {
+                return root.lexically_normal();
+            }
+
+            std::vector<wchar_t> module_path(32768u, L'\\0');
+            const DWORD length = GetModuleFileNameW(
+                nullptr,
+                module_path.data(),
+                static_cast<DWORD>(module_path.size()));
+            if (length == 0u || length >= module_path.size())
+            {
+                diagnostic = "Unable to resolve the Runtime module directory for a Package-relative Shader Root.";
+                return {};
+            }
+            module_path.resize(length);
+            const std::filesystem::path executable_path(module_path.begin(), module_path.end());
+            return (executable_path.parent_path() / root).lexically_normal();
         }
 
         bool valid_animation_track(
