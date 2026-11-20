@@ -137,6 +137,138 @@ void set_matrix_column(inout float3x3 value, uint column, float3 column_value)
     value[2][column] = column_value.z;
 }
 
+void compute_jacobi_rotation(
+    float app,
+    float aqq,
+    float apq,
+    out float cosine,
+    out float sine)
+{
+    float theta = (aqq - app) / (2.0f * apq);
+    float sign_value = theta >= 0.0f ? 1.0f : -1.0f;
+    float tangent = sign_value /
+        (abs(theta) + sqrt(1.0f + theta * theta));
+    cosine = rsqrt(1.0f + tangent * tangent);
+    sine = tangent * cosine;
+}
+
+void apply_jacobi_rotation_01(
+    inout float3x3 symmetric,
+    inout float3x3 eigenvectors)
+{
+    float app = symmetric[0][0];
+    float aqq = symmetric[1][1];
+    float apq = symmetric[0][1];
+    float cosine;
+    float sine;
+    compute_jacobi_rotation(app, aqq, apq, cosine, sine);
+
+    symmetric[0][0] = app - (sine / cosine) * apq;
+    symmetric[1][1] = aqq + (sine / cosine) * apq;
+    symmetric[0][1] = 0.0f;
+    symmetric[1][0] = 0.0f;
+
+    float akp = symmetric[2][0];
+    float akq = symmetric[2][1];
+    float rotated_kp = cosine * akp - sine * akq;
+    float rotated_kq = sine * akp + cosine * akq;
+    symmetric[2][0] = rotated_kp;
+    symmetric[0][2] = rotated_kp;
+    symmetric[2][1] = rotated_kq;
+    symmetric[1][2] = rotated_kq;
+
+    float v00 = eigenvectors[0][0];
+    float v01 = eigenvectors[0][1];
+    eigenvectors[0][0] = cosine * v00 - sine * v01;
+    eigenvectors[0][1] = sine * v00 + cosine * v01;
+    float v10 = eigenvectors[1][0];
+    float v11 = eigenvectors[1][1];
+    eigenvectors[1][0] = cosine * v10 - sine * v11;
+    eigenvectors[1][1] = sine * v10 + cosine * v11;
+    float v20 = eigenvectors[2][0];
+    float v21 = eigenvectors[2][1];
+    eigenvectors[2][0] = cosine * v20 - sine * v21;
+    eigenvectors[2][1] = sine * v20 + cosine * v21;
+}
+
+void apply_jacobi_rotation_02(
+    inout float3x3 symmetric,
+    inout float3x3 eigenvectors)
+{
+    float app = symmetric[0][0];
+    float aqq = symmetric[2][2];
+    float apq = symmetric[0][2];
+    float cosine;
+    float sine;
+    compute_jacobi_rotation(app, aqq, apq, cosine, sine);
+
+    symmetric[0][0] = app - (sine / cosine) * apq;
+    symmetric[2][2] = aqq + (sine / cosine) * apq;
+    symmetric[0][2] = 0.0f;
+    symmetric[2][0] = 0.0f;
+
+    float akp = symmetric[1][0];
+    float akq = symmetric[1][2];
+    float rotated_kp = cosine * akp - sine * akq;
+    float rotated_kq = sine * akp + cosine * akq;
+    symmetric[1][0] = rotated_kp;
+    symmetric[0][1] = rotated_kp;
+    symmetric[1][2] = rotated_kq;
+    symmetric[2][1] = rotated_kq;
+
+    float v00 = eigenvectors[0][0];
+    float v02 = eigenvectors[0][2];
+    eigenvectors[0][0] = cosine * v00 - sine * v02;
+    eigenvectors[0][2] = sine * v00 + cosine * v02;
+    float v10 = eigenvectors[1][0];
+    float v12 = eigenvectors[1][2];
+    eigenvectors[1][0] = cosine * v10 - sine * v12;
+    eigenvectors[1][2] = sine * v10 + cosine * v12;
+    float v20 = eigenvectors[2][0];
+    float v22 = eigenvectors[2][2];
+    eigenvectors[2][0] = cosine * v20 - sine * v22;
+    eigenvectors[2][2] = sine * v20 + cosine * v22;
+}
+
+void apply_jacobi_rotation_12(
+    inout float3x3 symmetric,
+    inout float3x3 eigenvectors)
+{
+    float app = symmetric[1][1];
+    float aqq = symmetric[2][2];
+    float apq = symmetric[1][2];
+    float cosine;
+    float sine;
+    compute_jacobi_rotation(app, aqq, apq, cosine, sine);
+
+    symmetric[1][1] = app - (sine / cosine) * apq;
+    symmetric[2][2] = aqq + (sine / cosine) * apq;
+    symmetric[1][2] = 0.0f;
+    symmetric[2][1] = 0.0f;
+
+    float akp = symmetric[0][1];
+    float akq = symmetric[0][2];
+    float rotated_kp = cosine * akp - sine * akq;
+    float rotated_kq = sine * akp + cosine * akq;
+    symmetric[0][1] = rotated_kp;
+    symmetric[1][0] = rotated_kp;
+    symmetric[0][2] = rotated_kq;
+    symmetric[2][0] = rotated_kq;
+
+    float v01 = eigenvectors[0][1];
+    float v02 = eigenvectors[0][2];
+    eigenvectors[0][1] = cosine * v01 - sine * v02;
+    eigenvectors[0][2] = sine * v01 + cosine * v02;
+    float v11 = eigenvectors[1][1];
+    float v12 = eigenvectors[1][2];
+    eigenvectors[1][1] = cosine * v11 - sine * v12;
+    eigenvectors[1][2] = sine * v11 + cosine * v12;
+    float v21 = eigenvectors[2][1];
+    float v22 = eigenvectors[2][2];
+    eigenvectors[2][1] = cosine * v21 - sine * v22;
+    eigenvectors[2][2] = sine * v21 + cosine * v22;
+}
+
 bool jacobi_svd_rotation(float3x3 deformation, out float3x3 rotation)
 {
     float3x3 symmetric = mul(transpose(deformation), deformation);
@@ -144,63 +276,31 @@ bool jacobi_svd_rotation(float3x3 deformation, out float3x3 rotation)
 
     for (uint iteration = 0u; iteration < 32u; ++iteration)
     {
-        uint p = 0u;
-        uint q = 1u;
-        float maximum_off_diagonal = abs(symmetric[0][1]);
-        if (abs(symmetric[0][2]) > maximum_off_diagonal)
-        {
-            p = 0u;
-            q = 2u;
-            maximum_off_diagonal = abs(symmetric[0][2]);
-        }
-        if (abs(symmetric[1][2]) > maximum_off_diagonal)
-        {
-            p = 1u;
-            q = 2u;
-            maximum_off_diagonal = abs(symmetric[1][2]);
-        }
+        const float off_diagonal_01 = abs(symmetric[0][1]);
+        const float off_diagonal_02 = abs(symmetric[0][2]);
+        const float off_diagonal_12 = abs(symmetric[1][2]);
+        const float maximum_off_diagonal = max(
+            off_diagonal_01,
+            max(off_diagonal_02, off_diagonal_12));
         if (maximum_off_diagonal <= 1.0e-12f)
         {
             break;
         }
 
-        float app = symmetric[p][p];
-        float aqq = symmetric[q][q];
-        float apq = symmetric[p][q];
-        float theta = (aqq - app) / (2.0f * apq);
-        float sign_value = theta >= 0.0f ? 1.0f : -1.0f;
-        float tangent = sign_value /
-            (abs(theta) + sqrt(1.0f + theta * theta));
-        float cosine = rsqrt(1.0f + tangent * tangent);
-        float sine = tangent * cosine;
-
-        symmetric[p][p] = app - tangent * apq;
-        symmetric[q][q] = aqq + tangent * apq;
-        symmetric[p][q] = 0.0f;
-        symmetric[q][p] = 0.0f;
-
-        [unroll]
-        for (uint k = 0u; k < 3u; ++k)
+        // Select the same largest-magnitude pivot as the CPU reference,
+        // but keep all matrix writes statically indexed for FXC SM5.
+        if (off_diagonal_01 >= off_diagonal_02 &&
+            off_diagonal_01 >= off_diagonal_12)
         {
-            if (k == p || k == q)
-            {
-                continue;
-            }
-            float akp = symmetric[k][p];
-            float akq = symmetric[k][q];
-            symmetric[k][p] = cosine * akp - sine * akq;
-            symmetric[p][k] = symmetric[k][p];
-            symmetric[k][q] = sine * akp + cosine * akq;
-            symmetric[q][k] = symmetric[k][q];
+            apply_jacobi_rotation_01(symmetric, eigenvectors);
         }
-
-        [unroll]
-        for (uint row = 0u; row < 3u; ++row)
+        else if (off_diagonal_02 >= off_diagonal_12)
         {
-            float vkp = eigenvectors[row][p];
-            float vkq = eigenvectors[row][q];
-            eigenvectors[row][p] = cosine * vkp - sine * vkq;
-            eigenvectors[row][q] = sine * vkp + cosine * vkq;
+            apply_jacobi_rotation_02(symmetric, eigenvectors);
+        }
+        else
+        {
+            apply_jacobi_rotation_12(symmetric, eigenvectors);
         }
     }
 
