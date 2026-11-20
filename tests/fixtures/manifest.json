@@ -330,12 +330,14 @@
       "automated_cases": [
         "P06_COROTATIONAL_FEM_GOLDEN",
         "P06_INVERSION_ROLLBACK",
-        "P06_WARP_COROTATIONAL_FEM"
+        "P06_WARP_COROTATIONAL_FEM",
+        "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS"
       ],
       "unimplemented": [
-        "GPU nodal force accumulation, mass integration and substep scheduling",
-        "GPU inverted-element proper-rotation/SVD fallback; inversion remains CPU-reference validated",
-        "CFL/substep controller and animation-tracking coupling"
+        "GPU proper-rotation SVD fallback and inverted / near-singular element parity; the current Runtime FEM pass fails closed when the polar path is not committable",
+        "CFL-derived stability limits, per-vertex physics attribute weighting and density remapping",
+        "Force / Impulse event segmentation and animation / kinematic trajectory coupling",
+        "Full World collision, Cloth constraint and Contact solver integration"
       ]
     },
     {
@@ -805,7 +807,8 @@
       "R0_RUNTIME_TIME_BUDGET_AND_PAUSE",
       "R0_RUNTIME_SUBMISSION_THREAD_GUARD",
       "R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY",
-      "R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW"
+      "R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW",
+      "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS"
     ],
     "covered_contracts": [
       "host_device_immediate_context_feature_level_and_device_identity_validation",
@@ -819,18 +822,18 @@
       "cpu_preflight_blocks_without_dropping_the_same_reservation_or_sequence",
       "execution_budget_revision_rechecks_the_same_head_reservation",
       "world_input_mutation_is_rejected_while_a_tick_reservation_or_render_lease_exists",
-      "cpu_preflight_work_count_overflow_transitions_to_terminal_failed_without_gpu_submission"
+      "cpu_preflight_work_count_overflow_transitions_to_terminal_failed_without_gpu_submission",
+      "two_persistent_soft_body_position_and_velocity_state_banks_per_mesh",
+      "gated_soft_body_fem_force_csr_gather_and_damped_integration_passes",
+      "odd_substep_tick_scratch_publication_to_inactive_state_bank",
+      "gpu_commit_status_requires_exact_state_generation_and_bank_transition"
     ],
     "remaining_r0": [
-      "GPU Tick Submission and per-World Dispatch Plan creation",
-      "GPU Begin / predecessor gate on every budgeted Physics pass",
-      "GPU Status Buffer production and per-Tick Event Query enqueue",
-      "asynchronous COMMITTED status parsing and contiguous observed-prefix recovery",
-      "two persistent State Banks and Segment Snapshot lifecycle",
-      "Render Candidate Ring and Host Render Lease publication",
-      "Public Runtime integration with the production Soft Body / Cloth / Collision solvers",
+      "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
+      "Render Candidate Ring, CPU-observed Render publication and Host Render Lease release",
+      "Cloth / Collider solver integration into the World Runtime scheduler",
       "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation"
     ],
-    "validation": "WARP test source is registered in the Windows test project; execution and C++ compilation remain unverified until a Windows CI runner executes build-and-test."
+    "validation": "WARP runtime regression source is registered in the Windows test project; execution and C++ / HLSL compilation remain unverified until a Windows CI runner completes build-and-test."
   }
 }
