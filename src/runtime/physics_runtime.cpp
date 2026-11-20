@@ -1218,7 +1218,7 @@ namespace skin_physics::runtime
             world->pending_single_step_requests != 0u)
         {
             return make_status(status_code::busy,
-                "Fixed Delta Time can change only while paused / stopped with no whole pending Tick, Step Request or in-flight Submission.");
+                "Fixed Delta Time can change only while Paused with no whole pending Tick, Step Request or in-flight Submission.");
         }
         world->description.fixed_delta_time = fixed_delta_time;
         return make_status(status_code::ok, {});
