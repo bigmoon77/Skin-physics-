@@ -539,6 +539,50 @@ namespace
         require(runtime.apply_attribute_edit(world, model, 0u, paint_edit).success(),
             "An idle Soft Body Paint edit must update Render Mesh values and refresh the Physics Mesh harmonic transfer.");
 
+        skin_physics::runtime::force_desc force;
+        force.event_id = 101u;
+        force.target.model = model;
+        force.target.mesh_index = 0u;
+        force.position = { 2.0f, 3.0f, 4.0f };
+        force.direction = { 0.0f, 1.0f, 0.0f };
+        force.magnitude = 10.0f;
+        force.radius = 1.0f;
+        force.duration = 0.1;
+        force.start_time = 0.0;
+        require(runtime.enqueue_force(world, force).success(),
+            "Runtime must accept a valid Soft Body Force Event into its immutable input queue.");
+
+        skin_physics::runtime::impulse_desc impulse;
+        impulse.event_id = 102u;
+        impulse.target.model = model;
+        impulse.target.mesh_index = 0u;
+        impulse.position = { 2.0f, 3.0f, 4.0f };
+        impulse.direction = { 0.0f, 1.0f, 0.0f };
+        impulse.impulse_magnitude = 2.0f;
+        impulse.radius = 1.0f;
+        impulse.event_time = 0.0;
+        require(runtime.enqueue_impulse(world, impulse).success(),
+            "Runtime must accept a valid Soft Body Impulse Event into its immutable input queue.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "Force / Impulse regression World must enter Playing.");
+        skin_physics::runtime::advance_report force_report;
+        require(runtime.advance(world, 0.01, &force_report).success() &&
+            force_report.submitted_tick_count == 0u &&
+            force_report.in_flight_tick_count == 0u &&
+            force_report.pending_tick_count == 1u,
+            "Unintegrated Force / Impulse Events must preserve the Tick Reservation without GPU submission.");
+        skin_physics::runtime::world_status force_status;
+        require(runtime.poll(world, &force_status).success() &&
+            force_status.state == skin_physics::runtime::tick_state::blocked &&
+            force_status.last_tick_status == status_code::blocked_by_input &&
+            force_status.head_reserved_tick_sequence == 1u &&
+            force_status.diagnostic.find("Force / Impulse") != std::string::npos,
+            "Runtime must explicitly report BLOCKED_BY_INPUT while Force / Impulse Segment scheduling is unimplemented.");
+        require(runtime.reset_world(world).success(),
+            "Reset must explicitly clear the unsupported Force / Impulse Events and retained Reservation.");
+
         skin_physics::runtime::transform sampled_root =
             model_desc.world_transform;
         sampled_root.translation.x += 0.5f;
