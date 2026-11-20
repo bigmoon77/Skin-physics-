@@ -4847,6 +4847,10 @@ namespace skin_physics::runtime
                 status_reservation_token == completed_tick.reservation_token;
             if (!matching_status_identity)
             {
+                runtime.release_render_candidate_slot(
+                    result_world,
+                    completed_tick.render_candidate_slot_id,
+                    completed_tick.render_candidate_slot_generation);
                 completed_tick.reservation.rejected = true;
                 completed_tick.reservation.blocked = true;
                 runtime.restore_reservation_in_sequence_order(
@@ -4879,17 +4883,52 @@ namespace skin_physics::runtime
             // this immutable Plan's expected predecessor. Status Query records are
             // consumed in Immediate-Context order, so the current CPU-observed
             // committed prefix is the authoritative non-Commit state to preserve.
+            const uint32_t expected_published_render_slot_id =
+                result_world.latest_render_slot_id == asset::invalid_index
+                    ? 0x0000ffffu
+                    : result_world.latest_render_slot_id;
+            const uint32_t expected_published_render_slot_generation =
+                result_world.latest_render_slot_id == asset::invalid_index
+                    ? 0u
+                    : result_world.latest_render_slot_generation;
+            const bool non_commit_render_state_unchanged =
+                gpu_status.reserved[0] == expected_published_render_slot_id &&
+                gpu_status.reserved[1] == expected_published_render_slot_generation;
+
             const bool non_commit_state_unchanged =
                 status_committed_sequence ==
                     result_world.gpu_committed_sequence &&
                 status_state_generation ==
                     result_world.gpu_state_generation &&
                 gpu_status.active_state_set ==
-                    result_world.active_state_set;
+                    result_world.active_state_set &&
+                non_commit_render_state_unchanged;
+
+            const bool committed_render_slot_valid =
+                completed_tick.render_candidate_slot_id == asset::invalid_index
+                    ? non_commit_render_state_unchanged
+                    : gpu_status.reserved[0] ==
+                            completed_tick.render_candidate_slot_id &&
+                        gpu_status.reserved[1] ==
+                            completed_tick.render_candidate_slot_generation &&
+                        completed_tick.render_candidate_slot_id <
+                            result_world.render_candidate_slots.size() &&
+                        result_world.render_candidate_slots[
+                            completed_tick.render_candidate_slot_id].reserved &&
+                        result_world.render_candidate_slots[
+                            completed_tick.render_candidate_slot_id].generation ==
+                            completed_tick.render_candidate_slot_generation &&
+                        result_world.render_candidate_slots[
+                            completed_tick.render_candidate_slot_id].committed_tick_sequence ==
+                            sequence;
 
             if (gpu_status.terminal_state != 6u &&
                 !non_commit_state_unchanged)
             {
+                runtime.release_render_candidate_slot(
+                    result_world,
+                    completed_tick.render_candidate_slot_id,
+                    completed_tick.render_candidate_slot_generation);
                 completed_tick.reservation.blocked = true;
                 completed_tick.reservation.rejected = true;
                 runtime.restore_reservation_in_sequence_order(
@@ -4904,8 +4943,13 @@ namespace skin_physics::runtime
             if (gpu_status.terminal_state == 6u &&
                 (!committed_generation_valid ||
                     !committed_bank_valid ||
-                    !committed_sequence_valid))
+                    !committed_sequence_valid ||
+                    !committed_render_slot_valid))
             {
+                runtime.release_render_candidate_slot(
+                    result_world,
+                    completed_tick.render_candidate_slot_id,
+                    completed_tick.render_candidate_slot_generation);
                 completed_tick.reservation.blocked = true;
                 completed_tick.reservation.rejected = true;
                 runtime.restore_reservation_in_sequence_order(
@@ -4913,7 +4957,7 @@ namespace skin_physics::runtime
                 result_world.state = tick_state::failed;
                 result_world.last_tick_status = status_code::gpu_execution_failed;
                 result_world.diagnostic =
-                    "GPU COMMITTED Status violated the one-generation / alternating-State-Bank transition contract.";
+                    "GPU COMMITTED Status violated the State Bank / Generation / Render Candidate publication contract.";
                 continue;
             }
 
@@ -4921,10 +4965,15 @@ namespace skin_physics::runtime
                 gpu_status.terminal_failure == 0u &&
                 committed_sequence_valid &&
                 committed_generation_valid &&
-                committed_bank_valid)
+                committed_bank_valid &&
+                committed_render_slot_valid)
             {
                 if (sequence != result_world.gpu_committed_sequence + 1u)
                 {
+                    runtime.release_render_candidate_slot(
+                        result_world,
+                        completed_tick.render_candidate_slot_id,
+                        completed_tick.render_candidate_slot_generation);
                     completed_tick.reservation.rejected = true;
                     completed_tick.reservation.blocked = true;
                     runtime.restore_reservation_in_sequence_order(
@@ -4933,6 +4982,23 @@ namespace skin_physics::runtime
                     result_world.last_tick_status = status_code::gpu_execution_failed;
                     result_world.diagnostic =
                         "GPU Commit Status skipped a Logical Tick Sequence.";
+                    continue;
+                }
+
+                if (!runtime.commit_render_candidate_slot(
+                        result_world,
+                        completed_tick.render_candidate_slot_id,
+                        completed_tick.render_candidate_slot_generation,
+                        sequence))
+                {
+                    runtime.release_render_candidate_slot(
+                        result_world,
+                        completed_tick.render_candidate_slot_id,
+                        completed_tick.render_candidate_slot_generation);
+                    result_world.state = tick_state::failed;
+                    result_world.last_tick_status = status_code::gpu_execution_failed;
+                    result_world.diagnostic =
+                        "GPU Commit succeeded but its reserved Render Candidate Slot could not be published.";
                     continue;
                 }
 
@@ -4977,6 +5043,10 @@ namespace skin_physics::runtime
             }
             else
             {
+                runtime.release_render_candidate_slot(
+                    result_world,
+                    completed_tick.render_candidate_slot_id,
+                    completed_tick.render_candidate_slot_generation);
                 completed_tick.reservation.blocked = true;
                 completed_tick.reservation.rejected =
                     gpu_status.terminal_state == 4u ||
