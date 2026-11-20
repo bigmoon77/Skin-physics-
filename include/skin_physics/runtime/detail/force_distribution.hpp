@@ -161,8 +161,9 @@ namespace skin_physics::runtime::detail
             }
         }
 
+        constexpr double minimum_weight_sum = 1.0e-20;
         if (!std::isfinite(total_unnormalized_weight) ||
-            total_unnormalized_weight <= 0.0)
+            total_unnormalized_weight <= minimum_weight_sum)
         {
             diagnostic =
                 "NO_FORCE_TARGET: no positive mass-weighted Wendland C2 support exists in the selected target scope.";

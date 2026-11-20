@@ -3192,22 +3192,7 @@ namespace skin_physics::runtime
                             input_snapshot.description.gravity.y;
                         integration_parameters.gravity[2] =
                             input_snapshot.description.gravity.z;
-                        Microsoft::WRL::ComPtr<ID3D11Buffer> segment_parameters;
-                        if (!create_constant_buffer(
-                                device.Get(),
-                                static_cast<uint32_t>(
-                                    sizeof(integration_parameters)),
-                                &integration_parameters,
-                                segment_parameters.GetAddressOf()))
-                        {
-                            diagnostic =
-                                "Unable to allocate an immutable per-Segment Soft Body Integration Parameters Buffer.";
-                            return false;
-                        }
-                        out_segment_parameter_buffers.push_back(
-                            std::move(segment_parameters));
-                        ID3D11Buffer* segment_parameters_buffer =
-                            out_segment_parameter_buffers.back().Get();
+                        ID3D11Buffer* segment_parameters_buffer = nullptr;
                         ID3D11ShaderResourceView* source_position_srv =
                             source_is_scratch
                                 ? gpu_mesh.position_scratch_srv.Get()

@@ -3038,6 +3038,26 @@ namespace
             preserved_output.unnormalized_weight_sum == 7.0,
             "A failed distribution must leave the caller's previous output unchanged.");
 
+        std::vector<skin_physics::asset::vec3> tiny_mass_positions = {
+            { 0.0f, 0.0f, 0.0f }
+        };
+        std::vector<float> tiny_masses = { 1.0e-30f };
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            tiny_mass_views(1u);
+        tiny_mass_views[0u].segment_start_positions = &tiny_mass_positions;
+        tiny_mass_views[0u].rest_lumped_masses = &tiny_masses;
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                tiny_mass_views,
+                preserved_output,
+                diagnostic),
+            "A positive but sub-threshold SI mass support must be rejected consistently with the GPU minimum weight sum.");
+        require(diagnostic.find("NO_FORCE_TARGET") != std::string::npos &&
+            preserved_output.mesh_weights[0u][0u] == 0.25,
+            "A sub-threshold normalization sum must preserve output and report NO_FORCE_TARGET.");
+
         require(
             !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
                 read_vec3(input.at("action_position")),
