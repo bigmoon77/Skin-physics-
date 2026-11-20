@@ -496,6 +496,7 @@ namespace
         skin_physics::runtime::world_desc world_desc;
         world_desc.fixed_delta_time = 0.01;
         world_desc.contact_max_substep_delta_time = 0.004;
+        world_desc.maximum_integration_segments_per_tick = 4u;
         world_desc.maximum_in_flight_ticks = 2u;
         world_desc.maximum_steps_per_advance = 2u;
         skin_physics::runtime::world_handle world;
@@ -618,8 +619,9 @@ namespace
         require(runtime.advance(world, 0.01, &force_report).success() &&
             force_report.submitted_tick_count == 0u &&
             force_report.in_flight_tick_count == 0u &&
-            force_report.pending_tick_count == 1u,
-            "Unintegrated Force / Impulse Events must preserve the Tick Reservation without GPU submission.");
+            force_report.pending_tick_count == 1u &&
+            force_report.cpu_preflight_blocked_tick_count == 1u,
+            "Force / Impulse time boundaries must contribute to CPU Preflight Segment admission before GPU submission.");
         skin_physics::runtime::force_desc late_force = force;
         late_force.event_id = 103u;
         require(runtime.enqueue_force(world, late_force).code == status_code::busy,
@@ -627,15 +629,38 @@ namespace
         skin_physics::runtime::world_status force_status;
         require(runtime.poll(world, &force_status).success() &&
             force_status.state == skin_physics::runtime::tick_state::blocked &&
-            force_status.last_tick_status == status_code::blocked_by_input &&
+            force_status.last_tick_status == status_code::work_budget_exceeded &&
+            force_status.budget_block_origin ==
+                skin_physics::runtime::work_budget_block_origin::cpu_preflight &&
+            force_status.work_budget_block_flags == 0x02u &&
             force_status.head_reserved_tick_sequence == 1u &&
             force_status.head_input_snapshot_version != 0u &&
             force_status.planned_substeps == 3u &&
-            force_status.planned_integration_segments == 6u &&
-            force_status.diagnostic.find("Force / Impulse") != std::string::npos,
-            "Runtime must explicitly report BLOCKED_BY_INPUT while Force / Impulse Segment scheduling is unimplemented.");
+            force_status.planned_integration_segments == 6u,
+            "Force start / end and Impulse times must produce six planned Segments from three base Substeps and block at the four-Segment Admission Limit.");
         const uint64_t force_snapshot_version =
             force_status.head_input_snapshot_version;
+        skin_physics::runtime::world_execution_budget recovered_event_budget;
+        recovered_event_budget.maximum_substeps = 128u;
+        recovered_event_budget.maximum_integration_segments_per_tick = 6u;
+        require(runtime.set_world_execution_budget(
+                world, recovered_event_budget).success(),
+            "Budget recovery must admit the exact event-derived Segment count.");
+        skin_physics::runtime::advance_report force_retry_report;
+        require(runtime.advance(world, 0.0, &force_retry_report).success() &&
+            force_retry_report.submitted_tick_count == 0u &&
+            force_retry_report.in_flight_tick_count == 0u &&
+            force_retry_report.pending_tick_count == 1u,
+            "The admitted Force / Impulse Reservation must retry without adding time or allocating another Tick.");
+        skin_physics::runtime::world_status force_retry_status;
+        require(runtime.poll(world, &force_retry_status).success() &&
+            force_retry_status.state == skin_physics::runtime::tick_state::blocked &&
+            force_retry_status.last_tick_status == status_code::blocked_by_input &&
+            force_retry_status.head_reserved_tick_sequence == 1u &&
+            force_retry_status.head_input_snapshot_version == force_snapshot_version &&
+            force_retry_status.planned_substeps == 3u &&
+            force_retry_status.planned_integration_segments == 6u,
+            "Budget Retry must preserve the same Input Snapshot Version and exact Force / Impulse Segment schedule before the unimplemented GPU event pass blocks submission.");
         require(runtime.reset_world(world).success(),
             "Reset must explicitly clear the unsupported Force / Impulse Events and retained Reservation.");
         require(runtime.enqueue_force(world, force).success(),
