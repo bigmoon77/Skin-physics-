@@ -25,7 +25,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Record open implementation dependencies in this roadmap; change normative design only when a real contradiction is found.
 
 ### Phase 1 — R0 Runtime boundary and asynchronous scheduler
-**Status: in progress — Runtime API / ownership foundation added; GPU Tick scheduler and Commit integration pending**
+**Status: in progress — asynchronous Tick submission / Query observation and a first gated Soft Body path are implemented; immutable Segment Snapshots and Render leases remain pending**
 
 - Public C++17 API, descriptors, status codes and generation-checked World / Model / Collider handles.
 - Host-owned D3D11 Device / Immediate Context validation and COM lifetime.
@@ -33,9 +33,10 @@ A phase is not called complete merely because headers, shaders or test sources e
 - World lifecycle, fixed-step admission, accumulator / Step Request / Tick Reservation accounting.
 - Runtime / World execution budgets and revisioned recovery.
 - GPU status buffer, Event Query ring, non-blocking poll and contiguous CPU-observed COMMITTED prefix.
-- Two-bank state ownership, immutable Dispatch Plan, predecessor gate, terminal status and success-only Commit Control.
-- Rollback / retry with the exact same Reservation, Input Snapshot and Packet Version.
-- Render Candidate / Query / in-flight lease admission and safe destroy / drain / shutdown rules.
+- Per-World immutable Dispatch Plan, predecessor gate, terminal status and success-only Commit Control.
+- Per-Soft-Body-Mesh persistent position / velocity State Banks, per-Tick Scratch, gated GPU submission and reset-to-rest-state lifecycle.
+- Rollback / retry keeps the exact same CPU Reservation; immutable per-Tick Input Snapshot / Packet Version is still pending.
+- Render Candidate / Host Render Lease publication remains pending; Query / in-flight lease admission and safe destroy / drain / shutdown guards are present.
 
 **Exit criteria**
 - Public headers match the Runtime Design field widths and semantics.
@@ -46,13 +47,13 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Lifecycle and retry tests cover all documented BUSY / BLOCKED / REJECTED / FAILED boundaries.
 
 ### Phase 2 — R1 Soft Body GPU integration
-**Status: pending**
+**Status: in progress — first Runtime-connected Soft Body compute path added; numerical and feature-completeness gates remain open**
 
-- GPU tet deformation gradient, polar rotation / SVD fallback, stress and inversion handling.
-- Deterministic per-tet force contribution and Vertex-to-Tet CSR gather; no floating-point Atomic Add.
-- Mass / velocity / position integration and world-wide substep scheduling.
-- Persistent State Bank / Snapshot / Capacity / Commit integration.
-- CPU double-precision oracle comparisons and rigid / affine / inversion fixtures.
+- Implemented initial runtime upload of per-model Soft Body Tet / CSR / inverse-mass resources and two persistent position / velocity State Banks plus Tick Scratch.
+- Implemented gated Tet deformation-gradient / scaled-polar stress evaluation, deterministic Vertex-to-Tet CSR force gather, and damped force integration.
+- Implemented World-preflight substep dispatch, odd-substep Scratch publication into the inactive bank, GPU failure validation, and success-only Tick Commit.
+- Added WARP Runtime coverage for two in-flight Ticks, three Substeps per Tick, alternating State Banks, Query observation, and Reset to the rest pose; source is registered but not yet executed by Windows CI.
+- Remaining: proper-rotation SVD fallback, inverted / near-singular parity, per-vertex attribute and density remapping, CFL-derived limits, Force / Impulse segmentation, animation / kinematic coupling, Collision / Contact coupling, and CPU oracle parity for the production Runtime path.
 
 ### Phase 3 — R2 Cloth GPU iteration
 **Status: pending**
