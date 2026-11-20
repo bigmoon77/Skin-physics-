@@ -167,6 +167,7 @@ namespace skin_physics::runtime
             uint32_t render_vertex_count = 0u;
             uint32_t render_index_count = 0u;
             uint32_t reserved[2] = {};
+            float root_rotation[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
             float inverse_root_rotation[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
             float inverse_root_translation[4] = {};
         };
@@ -175,8 +176,8 @@ namespace skin_physics::runtime
             "Soft Body Render Binding ABI must remain 64 bytes.");
         static_assert(sizeof(gpu_soft_body_render_vertex_input) == 64,
             "Soft Body Render Vertex ABI must remain 64 bytes.");
-        static_assert(sizeof(gpu_soft_body_render_parameters) == 48,
-            "Soft Body Render Parameters ABI must remain 48 bytes.");
+        static_assert(sizeof(gpu_soft_body_render_parameters) == 64,
+            "Soft Body Render Parameters ABI must remain 64 bytes.");
 
         static_assert(sizeof(gpu_soft_body_tet_input) == 160,
             "Soft Body Tet Input ABI must remain 160 bytes.");
