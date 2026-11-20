@@ -1129,6 +1129,12 @@ namespace
         model_desc.source_model.nodes = { root_node, joint_node, mesh_node };
         model_desc.source_model.scene_roots = { 0u };
         model_desc.source_model.animations.push_back(animation_clip);
+        skin_physics::asset::animation_clip target_animation_clip =
+            animation_clip;
+        target_animation_clip.name = "runtime_joint_translation_target";
+        target_animation_clip.tracks[0].keys[1].value =
+            { 2.0f, 0.0f, 0.0f };
+        model_desc.source_model.animations.push_back(target_animation_clip);
 
         skin_physics::runtime::model_mesh_physics_asset mesh_asset;
         mesh_asset.mesh_index = 0u;
@@ -1207,9 +1213,65 @@ namespace
         require(!animated_positions.empty() &&
             animated_positions[0u].x > 1.0e-5f,
             "GPU Skinning Target Velocity and non-zero Tracking damping must move the simulated Physics Vertex toward the animated joint.");
+        const float playback_position_x = animated_positions[0u].x;
         require(runtime.release_render_bindings(
                 world, animated_binding.lease_generation).success(),
             "Skinned Animation Render Candidate Host Lease must release after readback.");
+
+        skin_physics::runtime::animation_blend_desc blend;
+        blend.source_track.clip_index = 0u;
+        blend.source_track.time = 0.0;
+        blend.source_track.speed = 1.0;
+        blend.target_track.clip_index = 1u;
+        blend.target_track.time = 0.0;
+        blend.target_track.speed = 1.0;
+        blend.blend_start_time = 0.01;
+        blend.blend_end_time = 0.02;
+        blend.weight_start = 1.0f;
+        blend.weight_end = 1.0f;
+        blend.tangent_start = 0.0f;
+        blend.tangent_end = 0.0f;
+        require(runtime.set_animation_blend(world, model, blend).success(),
+            "Runtime must accept a synchronized Source / Target Animation Blend whose Hermite Weight selects the Target Clip.");
+        skin_physics::runtime::advance_report blend_report;
+        require(runtime.advance(world, 0.01, &blend_report).success() &&
+            blend_report.submitted_tick_count == 1u &&
+            blend_report.in_flight_tick_count == 1u &&
+            blend_report.pending_tick_count == 0u,
+            "The two-Clip Blend Runtime Tick must schedule its shared Source / Target / Weight Span and submit GPU Skinning / Tracking passes.");
+        skin_physics::runtime::world_status blend_status;
+        bool blend_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &blend_status).success(),
+                "Animation Blend Status polling must remain non-blocking.");
+            if (blend_status.in_flight_tick_count == 0u)
+            {
+                blend_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(blend_observed &&
+            blend_status.state == skin_physics::runtime::tick_state::committed &&
+            blend_status.gpu_committed_sequence == 2u,
+            "The synchronized Animation Blend Tick must Commit only after the GPU Target validation and Tracking integration.");
+        skin_physics::runtime::render_binding blended_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &blended_binding).success(),
+            "Committed two-Clip Blend must publish a Physics Mesh Render Candidate.");
+        const std::vector<test_gpu_float4> blended_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), blended_binding.position_srv,
+                blended_binding.vertex_count);
+        require(!blended_positions.empty() &&
+            blended_positions[0u].x > playback_position_x + 1.0e-5f,
+            "The Target-selected Hermite Blend Clip must produce a stronger analytic Target Velocity and move the Physics Vertex farther than Source Playback.");
+        require(runtime.release_render_bindings(
+                world, blended_binding.lease_generation).success(),
+            "Blended Animation Render Candidate Host Lease must release after readback.");
+
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::stopped).success(),
             "Skinned Animation Runtime World must Stop before Model / World destruction.");
