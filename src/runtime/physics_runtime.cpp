@@ -5362,8 +5362,7 @@ namespace skin_physics::runtime
         out_binding->index_count = gpu_mesh_iterator->render_index_count;
         out_binding->resource_generation =
             (static_cast<uint64_t>(world->generation) << 32u) |
-            (static_cast<uint64_t>(slot_generation) << 16u) |
-            static_cast<uint64_t>(slot_id & 0xffffu);
+            static_cast<uint64_t>(slot_generation);
         out_binding->device_generation = runtime.device_generation;
         out_binding->committed_tick_sequence =
             slot_state.committed_tick_sequence;
