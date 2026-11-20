@@ -2014,6 +2014,160 @@ namespace
             "CUBICSPLINE Span construction must reject a tangent array with the wrong component count.");
     }
 
+    void test_phase09_animation_node_hierarchy_and_skin_matrix_derivatives()
+    {
+        using skin_physics::asset::animation_key;
+        using skin_physics::asset::animation_path;
+        using skin_physics::asset::animation_track;
+        using skin_physics::asset::mat4;
+        using skin_physics::asset::model;
+        using skin_physics::asset::node;
+        using skin_physics::asset::skin;
+        using skin_physics::asset::interpolation;
+
+        model source_model;
+        source_model.meshes.resize(1u);
+        source_model.nodes.resize(3u);
+
+        node& root_node = source_model.nodes[0u];
+        root_node.name = "animated_root";
+        root_node.children = { 1u, 2u };
+
+        node& joint_node = source_model.nodes[1u];
+        joint_node.name = "animated_joint";
+        joint_node.parent_index = 0u;
+        joint_node.translation = { 0.0f, 1.0f, 0.0f };
+
+        node& mesh_node = source_model.nodes[2u];
+        mesh_node.name = "static_mesh_node";
+        mesh_node.parent_index = 0u;
+        mesh_node.mesh_index = 0u;
+        mesh_node.skin_index = 0u;
+        mesh_node.uses_matrix = true;
+        mesh_node.local_matrix = mat4{};
+        mesh_node.local_matrix.value[14u] = 2.0f;
+
+        skin source_skin;
+        source_skin.name = "single_joint_skin";
+        source_skin.skeleton_node_index = 1u;
+        source_skin.joints = { 1u };
+        source_skin.inverse_bind_matrices = { mat4{} };
+        source_model.skins.push_back(source_skin);
+
+        skin_physics::asset::animation_clip clip;
+        clip.name = "hierarchy_translation";
+        clip.duration = 2.0f;
+
+        animation_track root_translation;
+        root_translation.node_index = 0u;
+        root_translation.path = animation_path::translation;
+        root_translation.mode = interpolation::linear;
+        root_translation.component_count = 3u;
+        animation_key root_key_start;
+        root_key_start.time = 0.0f;
+        root_key_start.value = { 0.0f, 0.0f, 0.0f };
+        animation_key root_key_end;
+        root_key_end.time = 2.0f;
+        root_key_end.value = { 2.0f, 0.0f, 0.0f };
+        root_translation.keys = { root_key_start, root_key_end };
+
+        animation_track joint_translation;
+        joint_translation.node_index = 1u;
+        joint_translation.path = animation_path::translation;
+        joint_translation.mode = interpolation::linear;
+        joint_translation.component_count = 3u;
+        animation_key joint_key_start;
+        joint_key_start.time = 0.0f;
+        joint_key_start.value = { 0.0f, 1.0f, 0.0f };
+        animation_key joint_key_end;
+        joint_key_end.time = 2.0f;
+        joint_key_end.value = { 0.0f, 3.0f, 0.0f };
+        joint_translation.keys = { joint_key_start, joint_key_end };
+        clip.tracks = { root_translation, joint_translation };
+
+        const skin_physics::physics::animation_clip_spans_build_result clip_spans =
+            skin_physics::physics::build_animation_clip_spans(
+                clip, static_cast<uint32_t>(source_model.nodes.size()), 0.0, 2.0);
+        require(clip_spans.success && clip_spans.values.size() == 1u,
+            "Hierarchy regression must build one synchronized Clip Span for the animated Root and Joint.");
+
+        const skin_physics::physics::animation_hierarchy_sample_result evaluated =
+            skin_physics::physics::evaluate_animation_clip_hierarchy(
+                source_model, clip, clip_spans.values[0u], 0.5, 1.0);
+        require(evaluated.success &&
+            evaluated.value.local_matrices.size() == 3u &&
+            evaluated.value.global_matrices.size() == 3u &&
+            evaluated.value.skin_poses.size() == 1u,
+            "CPU Animation Hierarchy evaluation must publish every Node matrix and one Skin Pose.");
+
+        const mat4& root_global =
+            evaluated.value.global_matrices[0u];
+        const mat4& joint_global =
+            evaluated.value.global_matrices[1u];
+        const mat4& mesh_global =
+            evaluated.value.global_matrices[2u];
+        require(std::abs(root_global.value[12u] - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_global.value[12u] - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_global.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(mesh_global.value[12u] - 1.0f) <= 1.0e-6f &&
+            std::abs(mesh_global.value[14u] - 2.0f) <= 1.0e-6f,
+            "Node Global Matrices must accumulate Parent * Local in topological order and preserve static Matrix Nodes.");
+
+        const mat4& root_global_derivative =
+            evaluated.value.global_matrix_derivatives[0u];
+        const mat4& joint_global_derivative =
+            evaluated.value.global_matrix_derivatives[1u];
+        const mat4& mesh_global_derivative =
+            evaluated.value.global_matrix_derivatives[2u];
+        require(std::abs(root_global_derivative.value[12u] - 2.0f) <= 1.0e-6f &&
+            std::abs(joint_global_derivative.value[12u] - 2.0f) <= 1.0e-6f &&
+            std::abs(joint_global_derivative.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(mesh_global_derivative.value[12u] - 2.0f) <= 1.0e-6f &&
+            std::abs(mesh_global_derivative.value[14u]) <= 1.0e-6f,
+            "Global Matrix Derivatives must apply the Product Rule through animated and static Nodes.");
+
+        const skin_physics::physics::animation_skin_pose& skin_pose =
+            evaluated.value.skin_poses[0u];
+        require(skin_pose.mesh_node_index == 2u &&
+            skin_pose.skin_index == 0u &&
+            skin_pose.skin_matrices.size() == 1u &&
+            skin_pose.skin_matrix_derivatives.size() == 1u,
+            "Each skinned Mesh Node must expose one Skin Matrix and analytic derivative per Joint.");
+        const mat4& skin_matrix = skin_pose.skin_matrices[0u];
+        const mat4& skin_matrix_derivative =
+            skin_pose.skin_matrix_derivatives[0u];
+        require(std::abs(skin_matrix.value[12u]) <= 1.0e-6f &&
+            std::abs(skin_matrix.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(skin_matrix.value[14u] + 2.0f) <= 1.0e-6f,
+            "Skin Matrix must be inverse(Mesh Node Global) * Joint Global * Inverse Bind.");
+        require(std::abs(skin_matrix_derivative.value[12u]) <= 1.0e-6f &&
+            std::abs(skin_matrix_derivative.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(skin_matrix_derivative.value[14u]) <= 1.0e-6f,
+            "Skin Matrix derivative must cancel shared Root motion and retain the Joint's relative analytic velocity.");
+
+        model invalid_hierarchy = source_model;
+        invalid_hierarchy.nodes[0u].parent_index = 1u;
+        const skin_physics::physics::animation_hierarchy_sample_result cyclic_hierarchy =
+            skin_physics::physics::evaluate_animation_clip_hierarchy(
+                invalid_hierarchy, clip, clip_spans.values[0u], 0.5, 1.0);
+        require(!cyclic_hierarchy.success &&
+            cyclic_hierarchy.value.global_matrices.empty() &&
+            cyclic_hierarchy.error ==
+                skin_physics::physics::animation_hierarchy_error::invalid_hierarchy,
+            "A cyclic Asset Node hierarchy must fail atomically without publishing partial Global Matrices.");
+
+        model singular_mesh = source_model;
+        singular_mesh.nodes[2u].local_matrix.value[0u] = 0.0f;
+        const skin_physics::physics::animation_hierarchy_sample_result singular_skin =
+            skin_physics::physics::evaluate_animation_clip_hierarchy(
+                singular_mesh, clip, clip_spans.values[0u], 0.5, 1.0);
+        require(!singular_skin.success &&
+            singular_skin.value.skin_poses.empty() &&
+            singular_skin.error ==
+                skin_physics::physics::animation_hierarchy_error::singular_mesh_node,
+            "A singular Mesh Node Global Matrix must fail before emitting an invalid Skin Matrix.");
+    }
+
     void test_phase10_attribute_paint_and_serialization()
     {
         const test_json::value input = test_json::load(
