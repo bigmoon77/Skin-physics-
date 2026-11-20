@@ -984,6 +984,28 @@ namespace skin_physics::physics
                 ++evaluations;
                 const auto bounds = side_interval_function(current);
 
+                // An EE feature interval may be too wide to prove a positive
+                // line-line denominator or non-degenerate edge lengths even
+                // when every instant in the interval is valid. Refine that
+                // interval before classifying the feature as unresolved. A
+                // genuinely degenerate interval keeps failing until the
+                // bounded evaluation budget is exhausted, so it still fails
+                // closed.
+                if (bounds.feature_mapping_required &&
+                    (!bounds.feature_parameter_a.valid ||
+                        !bounds.feature_parameter_b.valid))
+                {
+                    const real midpoint =
+                        (current.lower + current.upper) * 0.5L;
+                    if (midpoint <= current.lower || midpoint >= current.upper)
+                    {
+                        return side_proof_status::unresolved;
+                    }
+                    pending.push_back({ current.lower, midpoint });
+                    pending.push_back({ midpoint, current.upper });
+                    continue;
+                }
+
                 if (!bounds.alignment.valid || !bounds.normal_length.valid ||
                     !bounds.phi.valid)
                 {
