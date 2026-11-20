@@ -775,9 +775,9 @@
     }
   },
   "latest_ci_attempt": {
-    "commit": "51c2b04537d59f94a2c35082ebbd86095825bcb4",
-    "workflow_run_id": 44659312982,
-    "job_id": 136033310189,
+    "commit": "59bb875d4d6dfabbe521ab1ca92dec74afdcfc1c",
+    "workflow_run_id": 44660338616,
+    "job_id": 136036720278,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
@@ -787,6 +787,6 @@
     "build": "not_verified",
     "tests": "not_started",
     "classification": "failed_before_any_reported_job_step",
-    "note": "This attempt targets the latest implementation HEAD. GitHub reports the job as failed, but the job-step endpoint returns an empty array and no job log artifact is available. No compiler or test step is evidenced; runner allocation and the pre-step failure cause are unknown. This is not evidence of a source-code regression. The new DispatchIndirect WARP test and the existing correction pipeline remain unverified until a Windows runner executes them."
+    "note": "This attempt targets the GPU Tick transaction Commit Gate source commit. GitHub reports the job as failed, but the job-step endpoint returned an empty array and no job log artifact was available. No compiler or test step is evidenced; runner allocation and the pre-step failure cause are unknown. This is not evidence of a source-code regression. DispatchIndirect and Tick transaction WARP execution remain unverified."
   }
 }
