@@ -3471,6 +3471,7 @@ int run_gpu_solver_tests()
     test_phase05_warp_cloth_all_constraint_types();
     test_phase06_warp_corotational_fem();
     test_r1_warp_runtime_soft_body_fem_svd_parity();
+    test_phase09_warp_animation_trajectory_packet_abi();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
