@@ -413,6 +413,8 @@ int run_runtime_tests()
     std::cout << "[PASS] R0_RUNTIME_SUBMISSION_THREAD_GUARD\n";
     test_runtime_cpu_preflight_reservation_retry();
     std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY\n";
+    test_runtime_cpu_preflight_count_overflow_fails_world();
+    std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW\n";
     std::cout << "RuntimeTests passed.\n";
     return 0;
 }
