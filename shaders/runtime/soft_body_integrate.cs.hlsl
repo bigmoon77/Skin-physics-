@@ -22,6 +22,7 @@ StructuredBuffer<float4> source_positions : register(t0);
 StructuredBuffer<float4> source_velocities : register(t1);
 StructuredBuffer<float4> vertex_forces : register(t2);
 StructuredBuffer<float> inverse_masses : register(t3);
+StructuredBuffer<float> vertex_damping_rates : register(t4);
 RWStructuredBuffer<float4> destination_positions : register(u0);
 RWStructuredBuffer<float4> destination_velocities : register(u1);
 RWStructuredBuffer<TickCommitControl> tick_commit_control_buffer : register(u2);
@@ -66,7 +67,15 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
         return;
     }
 
-    float z = damping_rate * delta_time;
+    float vertex_damping_rate = vertex_damping_rates[index];
+    if (!isfinite(vertex_damping_rate) || vertex_damping_rate < 0.0f)
+    {
+        uint previous_failure = 0u;
+        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        return;
+    }
+
+    float z = vertex_damping_rate * delta_time;
     float decay = exp(-z);
     float damping_integral = delta_time;
     if (z >= 1.0e-3f && damping_rate > 0.0f)
