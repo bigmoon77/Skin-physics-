@@ -597,7 +597,9 @@
             "Spans crossing an interior Key boundary, malformed tangent arrays, invalid quaternion values and non-positive World-Time durations fail closed",
             "The Channel Span Scheduler splits every signed Clip-Time interval at all interior Keys in forward or reverse playback order",
             "Adjacent forward and reverse LINEAR Span records produce matching channel values at their shared Key boundaries",
-            "Paused Tracks produce one zero-Clip-Time Span; duplicate / non-monotonic Keys fail atomically without partial Span records"
+            "Paused Tracks produce one zero-Clip-Time Span; duplicate / non-monotonic Keys fail atomically without partial Span records",
+            "CUBICSPLINE Quaternion evaluation normalizes the raw Hermite polynomial and projects its analytic derivative into the quaternion tangent space",
+            "A single-key Animation Track remains one constant Span across its only key and returns zero target velocity"
           ]
         }
       ],
