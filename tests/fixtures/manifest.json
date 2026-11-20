@@ -666,12 +666,21 @@
             "Segment Cursor maps positive World Time into the selected immutable Span normalized coordinate and copies the exact Animation Input Version",
             "Invalid Version, malformed Track Channel Range, invalid certified Bounds, duplicate Span IDs, non-contiguous Span intervals and out-of-Span Cursor requests fail atomically without replacing prior output"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI",
+          "checks": [
+            "C++ span / cursor / Track / Channel / Blend / Matrix / Kinematic Collider records are uploaded with their declared StructuredBuffer Strides",
+            "Shader Model 5 HLSL StructuredBuffer fields read every CPU record field at the same 4-byte offsets and UAV copy preserves the complete record byte-for-byte",
+            "WARP Readback covers all 8 record payload types, including the independent mutable Segment Cursor and both Matrix record arrays"
+          ]
         }
       ],
       "automated_cases": [
         "P09_ANIMATION_TARGET",
         "P09_WARP_ANIMATION_AND_TELEPORT",
-        "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER"
+        "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER",
+        "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI"
       ],
       "unimplemented": [
         "Multi-key runtime clip sampling, cubic curves and node-hierarchy binding in the GPU path",
