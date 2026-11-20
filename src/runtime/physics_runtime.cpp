@@ -5634,7 +5634,7 @@ namespace skin_physics::runtime
 
         if (has_head_reservation)
         {
-            tick_reservation& reservation = world->reservations.front();
+            implementation::tick_reservation& reservation = world->reservations.front();
             reservation.budget_revision = world->execution_budget_revision;
             if (world->budget_block_origin ==
                 work_budget_block_origin::gpu_dynamic_toi)
