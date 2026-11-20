@@ -2263,7 +2263,10 @@ namespace
         require(std::abs(blended_root_global.value[12u] - 2.0f) <= 1.0e-5f &&
             std::abs(blended_joint_global.value[13u] - 3.0f) <= 1.0e-5f &&
             std::abs(blended_root_global_derivative.value[12u] - 2.5f) <= 1.0e-5f,
-            "Blended Local Pose must be propagated through Parent * Local hierarchy matrices and analytic derivatives.");
+            std::string("Blended Local Pose must be propagated through Parent * Local hierarchy matrices and analytic derivatives. root_x=") +
+                std::to_string(blended_root_global.value[12u]) +
+                " joint_y=" + std::to_string(blended_joint_global.value[13u]) +
+                " root_vx=" + std::to_string(blended_root_global_derivative.value[12u]));
 
         const mat4& blended_skin_matrix =
             blended_pose.value.skin_poses[0u].skin_matrices[0u];
