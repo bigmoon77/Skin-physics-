@@ -15,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -2924,6 +2925,7 @@ namespace skin_physics::runtime
         world->impulses.clear();
         world->event_ids.clear();
         world->observed_tick_sequences.clear();
+        world->observed_tick_deltas.clear();
         for (implementation::model_slot& model : world->models)
         {
             model.root_samples.clear();
