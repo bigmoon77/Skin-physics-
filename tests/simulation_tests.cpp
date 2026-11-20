@@ -2505,8 +2505,8 @@ namespace
             std::abs(root_channel->translation_c1.x - 1.0f) <= 1.0e-6f &&
             std::abs(joint_channel->translation_c0.y - 1.0f) <= 1.0e-6f &&
             std::abs(joint_channel->translation_c1.y) <= 1.0e-6f &&
-            std::abs(joint_channel->translation_c2.y) <= 1.0e-6f &&
-            std::abs(joint_channel->translation_c3.y - 2.0f) <= 1.0e-6f,
+            std::abs(joint_channel->translation_c2.y - 6.0f) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c3.y + 4.0f) <= 1.0e-6f,
             "Channel Records must contain the exact Span-local LINEAR / CUBICSPLINE coefficient arrays.");
         require(std::abs(
                 built.value.inverse_bind_matrices[0u].column3.y + 1.0f) <= 1.0e-6f &&
