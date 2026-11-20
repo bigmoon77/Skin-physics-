@@ -742,6 +742,53 @@ namespace skin_physics::runtime
 
     struct physics_runtime::implementation
     {
+        struct soft_body_gpu_mesh
+        {
+            uint32_t mesh_index = asset::invalid_index;
+            uint32_t vertex_count = 0u;
+            uint32_t tetrahedron_count = 0u;
+
+            std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> position_banks;
+            std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
+                position_bank_srvs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, 2>
+                position_bank_uavs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> velocity_banks;
+            std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
+                velocity_bank_srvs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, 2>
+                velocity_bank_uavs;
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> position_scratch;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> position_scratch_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> position_scratch_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> velocity_scratch;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> velocity_scratch_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> velocity_scratch_uav;
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> tetrahedron_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> tetrahedron_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> tetrahedron_output_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> tetrahedron_output_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> tetrahedron_output_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_tetrahedron_offsets_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_tetrahedron_offsets_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_tetrahedron_ids_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_tetrahedron_ids_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> inverse_mass_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> inverse_mass_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_force_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_force_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> vertex_force_uav;
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> fem_parameters;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> gather_parameters;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> integration_parameters;
+
+            std::vector<gpu_float4> initial_positions;
+            std::vector<gpu_float4> initial_velocities;
+        };
+
         struct model_slot
         {
             uint32_t generation = 1u;
@@ -749,6 +796,7 @@ namespace skin_physics::runtime
             bool retired = false;
             asset::model source_model;
             std::vector<model_mesh_physics_asset> mesh_physics_assets;
+            std::vector<soft_body_gpu_mesh> gpu_soft_body_meshes;
             transform root_transform;
             std::vector<transform_sample> root_samples;
             bool has_animation_playback = false;
