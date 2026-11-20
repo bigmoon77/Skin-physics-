@@ -909,7 +909,6 @@
       "render_candidate_readback_validates_normalization_tangent_orthogonality_and_handedness"
     ],
     "remaining_r0": [
-      "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
       "Cloth / Collider solver integration into the World Runtime scheduler",
       "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation",
       "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
