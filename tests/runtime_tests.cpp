@@ -552,6 +552,7 @@ namespace
             render_binding.index_count == render_mesh.indices.size() &&
             render_binding.committed_tick_sequence == 2u &&
             render_binding.render_slot_id != skin_physics::asset::invalid_index &&
+            render_binding.resource_generation != 0u &&
             render_binding.lease_generation != 0u,
             "Render Binding must identify the committed Ring Slot and provide the expected GPU stream layout.");
 
@@ -641,6 +642,8 @@ namespace
             same_lease_binding.render_slot_id == render_binding.render_slot_id &&
             same_lease_binding.render_slot_generation ==
                 render_binding.render_slot_generation &&
+            same_lease_binding.resource_generation ==
+                render_binding.resource_generation &&
             same_lease_binding.committed_tick_sequence == 2u,
             "A second Mesh request must stay pinned to the original leased Slot even after a newer Candidate becomes latest.");
 
