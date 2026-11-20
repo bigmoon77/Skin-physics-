@@ -2528,7 +2528,8 @@ namespace
         const std::vector<uint32_t> zero_count = { 0u };
         const ComPtr<ID3D11Buffer> count_buffer =
             create_structured_buffer(
-                device, zero_count, D3D11_BIND_UNORDERED_ACCESS);
+                device, zero_count,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
         const ComPtr<ID3D11UnorderedAccessView> count_uav =
             create_structured_uav<uint32_t>(
                 device, count_buffer.Get(), 1);
