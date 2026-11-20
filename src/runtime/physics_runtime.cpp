@@ -4091,11 +4091,17 @@ namespace skin_physics::runtime
             simulation::d3d11_compute_graph& graph,
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
                 out_segment_parameter_buffers,
+            std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>&
+                out_segment_shader_resource_views,
+            std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>&
+                out_segment_unordered_access_views,
             force_distribution_global_scratch& out_force_distribution_scratch,
             std::string& diagnostic)
         {
             diagnostic.clear();
             out_segment_parameter_buffers.clear();
+            out_segment_shader_resource_views.clear();
+            out_segment_unordered_access_views.clear();
             out_force_distribution_scratch = {};
             if (source_state_set > 1u || destination_state_set > 1u ||
                 source_state_set == destination_state_set ||
@@ -5860,6 +5866,10 @@ namespace skin_physics::runtime
             simulation::d3d11_compute_graph graph;
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>
                 segment_parameter_buffers;
+            std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>
+                segment_shader_resource_views;
+            std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>
+                segment_unordered_access_views;
             force_distribution_global_scratch force_distribution_scratch;
             std::string diagnostic;
             simulation::compute_pass_desc begin_pass;
@@ -5894,6 +5904,8 @@ namespace skin_physics::runtime
                         reservation,
                         graph,
                         segment_parameter_buffers,
+                        segment_shader_resource_views,
+                        segment_unordered_access_views,
                         force_distribution_scratch,
                         diagnostic))
                 {
@@ -6053,6 +6065,10 @@ namespace skin_physics::runtime
             in_flight.input_snapshot_version = input_snapshot_version;
             in_flight.segment_parameter_buffers =
                 std::move(segment_parameter_buffers);
+            in_flight.segment_shader_resource_views =
+                std::move(segment_shader_resource_views);
+            in_flight.segment_unordered_access_views =
+                std::move(segment_unordered_access_views);
             in_flight.force_distribution_scratch =
                 std::move(force_distribution_scratch);
             in_flight.expected_predecessor_sequence =
