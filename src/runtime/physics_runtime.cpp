@@ -1039,6 +1039,416 @@ namespace skin_physics::runtime
             world.scheduled_source_state_set = world.active_state_set;
         }
 
+        bool build_soft_body_tet_inputs(
+            const physics::physics_mesh& mesh,
+            const mesh_physics_parameters& parameters,
+            std::vector<gpu_soft_body_tet_input>& out_inputs,
+            float& out_damping_rate,
+            std::string& diagnostic) const
+        {
+            diagnostic.clear();
+            out_inputs.clear();
+            if (mesh.tetrahedra.empty() ||
+                mesh.tetrahedra.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+            {
+                diagnostic = "Soft Body Tet count is empty or exceeds uint32.";
+                return false;
+            }
+
+            const float poisson_denominator = 2.0f * (1.0f + parameters.poisson_ratio);
+            const float bulk_denominator = 3.0f * (1.0f - 2.0f * parameters.poisson_ratio);
+            if (!finite_float(poisson_denominator) ||
+                !finite_float(bulk_denominator) ||
+                poisson_denominator <= 0.0f ||
+                bulk_denominator <= 0.0f)
+            {
+                diagnostic = "Soft Body Lamé parameter denominator is invalid.";
+                return false;
+            }
+
+            const float shear_modulus = parameters.young_modulus / poisson_denominator;
+            const float bulk_modulus = parameters.young_modulus / bulk_denominator;
+            const std::size_t shape_channel = static_cast<std::size_t>(
+                asset::physics_attribute_channel::shape_recovery);
+            const std::size_t volume_channel = static_cast<std::size_t>(
+                asset::physics_attribute_channel::volume);
+            const std::size_t damping_channel = static_cast<std::size_t>(
+                asset::physics_attribute_channel::damping);
+            const float shape_multiplier = parameters.attribute_multipliers[shape_channel];
+            const float volume_multiplier = parameters.attribute_multipliers[volume_channel];
+            out_damping_rate =
+                parameters.damping * parameters.attribute_multipliers[damping_channel];
+
+            if (!finite_float(shear_modulus) ||
+                !finite_float(bulk_modulus) ||
+                !finite_float(out_damping_rate) ||
+                shear_modulus <= 0.0f ||
+                bulk_modulus <= 0.0f ||
+                out_damping_rate < 0.0f)
+            {
+                diagnostic = "Soft Body material conversion produced a non-finite or invalid coefficient.";
+                return false;
+            }
+
+            out_inputs.resize(mesh.tetrahedra.size());
+            for (std::size_t tet_index = 0;
+                tet_index < mesh.tetrahedra.size(); ++tet_index)
+            {
+                const physics::tetrahedron& source = mesh.tetrahedra[tet_index];
+                gpu_soft_body_tet_input& destination = out_inputs[tet_index];
+                for (uint32_t local_vertex = 0u; local_vertex < 4u; ++local_vertex)
+                {
+                    destination.vertex_ids[local_vertex] = source.vertices[local_vertex];
+                    const asset::vec3& gradient =
+                        source.rest_shape_gradients[local_vertex];
+                    destination.rest_gradients[local_vertex][0] = gradient.x;
+                    destination.rest_gradients[local_vertex][1] = gradient.y;
+                    destination.rest_gradients[local_vertex][2] = gradient.z;
+                    destination.rest_gradients[local_vertex][3] = 0.0f;
+                }
+
+                for (uint32_t row = 0u; row < 3u; ++row)
+                {
+                    for (uint32_t column = 0u; column < 3u; ++column)
+                    {
+                        destination.rest_inverse[row][column] =
+                            source.rest_inverse[row * 3u + column];
+                    }
+                    destination.rest_inverse[row][3] = 0.0f;
+                }
+
+                destination.material0[0] = source.rest_volume;
+                destination.material0[1] = shear_modulus;
+                destination.material0[2] = bulk_modulus;
+                destination.material0[3] = shape_multiplier;
+                destination.material1[0] = volume_multiplier;
+                destination.material1[1] = parameters.young_modulus;
+                destination.material1[2] = 0.1f;
+                destination.material1[3] = 0.0f;
+            }
+            return true;
+        }
+
+        bool initialize_soft_body_gpu_mesh(
+            uint32_t mesh_index,
+            const model_mesh_physics_asset& mesh_asset,
+            const transform& root_transform,
+            soft_body_gpu_mesh& out_mesh,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            const physics::physics_mesh& mesh = mesh_asset.physics_mesh;
+            if (mesh.rest_positions.empty() ||
+                mesh.rest_positions.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
+                mesh.tetrahedra.empty() ||
+                mesh.tetrahedra.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+            {
+                diagnostic = "Soft Body GPU Mesh has an empty or unrepresentable vertex / Tet count.";
+                return false;
+            }
+
+            soft_body_gpu_mesh candidate;
+            candidate.mesh_index = mesh_index;
+            candidate.vertex_count = static_cast<uint32_t>(mesh.rest_positions.size());
+            candidate.tetrahedron_count = static_cast<uint32_t>(mesh.tetrahedra.size());
+            candidate.initial_positions.resize(mesh.rest_positions.size());
+            candidate.initial_velocities.resize(mesh.rest_positions.size());
+
+            for (std::size_t vertex_index = 0;
+                vertex_index < mesh.rest_positions.size(); ++vertex_index)
+            {
+                const asset::vec3 position = transform_position(
+                    root_transform, mesh.rest_positions[vertex_index]);
+                if (!finite_vec3(position))
+                {
+                    diagnostic = "Soft Body initial world-space position is not finite.";
+                    return false;
+                }
+                candidate.initial_positions[vertex_index] = {
+                    position.x, position.y, position.z, 1.0f
+                };
+                candidate.initial_velocities[vertex_index] = {};
+            }
+
+            const mesh_physics_parameters default_parameters;
+            std::vector<gpu_soft_body_tet_input> tet_inputs;
+            float damping_rate = 0.0f;
+            if (!build_soft_body_tet_inputs(
+                    mesh, default_parameters, tet_inputs, damping_rate, diagnostic))
+            {
+                return false;
+            }
+
+            std::vector<gpu_soft_body_tet_output> tet_output(
+                mesh.tetrahedra.size(), gpu_soft_body_tet_output{});
+            std::vector<gpu_float4> vertex_force(
+                mesh.rest_positions.size(), gpu_float4{});
+
+            const UINT state_bind_flags =
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+            for (uint32_t bank_index = 0u; bank_index < 2u; ++bank_index)
+            {
+                if (!create_structured_buffer_from_vector(
+                        device.Get(), candidate.initial_positions,
+                        state_bind_flags,
+                        candidate.position_banks[bank_index].GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(), candidate.position_banks[bank_index].Get(),
+                        candidate.vertex_count,
+                        candidate.position_bank_srvs[bank_index].GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(), candidate.position_banks[bank_index].Get(),
+                        candidate.vertex_count,
+                        candidate.position_bank_uavs[bank_index].GetAddressOf()) ||
+                    !create_structured_buffer_from_vector(
+                        device.Get(), candidate.initial_velocities,
+                        state_bind_flags,
+                        candidate.velocity_banks[bank_index].GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(), candidate.velocity_banks[bank_index].Get(),
+                        candidate.vertex_count,
+                        candidate.velocity_bank_srvs[bank_index].GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(), candidate.velocity_banks[bank_index].Get(),
+                        candidate.vertex_count,
+                        candidate.velocity_bank_uavs[bank_index].GetAddressOf()))
+                {
+                    diagnostic = "Unable to allocate both persistent Soft Body State Banks.";
+                    return false;
+                }
+            }
+
+            if (!create_structured_buffer_from_vector(
+                    device.Get(), candidate.initial_positions,
+                    state_bind_flags, candidate.position_scratch.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.position_scratch.Get(),
+                    candidate.vertex_count,
+                    candidate.position_scratch_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), candidate.position_scratch.Get(),
+                    candidate.vertex_count,
+                    candidate.position_scratch_uav.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), candidate.initial_velocities,
+                    state_bind_flags, candidate.velocity_scratch.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.velocity_scratch.Get(),
+                    candidate.vertex_count,
+                    candidate.velocity_scratch_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), candidate.velocity_scratch.Get(),
+                    candidate.vertex_count,
+                    candidate.velocity_scratch_uav.GetAddressOf()))
+            {
+                diagnostic = "Unable to allocate Soft Body Tick Scratch State.";
+                return false;
+            }
+
+            if (!create_structured_buffer_from_vector(
+                    device.Get(), tet_inputs, D3D11_BIND_SHADER_RESOURCE,
+                    candidate.tetrahedron_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.tetrahedron_buffer.Get(),
+                    candidate.tetrahedron_count,
+                    candidate.tetrahedron_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), tet_output, state_bind_flags,
+                    candidate.tetrahedron_output_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.tetrahedron_output_buffer.Get(),
+                    candidate.tetrahedron_count,
+                    candidate.tetrahedron_output_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), candidate.tetrahedron_output_buffer.Get(),
+                    candidate.tetrahedron_count,
+                    candidate.tetrahedron_output_uav.GetAddressOf()))
+            {
+                diagnostic = "Unable to allocate Soft Body Tet Input / Output resources.";
+                return false;
+            }
+
+            if (mesh.vertex_tetrahedron_offsets.size() !=
+                    mesh.rest_positions.size() + 1u ||
+                mesh.vertex_tetrahedron_ids.empty() ||
+                mesh.inverse_mass.size() != mesh.rest_positions.size())
+            {
+                diagnostic = "Soft Body Vertex-to-Tet CSR or inverse-mass array is invalid.";
+                return false;
+            }
+
+            if (!create_structured_buffer_from_vector(
+                    device.Get(), mesh.vertex_tetrahedron_offsets,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.vertex_tetrahedron_offsets_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.vertex_tetrahedron_offsets_buffer.Get(),
+                    static_cast<uint32_t>(mesh.vertex_tetrahedron_offsets.size()),
+                    candidate.vertex_tetrahedron_offsets_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), mesh.vertex_tetrahedron_ids,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.vertex_tetrahedron_ids_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.vertex_tetrahedron_ids_buffer.Get(),
+                    static_cast<uint32_t>(mesh.vertex_tetrahedron_ids.size()),
+                    candidate.vertex_tetrahedron_ids_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), mesh.inverse_mass,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.inverse_mass_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.inverse_mass_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.inverse_mass_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), vertex_force, state_bind_flags,
+                    candidate.vertex_force_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.vertex_force_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.vertex_force_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), candidate.vertex_force_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.vertex_force_uav.GetAddressOf()))
+            {
+                diagnostic = "Unable to allocate Soft Body CSR / Mass / Force resources.";
+                return false;
+            }
+
+            gpu_soft_body_fem_parameters fem_parameters;
+            fem_parameters.tetrahedron_count = candidate.tetrahedron_count;
+            gpu_soft_body_gather_parameters gather_parameters;
+            gather_parameters.vertex_count = candidate.vertex_count;
+            gpu_soft_body_integration_parameters integration_parameters;
+            integration_parameters.vertex_count = candidate.vertex_count;
+
+            if (!create_constant_buffer(
+                    device.Get(), sizeof(fem_parameters), &fem_parameters,
+                    candidate.fem_parameters.GetAddressOf()) ||
+                !create_constant_buffer(
+                    device.Get(), sizeof(gather_parameters), &gather_parameters,
+                    candidate.gather_parameters.GetAddressOf()) ||
+                !create_constant_buffer(
+                    device.Get(), sizeof(integration_parameters),
+                    &integration_parameters,
+                    candidate.integration_parameters.GetAddressOf()))
+            {
+                diagnostic = "Unable to allocate Soft Body Compute Parameter buffers.";
+                return false;
+            }
+
+            out_mesh = std::move(candidate);
+            return true;
+        }
+
+        bool update_soft_body_materials(
+            model_slot& model,
+            soft_body_gpu_mesh& gpu_mesh,
+            float& out_damping_rate,
+            std::string& diagnostic)
+        {
+            const auto asset_iterator = std::find_if(
+                model.mesh_physics_assets.begin(),
+                model.mesh_physics_assets.end(),
+                [&](const model_mesh_physics_asset& value)
+                {
+                    return value.mesh_index == gpu_mesh.mesh_index;
+                });
+            if (asset_iterator == model.mesh_physics_assets.end() ||
+                gpu_mesh.mesh_index >= model.mesh_parameters.size() ||
+                gpu_mesh.mesh_index >= model.mesh_parameters_valid.size())
+            {
+                diagnostic = "Soft Body GPU Mesh lost its immutable Physics Mesh Asset owner.";
+                return false;
+            }
+
+            const mesh_physics_parameters parameters =
+                model.mesh_parameters_valid[gpu_mesh.mesh_index]
+                    ? model.mesh_parameters[gpu_mesh.mesh_index]
+                    : mesh_physics_parameters{};
+
+            std::vector<gpu_soft_body_tet_input> tet_inputs;
+            if (!build_soft_body_tet_inputs(
+                    asset_iterator->physics_mesh,
+                    parameters,
+                    tet_inputs,
+                    out_damping_rate,
+                    diagnostic))
+            {
+                return false;
+            }
+            if (tet_inputs.size() != gpu_mesh.tetrahedron_count)
+            {
+                diagnostic = "Soft Body Tet count changed after the GPU resource layout was created.";
+                return false;
+            }
+
+            immediate_context->UpdateSubresource(
+                gpu_mesh.tetrahedron_buffer.Get(), 0u, nullptr,
+                tet_inputs.data(), 0u, 0u);
+            return true;
+        }
+
+        bool world_has_soft_body_work(const world_slot& world) const
+        {
+            for (const model_slot& model : world.models)
+            {
+                if (model.occupied && !model.gpu_soft_body_meshes.empty())
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool world_has_unsupported_physics_work(const world_slot& world) const
+        {
+            for (const collider_slot& collider : world.colliders)
+            {
+                if (collider.occupied)
+                {
+                    return true;
+                }
+            }
+
+            for (const model_slot& model : world.models)
+            {
+                if (!model.occupied)
+                {
+                    continue;
+                }
+                for (uint32_t mesh_index = 0u;
+                    mesh_index < model.source_model.meshes.size(); ++mesh_index)
+                {
+                    const asset::physics_mode mode =
+                        model.source_model.meshes[mesh_index].mode;
+                    if (mode == asset::physics_mode::none)
+                    {
+                        continue;
+                    }
+                    const bool has_soft_body_resources =
+                        std::any_of(
+                            model.gpu_soft_body_meshes.begin(),
+                            model.gpu_soft_body_meshes.end(),
+                            [mesh_index](const soft_body_gpu_mesh& value)
+                            {
+                                return value.mesh_index == mesh_index;
+                            });
+                    if (mode != asset::physics_mode::soft_body ||
+                        !has_soft_body_resources)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         void update_head_reservation_preflight(world_slot& world)
         {
             if (world.reservations.empty())
