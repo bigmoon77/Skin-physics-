@@ -2815,6 +2815,8 @@ namespace skin_physics::physics
             bool has_translation_channel = false;
             bool has_rotation_channel = false;
             bool has_scale_channel = false;
+            bool uses_matrix = false;
+            asset::mat4 static_matrix;
         };
 
         bool finite_vec3(const asset::vec3& value)
@@ -2989,145 +2991,18 @@ namespace skin_physics::physics
             return finite_matrix(out_local) &&
                 finite_matrix(out_local_derivative);
         }
-    }
 
-    animation_hierarchy_sample_result evaluate_animation_clip_hierarchy(
-        const asset::model& model,
-        const asset::animation_clip& clip,
-        const animation_clip_span& span,
-        double span_local_u,
-        double span_world_duration)
-    {
-        const std::size_t node_count = model.nodes.size();
-        if (node_count == 0u ||
-            node_count >= static_cast<std::size_t>(asset::invalid_index) ||
-            clip.tracks.empty() ||
-            clip.tracks.size() != span.channels.size())
+        animation_hierarchy_sample_result build_animation_hierarchy_from_node_trs(
+            const asset::model& model,
+            const std::vector<hierarchy_node_trs>& node_trs)
         {
-            return make_hierarchy_error(
-                animation_hierarchy_error::invalid_model,
-                "Animation Hierarchy evaluation requires a non-empty Model and a complete Span channel for every Asset Track.");
-        }
-        if (!std::isfinite(span_local_u) ||
-            span_local_u < 0.0 || span_local_u > 1.0 ||
-            !std::isfinite(span_world_duration) ||
-            span_world_duration <= 0.0)
-        {
-            return make_hierarchy_error(
-                animation_hierarchy_error::invalid_clip_span,
-                "Animation Hierarchy evaluation requires a Span-local coordinate in [0, 1] and a finite positive World-Time duration.");
-        }
-
-        std::vector<hierarchy_node_trs> node_trs(node_count);
-        std::vector<std::array<bool, 3>> channel_seen(node_count, { false, false, false });
-        for (std::size_t node_index = 0u; node_index < node_count; ++node_index)
-        {
-            const asset::node& node = model.nodes[node_index];
-            hierarchy_node_trs& trs = node_trs[node_index];
-            trs.translation = node.translation;
-            trs.scale = node.scale;
-            trs.rotation = node.rotation;
-            if (node.uses_matrix && !is_affine_matrix(node.local_matrix))
+            const std::size_t node_count = model.nodes.size();
+            if (node_count == 0u || node_trs.size() != node_count)
             {
                 return make_hierarchy_error(
-                    animation_hierarchy_error::invalid_transform,
-                    "A static Asset Node Matrix is non-finite or non-affine.");
+                    animation_hierarchy_error::invalid_model,
+                    "Animation Hierarchy builder requires one local transform for every Asset Node.");
             }
-        }
-
-        for (std::size_t channel_index = 0u;
-            channel_index < span.channels.size(); ++channel_index)
-        {
-            const animation_channel_span& channel =
-                span.channels[channel_index];
-            const asset::animation_track& track = clip.tracks[channel_index];
-            if (channel.track_index != channel_index ||
-                channel.node_index >= node_count ||
-                channel.node_index != track.node_index ||
-                channel.path != track.path ||
-                model.nodes[channel.node_index].uses_matrix ||
-                channel.clip_time_start != span.clip_time_start ||
-                channel.clip_time_delta != span.clip_time_delta)
-            {
-                return make_hierarchy_error(
-                    animation_hierarchy_error::invalid_channel,
-                    "Animation Span channel ordering, Node / Path mapping, common Clip-Time interval or static Matrix animation binding is invalid.");
-            }
-
-            std::size_t channel_slot = 0u;
-            hierarchy_node_trs& trs = node_trs[channel.node_index];
-            if (channel.path == asset::animation_path::translation)
-            {
-                channel_slot = 0u;
-                trs.has_translation_channel = true;
-            }
-            else if (channel.path == asset::animation_path::rotation)
-            {
-                channel_slot = 1u;
-                trs.has_rotation_channel = true;
-            }
-            else if (channel.path == asset::animation_path::scale)
-            {
-                channel_slot = 2u;
-                trs.has_scale_channel = true;
-            }
-            else
-            {
-                return make_hierarchy_error(
-                    animation_hierarchy_error::invalid_channel,
-                    "Animation Span contains an unsupported Node Path.");
-            }
-            if (channel_seen[channel.node_index][channel_slot])
-            {
-                return make_hierarchy_error(
-                    animation_hierarchy_error::invalid_channel,
-                    "Animation Span contains duplicate channels for one Node / Path pair.");
-            }
-            channel_seen[channel.node_index][channel_slot] = true;
-
-            const animation_channel_span_sample_result sample =
-                evaluate_animation_channel_span(
-                    channel, span_local_u, span_world_duration);
-            if (!sample.success)
-            {
-                return make_hierarchy_error(
-                    animation_hierarchy_error::invalid_channel,
-                    "Animation Channel evaluation failed: " + sample.message);
-            }
-
-            if (channel.path == asset::animation_path::translation)
-            {
-                trs.translation = {
-                    sample.value.value.x,
-                    sample.value.value.y,
-                    sample.value.value.z
-                };
-                trs.translation_velocity = {
-                    sample.value.world_time_derivative.x,
-                    sample.value.world_time_derivative.y,
-                    sample.value.world_time_derivative.z
-                };
-            }
-            else if (channel.path == asset::animation_path::scale)
-            {
-                trs.scale = {
-                    sample.value.value.x,
-                    sample.value.value.y,
-                    sample.value.value.z
-                };
-                trs.scale_velocity = {
-                    sample.value.world_time_derivative.x,
-                    sample.value.world_time_derivative.y,
-                    sample.value.world_time_derivative.z
-                };
-            }
-            else
-            {
-                trs.rotation = sample.value.value;
-                trs.rotation_velocity =
-                    sample.value.world_time_derivative;
-            }
-        }
 
         std::vector<std::vector<uint32_t>> children(node_count);
         std::vector<uint32_t> indegree(node_count, 0u);
@@ -3201,6 +3076,7 @@ namespace skin_physics::physics
         }
 
         animation_hierarchy_sample result_value;
+        result_value.local_transforms.resize(node_count);
         result_value.local_matrices.resize(node_count);
         result_value.local_matrix_derivatives.resize(node_count);
         result_value.global_matrices.resize(node_count);
@@ -3209,6 +3085,17 @@ namespace skin_physics::physics
         for (uint32_t node_index : topological_order)
         {
             const asset::node& node = model.nodes[node_index];
+            const hierarchy_node_trs& trs = node_trs[node_index];
+            animation_node_local_transform local_transform;
+            local_transform.uses_matrix = node.uses_matrix;
+            local_transform.matrix = node.local_matrix;
+            local_transform.translation = trs.translation;
+            local_transform.rotation = trs.rotation;
+            local_transform.scale = trs.scale;
+            local_transform.translation_velocity = trs.translation_velocity;
+            local_transform.rotation_velocity = trs.rotation_velocity;
+            local_transform.scale_velocity = trs.scale_velocity;
+            result_value.local_transforms[node_index] = local_transform;
             asset::mat4 local_matrix;
             asset::mat4 local_derivative = zero_matrix();
             if (node.uses_matrix)
@@ -3409,11 +3296,543 @@ namespace skin_physics::physics
             result_value.skin_poses.push_back(std::move(skin_pose));
         }
 
-        animation_hierarchy_sample_result result;
-        result.value = std::move(result_value);
-        result.success = true;
-        return result;
+
+            animation_hierarchy_sample_result result;
+            result.value = std::move(result_value);
+            result.success = true;
+            return result;
+        }
+
     }
 
+    animation_hierarchy_sample_result evaluate_animation_clip_hierarchy(
+        const asset::model& model,
+        const asset::animation_clip& clip,
+        const animation_clip_span& span,
+        double span_local_u,
+        double span_world_duration)
+    {
+        const std::size_t node_count = model.nodes.size();
+        if (node_count == 0u ||
+            node_count >= static_cast<std::size_t>(asset::invalid_index) ||
+            clip.tracks.empty() ||
+            clip.tracks.size() != span.channels.size())
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_model,
+                "Animation Hierarchy evaluation requires a non-empty Model and a complete Span channel for every Asset Track.");
+        }
+        if (!std::isfinite(span_local_u) ||
+            span_local_u < 0.0 || span_local_u > 1.0 ||
+            !std::isfinite(span_world_duration) ||
+            span_world_duration <= 0.0)
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_clip_span,
+                "Animation Hierarchy evaluation requires a Span-local coordinate in [0, 1] and a finite positive World-Time duration.");
+        }
+
+        std::vector<hierarchy_node_trs> node_trs(node_count);
+        std::vector<std::array<bool, 3>> channel_seen(node_count, { false, false, false });
+        for (std::size_t node_index = 0u; node_index < node_count; ++node_index)
+        {
+            const asset::node& node = model.nodes[node_index];
+            hierarchy_node_trs& trs = node_trs[node_index];
+            trs.translation = node.translation;
+            trs.scale = node.scale;
+            trs.rotation = node.rotation;
+            trs.uses_matrix = node.uses_matrix;
+            trs.static_matrix = node.local_matrix;
+            if (node.uses_matrix && !is_affine_matrix(node.local_matrix))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_transform,
+                    "A static Asset Node Matrix is non-finite or non-affine.");
+            }
+        }
+
+        for (std::size_t channel_index = 0u;
+            channel_index < span.channels.size(); ++channel_index)
+        {
+            const animation_channel_span& channel =
+                span.channels[channel_index];
+            const asset::animation_track& track = clip.tracks[channel_index];
+            if (channel.track_index != channel_index ||
+                channel.node_index >= node_count ||
+                channel.node_index != track.node_index ||
+                channel.path != track.path ||
+                model.nodes[channel.node_index].uses_matrix ||
+                channel.clip_time_start != span.clip_time_start ||
+                channel.clip_time_delta != span.clip_time_delta)
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Span channel ordering, Node / Path mapping, common Clip-Time interval or static Matrix animation binding is invalid.");
+            }
+
+            std::size_t channel_slot = 0u;
+            hierarchy_node_trs& trs = node_trs[channel.node_index];
+            if (channel.path == asset::animation_path::translation)
+            {
+                channel_slot = 0u;
+                trs.has_translation_channel = true;
+            }
+            else if (channel.path == asset::animation_path::rotation)
+            {
+                channel_slot = 1u;
+                trs.has_rotation_channel = true;
+            }
+            else if (channel.path == asset::animation_path::scale)
+            {
+                channel_slot = 2u;
+                trs.has_scale_channel = true;
+            }
+            else
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Span contains an unsupported Node Path.");
+            }
+            if (channel_seen[channel.node_index][channel_slot])
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Span contains duplicate channels for one Node / Path pair.");
+            }
+            channel_seen[channel.node_index][channel_slot] = true;
+
+            const animation_channel_span_sample_result sample =
+                evaluate_animation_channel_span(
+                    channel, span_local_u, span_world_duration);
+            if (!sample.success)
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Channel evaluation failed: " + sample.message);
+            }
+
+            if (channel.path == asset::animation_path::translation)
+            {
+                trs.translation = {
+                    sample.value.value.x,
+                    sample.value.value.y,
+                    sample.value.value.z
+                };
+                trs.translation_velocity = {
+                    sample.value.world_time_derivative.x,
+                    sample.value.world_time_derivative.y,
+                    sample.value.world_time_derivative.z
+                };
+            }
+            else if (channel.path == asset::animation_path::scale)
+            {
+                trs.scale = {
+                    sample.value.value.x,
+                    sample.value.value.y,
+                    sample.value.value.z
+                };
+                trs.scale_velocity = {
+                    sample.value.world_time_derivative.x,
+                    sample.value.world_time_derivative.y,
+                    sample.value.world_time_derivative.z
+                };
+            }
+            else
+            {
+                trs.rotation = sample.value.value;
+                trs.rotation_velocity =
+                    sample.value.world_time_derivative;
+            }
+        }
+
+        return build_animation_hierarchy_from_node_trs(model, node_trs);
+    }
+
+
+
+    animation_hierarchy_sample_result evaluate_animation_blend_clip_hierarchy(
+        const asset::model& model,
+        const asset::animation_clip& source_clip,
+        const asset::animation_clip& target_clip,
+        const animation_blend_clip_span& span,
+        double span_local_u)
+    {
+        if (!std::isfinite(span_local_u) ||
+            span_local_u < 0.0 || span_local_u > 1.0 ||
+            !std::isfinite(span.world_time_start) ||
+            !std::isfinite(span.world_time_duration) ||
+            span.world_time_duration <= 0.0 ||
+            !std::isfinite(span.world_time_start + span.world_time_duration) ||
+            span.world_time_start + span.world_time_duration ==
+                span.world_time_start)
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_clip_span,
+                "Animation Blend Pose evaluation requires one finite positive synchronized World-Time Span and u in [0, 1].");
+        }
+
+        const double world_time_end =
+            span.world_time_start + span.world_time_duration;
+        const auto matches_world_span =
+            [&span, world_time_end](double world_start, double duration)
+        {
+            return std::isfinite(world_start) &&
+                std::isfinite(duration) &&
+                duration > 0.0 &&
+                world_start == span.world_time_start &&
+                duration == span.world_time_duration &&
+                world_start + duration == world_time_end;
+        };
+        if (!matches_world_span(
+                span.source.world_time_start,
+                span.source.world_time_duration) ||
+            !matches_world_span(
+                span.target.world_time_start,
+                span.target.world_time_duration) ||
+            !matches_world_span(
+                span.blend_weight.world_time_start,
+                span.blend_weight.world_time_duration))
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_blend,
+                "Source, Target and Hermite Blend Weight must cover the exact same World-Time interval.");
+        }
+
+        const animation_hierarchy_sample_result source =
+            evaluate_animation_clip_hierarchy(
+                model,
+                source_clip,
+                span.source.clip,
+                span_local_u,
+                span.world_time_duration);
+        if (!source.success)
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_blend,
+                "Source Clip Pose evaluation failed: " + source.message);
+        }
+
+        const animation_hierarchy_sample_result target =
+            evaluate_animation_clip_hierarchy(
+                model,
+                target_clip,
+                span.target.clip,
+                span_local_u,
+                span.world_time_duration);
+        if (!target.success)
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_blend,
+                "Target Clip Pose evaluation failed: " + target.message);
+        }
+
+        const animation_blend_weight_sample_result blend_weight =
+            evaluate_animation_blend_weight_span(
+                span.blend_weight, span_local_u);
+        if (!blend_weight.success ||
+            !std::isfinite(blend_weight.value.weight) ||
+            blend_weight.value.weight < 0.0 ||
+            blend_weight.value.weight > 1.0 ||
+            !std::isfinite(blend_weight.value.world_time_derivative))
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_blend,
+                "Hermite Blend Weight evaluation failed: " + blend_weight.message);
+        }
+
+        const std::size_t node_count = model.nodes.size();
+        if (source.value.local_transforms.size() != node_count ||
+            target.value.local_transforms.size() != node_count)
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_model,
+                "Source / Target Pose evaluators did not return one Local Transform per Asset Node.");
+        }
+
+        const double weight = blend_weight.value.weight;
+        const double weight_derivative =
+            blend_weight.value.world_time_derivative;
+        std::vector<hierarchy_node_trs> blended_transforms(node_count);
+        for (std::size_t node_index = 0u;
+            node_index < node_count; ++node_index)
+        {
+            const animation_node_local_transform& source_node =
+                source.value.local_transforms[node_index];
+            const animation_node_local_transform& target_node =
+                target.value.local_transforms[node_index];
+            hierarchy_node_trs& blended =
+                blended_transforms[node_index];
+
+            if (source_node.uses_matrix != target_node.uses_matrix)
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_transform,
+                    "Source / Target Pose disagree on whether an Asset Node uses a static Matrix.");
+            }
+            if (source_node.uses_matrix)
+            {
+                for (std::size_t matrix_index = 0u;
+                    matrix_index < 16u; ++matrix_index)
+                {
+                    if (source_node.matrix.value[matrix_index] !=
+                        target_node.matrix.value[matrix_index])
+                    {
+                        return make_hierarchy_error(
+                            animation_hierarchy_error::invalid_transform,
+                            "Source / Target Pose static Matrix Nodes must preserve the same immutable Asset Matrix.");
+                    }
+                }
+                blended.uses_matrix = true;
+                blended.static_matrix = source_node.matrix;
+                continue;
+            }
+
+            const double source_translation[3] = {
+                source_node.translation.x,
+                source_node.translation.y,
+                source_node.translation.z
+            };
+            const double target_translation[3] = {
+                target_node.translation.x,
+                target_node.translation.y,
+                target_node.translation.z
+            };
+            const double source_translation_velocity[3] = {
+                source_node.translation_velocity.x,
+                source_node.translation_velocity.y,
+                source_node.translation_velocity.z
+            };
+            const double target_translation_velocity[3] = {
+                target_node.translation_velocity.x,
+                target_node.translation_velocity.y,
+                target_node.translation_velocity.z
+            };
+            const double source_scale[3] = {
+                source_node.scale.x,
+                source_node.scale.y,
+                source_node.scale.z
+            };
+            const double target_scale[3] = {
+                target_node.scale.x,
+                target_node.scale.y,
+                target_node.scale.z
+            };
+            const double source_scale_velocity[3] = {
+                source_node.scale_velocity.x,
+                source_node.scale_velocity.y,
+                source_node.scale_velocity.z
+            };
+            const double target_scale_velocity[3] = {
+                target_node.scale_velocity.x,
+                target_node.scale_velocity.y,
+                target_node.scale_velocity.z
+            };
+            double blended_translation[3] = {};
+            double blended_translation_velocity[3] = {};
+            double blended_scale[3] = {};
+            double blended_scale_velocity[3] = {};
+            for (std::size_t component = 0u; component < 3u; ++component)
+            {
+                blended_translation[component] =
+                    (1.0 - weight) * source_translation[component] +
+                    weight * target_translation[component];
+                blended_translation_velocity[component] =
+                    (1.0 - weight) * source_translation_velocity[component] +
+                    weight * target_translation_velocity[component] +
+                    weight_derivative *
+                        (target_translation[component] -
+                            source_translation[component]);
+                blended_scale[component] =
+                    (1.0 - weight) * source_scale[component] +
+                    weight * target_scale[component];
+                blended_scale_velocity[component] =
+                    (1.0 - weight) * source_scale_velocity[component] +
+                    weight * target_scale_velocity[component] +
+                    weight_derivative *
+                        (target_scale[component] - source_scale[component]);
+
+                const double maximum_float =
+                    static_cast<double>(std::numeric_limits<float>::max());
+                if (!std::isfinite(blended_translation[component]) ||
+                    !std::isfinite(blended_translation_velocity[component]) ||
+                    !std::isfinite(blended_scale[component]) ||
+                    !std::isfinite(blended_scale_velocity[component]) ||
+                    std::abs(blended_translation[component]) > maximum_float ||
+                    std::abs(blended_translation_velocity[component]) > maximum_float ||
+                    std::abs(blended_scale[component]) > maximum_float ||
+                    std::abs(blended_scale_velocity[component]) > maximum_float)
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_transform,
+                        "Blended Node Translation / Scale or their analytic derivatives exceeded finite float range.");
+                }
+            }
+            blended.translation = {
+                static_cast<float>(blended_translation[0]),
+                static_cast<float>(blended_translation[1]),
+                static_cast<float>(blended_translation[2])
+            };
+            blended.translation_velocity = {
+                static_cast<float>(blended_translation_velocity[0]),
+                static_cast<float>(blended_translation_velocity[1]),
+                static_cast<float>(blended_translation_velocity[2])
+            };
+            blended.scale = {
+                static_cast<float>(blended_scale[0]),
+                static_cast<float>(blended_scale[1]),
+                static_cast<float>(blended_scale[2])
+            };
+            blended.scale_velocity = {
+                static_cast<float>(blended_scale_velocity[0]),
+                static_cast<float>(blended_scale_velocity[1]),
+                static_cast<float>(blended_scale_velocity[2])
+            };
+
+            animation_component_array source_rotation = {
+                source_node.rotation.x,
+                source_node.rotation.y,
+                source_node.rotation.z,
+                source_node.rotation.w
+            };
+            animation_component_array target_rotation = {
+                target_node.rotation.x,
+                target_node.rotation.y,
+                target_node.rotation.z,
+                target_node.rotation.w
+            };
+            animation_component_array source_rotation_derivative = {
+                source_node.rotation_velocity.x,
+                source_node.rotation_velocity.y,
+                source_node.rotation_velocity.z,
+                source_node.rotation_velocity.w
+            };
+            animation_component_array target_rotation_derivative = {
+                target_node.rotation_velocity.x,
+                target_node.rotation_velocity.y,
+                target_node.rotation_velocity.z,
+                target_node.rotation_velocity.w
+            };
+
+            animation_component_array normalized_source_rotation = {};
+            animation_component_array normalized_target_rotation = {};
+            double source_rotation_length = 0.0;
+            double target_rotation_length = 0.0;
+            if (!normalize_quaternion_double(
+                    source_rotation,
+                    normalized_source_rotation,
+                    source_rotation_length) ||
+                !normalize_quaternion_double(
+                    target_rotation,
+                    normalized_target_rotation,
+                    target_rotation_length))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_transform,
+                    "Source / Target Node Rotation contains an invalid quaternion.");
+            }
+
+            const double source_projection =
+                dot_quaternion(
+                    normalized_source_rotation,
+                    source_rotation_derivative);
+            const double target_projection =
+                dot_quaternion(
+                    normalized_target_rotation,
+                    target_rotation_derivative);
+            animation_component_array normalized_source_derivative = {};
+            animation_component_array normalized_target_derivative = {};
+            for (std::size_t component = 0u; component < 4u; ++component)
+            {
+                normalized_source_derivative[component] =
+                    (source_rotation_derivative[component] -
+                        normalized_source_rotation[component] *
+                            source_projection) / source_rotation_length;
+                normalized_target_derivative[component] =
+                    (target_rotation_derivative[component] -
+                        normalized_target_rotation[component] *
+                            target_projection) / target_rotation_length;
+            }
+
+            if (dot_quaternion(
+                    normalized_source_rotation,
+                    normalized_target_rotation) < 0.0)
+            {
+                for (std::size_t component = 0u; component < 4u; ++component)
+                {
+                    normalized_target_rotation[component] =
+                        -normalized_target_rotation[component];
+                    normalized_target_derivative[component] =
+                        -normalized_target_derivative[component];
+                }
+            }
+
+            animation_component_array raw_blended_rotation = {};
+            animation_component_array raw_blended_rotation_derivative = {};
+            for (std::size_t component = 0u; component < 4u; ++component)
+            {
+                raw_blended_rotation[component] =
+                    (1.0 - weight) * normalized_source_rotation[component] +
+                    weight * normalized_target_rotation[component];
+                raw_blended_rotation_derivative[component] =
+                    (1.0 - weight) *
+                        normalized_source_derivative[component] +
+                    weight * normalized_target_derivative[component] +
+                    weight_derivative *
+                        (normalized_target_rotation[component] -
+                            normalized_source_rotation[component]);
+            }
+
+            animation_component_array normalized_blended_rotation = {};
+            double blended_rotation_length = 0.0;
+            if (!normalize_quaternion_double(
+                    raw_blended_rotation,
+                    normalized_blended_rotation,
+                    blended_rotation_length))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_transform,
+                    "Hemisphere-aligned Source / Target Quaternion Blend produced a zero or non-finite quaternion.");
+            }
+
+            const double blended_projection =
+                dot_quaternion(
+                    normalized_blended_rotation,
+                    raw_blended_rotation_derivative);
+            animation_component_array blended_rotation_derivative = {};
+            for (std::size_t component = 0u; component < 4u; ++component)
+            {
+                blended_rotation_derivative[component] =
+                    (raw_blended_rotation_derivative[component] -
+                        normalized_blended_rotation[component] *
+                            blended_projection) / blended_rotation_length;
+                if (!std::isfinite(normalized_blended_rotation[component]) ||
+                    !std::isfinite(blended_rotation_derivative[component]) ||
+                    std::abs(normalized_blended_rotation[component]) >
+                        static_cast<double>(std::numeric_limits<float>::max()) ||
+                    std::abs(blended_rotation_derivative[component]) >
+                        static_cast<double>(std::numeric_limits<float>::max()))
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_transform,
+                        "Blended Quaternion or its analytic derivative exceeded finite float range.");
+                }
+            }
+            blended.rotation = {
+                static_cast<float>(normalized_blended_rotation[0]),
+                static_cast<float>(normalized_blended_rotation[1]),
+                static_cast<float>(normalized_blended_rotation[2]),
+                static_cast<float>(normalized_blended_rotation[3])
+            };
+            blended.rotation_velocity = {
+                static_cast<float>(blended_rotation_derivative[0]),
+                static_cast<float>(blended_rotation_derivative[1]),
+                static_cast<float>(blended_rotation_derivative[2]),
+                static_cast<float>(blended_rotation_derivative[3])
+            };
+        }
+
+        return build_animation_hierarchy_from_node_trs(
+            model, blended_transforms);
+    }
 
 }
