@@ -2481,7 +2481,9 @@ namespace skin_physics::runtime
             world->accumulator_seconds += requested_delta;
         }
 
-        if (world->reservations.empty())
+        const uint64_t previous_submitted_sequence = world->submitted_sequence;
+        if (world->reservations.empty() &&
+            world->in_flight_tick_count == 0u)
         {
             if (world->pending_single_step_requests != 0u)
             {
@@ -2491,6 +2493,18 @@ namespace skin_physics::runtime
             {
                 runtime.reserve_next_tick(*world, false);
             }
+        }
+
+        if (world->in_flight_tick_count == 0u &&
+            !world->reservations.empty() &&
+            !world->reservations.front().blocked &&
+            !world->reservations.front().rejected)
+        {
+            runtime.submit_head_reservation(*world, world_handle_value.index);
+        }
+        if (world->submitted_sequence > previous_submitted_sequence)
+        {
+            out_report->submitted_tick_count = 1u;
         }
 
         const uint64_t pending64 =
