@@ -285,7 +285,6 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         rotate_by_quaternion(vertex.fallback_normal.xyz, root_rotation),
         float3(0.0f, 1.0f, 0.0f));
     float3 world_normal = safe_normalize(normal_sum, fallback_world_normal);
-    normal = rotate_by_quaternion(world_normal, inverse_root_rotation);
 
     float3 projected_tangent = tangent_sum -
         world_normal * dot(world_normal, tangent_sum);
@@ -312,8 +311,22 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     float handedness = abs(handedness_measure) > 1.0e-12f
         ? (handedness_measure < 0.0f ? -1.0f : 1.0f)
         : (vertex.fallback_tangent.w < 0.0f ? -1.0f : 1.0f);
+
+    // Re-orthogonalize after returning to the Model-local basis. This keeps
+    // the exact output basis valid even when the host transform is only
+    // approximately unit length at floating-point precision.
+    normal = safe_normalize(
+        rotate_by_quaternion(world_normal, inverse_root_rotation),
+        vertex.fallback_normal.xyz);
+    float3 tangent_local = rotate_by_quaternion(
+        tangent_world, inverse_root_rotation);
+    tangent_local -= normal * dot(normal, tangent_local);
+    float3 tangent_fallback_axis = abs(normal.z) < 0.9f
+        ? float3(0.0f, 0.0f, 1.0f)
+        : float3(0.0f, 1.0f, 0.0f);
+    float3 tangent_fallback = cross(tangent_fallback_axis, normal);
     tangent = float4(
-        rotate_by_quaternion(tangent_world, inverse_root_rotation),
+        safe_normalize(tangent_local, tangent_fallback),
         handedness);
 
     if (!all(isfinite(position)) || !all(isfinite(normal)) ||
