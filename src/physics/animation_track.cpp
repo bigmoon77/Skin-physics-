@@ -1374,4 +1374,371 @@ namespace skin_physics::physics
         return result;
     }
 
+
+    namespace
+    {
+        animation_blend_weight_span_build_result make_blend_span_error(
+            animation_blend_weight_error error,
+            const std::string& message)
+        {
+            animation_blend_weight_span_build_result result;
+            result.error = error;
+            result.message = message;
+            return result;
+        }
+
+        animation_blend_weight_spans_build_result make_blend_spans_error(
+            animation_blend_weight_error error,
+            const std::string& message)
+        {
+            animation_blend_weight_spans_build_result result;
+            result.error = error;
+            result.message = message;
+            return result;
+        }
+
+        animation_blend_weight_sample_result make_blend_sample_error(
+            animation_blend_weight_error error,
+            const std::string& message)
+        {
+            animation_blend_weight_sample_result result;
+            result.error = error;
+            result.message = message;
+            return result;
+        }
+
+        animation_component_array blend_curve_coefficients(
+            const animation_blend_weight_curve_desc& curve)
+        {
+            const double duration =
+                curve.blend_end_time - curve.blend_start_time;
+            const double weight_start = curve.weight_start;
+            const double weight_end = curve.weight_end;
+            const double tangent_start =
+                static_cast<double>(curve.tangent_start) * duration;
+            const double tangent_end =
+                static_cast<double>(curve.tangent_end) * duration;
+            return {
+                weight_start,
+                tangent_start,
+                -3.0 * weight_start + 3.0 * weight_end -
+                    2.0 * tangent_start - tangent_end,
+                2.0 * weight_start - 2.0 * weight_end +
+                    tangent_start + tangent_end
+            };
+        }
+
+        double evaluate_blend_curve_value(
+            const animation_component_array& coefficients,
+            double u)
+        {
+            return ((coefficients[3] * u + coefficients[2]) * u +
+                coefficients[1]) * u + coefficients[0];
+        }
+
+        bool blend_curve_value_is_valid(
+            const animation_component_array& coefficients,
+            double u)
+        {
+            const double value = evaluate_blend_curve_value(coefficients, u);
+            return std::isfinite(value) && value >= 0.0 && value <= 1.0;
+        }
+    }
+
+    bool valid_animation_blend_weight_curve(
+        const animation_blend_weight_curve_desc& curve)
+    {
+        if (!std::isfinite(curve.blend_start_time) ||
+            !std::isfinite(curve.blend_end_time) ||
+            curve.blend_end_time <= curve.blend_start_time ||
+            !std::isfinite(curve.weight_start) ||
+            !std::isfinite(curve.weight_end) ||
+            curve.weight_start < 0.0f || curve.weight_start > 1.0f ||
+            curve.weight_end < 0.0f || curve.weight_end > 1.0f ||
+            !std::isfinite(curve.tangent_start) ||
+            !std::isfinite(curve.tangent_end))
+        {
+            return false;
+        }
+
+        const animation_component_array coefficients =
+            blend_curve_coefficients(curve);
+        if (!std::all_of(
+                coefficients.begin(), coefficients.end(),
+                [](double value) { return std::isfinite(value); }) ||
+            !blend_curve_value_is_valid(coefficients, 0.0) ||
+            !blend_curve_value_is_valid(coefficients, 1.0))
+        {
+            return false;
+        }
+
+        const double quadratic_a = 3.0 * coefficients[3];
+        const double quadratic_b = 2.0 * coefficients[2];
+        const double quadratic_c = coefficients[1];
+        const double coefficient_scale = std::max(
+            1.0,
+            std::max(std::abs(quadratic_a),
+                std::max(std::abs(quadratic_b), std::abs(quadratic_c))));
+        const double linear_epsilon =
+            std::numeric_limits<double>::epsilon() *
+            coefficient_scale * 64.0;
+
+        if (std::abs(quadratic_a) <= linear_epsilon)
+        {
+            if (std::abs(quadratic_b) <= linear_epsilon)
+            {
+                return true;
+            }
+            const double root = -quadratic_c / quadratic_b;
+            return !(root > 0.0 && root < 1.0) ||
+                blend_curve_value_is_valid(coefficients, root);
+        }
+
+        double discriminant =
+            quadratic_b * quadratic_b -
+            4.0 * quadratic_a * quadratic_c;
+        const double discriminant_scale = std::max(
+            1.0,
+            quadratic_b * quadratic_b +
+                std::abs(4.0 * quadratic_a * quadratic_c));
+        const double discriminant_epsilon =
+            std::numeric_limits<double>::epsilon() *
+            discriminant_scale * 64.0;
+        if (discriminant < -discriminant_epsilon)
+        {
+            return true;
+        }
+        discriminant = std::max(0.0, discriminant);
+        const double square_root = std::sqrt(discriminant);
+        const double q = -0.5 *
+            (quadratic_b + std::copysign(square_root, quadratic_b));
+        if (q == 0.0)
+        {
+            const double root = -quadratic_b / (2.0 * quadratic_a);
+            return !(root > 0.0 && root < 1.0) ||
+                blend_curve_value_is_valid(coefficients, root);
+        }
+
+        const double root0 = q / quadratic_a;
+        const double root1 = quadratic_c / q;
+        return (!(root0 > 0.0 && root0 < 1.0) ||
+                    blend_curve_value_is_valid(coefficients, root0)) &&
+            (!(root1 > 0.0 && root1 < 1.0) ||
+                blend_curve_value_is_valid(coefficients, root1));
+    }
+
+    animation_blend_weight_span_build_result build_animation_blend_weight_span(
+        const animation_blend_weight_curve_desc& curve,
+        double world_time_start,
+        double world_time_duration)
+    {
+        if (!valid_animation_blend_weight_curve(curve))
+        {
+            return make_blend_span_error(
+                animation_blend_weight_error::invalid_curve,
+                "Animation Blend Weight Curve is invalid or leaves [0, 1] over its complete domain.");
+        }
+        const double world_time_end =
+            world_time_start + world_time_duration;
+        if (!std::isfinite(world_time_start) ||
+            !std::isfinite(world_time_duration) ||
+            world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_end) ||
+            world_time_end == world_time_start)
+        {
+            return make_blend_span_error(
+                animation_blend_weight_error::invalid_time,
+                "Animation Blend Weight Span requires a finite World-Time start and positive representable duration.");
+        }
+
+        animation_blend_weight_span candidate;
+        candidate.world_time_start = world_time_start;
+        candidate.world_time_duration = world_time_duration;
+        if (world_time_end <= curve.blend_start_time)
+        {
+            candidate.coefficients = {
+                static_cast<double>(curve.weight_start), 0.0, 0.0, 0.0
+            };
+        }
+        else if (world_time_start >= curve.blend_end_time)
+        {
+            candidate.coefficients = {
+                static_cast<double>(curve.weight_end), 0.0, 0.0, 0.0
+            };
+        }
+        else if (world_time_start < curve.blend_start_time ||
+            world_time_end > curve.blend_end_time)
+        {
+            return make_blend_span_error(
+                animation_blend_weight_error::span_crosses_curve_boundary,
+                "Animation Blend Weight Span crosses blend_start_time or blend_end_time and must be split by the World Scheduler.");
+        }
+        else
+        {
+            const animation_component_array curve_coefficients =
+                blend_curve_coefficients(curve);
+            const double curve_duration =
+                curve.blend_end_time - curve.blend_start_time;
+            const double normalized_start =
+                (world_time_start - curve.blend_start_time) /
+                curve_duration;
+            const double normalized_delta =
+                world_time_duration / curve_duration;
+            const double normalized_start_squared =
+                normalized_start * normalized_start;
+            const double normalized_delta_squared =
+                normalized_delta * normalized_delta;
+            const double normalized_delta_cubed =
+                normalized_delta_squared * normalized_delta;
+
+            candidate.coefficients[0] =
+                evaluate_blend_curve_value(
+                    curve_coefficients, normalized_start);
+            candidate.coefficients[1] = normalized_delta *
+                (curve_coefficients[1] +
+                    2.0 * curve_coefficients[2] * normalized_start +
+                    3.0 * curve_coefficients[3] * normalized_start_squared);
+            candidate.coefficients[2] = normalized_delta_squared *
+                (curve_coefficients[2] +
+                    3.0 * curve_coefficients[3] * normalized_start);
+            candidate.coefficients[3] =
+                normalized_delta_cubed * curve_coefficients[3];
+        }
+
+        if (!std::all_of(
+                candidate.coefficients.begin(),
+                candidate.coefficients.end(),
+                [](double value) { return std::isfinite(value); }))
+        {
+            return make_blend_span_error(
+                animation_blend_weight_error::invalid_curve,
+                "Animation Blend Weight Span coefficients exceed finite double range.");
+        }
+
+        animation_blend_weight_span_build_result result;
+        result.value = candidate;
+        result.success = true;
+        return result;
+    }
+
+    animation_blend_weight_spans_build_result build_animation_blend_weight_spans(
+        const animation_blend_weight_curve_desc& curve,
+        double world_time_start,
+        double world_time_duration)
+    {
+        if (!valid_animation_blend_weight_curve(curve))
+        {
+            return make_blend_spans_error(
+                animation_blend_weight_error::invalid_curve,
+                "Animation Blend Weight Curve is invalid or leaves [0, 1] over its complete domain.");
+        }
+        const double world_time_end =
+            world_time_start + world_time_duration;
+        if (!std::isfinite(world_time_start) ||
+            !std::isfinite(world_time_duration) ||
+            world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_end) ||
+            world_time_end == world_time_start)
+        {
+            return make_blend_spans_error(
+                animation_blend_weight_error::invalid_time,
+                "Animation Blend Weight scheduling requires a finite positive Logical Tick interval.");
+        }
+
+        std::vector<double> boundaries;
+        boundaries.reserve(4u);
+        boundaries.push_back(world_time_start);
+        if (curve.blend_start_time > world_time_start &&
+            curve.blend_start_time < world_time_end)
+        {
+            boundaries.push_back(curve.blend_start_time);
+        }
+        if (curve.blend_end_time > world_time_start &&
+            curve.blend_end_time < world_time_end)
+        {
+            boundaries.push_back(curve.blend_end_time);
+        }
+        boundaries.push_back(world_time_end);
+        std::sort(boundaries.begin(), boundaries.end());
+
+        animation_blend_weight_spans_build_result result;
+        result.values.reserve(boundaries.size() - 1u);
+        for (std::size_t index = 0u;
+            index + 1u < boundaries.size(); ++index)
+        {
+            const double span_start = boundaries[index];
+            const double span_duration = boundaries[index + 1u] - span_start;
+            animation_blend_weight_span_build_result span_result =
+                build_animation_blend_weight_span(
+                    curve, span_start, span_duration);
+            if (!span_result.success)
+            {
+                result.values.clear();
+                result.error = span_result.error;
+                result.message = span_result.message;
+                return result;
+            }
+            result.values.push_back(std::move(span_result.value));
+        }
+        result.success = !result.values.empty();
+        if (!result.success)
+        {
+            result.error = animation_blend_weight_error::invalid_time;
+            result.message =
+                "Animation Blend Weight Scheduler produced an empty World-Time partition.";
+        }
+        return result;
+    }
+
+    animation_blend_weight_sample_result evaluate_animation_blend_weight_span(
+        const animation_blend_weight_span& span,
+        double span_local_u)
+    {
+        if (!std::isfinite(span.world_time_start) ||
+            !std::isfinite(span.world_time_duration) ||
+            span.world_time_duration <= 0.0 ||
+            !std::isfinite(span.world_time_start + span.world_time_duration) ||
+            !std::isfinite(span_local_u) ||
+            span_local_u < 0.0 || span_local_u > 1.0)
+        {
+            return make_blend_sample_error(
+                animation_blend_weight_error::invalid_time,
+                "Animation Blend Weight evaluation requires a finite World-Time interval and u in [0, 1].");
+        }
+        if (!std::all_of(
+                span.coefficients.begin(),
+                span.coefficients.end(),
+                [](double value) { return std::isfinite(value); }))
+        {
+            return make_blend_sample_error(
+                animation_blend_weight_error::invalid_curve,
+                "Animation Blend Weight Span contains a non-finite coefficient.");
+        }
+
+        const double u = span_local_u;
+        const double u_squared = u * u;
+        const double weight =
+            ((span.coefficients[3] * u + span.coefficients[2]) * u +
+                span.coefficients[1]) * u + span.coefficients[0];
+        const double derivative_u =
+            span.coefficients[1] +
+            2.0 * span.coefficients[2] * u +
+            3.0 * span.coefficients[3] * u_squared;
+        const double world_derivative =
+            derivative_u / span.world_time_duration;
+        if (!std::isfinite(weight) || weight < -1.0e-9 || weight > 1.0 + 1.0e-9 ||
+            !std::isfinite(world_derivative))
+        {
+            return make_blend_sample_error(
+                animation_blend_weight_error::invalid_curve,
+                "Animation Blend Weight evaluation left [0, 1] or produced a non-finite derivative.");
+        }
+
+        animation_blend_weight_sample_result result;
+        result.value.weight = std::max(0.0, std::min(1.0, weight));
+        result.value.world_time_derivative = world_derivative;
+        result.success = true;
+        return result;
+    }
+
 }
