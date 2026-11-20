@@ -6932,7 +6932,7 @@ namespace skin_physics::runtime
         model.has_animation_playback = false;
         model.has_animation_blend = false;
         model.animation_world_time_origin =
-            world.gpu_committed_simulation_time;
+            world->gpu_committed_simulation_time;
         model.mesh_parameters.resize(model.source_model.meshes.size());
         model.mesh_parameters_valid.resize(model.source_model.meshes.size(), false);
         model.occupied = true;
