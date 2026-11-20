@@ -25,7 +25,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Record open implementation dependencies in this roadmap; change normative design only when a real contradiction is found.
 
 ### Phase 1 — R0 Runtime boundary and asynchronous scheduler
-**Status: in progress — asynchronous Tick submission / Query observation and Soft Body Render Candidate / Host Lease are implemented; immutable Segment Snapshots remain pending**
+**Status: in progress — asynchronous Tick submission / Query observation, Soft Body Render Candidate / Host Lease, and immutable per-Tick CPU Input Snapshot ownership are implemented; Segment Snapshots remain pending**
 
 - Public C++17 API, descriptors, status codes and generation-checked World / Model / Collider handles.
 - Host-owned D3D11 Device / Immediate Context validation and COM lifetime.
@@ -39,7 +39,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - GPU terminal BLOCKED is classified by Status Origin: Dynamic TOI maps to WORK_BUDGET_EXCEEDED / retryable (or WORK_BUDGET_UNSATISFIABLE above the immutable Hard Limit), while an origin-free terminal BLOCKED maps to BLOCKED_BY_PREDECESSOR. The production Dynamic TOI Segment producer and Boundary Table scheduler remain open.
 - advance_report distinguishes Host Render Lease Backpressure from Query / Capacity Admission stalls.
 - Per-Soft-Body-Mesh persistent position / velocity State Banks, per-Tick Scratch, gated GPU submission and reset-to-rest-state lifecycle.
-- Rollback / retry keeps the exact same CPU Reservation; immutable per-Tick Input Snapshot / Packet Version is still pending.
+- Every CPU Tick Reservation owns a monotonic-versioned immutable Input Snapshot covering World settings, Force / Impulse inputs, Model Root / Animation / Material state, transferred Physics Attribute weights, and Collider descriptors / pose samples. The same shared snapshot survives CPU Preflight Block / Budget Retry, GPU Submission, in-flight Query ownership and non-COMMITTED Reservation restoration.
 - Soft Body Render Candidate Ring uses maximum in-flight + 1 Slots, GPU-side Binding / Normal / Tangent feedback, full-width Slot ID / Generation Status publication, CPU-observed-only Host Lease, and submission blocking while leased. Cloth / Collision Render Candidates remain with their solver phases.
 
 **Exit criteria**
