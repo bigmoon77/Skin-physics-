@@ -912,7 +912,12 @@ namespace skin_physics::runtime
         std::unique_ptr<simulation::d3d11_status_ring> status_ring;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_begin_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_empty_world_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_soft_body_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_gather_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_integrate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
         std::vector<world_slot> worlds;
         std::thread::id submission_thread;
         uint64_t device_generation = 1u;
@@ -2141,30 +2146,61 @@ namespace skin_physics::runtime
         }
         const std::filesystem::path tick_shader_path =
             shader_root / "tick_transaction_control.cs.hlsl";
+        const std::filesystem::path soft_body_fem_path =
+            shader_root / "soft_body_fem.cs.hlsl";
+        const std::filesystem::path soft_body_gather_path =
+            shader_root / "soft_body_force_gather.cs.hlsl";
+        const std::filesystem::path soft_body_integrate_path =
+            shader_root / "soft_body_integrate.cs.hlsl";
 
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_begin_shader;
-        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_empty_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_soft_body_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_gather_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_integrate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
         if (!compile_runtime_compute_shader(
                 device, tick_shader_path, "tick_begin_control",
                 tick_begin_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
                 device, tick_shader_path, "tick_mark_empty_world_validated",
-                tick_validate_shader.GetAddressOf(), diagnostic) ||
+                tick_validate_empty_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, tick_shader_path, "tick_validate_soft_body",
+                tick_validate_soft_body_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
                 device, tick_shader_path, "tick_commit_control",
-                tick_commit_shader.GetAddressOf(), diagnostic))
+                tick_commit_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_fem_path, "soft_body_fem",
+                soft_body_fem_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_gather_path, "soft_body_force_gather",
+                soft_body_gather_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_integrate_path, "soft_body_integrate",
+                soft_body_integrate_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_integrate_path, "soft_body_copy_state",
+                soft_body_copy_state_shader.GetAddressOf(), diagnostic))
         {
             return make_status(status_code::gpu_execution_failed,
-                "Runtime Tick Control shader initialization failed: " + diagnostic);
+                "Runtime Tick / Soft Body shader initialization failed: " + diagnostic);
         }
 
         runtime.desc = desc;
         runtime.device = device;
         runtime.immediate_context = immediate_context;
         runtime.tick_begin_shader = std::move(tick_begin_shader);
-        runtime.tick_validate_empty_world_shader = std::move(tick_validate_shader);
+        runtime.tick_validate_empty_world_shader = std::move(tick_validate_empty_shader);
+        runtime.tick_validate_soft_body_shader = std::move(tick_validate_soft_body_shader);
         runtime.tick_commit_shader = std::move(tick_commit_shader);
+        runtime.soft_body_fem_shader = std::move(soft_body_fem_shader);
+        runtime.soft_body_force_gather_shader = std::move(soft_body_gather_shader);
+        runtime.soft_body_integrate_shader = std::move(soft_body_integrate_shader);
+        runtime.soft_body_copy_state_shader = std::move(soft_body_copy_state_shader);
         runtime.submission_thread = std::this_thread::get_id();
 
         if (!runtime.ensure_status_capacity(desc.query_ring_capacity, diagnostic))
