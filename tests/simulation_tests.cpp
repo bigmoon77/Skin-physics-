@@ -2635,6 +2635,29 @@ namespace
             preserved_cursor.u_segment_start == original_cursor.u_segment_start,
             "An out-of-Span Cursor request must fail atomically without overwriting the caller's previous Cursor.");
 
+        model duplicate_skin_joints = source_model;
+        duplicate_skin_joints.skins[1u].joints[1u] = 1u;
+        const auto duplicate_skin_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                duplicate_skin_joints, build_desc);
+        require(!duplicate_skin_result.success &&
+            duplicate_skin_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_skin &&
+            duplicate_skin_result.value.skin_records.empty() &&
+            duplicate_skin_result.value.skin_joint_records.empty(),
+            "A Skin with duplicate Joint Nodes must fail atomically without publishing partial Skin / Joint mappings.");
+
+        model invalid_skin_joint = source_model;
+        invalid_skin_joint.skins[1u].joints[1u] = 99u;
+        const auto invalid_skin_joint_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                invalid_skin_joint, build_desc);
+        require(!invalid_skin_joint_result.success &&
+            invalid_skin_joint_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_skin &&
+            invalid_skin_joint_result.value.skin_records.empty(),
+            "A Skin Joint Node outside the Asset Model must fail atomically.");
+
         animation_trajectory_packet_build_desc invalid_version = build_desc;
         invalid_version.animation_input_version = 0u;
         const auto invalid_version_result =
