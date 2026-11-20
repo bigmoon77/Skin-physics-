@@ -1096,6 +1096,84 @@ namespace
         using skin_physics::physics::animation_channel_span_build_result;
         using skin_physics::physics::animation_channel_span_sample_result;
 
+        skin_physics::physics::animation_blend_weight_curve_desc blend_curve;
+        blend_curve.blend_start_time = 0.5;
+        blend_curve.blend_end_time = 2.5;
+        blend_curve.weight_start = 0.0f;
+        blend_curve.weight_end = 1.0f;
+        blend_curve.tangent_start = 0.0f;
+        blend_curve.tangent_end = 0.0f;
+        require(skin_physics::physics::valid_animation_blend_weight_curve(
+                blend_curve),
+            "A monotonic cubic Hermite Blend Weight Curve must validate over its complete domain.");
+
+        const skin_physics::physics::animation_blend_weight_spans_build_result
+            blend_schedule =
+                skin_physics::physics::build_animation_blend_weight_spans(
+                    blend_curve, 0.0, 3.0);
+        require(blend_schedule.success &&
+            blend_schedule.values.size() == 3u &&
+            std::abs(blend_schedule.values[0u].world_time_start - 0.0) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[0u].world_time_duration - 0.5) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[1u].world_time_start - 0.5) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[1u].world_time_duration - 2.0) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[2u].world_time_start - 2.5) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[2u].world_time_duration - 0.5) <= 1.0e-12,
+            "Blend Weight scheduling must split a Logical Tick at both blend boundaries.");
+
+        const skin_physics::physics::animation_blend_weight_sample_result
+            blend_before =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    blend_schedule.values[0u], 0.5);
+        const skin_physics::physics::animation_blend_weight_sample_result
+            blend_mid =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    blend_schedule.values[1u], 0.5);
+        const skin_physics::physics::animation_blend_weight_sample_result
+            blend_after =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    blend_schedule.values[2u], 0.5);
+        require(blend_before.success && blend_mid.success && blend_after.success &&
+            std::abs(blend_before.value.weight) <= 1.0e-12 &&
+            std::abs(blend_before.value.world_time_derivative) <= 1.0e-12 &&
+            std::abs(blend_mid.value.weight - 0.5) <= 1.0e-12 &&
+            std::abs(blend_mid.value.world_time_derivative - 0.75) <= 1.0e-12 &&
+            std::abs(blend_after.value.weight - 1.0) <= 1.0e-12 &&
+            std::abs(blend_after.value.world_time_derivative) <= 1.0e-12,
+            "Cubic Hermite Blend Weight spans must evaluate endpoint holds, interior Weight and analytic World-Time derivative.");
+
+        const skin_physics::physics::animation_blend_weight_span_build_result
+            partial_blend_span =
+                skin_physics::physics::build_animation_blend_weight_span(
+                    blend_curve, 1.0, 1.0);
+        const skin_physics::physics::animation_blend_weight_sample_result
+            partial_blend_sample =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    partial_blend_span.value, 0.5);
+        require(partial_blend_span.success && partial_blend_sample.success &&
+            std::abs(partial_blend_sample.value.weight - 0.5) <= 1.0e-12 &&
+            std::abs(partial_blend_sample.value.world_time_derivative - 0.75) <= 1.0e-12,
+            "A partial Blend Weight Span must reparameterize the original Hermite curve without changing its value or derivative.");
+
+        const skin_physics::physics::animation_blend_weight_span_build_result
+            crossing_blend_span =
+                skin_physics::physics::build_animation_blend_weight_span(
+                    blend_curve, 0.25, 1.0);
+        require(!crossing_blend_span.success &&
+            crossing_blend_span.error ==
+                skin_physics::physics::animation_blend_weight_error::span_crosses_curve_boundary,
+            "A Blend Weight Span crossing blend_start_time must be split by the scheduler.");
+
+        skin_physics::physics::animation_blend_weight_curve_desc overshooting_blend_curve =
+            blend_curve;
+        overshooting_blend_curve.tangent_start = 10.0f;
+        overshooting_blend_curve.tangent_end = 10.0f;
+        require(!skin_physics::physics::valid_animation_blend_weight_curve(
+                overshooting_blend_curve) &&
+            !skin_physics::physics::build_animation_blend_weight_spans(
+                overshooting_blend_curve, 0.0, 3.0).success,
+            "A Hermite Blend Weight Curve whose interior extrema leave [0, 1] must be rejected before Span construction.");
+
         animation_track linear_translation;
         linear_translation.node_index = 3u;
         linear_translation.path = animation_path::translation;
