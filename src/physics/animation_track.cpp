@@ -779,6 +779,82 @@ namespace skin_physics::physics
         return result;
     }
 
+    animation_channel_spans_build_result build_animation_channel_spans(
+        const asset::animation_track& track,
+        double clip_time_start,
+        double clip_time_delta)
+    {
+        animation_channel_spans_build_result result;
+        std::size_t component_count = 0u;
+        if (!std::isfinite(clip_time_start) ||
+            !std::isfinite(clip_time_delta) ||
+            !std::isfinite(clip_time_start + clip_time_delta))
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Span schedule Clip-Time start / delta must be finite and representable.";
+            return result;
+        }
+        if (!validate_asset_animation_track(
+                track, component_count, result.error, result.message))
+        {
+            return result;
+        }
+
+        const double clip_time_end = clip_time_start + clip_time_delta;
+        std::vector<double> boundaries;
+        boundaries.reserve(track.keys.size() + 2u);
+        boundaries.push_back(clip_time_start);
+
+        if (clip_time_delta != 0.0)
+        {
+            const double minimum_time =
+                std::min(clip_time_start, clip_time_end);
+            const double maximum_time =
+                std::max(clip_time_start, clip_time_end);
+            for (const asset::animation_key& key : track.keys)
+            {
+                const double key_time = static_cast<double>(key.time);
+                if (key_time > minimum_time && key_time < maximum_time)
+                {
+                    boundaries.push_back(key_time);
+                }
+            }
+            if (clip_time_delta < 0.0)
+            {
+                std::sort(boundaries.begin() + 1, boundaries.end(),
+                    std::greater<double>());
+            }
+            else
+            {
+                std::sort(boundaries.begin() + 1, boundaries.end());
+            }
+        }
+
+        boundaries.push_back(clip_time_end);
+        result.values.reserve(boundaries.size() - 1u);
+        for (std::size_t index = 0u;
+            index + 1u < boundaries.size(); ++index)
+        {
+            const double span_start = boundaries[index];
+            const double span_delta =
+                boundaries[index + 1u] - boundaries[index];
+            animation_channel_span_build_result span_result =
+                build_animation_channel_span(track, span_start, span_delta);
+            if (!span_result.success)
+            {
+                result.values.clear();
+                result.error = span_result.error;
+                result.message = span_result.message;
+                return result;
+            }
+            result.values.push_back(std::move(span_result.value));
+        }
+
+        result.success = true;
+        return result;
+    }
+
     animation_channel_span_sample_result evaluate_animation_channel_span(
         const animation_channel_span& span,
         double span_local_u,
