@@ -1802,6 +1802,8 @@ namespace
             const skin_physics::physics::animation_blend_clip_span& span =
                 synchronized_blend_spans.values[span_index];
             require(span.span_index == span_index &&
+                span.source.clip.span_index == span_index &&
+                span.target.clip.span_index == span_index &&
                 span.source.world_time_start == span.world_time_start &&
                 span.target.world_time_start == span.world_time_start &&
                 span.blend_weight.world_time_start == span.world_time_start &&
