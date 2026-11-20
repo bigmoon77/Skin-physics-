@@ -947,7 +947,8 @@
       "production_fem_warp_test_control_buffer_stride_matches_runtime_hlsl_tick_commit_control_abi",
       "production_fem_rejects_nonfinite_deformation_rotation_stress_inversion_stress_energy_and_forces",
       "root_transform_samples_are_not_silently_ignored_before_trajectory_packet_integration",
-      "unsupported_animation_root_inputs_preserve_the_cpu_tick_reservation_until_reset"
+      "unsupported_animation_root_inputs_preserve_the_cpu_tick_reservation_until_reset",
+      "unintegrated_animation_root_transform_cloth_collider_or_force_inputs_report_blocked_by_input_without_gpu_submission"
     ],
     "remaining_r0": [
       "Cloth / Collider solver integration into the World Runtime scheduler",
