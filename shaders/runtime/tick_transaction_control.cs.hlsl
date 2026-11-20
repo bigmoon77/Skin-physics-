@@ -135,8 +135,8 @@ void publish_tick_status(
     value.work_budget_block_origin = 0u;
     value.executed_integration_segments = 0u;
     value.minimum_required_integration_segments = 0u;
-    value.reserved0 = 0u;
-    value.reserved1 = 0u;
+    value.reserved0 = control.reserved & 0x0000ffffu;
+    value.reserved1 = (control.reserved >> 16u) & 0x0000ffffu;
     tick_status_buffer[0] = value;
 }
 
@@ -343,6 +343,12 @@ void tick_commit_control(uint3 dispatch_id : SV_DispatchThreadID)
     uint generation_carry = next_generation_low == 0u ? 1u : 0u;
 
     control.active_state_set = plan.destination_state_set;
+    if (plan.reserved0 != 0xffffffffu)
+    {
+        control.reserved =
+            ((plan.reserved1 & 0x0000ffffu) << 16u) |
+            (plan.reserved0 & 0x0000ffffu);
+    }
     control.committed_sequence_low = plan.tick_sequence_low;
     control.committed_sequence_high = plan.tick_sequence_high;
     control.state_generation_low = next_generation_low;
