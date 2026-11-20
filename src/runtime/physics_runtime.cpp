@@ -640,6 +640,7 @@ namespace skin_physics::runtime
             double delta_time = 0.0;
             bool from_single_step = false;
             bool blocked = false;
+            bool rejected = false;
             uint64_t budget_revision = 0u;
             uint32_t planned_substeps = 0u;
             uint32_t planned_integration_segments = 0u;
@@ -701,6 +702,7 @@ namespace skin_physics::runtime
             std::vector<impulse_desc> impulses;
             std::unordered_set<uint64_t> event_ids;
             std::unordered_set<uint64_t> observed_tick_sequences;
+            std::unordered_map<uint64_t, double> observed_tick_deltas;
         };
 
         runtime_desc desc;
@@ -827,6 +829,13 @@ namespace skin_physics::runtime
             }
 
             tick_reservation& reservation = world.reservations.front();
+            if (reservation.rejected)
+            {
+                world.state = tick_state::rejected;
+                world.last_tick_status = status_code::step_rejected;
+                return;
+            }
+            reservation.blocked = false;
             double dt_limit = std::numeric_limits<double>::infinity();
             if (world.description.world_max_substep_delta_time > 0.0)
             {
@@ -1052,6 +1061,7 @@ namespace skin_physics::runtime
         {
             if (world.reservations.empty() ||
                 world.reservations.front().blocked ||
+                world.reservations.front().rejected ||
                 world.in_flight_tick_count != 0u)
             {
                 return false;
