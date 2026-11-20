@@ -99,6 +99,17 @@ namespace skin_physics::runtime
         static_assert(sizeof(gpu_tick_commit_control) == 64,
             "GPU Tick Commit Control ABI must remain 64 bytes.");
 
+        struct alignas(16) gpu_float4
+        {
+            float x = 0.0f;
+            float y = 0.0f;
+            float z = 0.0f;
+            float w = 0.0f;
+        };
+
+        static_assert(sizeof(gpu_float4) == 16,
+            "GPU float4 ABI must remain 16 bytes.");
+
         struct alignas(16) gpu_soft_body_tet_input
         {
             uint32_t vertex_ids[4] = {};
