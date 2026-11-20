@@ -1105,10 +1105,20 @@ namespace skin_physics::runtime
             std::vector<collider_input_snapshot> colliders;
         };
 
+        struct integration_segment
+        {
+            double start_time = 0.0;
+            double delta_time = 0.0;
+            std::vector<uint32_t> active_force_indices;
+            std::vector<uint32_t> impulse_indices;
+        };
+
         struct tick_reservation
         {
             uint64_t sequence = 0u;
+            double start_time = 0.0;
             double delta_time = 0.0;
+            std::vector<integration_segment> integration_segments;
             std::shared_ptr<const tick_input_snapshot> input_snapshot;
             bool from_single_step = false;
             bool blocked = false;
@@ -3120,6 +3130,206 @@ namespace skin_physics::runtime
             return true;
         }
 
+        bool build_world_integration_segment_schedule(
+            const tick_reservation& reservation,
+            const tick_input_snapshot& input_snapshot,
+            uint32_t substep_count,
+            std::vector<integration_segment>& out_segments,
+            std::string& diagnostic) const
+        {
+            out_segments.clear();
+            diagnostic.clear();
+            if (substep_count == 0u ||
+                reservation.input_snapshot == nullptr ||
+                input_snapshot.version != reservation.input_snapshot->version ||
+                !finite_double(reservation.start_time) ||
+                !finite_double(reservation.delta_time) ||
+                reservation.delta_time <= 0.0)
+            {
+                diagnostic =
+                    "Integration Segment Schedule received an invalid Reservation or Input Snapshot.";
+                return false;
+            }
+
+            const double tick_start = reservation.start_time;
+            const double tick_end = tick_start + reservation.delta_time;
+            if (!finite_double(tick_end) || tick_end <= tick_start)
+            {
+                diagnostic =
+                    "Tick time interval is not representable as a positive finite World-time range.";
+                return false;
+            }
+
+            const std::size_t maximum_size =
+                std::numeric_limits<std::size_t>::max();
+            std::size_t maximum_boundary_count =
+                static_cast<std::size_t>(substep_count) + 1u;
+            if (input_snapshot.forces.size() >
+                (maximum_size - maximum_boundary_count) / 2u)
+            {
+                diagnostic = "Force Event boundary count overflows size_t.";
+                return false;
+            }
+            maximum_boundary_count += input_snapshot.forces.size() * 2u;
+            if (input_snapshot.impulses.size() >
+                maximum_size - maximum_boundary_count)
+            {
+                diagnostic = "Impulse Event boundary count overflows size_t.";
+                return false;
+            }
+            maximum_boundary_count += input_snapshot.impulses.size();
+            if (input_snapshot.forces.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
+                input_snapshot.impulses.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+            {
+                diagnostic =
+                    "Force / Impulse Event count exceeds the uint32 Integration Segment ABI range.";
+                return false;
+            }
+
+            std::vector<double> boundaries;
+            try
+            {
+                boundaries.reserve(maximum_boundary_count);
+                boundaries.push_back(tick_start);
+                boundaries.push_back(tick_end);
+
+                for (uint32_t substep = 1u; substep < substep_count; ++substep)
+                {
+                    const double normalized =
+                        static_cast<double>(substep) /
+                        static_cast<double>(substep_count);
+                    const double boundary =
+                        tick_start + reservation.delta_time * normalized;
+                    if (!finite_double(boundary) ||
+                        boundary <= tick_start ||
+                        boundary >= tick_end)
+                    {
+                        diagnostic =
+                            "A positive World Substep boundary collapsed in double-precision Tick time.";
+                        return false;
+                    }
+                    boundaries.push_back(boundary);
+                }
+
+                for (const force_desc& force : input_snapshot.forces)
+                {
+                    const double force_end_time =
+                        force.start_time + force.duration;
+                    if (!finite_double(force.start_time) ||
+                        !finite_double(force.duration) ||
+                        force.duration <= 0.0 ||
+                        !finite_double(force_end_time) ||
+                        force_end_time <= force.start_time)
+                    {
+                        diagnostic =
+                            "Immutable Force Event contains an invalid or unrepresentable time interval.";
+                        return false;
+                    }
+
+                    if (force.start_time > tick_start &&
+                        force.start_time < tick_end)
+                    {
+                        boundaries.push_back(force.start_time);
+                    }
+                    if (force_end_time > tick_start &&
+                        force_end_time < tick_end)
+                    {
+                        boundaries.push_back(force_end_time);
+                    }
+                }
+
+                for (const impulse_desc& impulse : input_snapshot.impulses)
+                {
+                    if (!finite_double(impulse.event_time) ||
+                        impulse.event_time < 0.0)
+                    {
+                        diagnostic =
+                            "Immutable Impulse Event contains an invalid World time.";
+                        return false;
+                    }
+                    if (impulse.event_time > tick_start &&
+                        impulse.event_time < tick_end)
+                    {
+                        boundaries.push_back(impulse.event_time);
+                    }
+                }
+
+                std::sort(boundaries.begin(), boundaries.end());
+                boundaries.erase(
+                    std::unique(boundaries.begin(), boundaries.end()),
+                    boundaries.end());
+
+                if (boundaries.size() < 2u ||
+                    boundaries.size() - 1u >
+                        static_cast<std::size_t>(
+                            std::numeric_limits<uint32_t>::max()))
+                {
+                    diagnostic =
+                        "Integration Segment count is empty or exceeds the uint32 Runtime ABI range.";
+                    return false;
+                }
+
+                out_segments.reserve(boundaries.size() - 1u);
+                for (std::size_t boundary_index = 0u;
+                    boundary_index + 1u < boundaries.size();
+                    ++boundary_index)
+                {
+                    integration_segment segment;
+                    segment.start_time = boundaries[boundary_index];
+                    segment.delta_time =
+                        boundaries[boundary_index + 1u] -
+                        boundaries[boundary_index];
+                    if (!finite_double(segment.start_time) ||
+                        !finite_double(segment.delta_time) ||
+                        segment.delta_time <= 0.0)
+                    {
+                        diagnostic =
+                            "Integration Segment Schedule contains a non-positive or non-finite interval.";
+                        out_segments.clear();
+                        return false;
+                    }
+
+                    for (uint32_t force_index = 0u;
+                        force_index < input_snapshot.forces.size();
+                        ++force_index)
+                    {
+                        const force_desc& force =
+                            input_snapshot.forces[force_index];
+                        const double force_end_time =
+                            force.start_time + force.duration;
+                        if (force.start_time <= segment.start_time &&
+                            segment.start_time < force_end_time)
+                        {
+                            segment.active_force_indices.push_back(force_index);
+                        }
+                    }
+
+                    for (uint32_t impulse_index = 0u;
+                        impulse_index < input_snapshot.impulses.size();
+                        ++impulse_index)
+                    {
+                        if (input_snapshot.impulses[impulse_index].event_time ==
+                            segment.start_time)
+                        {
+                            segment.impulse_indices.push_back(impulse_index);
+                        }
+                    }
+
+                    out_segments.push_back(std::move(segment));
+                }
+            }
+            catch (...)
+            {
+                out_segments.clear();
+                diagnostic =
+                    "Unable to allocate the World Integration Segment Schedule.";
+                return false;
+            }
+            return true;
+        }
+
         void update_head_reservation_preflight(world_slot& world)
         {
             if (world.reservations.empty())
@@ -3276,12 +3486,38 @@ namespace skin_physics::runtime
 
             const uint32_t planned_substeps =
                 static_cast<uint32_t>(required_substeps);
-            // Until R1-R5 are connected, the base integration-segment lower bound
-            // is the World Substep count. Animation / Force / Impulse / TOI boundaries
-            // are added by the later scheduler integration phases.
-            const uint32_t planned_segments = planned_substeps;
+            std::vector<integration_segment> scheduled_segments;
+            std::string schedule_diagnostic;
+            if (!build_world_integration_segment_schedule(
+                    reservation,
+                    input_snapshot,
+                    planned_substeps,
+                    scheduled_segments,
+                    schedule_diagnostic))
+            {
+                reservation.planned_substeps = 0u;
+                reservation.planned_integration_segments = 0u;
+                reservation.integration_segments.clear();
+                reservation.blocked = false;
+                reservation.rejected = true;
+                world.planned_substeps = 0u;
+                world.planned_integration_segments = 0u;
+                world.work_budget_block_flags = 0u;
+                world.budget_block_origin = work_budget_block_origin::none;
+                world.budget_resolution = work_budget_resolution::none;
+                world.last_tick_status = status_code::capacity_exceeded;
+                world.state = tick_state::failed;
+                world.diagnostic =
+                    "CPU Integration Segment Schedule could not be represented: " +
+                    schedule_diagnostic;
+                return;
+            }
+
+            const uint32_t planned_segments =
+                static_cast<uint32_t>(scheduled_segments.size());
             reservation.planned_substeps = planned_substeps;
             reservation.planned_integration_segments = planned_segments;
+            reservation.integration_segments = std::move(scheduled_segments);
             reservation.budget_revision = world.execution_budget_revision;
             world.planned_substeps = planned_substeps;
             world.planned_integration_segments = planned_segments;
@@ -3354,8 +3590,15 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            const double reservation_start_time =
+                world.gpu_committed_simulation_time + world.reserved_tick_time;
+            const double reservation_end_time =
+                reservation_start_time + world.description.fixed_delta_time;
             if (world.next_tick_sequence == 0u ||
                 world.next_tick_sequence == std::numeric_limits<uint64_t>::max() ||
+                !finite_double(reservation_start_time) ||
+                !finite_double(reservation_end_time) ||
+                reservation_end_time <= reservation_start_time ||
                 !finite_double(world.reserved_tick_time +
                     world.description.fixed_delta_time))
             {
@@ -3392,6 +3635,7 @@ namespace skin_physics::runtime
 
             tick_reservation reservation;
             reservation.sequence = world.next_tick_sequence;
+            reservation.start_time = reservation_start_time;
             reservation.delta_time = world.description.fixed_delta_time;
             reservation.input_snapshot = std::move(input_snapshot);
             reservation.from_single_step = from_single_step;
