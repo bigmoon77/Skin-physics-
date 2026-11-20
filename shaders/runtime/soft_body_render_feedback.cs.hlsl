@@ -31,7 +31,11 @@ struct TickCommitControl
     uint reservation_token_high;
     uint last_gate_state;
     uint diagnostic;
-    uint reserved;
+    uint render_slot_id;
+    uint render_slot_generation;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
 };
 
 StructuredBuffer<float4> physics_positions : register(t0);
