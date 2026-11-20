@@ -983,6 +983,19 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11Buffer> skin_weights_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> skin_weights_srv;
 
+            // Immutable Mesh-local source positions; FEM State Banks remain World-space.
+            Microsoft::WRL::ComPtr<ID3D11Buffer> rest_positions_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> rest_positions_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> animation_target_positions_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> animation_target_positions_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> animation_target_positions_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> animation_target_velocities_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> animation_target_velocities_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> animation_target_velocities_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> animation_target_status_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> animation_target_status_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> animation_target_status_uav;
+
             std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> position_banks;
             std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
                 position_bank_srvs;
@@ -1844,6 +1857,17 @@ namespace skin_physics::runtime
                 mesh.tetrahedra.size(), gpu_soft_body_tet_output{});
             std::vector<gpu_float4> vertex_force(
                 mesh.rest_positions.size(), gpu_float4{});
+            std::vector<gpu_float4> mesh_local_rest_positions;
+            mesh_local_rest_positions.reserve(mesh.rest_positions.size());
+            for (const asset::vec3& position : mesh.rest_positions)
+            {
+                mesh_local_rest_positions.push_back({
+                    position.x, position.y, position.z, 1.0f
+                });
+            }
+            const std::vector<gpu_float4> empty_animation_targets(
+                mesh.rest_positions.size(), gpu_float4{});
+            const std::vector<uint32_t> empty_animation_target_status(1u, 0u);
 
             const UINT state_bind_flags =
                 D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
@@ -1906,6 +1930,20 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            if (!create_structured_buffer_from_vector(
+                    device.Get(), mesh_local_rest_positions,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.rest_positions_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.rest_positions_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.rest_positions_srv.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to upload immutable Mesh-local Rest Position records for the Soft Body GPU Mesh.";
+                return false;
+            }
+
             if (!skin_weight_records.empty() &&
                 (!create_structured_buffer_from_vector(
                     device.Get(), skin_weight_records,
@@ -1914,10 +1952,46 @@ namespace skin_physics::runtime
                  !create_structured_srv(
                     device.Get(), candidate.skin_weights_buffer.Get(),
                     candidate.vertex_count,
-                    candidate.skin_weights_srv.GetAddressOf())))
+                    candidate.skin_weights_srv.GetAddressOf()) ||
+                 !create_structured_buffer_from_vector(
+                    device.Get(), empty_animation_targets,
+                    state_bind_flags,
+                    candidate.animation_target_positions_buffer.GetAddressOf()) ||
+                 !create_structured_srv(
+                    device.Get(), candidate.animation_target_positions_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.animation_target_positions_srv.GetAddressOf()) ||
+                 !create_structured_uav(
+                    device.Get(), candidate.animation_target_positions_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.animation_target_positions_uav.GetAddressOf()) ||
+                 !create_structured_buffer_from_vector(
+                    device.Get(), empty_animation_targets,
+                    state_bind_flags,
+                    candidate.animation_target_velocities_buffer.GetAddressOf()) ||
+                 !create_structured_srv(
+                    device.Get(), candidate.animation_target_velocities_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.animation_target_velocities_srv.GetAddressOf()) ||
+                 !create_structured_uav(
+                    device.Get(), candidate.animation_target_velocities_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.animation_target_velocities_uav.GetAddressOf()) ||
+                 !create_structured_buffer_from_vector(
+                    device.Get(), empty_animation_target_status,
+                    state_bind_flags,
+                    candidate.animation_target_status_buffer.GetAddressOf()) ||
+                 !create_structured_srv(
+                    device.Get(), candidate.animation_target_status_buffer.Get(),
+                    1u,
+                    candidate.animation_target_status_srv.GetAddressOf()) ||
+                 !create_structured_uav(
+                    device.Get(), candidate.animation_target_status_buffer.Get(),
+                    1u,
+                    candidate.animation_target_status_uav.GetAddressOf())))
             {
                 diagnostic =
-                    "Unable to upload immutable Physics Vertex Skin Weight records for the Soft Body GPU Mesh.";
+                    "Unable to upload Physics Vertex Skin Weights or allocate LBS Target Position / Velocity / Status buffers for the Soft Body GPU Mesh.";
                 return false;
             }
 
