@@ -406,6 +406,15 @@ namespace
         require(runtime.add_model(world, model_desc, &model).success(),
             "Runtime must upload the Soft Body asset and allocate two persistent State Banks plus Tick Scratch.");
 
+        skin_physics::runtime::attribute_edit_desc paint_edit;
+        paint_edit.channel =
+            skin_physics::asset::physics_attribute_channel::shape_recovery;
+        paint_edit.vertex_indices = { 0u };
+        paint_edit.target = 0.25f;
+        paint_edit.strength = 1.0f;
+        require(runtime.apply_attribute_edit(world, model, 0u, paint_edit).success(),
+            "An idle Soft Body Paint edit must update Render Mesh values and refresh the Physics Mesh harmonic transfer.");
+
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::playing).success(),
             "Soft Body Runtime World must enter Playing.");
@@ -451,6 +460,134 @@ namespace
             "The reset and resource-released Soft Body World must be destroyable.");
         require(runtime.shutdown() == status_code::ok,
             "Runtime must shut down after the Soft Body GPU state-bank regression.");
+    }
+
+    void test_runtime_soft_body_cfl_preflight_and_budget_recovery()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Soft Body CFL regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = runtime_shader_root();
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime initialization must compile the production Soft Body shader package.");
+
+        skin_physics::physics::raw_tet_mesh raw_mesh;
+        raw_mesh.positions = {
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f },
+            { 0.0f, 0.0f, 1.0f }
+        };
+        raw_mesh.tetrahedra = { { 0u, 1u, 2u, 3u } };
+        const skin_physics::physics::physics_mesh_build_result built_mesh =
+            skin_physics::physics::build_physics_mesh(raw_mesh);
+        require(built_mesh.success,
+            "Soft Body CFL fixture must build a valid one-Tet Physics Mesh.");
+
+        skin_physics::asset::mesh render_mesh;
+        render_mesh.name = "runtime_soft_body_cfl_tet";
+        render_mesh.mode = skin_physics::asset::physics_mode::soft_body;
+        for (const skin_physics::asset::vec3& position : raw_mesh.positions)
+        {
+            skin_physics::asset::vertex vertex;
+            vertex.position = position;
+            render_mesh.vertices.push_back(vertex);
+        }
+        for (const skin_physics::physics::boundary_triangle& boundary :
+            built_mesh.value.boundary_triangles)
+        {
+            render_mesh.indices.insert(
+                render_mesh.indices.end(),
+                boundary.vertices.begin(),
+                boundary.vertices.end());
+        }
+
+        skin_physics::runtime::model_desc model_desc;
+        model_desc.source_model.meshes.push_back(render_mesh);
+        skin_physics::runtime::model_mesh_physics_asset mesh_asset;
+        mesh_asset.mesh_index = 0u;
+        mesh_asset.physics_mesh = built_mesh.value;
+        model_desc.mesh_physics_assets.push_back(std::move(mesh_asset));
+
+        skin_physics::runtime::world_desc world_desc;
+        world_desc.fixed_delta_time = 0.01;
+        world_desc.world_max_substep_delta_time = 0.0;
+        world_desc.contact_max_substep_delta_time = 0.0;
+        world_desc.minimum_substeps = 1u;
+        world_desc.maximum_substeps = 4u;
+        world_desc.maximum_integration_segments_per_tick = 512u;
+        world_desc.maximum_steps_per_advance = 1u;
+        world_desc.maximum_in_flight_ticks = 1u;
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world(world_desc, &world).success(),
+            "Soft Body CFL World creation must succeed.");
+
+        skin_physics::runtime::model_handle model;
+        require(runtime.add_model(world, model_desc, &model).success(),
+            "CFL fixture Soft Body Model must upload its Tet and attribute data.");
+
+        skin_physics::runtime::mesh_physics_parameters parameters;
+        parameters.density = 1000.0f;
+        parameters.young_modulus = 1.0e9f;
+        parameters.poisson_ratio = 0.3f;
+        parameters.damping = 0.0f;
+        require(runtime.set_mesh_physics_parameters(
+                world, model, 0u, parameters).success(),
+            "High-stiffness CFL material must be accepted before Tick Reservation.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "CFL World must enter Playing.");
+
+        skin_physics::runtime::advance_report report;
+        require(runtime.advance(world, 0.01, &report).success(),
+            "CFL-limited Advance must retain the accepted requested time.");
+        require(report.submitted_tick_count == 0u &&
+            report.in_flight_tick_count == 0u &&
+            report.cpu_preflight_blocked_tick_count == 1u &&
+            report.pending_tick_count == 1u,
+            "High Soft Body stiffness must block the Tick in CPU Preflight without GPU submission.");
+
+        skin_physics::runtime::world_status blocked;
+        require(runtime.poll(world, &blocked).success() &&
+            blocked.state == skin_physics::runtime::tick_state::blocked &&
+            blocked.last_tick_status == status_code::work_budget_exceeded &&
+            blocked.budget_block_origin ==
+                skin_physics::runtime::work_budget_block_origin::cpu_preflight &&
+            blocked.planned_substeps > world_desc.maximum_substeps &&
+            blocked.head_reserved_tick_sequence == 1u &&
+            std::abs(blocked.reserved_tick_time - 0.01) <= 1.0e-12,
+            "FEM CFL must increase the common World Substep requirement and preserve the exact blocked Reservation.");
+
+        skin_physics::runtime::world_execution_budget recovered_budget;
+        recovered_budget.maximum_substeps = 512u;
+        recovered_budget.maximum_integration_segments_per_tick = 512u;
+        require(runtime.set_world_execution_budget(
+                world, recovered_budget).success(),
+            "World budget must be increased to satisfy the CFL-derived Substep count.");
+
+        skin_physics::runtime::world_status recovered;
+        require(runtime.poll(world, &recovered).success() &&
+            recovered.state == skin_physics::runtime::tick_state::pending &&
+            recovered.last_tick_status == status_code::ok &&
+            recovered.execution_budget_revision == 2u &&
+            recovered.planned_substeps == blocked.planned_substeps &&
+            recovered.head_reserved_tick_sequence == 1u &&
+            std::abs(recovered.reserved_tick_time - 0.01) <= 1.0e-12,
+            "CFL budget recovery must preserve the same Substep plan, Reservation sequence and reserved time.");
+
+        require(runtime.reset_world(world).success(),
+            "Reset must release the pending CFL-blocked Reservation.");
+        require(runtime.destroy_model(world, model).success(),
+            "Reset CFL Model must release its GPU resources.");
+        require(runtime.destroy_world(world).success(),
+            "Reset CFL World must be destroyable.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime must shut down after the CFL preflight regression.");
     }
 
     void test_runtime_cpu_preflight_count_overflow_fails_world()
@@ -558,6 +695,8 @@ int run_runtime_tests()
     std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW\n";
     test_runtime_soft_body_gpu_tick_and_state_bank_sequence();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS\n";
+    test_runtime_soft_body_cfl_preflight_and_budget_recovery();
+    std::cout << "[PASS] R1_WARP_SOFT_BODY_CFL_PREFLIGHT\n";
     std::cout << "RuntimeTests passed.\n";
     return 0;
 }
