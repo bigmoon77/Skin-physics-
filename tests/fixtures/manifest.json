@@ -584,6 +584,18 @@
             "rotation target",
             "clip blend and teleport velocity policy"
           ]
+        },
+        {
+          "id": "P09_ANIMATION_CHANNEL_SPAN_COEFFICIENTS",
+          "checks": [
+            "An immutable Animation Channel Span maps one signed Clip-Time interval within one key segment into Span-local c0..c3 coefficients",
+            "LINEAR Translation / Scale coefficients are reparameterized for partial-key spans and negative playback speed; World-Time velocity is the analytic derivative divided by span duration",
+            "CUBICSPLINE Hermite tangents are scaled by key interval duration, transformed into Span-local coefficients, and preserve both values and analytic derivatives",
+            "STEP spans remain constant with zero target velocity, and paused Tracks sample the exact current Clip Time without generating velocity",
+            "LINEAR Quaternion spans pre-evaluate their signed Clip-Time endpoints, use shortest-arc Slerp, and return a normalized quaternion with analytic tangent-space derivative",
+            "CUBICSPLINE Quaternion raw component polynomials normalize at evaluation and project derivatives onto the quaternion tangent space",
+            "Spans crossing an interior Key boundary, malformed tangent arrays, invalid quaternion values and non-positive World-Time durations fail closed"
+          ]
         }
       ],
       "automated_cases": [
