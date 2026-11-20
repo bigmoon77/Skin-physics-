@@ -461,6 +461,8 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
     output.force1 = float4(force1, 0.0f);
     output.force2 = float4(force2, 0.0f);
     output.force3 = float4(force3, 0.0f);
-    output.metrics = float4(jacobian, current_volume, elastic_energy, 1.0f);
+    output.metrics = float4(
+        jacobian, current_volume, elastic_energy,
+        used_svd_fallback ? 2.0f : 1.0f);
     outputs[index] = output;
 }
