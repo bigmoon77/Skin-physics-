@@ -327,6 +327,20 @@
           "checks": [
             "inversion diagnostic and finite penalty path"
           ]
+        },
+        {
+          "id": "R1_FORCE_WENDLAND_C2_CPU_REFERENCE",
+          "input": "phase13_force_distribution/wendland_c2.input.json",
+          "expected": "phase13_force_distribution/wendland_c2.expected.json",
+          "checks": [
+            "Rest Lumped Mass multiplied by the Wendland C2 compact-support kernel",
+            "One normalization denominator pooled across the selected Mesh scope",
+            "Fixed Physics Vertices remain in the distribution set",
+            "Exact support-radius boundary receives zero weight",
+            "Force and Impulse descriptor magnitudes are conserved",
+            "Segment-start Position changes refresh the spatial weight",
+            "Zero support reports NO_FORCE_TARGET without partial output mutation"
+          ]
         }
       ],
       "automated_cases": [
@@ -339,14 +353,15 @@
         "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
         "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE",
         "R1_RUNTIME_ANIMATION_INPUT_DEFERRED",
-        "R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED"
+        "R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED",
+        "R1_FORCE_WENDLAND_C2_CPU_REFERENCE"
       ],
       "unimplemented": [
         "Physical / WARP numerical parity and SVD near-singular stress regression for the production Runtime path",
         "Animation Tracking stiffness / damping CFL limit and immutable animation trajectory packets",
-        "Force / Impulse event-boundary Segment scheduling",
         "Full World collision, Cloth constraint and Contact solver integration",
-        "Physics Attribute Paint cache serialization and topology-change remapping"
+        "Physics Attribute Paint cache serialization and topology-change remapping",
+        "Production GPU Force / Impulse target-wide Wendland C2 reduction, application and one-shot Event consumption"
       ],
       "runtime_gpu_source_files": [
         "shaders/runtime/soft_body_fem.cs.hlsl",
@@ -355,7 +370,7 @@
         "shaders/runtime/tick_transaction_control.cs.hlsl",
         "shaders/runtime/soft_body_render_feedback.cs.hlsl"
       ],
-      "status_note": "Runtime path contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / painted material and per-vertex damping / density remapping / CFL preflight / two-bank Commit / GPU Render Candidate Ring and Host Lease for Soft Body Meshes. Production WARP source now covers positive polar, near-singular positive SVD, and inverted finite diagnostic parity. CPU/WARP execution and numerical parity remain unverified because Windows CI has not reported build steps.",
+      "status_note": "The CPU double-precision Force / Impulse reference now implements pooled Rest Lumped Mass Wendland C2 weights and has a persistent golden regression. Production GPU reduction/application remains blocked pending the World-wide target-scope reduction and Event consumption path.",
       "warp_runtime_assertions": [
         "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",

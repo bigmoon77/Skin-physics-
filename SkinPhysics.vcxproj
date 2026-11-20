@@ -136,6 +136,7 @@
     <ClInclude Include="include\skin_physics\simulation\d3d11_timestamp_profiler.hpp" />
     <ClInclude Include="include\skin_physics\simulation\d3d11_compute_graph.hpp" />
     <ClInclude Include="include\skin_physics\simulation\d3d11_status_ring.hpp" />
+    <ClInclude Include="include\skin_physics\runtime\detail\force_distribution.hpp" />
     <ClInclude Include="include\skin_physics\runtime\physics_runtime.hpp" />
     <ClInclude Include="include\skin_physics\serialization\json.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />

@@ -8,6 +8,7 @@
 #include "skin_physics/physics/correction_ccd.hpp"
 #include "skin_physics/physics/animation_track.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
+#include "skin_physics/runtime/detail/force_distribution.hpp"
 #include "skin_physics/physics/performance_metrics.hpp"
 #include "skin_physics/simulation/fixed_step.hpp"
 #include "json_test_support.hpp"
@@ -2852,6 +2853,217 @@ namespace
             blocked_state.position_writer_epoch_generation == 0,
             "Broadphase Capacity overflow must BLOCK the Epoch and preserve the prior Candidate / Contact / CSR State.");
     }
+
+    void test_runtime_mass_weighted_wendland_c2_reference()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path(
+                "phase13_force_distribution/wendland_c2.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path(
+                "phase13_force_distribution/wendland_c2.expected.json"));
+
+        const test_json::value::array& mesh_inputs =
+            input.at("meshes").as_array();
+        std::vector<std::vector<skin_physics::asset::vec3>> positions(
+            mesh_inputs.size());
+        std::vector<std::vector<float>> rest_masses(mesh_inputs.size());
+
+        for (std::size_t mesh_index = 0u;
+            mesh_index < mesh_inputs.size(); ++mesh_index)
+        {
+            const test_json::value::array& position_inputs =
+                mesh_inputs[mesh_index].at("positions").as_array();
+            const test_json::value::array& mass_inputs =
+                mesh_inputs[mesh_index].at("rest_lumped_masses").as_array();
+            positions[mesh_index].reserve(position_inputs.size());
+            rest_masses[mesh_index].reserve(mass_inputs.size());
+
+            for (const test_json::value& position_input : position_inputs)
+            {
+                positions[mesh_index].push_back(read_vec3(position_input));
+            }
+            for (const test_json::value& mass_input : mass_inputs)
+            {
+                rest_masses[mesh_index].push_back(
+                    static_cast<float>(mass_input.as_number()));
+            }
+        }
+
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            mesh_views(mesh_inputs.size());
+        for (std::size_t mesh_index = 0u;
+            mesh_index < mesh_inputs.size(); ++mesh_index)
+        {
+            mesh_views[mesh_index].segment_start_positions =
+                &positions[mesh_index];
+            mesh_views[mesh_index].rest_lumped_masses =
+                &rest_masses[mesh_index];
+        }
+
+        skin_physics::runtime::detail::force_distribution_weights result;
+        std::string diagnostic;
+        const bool built =
+            skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                mesh_views,
+                result,
+                diagnostic);
+        require(built, "Mass-weighted Wendland C2 reference must build: " + diagnostic);
+
+        require(std::abs(
+                result.unnormalized_weight_sum -
+                expected.at("unnormalized_weight_sum").as_number()) <= 1.0e-12,
+            "Pooled Rest Lumped Mass / Wendland C2 sum must match the golden.");
+        const test_json::value::array& expected_mesh_weights =
+            expected.at("weights").as_array();
+        require(result.mesh_weights.size() == expected_mesh_weights.size(),
+            "Pooled Wendland C2 result must preserve the selected Mesh ranges.");
+
+        double normalized_weight_sum = 0.0;
+        for (std::size_t mesh_index = 0u;
+            mesh_index < result.mesh_weights.size(); ++mesh_index)
+        {
+            const test_json::value::array& expected_vertex_weights =
+                expected_mesh_weights[mesh_index].as_array();
+            require(result.mesh_weights[mesh_index].size() ==
+                    expected_vertex_weights.size(),
+                "Wendland C2 result must preserve the Physics Vertex count.");
+
+            for (std::size_t vertex_index = 0u;
+                vertex_index < result.mesh_weights[mesh_index].size();
+                ++vertex_index)
+            {
+                const double actual = result.mesh_weights[mesh_index][vertex_index];
+                const double golden =
+                    expected_vertex_weights[vertex_index].as_number();
+                require(std::abs(actual - golden) <= 1.0e-12,
+                    "Mass-weighted Wendland C2 vertex weight must match the golden.");
+                normalized_weight_sum += actual;
+            }
+        }
+
+        require(std::abs(
+                normalized_weight_sum -
+                expected.at("normalized_weight_sum").as_number()) <= 1.0e-12,
+            "The independently normalized Event weights must sum to one across all selected Meshes.");
+
+        const test_json::value::array& fixed_vertices =
+            input.at("fixed_vertices").as_array();
+        const uint32_t fixed_mesh_index = static_cast<uint32_t>(
+            fixed_vertices[0].at("mesh_index").as_number());
+        const uint32_t fixed_vertex_index = static_cast<uint32_t>(
+            fixed_vertices[0].at("vertex_index").as_number());
+        require(result.mesh_weights[fixed_mesh_index][fixed_vertex_index] > 0.0,
+            "A Fixed Physics Vertex inside the support must still receive its Rest-Mass share.");
+
+        require(result.mesh_weights[0u][2u] == 0.0,
+            "A Physics Vertex exactly on the compact-support radius must receive zero weight.");
+
+        const skin_physics::asset::vec3 direction =
+            read_vec3(input.at("force_direction"));
+        const double force_magnitude =
+            input.at("force_magnitude").as_number();
+        const double impulse_magnitude =
+            input.at("impulse_magnitude").as_number();
+        double distributed_force_y = 0.0;
+        double distributed_impulse_y = 0.0;
+        for (const std::vector<double>& mesh_weights : result.mesh_weights)
+        {
+            for (double weight : mesh_weights)
+            {
+                distributed_force_y +=
+                    weight * force_magnitude * static_cast<double>(direction.y);
+                distributed_impulse_y +=
+                    weight * impulse_magnitude * static_cast<double>(direction.y);
+            }
+        }
+        require(std::abs(distributed_force_y - force_magnitude) <= 1.0e-10,
+            "Mass-weighted Force distribution must conserve the descriptor magnitude.");
+        require(std::abs(distributed_impulse_y - impulse_magnitude) <= 1.0e-10,
+            "Mass-weighted Impulse distribution must conserve the descriptor magnitude.");
+
+        std::vector<std::vector<skin_physics::asset::vec3>> moved_positions = positions;
+        moved_positions[0u][0u].x = 0.25f;
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            moved_mesh_views(mesh_views.size());
+        for (std::size_t mesh_index = 0u;
+            mesh_index < moved_mesh_views.size(); ++mesh_index)
+        {
+            moved_mesh_views[mesh_index].segment_start_positions =
+                &moved_positions[mesh_index];
+            moved_mesh_views[mesh_index].rest_lumped_masses =
+                &rest_masses[mesh_index];
+        }
+
+        skin_physics::runtime::detail::force_distribution_weights moved_result;
+        require(
+            skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                moved_mesh_views,
+                moved_result,
+                diagnostic),
+            "Wendland C2 distribution must be recomputable from the next Segment-start positions.");
+        require(std::abs(
+                moved_result.mesh_weights[0u][0u] - result.mesh_weights[0u][0u]) > 1.0e-6,
+            "Moving a Physics Vertex between Segments must refresh its spatial Falloff weight.");
+
+        std::vector<skin_physics::asset::vec3> outside_positions = {
+            { 3.0f, 0.0f, 0.0f }
+        };
+        std::vector<float> outside_masses = { 1.0f };
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            outside_mesh_views(1u);
+        outside_mesh_views[0u].segment_start_positions = &outside_positions;
+        outside_mesh_views[0u].rest_lumped_masses = &outside_masses;
+
+        skin_physics::runtime::detail::force_distribution_weights preserved_output;
+        preserved_output.mesh_weights = { { 0.25 } };
+        preserved_output.unnormalized_weight_sum = 7.0;
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                outside_mesh_views,
+                preserved_output,
+                diagnostic),
+            "No-support input must be rejected and reported.");
+        require(diagnostic.find("NO_FORCE_TARGET") != std::string::npos,
+            "No-support input must use the documented NO_FORCE_TARGET diagnostic.");
+        require(preserved_output.mesh_weights.size() == 1u &&
+            preserved_output.mesh_weights[0u].size() == 1u &&
+            preserved_output.mesh_weights[0u][0u] == 0.25 &&
+            preserved_output.unnormalized_weight_sum == 7.0,
+            "A failed distribution must leave the caller's previous output unchanged.");
+
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                0.0f,
+                mesh_views,
+                preserved_output,
+                diagnostic),
+            "A zero-radius Force / Impulse must be rejected.");
+        require(preserved_output.mesh_weights[0u][0u] == 0.25,
+            "Invalid radius must not partially overwrite a prior distribution.");
+
+        std::vector<float> mismatched_masses = { 1.0f };
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            mismatched_views(1u);
+        mismatched_views[0u].segment_start_positions = &outside_positions;
+        mismatched_views[0u].rest_lumped_masses = &mismatched_masses;
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                mismatched_views,
+                preserved_output,
+                diagnostic),
+            "Position / Rest Mass count mismatch must be rejected.");
+    }
+
 }
 
 int run_simulation_tests()
@@ -2892,6 +3104,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P12_CORRECTION_MOTION_CCD_REFERENCE\n";
     test_phase12_correction_position_writer_epoch_pipeline();
     std::cout << "[PASS] P12_CORRECTION_POSITION_WRITER_EPOCH\n";
+    test_runtime_mass_weighted_wendland_c2_reference();
+    std::cout << "[PASS] R1_FORCE_WENDLAND_C2_CPU_REFERENCE\n";
     require(run_environment_tests() == 0, "Environment tests failed.");
     require(run_gpu_solver_tests() == 0, "GPU solver tests failed.");
     std::cout << "SimulationCoreTests passed.\n";

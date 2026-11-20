@@ -169,6 +169,9 @@
     <ClInclude Include="include\skin_physics\simulation\d3d11_status_ring.hpp">
       <Filter>Header Files\Simulation</Filter>
     </ClInclude>
+    <ClInclude Include="include\skin_physics\runtime\detail\force_distribution.hpp">
+      <Filter>Header Files\Runtime</Filter>
+    </ClInclude>
     <ClInclude Include="include\skin_physics\runtime\physics_runtime.hpp">
       <Filter>Header Files\Runtime</Filter>
     </ClInclude>
