@@ -452,8 +452,46 @@ namespace
             std::abs(result.cpu_observed_completed_time - 0.02) <= 1.0e-12,
             "WARP must execute odd-substep Scratch publication, alternate the committed State Bank across Ticks, and observe the contiguous Commit prefix.");
 
+        skin_physics::runtime::render_binding render_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &render_binding).success(),
+            "A CPU-observed committed Soft Body Render Candidate must be exposed through a Host Render Lease.");
+        require(render_binding.position_srv != nullptr &&
+            render_binding.format == DXGI_FORMAT_R32G32B32A32_FLOAT &&
+            render_binding.stride == 16u &&
+            render_binding.vertex_count == render_mesh.vertices.size() &&
+            render_binding.index_count == render_mesh.indices.size() &&
+            render_binding.committed_tick_sequence == 2u &&
+            render_binding.render_slot_id != skin_physics::asset::invalid_index &&
+            render_binding.lease_generation != 0u,
+            "Render Binding must identify the committed Ring Slot and provide the expected GPU stream layout.");
+
+        skin_physics::runtime::render_binding same_lease_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &same_lease_binding).success() &&
+            same_lease_binding.lease_generation == render_binding.lease_generation &&
+            same_lease_binding.render_slot_id == render_binding.render_slot_id &&
+            same_lease_binding.render_slot_generation ==
+                render_binding.render_slot_generation,
+            "Repeated Mesh binding requests must share the same active World Render Lease.");
+
+        skin_physics::runtime::advance_report while_leased_report;
+        require(runtime.advance(world, 0.01, &while_leased_report).success() &&
+            while_leased_report.submitted_tick_count == 0u &&
+            while_leased_report.in_flight_tick_count == 0u &&
+            while_leased_report.pending_tick_count == 1u,
+            "A Host Render Lease must block Ring reuse and keep new Tick time pending without GPU submission.");
+
+        require(runtime.release_render_bindings(
+                world, render_binding.lease_generation).success(),
+            "Host must release the Render Lease after unbinding the candidate SRVs.");
+        require(runtime.release_render_bindings(
+                world, render_binding.lease_generation).code == status_code::stale_handle,
+            "A Render Lease generation must be released exactly once.");
+
         require(runtime.reset_world(world).success(),
-            "Reset must restore both persistent Soft Body State Banks to the model's initial world-space pose.");
+            "Reset must restore both persistent Soft Body State Banks to the model's initial world-space pose and discard the CPU-only Tick held by the Render Lease.");
+
         require(runtime.destroy_model(world, model).success(),
             "An idle reset Soft Body Model must release its GPU State Bank resources.");
         require(runtime.destroy_world(world).success(),
