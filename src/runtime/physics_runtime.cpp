@@ -3091,6 +3091,8 @@ namespace skin_physics::runtime
             plan.dispatch_id_high = static_cast<uint32_t>(next_dispatch_id >> 32u);
             plan.required_validation_mask = 1u;
             plan.flags = world_has_soft_body_work(world) ? 0u : 1u;
+            plan.reserved[0] = 0xffffffffu;
+            plan.reserved[1] = 0u;
 
             const uint64_t world_id = world_identity(world_index, world.generation);
             uint64_t reservation_token =
@@ -3181,6 +3183,10 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            uint32_t render_slot_id = asset::invalid_index;
+            uint32_t render_slot_generation = 0u;
+            bool render_slot_reserved = false;
+
             if (world_has_soft_body_work(world))
             {
                 if (!append_soft_body_tick_passes(
@@ -3198,6 +3204,44 @@ namespace skin_physics::runtime
                     return false;
                 }
 
+                if (!reserve_render_candidate_slot(
+                        world,
+                        reservation.sequence,
+                        render_slot_id,
+                        render_slot_generation,
+                        diagnostic))
+                {
+                    world.state = tick_state::pending;
+                    world.last_tick_status = status_code::render_binding_busy;
+                    world.budget_block_origin = work_budget_block_origin::none;
+                    world.budget_resolution = work_budget_resolution::none;
+                    world.work_budget_block_flags = 0u;
+                    world.diagnostic = diagnostic;
+                    return false;
+                }
+                render_slot_reserved =
+                    render_slot_id != asset::invalid_index;
+                plan.reserved[0] = render_slot_id;
+                plan.reserved[1] = render_slot_generation;
+                immediate_context->UpdateSubresource(
+                    plan_buffer.Get(), 0u, nullptr, &plan, 0u, 0u);
+
+                if (!append_soft_body_render_candidate_passes(
+                        world,
+                        plan.destination_state_set,
+                        render_slot_id,
+                        graph,
+                        diagnostic))
+                {
+                    release_render_candidate_slot(
+                        world, render_slot_id, render_slot_generation);
+                    world.state = tick_state::failed;
+                    world.last_tick_status = status_code::gpu_execution_failed;
+                    world.diagnostic =
+                        "Unable to construct the gated Render Candidate passes: " + diagnostic;
+                    return false;
+                }
+
                 simulation::compute_pass_desc validate_pass;
                 validate_pass.name = "tick_validate_soft_body";
                 validate_pass.shader = tick_validate_soft_body_shader.Get();
@@ -3210,6 +3254,8 @@ namespace skin_physics::runtime
                 };
                 if (!graph.add_pass(validate_pass, diagnostic))
                 {
+                    release_render_candidate_slot(
+                        world, render_slot_id, render_slot_generation);
                     world.state = tick_state::failed;
                     world.last_tick_status = status_code::gpu_execution_failed;
                     world.diagnostic = diagnostic;
@@ -3249,6 +3295,11 @@ namespace skin_physics::runtime
             };
             if (!graph.add_pass(commit_pass, diagnostic))
             {
+                if (render_slot_reserved)
+                {
+                    release_render_candidate_slot(
+                        world, render_slot_id, render_slot_generation);
+                }
                 world.state = tick_state::failed;
                 world.last_tick_status = status_code::gpu_execution_failed;
                 world.diagnostic = diagnostic;
@@ -3259,6 +3310,11 @@ namespace skin_physics::runtime
                 graph.execute(immediate_context.Get());
             if (!execution.success)
             {
+                if (render_slot_reserved)
+                {
+                    release_render_candidate_slot(
+                        world, render_slot_id, render_slot_generation);
+                }
                 world.state = tick_state::failed;
                 world.last_tick_status = status_code::gpu_execution_failed;
                 world.diagnostic = execution.diagnostic;
@@ -3274,6 +3330,11 @@ namespace skin_physics::runtime
                 status_ring->enqueue(query_key, status_buffer.Get(), diagnostic);
             if (enqueue_result != simulation::d3d11_status_ring_error::none)
             {
+                if (render_slot_reserved)
+                {
+                    release_render_candidate_slot(
+                        world, render_slot_id, render_slot_generation);
+                }
                 world.state = tick_state::failed;
                 world.last_tick_status =
                     enqueue_result == simulation::d3d11_status_ring_error::device_removed
@@ -3296,6 +3357,9 @@ namespace skin_physics::runtime
                 world.scheduled_source_state_set;
             in_flight.expected_destination_state_set =
                 plan.destination_state_set;
+            in_flight.render_candidate_slot_id = render_slot_id;
+            in_flight.render_candidate_slot_generation =
+                render_slot_generation;
             in_flight.plan_buffer = std::move(plan_buffer);
             in_flight.status_buffer = std::move(status_buffer);
             world.in_flight_ticks.push_back(std::move(in_flight));
