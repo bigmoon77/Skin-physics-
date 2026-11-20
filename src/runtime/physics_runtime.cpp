@@ -2612,6 +2612,160 @@ namespace skin_physics::runtime
             return true;
         }
 
+        bool append_soft_body_render_candidate_passes(
+            world_slot& world,
+            uint32_t destination_state_set,
+            uint32_t render_slot_id,
+            simulation::d3d11_compute_graph& graph,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            if (!world_has_soft_body_work(world) ||
+                destination_state_set > 1u ||
+                render_slot_id >= world.render_candidate_slots.size())
+            {
+                diagnostic =
+                    "Render Candidate dispatch requires a Soft Body World, valid destination State Bank and admitted Ring Slot.";
+                return false;
+            }
+
+            for (uint32_t model_index = 0u;
+                model_index < world.models.size();
+                ++model_index)
+            {
+                model_slot& model = world.models[model_index];
+                if (!model.occupied)
+                {
+                    continue;
+                }
+
+                const transform& root = model.root_transform;
+                gpu_soft_body_render_parameters parameters;
+                parameters.render_vertex_count = 0u;
+                parameters.render_index_count = 0u;
+                parameters.root_rotation[0] = root.rotation.x;
+                parameters.root_rotation[1] = root.rotation.y;
+                parameters.root_rotation[2] = root.rotation.z;
+                parameters.root_rotation[3] = root.rotation.w;
+                parameters.inverse_root_rotation[0] = -root.rotation.x;
+                parameters.inverse_root_rotation[1] = -root.rotation.y;
+                parameters.inverse_root_rotation[2] = -root.rotation.z;
+                parameters.inverse_root_rotation[3] = root.rotation.w;
+
+                const asset::vec3 negative_translation = {
+                    -root.translation.x,
+                    -root.translation.y,
+                    -root.translation.z
+                };
+                const asset::vec3 inverse_quaternion = {
+                    parameters.inverse_root_rotation[0],
+                    parameters.inverse_root_rotation[1],
+                    parameters.inverse_root_rotation[2]
+                };
+                const asset::vec3 first_cross = {
+                    inverse_quaternion.y * negative_translation.z -
+                        inverse_quaternion.z * negative_translation.y,
+                    inverse_quaternion.z * negative_translation.x -
+                        inverse_quaternion.x * negative_translation.z,
+                    inverse_quaternion.x * negative_translation.y -
+                        inverse_quaternion.y * negative_translation.x
+                };
+                const asset::vec3 second_cross = {
+                    inverse_quaternion.y * first_cross.z -
+                        inverse_quaternion.z * first_cross.y,
+                    inverse_quaternion.z * first_cross.x -
+                        inverse_quaternion.x * first_cross.z,
+                    inverse_quaternion.x * first_cross.y -
+                        inverse_quaternion.y * first_cross.x
+                };
+                parameters.inverse_root_translation[0] =
+                    negative_translation.x + 2.0f *
+                        (root.rotation.w * first_cross.x + second_cross.x);
+                parameters.inverse_root_translation[1] =
+                    negative_translation.y + 2.0f *
+                        (root.rotation.w * first_cross.y + second_cross.y);
+                parameters.inverse_root_translation[2] =
+                    negative_translation.z + 2.0f *
+                        (root.rotation.w * first_cross.z + second_cross.z);
+                parameters.inverse_root_translation[3] = 0.0f;
+
+                for (soft_body_gpu_mesh& gpu_mesh : model.gpu_soft_body_meshes)
+                {
+                    if (render_slot_id >= gpu_mesh.render_candidate_slots.size())
+                    {
+                        diagnostic =
+                            "Soft Body Mesh Render Candidate Ring is smaller than the World Ring.";
+                        return false;
+                    }
+
+                    render_candidate_mesh_slot& candidate =
+                        gpu_mesh.render_candidate_slots[render_slot_id];
+                    parameters.render_vertex_count = gpu_mesh.render_vertex_count;
+                    parameters.render_index_count = gpu_mesh.render_index_count;
+                    immediate_context->UpdateSubresource(
+                        gpu_mesh.render_parameters.Get(),
+                        0u,
+                        nullptr,
+                        &parameters,
+                        0u,
+                        0u);
+
+                    simulation::compute_pass_desc feedback_pass;
+                    feedback_pass.name = "soft_body_render_candidate_m" +
+                        std::to_string(model_index) + "_mesh" +
+                        std::to_string(gpu_mesh.mesh_index);
+                    feedback_pass.shader = soft_body_render_feedback_shader.Get();
+                    feedback_pass.shader_resources = {
+                        { 0u, gpu_mesh.position_bank_srvs[destination_state_set].Get() },
+                        { 1u, gpu_mesh.render_binding_srv.Get() },
+                        { 2u, gpu_mesh.render_vertex_srv.Get() },
+                        { 3u, gpu_mesh.render_index_srv.Get() },
+                        { 4u, gpu_mesh.render_vertex_triangle_offsets_srv.Get() },
+                        { 5u, gpu_mesh.render_vertex_triangle_ids_srv.Get() }
+                    };
+                    feedback_pass.unordered_access_views = {
+                        { 0u, candidate.position_uav.Get(), 0xffffffffu },
+                        { 1u, candidate.normal_uav.Get(), 0xffffffffu },
+                        { 2u, candidate.tangent_uav.Get(), 0xffffffffu },
+                        { 3u, world.commit_control_uav.Get(), 0xffffffffu }
+                    };
+                    feedback_pass.constant_buffers = {
+                        { 0u, gpu_mesh.render_parameters.Get() }
+                    };
+                    feedback_pass.group_count_x = std::max(
+                        1u, (gpu_mesh.render_vertex_count + 63u) / 64u);
+                    if (!graph.add_pass(feedback_pass, diagnostic))
+                    {
+                        return false;
+                    }
+
+                    simulation::compute_pass_desc validate_pass;
+                    validate_pass.name = "soft_body_render_candidate_validate_m" +
+                        std::to_string(model_index) + "_mesh" +
+                        std::to_string(gpu_mesh.mesh_index);
+                    validate_pass.shader = soft_body_render_validate_shader.Get();
+                    validate_pass.shader_resources = {
+                        { 0u, candidate.position_srv.Get() },
+                        { 1u, candidate.normal_srv.Get() },
+                        { 2u, candidate.tangent_srv.Get() }
+                    };
+                    validate_pass.unordered_access_views = {
+                        { 3u, world.commit_control_uav.Get(), 0xffffffffu }
+                    };
+                    validate_pass.constant_buffers = {
+                        { 0u, gpu_mesh.render_parameters.Get() }
+                    };
+                    validate_pass.group_count_x = std::max(
+                        1u, (gpu_mesh.render_vertex_count + 63u) / 64u);
+                    if (!graph.add_pass(validate_pass, diagnostic))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
         void update_head_reservation_preflight(world_slot& world)
         {
             if (world.reservations.empty())
