@@ -240,6 +240,31 @@ namespace skin_physics::runtime
                 std::abs(length_squared - 1.0) <= 1.0e-3;
         }
 
+        bool normalize_transform_rotation(transform& value)
+        {
+            if (!valid_transform(value))
+            {
+                return false;
+            }
+
+            const double x = value.rotation.x;
+            const double y = value.rotation.y;
+            const double z = value.rotation.z;
+            const double w = value.rotation.w;
+            const double inverse_length = 1.0 / std::sqrt(
+                x * x + y * y + z * z + w * w);
+            if (!std::isfinite(inverse_length) || inverse_length <= 0.0)
+            {
+                return false;
+            }
+
+            value.rotation.x = static_cast<float>(x * inverse_length);
+            value.rotation.y = static_cast<float>(y * inverse_length);
+            value.rotation.z = static_cast<float>(z * inverse_length);
+            value.rotation.w = static_cast<float>(w * inverse_length);
+            return finite_vec4(value.rotation);
+        }
+
         bool same_com_identity(IUnknown* left, IUnknown* right)
         {
             if (left == nullptr || right == nullptr)
@@ -3896,6 +3921,12 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Model output Handle or Root Transform is invalid.");
         }
+        transform root_transform = desc.world_transform;
+        if (!normalize_transform_rotation(root_transform))
+        {
+            return make_status(status_code::invalid_argument,
+                "Model Root Transform Quaternion could not be normalized.");
+        }
         if (runtime.has_world_submission(*world) ||
             world->render_lease_active)
         {
@@ -3998,7 +4029,7 @@ namespace skin_physics::runtime
                     mesh_asset.mesh_index,
                     mesh_asset,
                     desc.source_model.meshes[mesh_asset.mesh_index],
-                    desc.world_transform,
+                    root_transform,
                     static_cast<uint32_t>(world->render_candidate_slots.size()),
                     gpu_mesh,
                     diagnostic))
@@ -4034,7 +4065,7 @@ namespace skin_physics::runtime
         model.source_model = desc.source_model;
         model.mesh_physics_assets = std::move(mesh_assets);
         model.gpu_soft_body_meshes = std::move(gpu_soft_body_meshes);
-        model.root_transform = desc.world_transform;
+        model.root_transform = root_transform;
         model.root_samples.clear();
         model.has_animation_playback = false;
         model.has_animation_blend = false;
@@ -4095,6 +4126,11 @@ namespace skin_physics::runtime
 
         implementation::collider_slot& collider = world->colliders[index];
         collider.description = desc;
+        if (!normalize_transform_rotation(collider.description.initial_transform))
+        {
+            return make_status(status_code::invalid_argument,
+                "Collider Initial Transform Quaternion could not be normalized.");
+        }
         collider.kinematic = false;
         collider.pose_samples.clear();
         collider.occupied = true;
@@ -4658,6 +4694,12 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Model Transform Sample must have a finite non-negative time and valid rigid transform.");
         }
+        transform normalized_world_transform = world_transform;
+        if (!normalize_transform_rotation(normalized_world_transform))
+        {
+            return make_status(status_code::invalid_argument,
+                "Model Transform Sample Quaternion could not be normalized.");
+        }
         if (!model->root_samples.empty() &&
             sample_time < model->root_samples.back().time)
         {
@@ -4667,11 +4709,11 @@ namespace skin_physics::runtime
         if (!model->root_samples.empty() &&
             sample_time == model->root_samples.back().time)
         {
-            model->root_samples.back() = { sample_time, world_transform, is_teleport };
+            model->root_samples.back() = { sample_time, normalized_world_transform, is_teleport };
         }
         else
         {
-            model->root_samples.push_back({ sample_time, world_transform, is_teleport });
+            model->root_samples.push_back({ sample_time, normalized_world_transform, is_teleport });
         }
         return make_status(status_code::ok, {});
     }
