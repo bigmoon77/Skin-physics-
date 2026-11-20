@@ -400,6 +400,18 @@
             "A Soft Body Asset Mesh referenced by multiple Skinned Mesh Node instances is rejected until the Runtime provides separate Physics State Banks per instance",
             "A Skinned Mesh Node with incomplete Render Vertex Skin Attributes is rejected before GPU resources are committed"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
+          "checks": [
+            "A Model containing one skinned Soft Body Mesh and an immutable one-joint LINEAR Translation Clip is accepted for Runtime Playback",
+            "The CPU Playback Span Scheduler creates Key-bounded immutable spans and the World Integration Schedule includes Animation Span boundaries",
+            "Each Integration Segment evaluates the matching Node Hierarchy / Skin Matrix and analytic derivative at the Segment start",
+            "The production GPU Skinning shader writes Physics Vertex Animation Target Position and analytic Target Velocity using the per-Skin Joint mapping",
+            "Segment-owned Animation Target Status remains alive and is read by the matching Soft Body Integration pass before Commit",
+            "Kelvin-Voigt Tracking uses per-vertex animation_tracking Paint, stiffness and damping; implicit exponential damping moves the simulated Physics Vertex toward the animated target",
+            "The Runtime Tick commits and publishes Render Candidates only after Skinning validation and Soft Body Integration succeed; Host Render Lease releases after readback"
+          ]
         }
       ],
       "automated_cases": [
