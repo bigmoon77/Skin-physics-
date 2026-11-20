@@ -103,6 +103,7 @@
     <None Include="tests\fixtures\phase09_10_gpu\animation_paint.cs.hlsl" />
     <None Include="tests\fixtures\phase12_correction\correction_candidate_pipeline.cs.hlsl" />
     <None Include="tests\fixtures\phase12_correction\indirect_dispatch.cs.hlsl" />
+    <None Include="tests\\fixtures\\phase12_correction\\tick_transaction_control.cs.hlsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
