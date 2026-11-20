@@ -27,5 +27,11 @@
     <ClInclude Include="tests\json_test_support.hpp">
       <Filter>Tests</Filter>
     </ClInclude>
+    <None Include="tests\fixtures\phase13_force_distribution\warp_130.input.json">
+      <Filter>Tests</Filter>
+    </None>
+    <None Include="tests\fixtures\phase13_force_distribution\warp_130.expected.json">
+      <Filter>Tests</Filter>
+    </None>
   </ItemGroup>
 </Project>
