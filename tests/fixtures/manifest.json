@@ -609,7 +609,11 @@
             "An Asset Animation Clip merges Key times across all Node / Path Tracks and emits synchronized Clip Spans in original Track order",
             "Forward and reverse Clip scheduling emits identical boundary sets in the corresponding playback order; every channel shares the same Clip-Time start / delta",
             "Duplicate Node / Path channels, Node Indices outside the Model, Clip ranges crossing loop duration, and malformed Track data fail without publishing partial Clip Spans",
-            "One-key constant Channels remain present in every Clip Span but do not introduce extra shared interpolation boundaries"
+            "One-key constant Channels remain present in every Clip Span but do not introduce extra shared interpolation boundaries",
+            "Synchronized multi-Track Clip Span records map into monotonically increasing positive World-Time intervals in forward and reverse playback",
+            "Every channel in a scheduled Clip Span retains the shared World-Time interval and the original Asset Track ordering",
+            "A paused synchronized Clip emits one Clip Span with all channels and retains the complete Logical Tick World-Time duration",
+            "A multi-Track Clip interval that cannot advance at its requested double-precision magnitude fails before publishing any Span"
           ]
         },
         {
