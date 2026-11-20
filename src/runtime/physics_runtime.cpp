@@ -4569,6 +4569,7 @@ namespace skin_physics::runtime
         const status input_status = runtime.validate_input_mutation(*world);
         if (!input_status.success()) return input_status;
         force_desc normalized_force = force;
+        const double force_end_time = force.start_time + force.duration;
         if (force.event_id == 0u ||
             !finite_vec3(force.position) ||
             !normalize_direction(normalized_force.direction) ||
@@ -4580,6 +4581,8 @@ namespace skin_physics::runtime
             force.duration <= 0.0 ||
             !finite_double(force.start_time) ||
             force.start_time < 0.0 ||
+            !finite_double(force_end_time) ||
+            force_end_time <= force.start_time ||
             !runtime.valid_target(*world, force.target))
         {
             return make_status(status_code::invalid_argument,
