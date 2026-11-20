@@ -605,7 +605,11 @@
             "STEP spans preserve directional one-sided values at a shared Key boundary for forward and reverse Playback",
             "Signed Clip-Time spans map to positive World-Time partitions that remain ordered from the Logical Tick start to end",
             "A paused Clip Track retains the full World-Time Tick as one zero-Clip-Time Span",
-            "Non-zero Clip-Time or World-Time deltas that cannot advance at their absolute start under double precision fail closed"
+            "Non-zero Clip-Time or World-Time deltas that cannot advance at their absolute start under double precision fail closed",
+            "An Asset Animation Clip merges Key times across all Node / Path Tracks and emits synchronized Clip Spans in original Track order",
+            "Forward and reverse Clip scheduling emits identical boundary sets in the corresponding playback order; every channel shares the same Clip-Time start / delta",
+            "Duplicate Node / Path channels, Node Indices outside the Model, Clip ranges crossing loop duration, and malformed Track data fail without publishing partial Clip Spans",
+            "One-key constant Channels remain present in every Clip Span but do not introduce extra shared interpolation boundaries"
           ]
         },
         {
