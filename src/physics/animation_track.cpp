@@ -1272,6 +1272,342 @@ namespace skin_physics::physics
         return result;
     }
 
+    animation_clip_span_schedule_result schedule_animation_clip_playback_spans(
+        const asset::animation_clip& clip,
+        uint32_t node_count,
+        double clip_time_start,
+        double playback_speed,
+        bool loop,
+        double world_time_start,
+        double world_time_duration,
+        uint32_t maximum_span_count)
+    {
+        animation_clip_span_schedule_result result;
+        const double clip_duration = static_cast<double>(clip.duration);
+        const double world_time_end =
+            world_time_start + world_time_duration;
+        if (!std::isfinite(clip_duration) || clip_duration < 0.0 ||
+            !std::isfinite(clip_time_start) ||
+            !std::isfinite(playback_speed) ||
+            !std::isfinite(world_time_start) ||
+            !std::isfinite(world_time_duration) ||
+            world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_end) ||
+            world_time_end == world_time_start ||
+            maximum_span_count == 0u ||
+            clip_time_start < 0.0 || clip_time_start > clip_duration)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Playback scheduling requires finite Clip / World times, a valid Clip start, finite Speed and a positive Span limit.";
+            return result;
+        }
+        if (clip.tracks.empty() || node_count == 0u)
+        {
+            result.error = animation_channel_span_error::invalid_track;
+            result.message =
+                "Animation Playback scheduling requires a Clip with Node-bound Tracks.";
+            return result;
+        }
+        if (loop && clip_duration <= 0.0 && playback_speed != 0.0)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "A non-zero-speed looping Track requires a positive Clip duration.";
+            return result;
+        }
+
+        const auto append_world_chunk =
+            [&clip, node_count, world_time_start, world_time_duration,
+                maximum_span_count, &result](
+                double world_offset,
+                double world_chunk_duration,
+                double chunk_clip_start,
+                double chunk_clip_delta) -> bool
+        {
+            const double chunk_world_start =
+                world_time_start + world_offset;
+            const double chunk_world_end =
+                chunk_world_start + world_chunk_duration;
+            if (!std::isfinite(world_offset) ||
+                world_offset < 0.0 ||
+                !std::isfinite(world_chunk_duration) ||
+                world_chunk_duration <= 0.0 ||
+                !std::isfinite(chunk_world_start) ||
+                !std::isfinite(chunk_world_end) ||
+                chunk_world_end <= chunk_world_start ||
+                !std::isfinite(chunk_clip_start) ||
+                !std::isfinite(chunk_clip_delta) ||
+                !std::isfinite(chunk_clip_start + chunk_clip_delta) ||
+                (chunk_clip_delta != 0.0 &&
+                    chunk_clip_start + chunk_clip_delta == chunk_clip_start))
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Animation Playback chunk cannot advance its absolute World / Clip time at the requested double-precision magnitude.";
+                return false;
+            }
+
+            animation_clip_span_schedule_result chunk =
+                schedule_animation_clip_spans(
+                    clip,
+                    node_count,
+                    chunk_clip_start,
+                    chunk_clip_delta,
+                    chunk_world_start,
+                    world_chunk_duration);
+            if (!chunk.success)
+            {
+                result.values.clear();
+                result.error = chunk.error;
+                result.message = chunk.message;
+                return false;
+            }
+            if (chunk.values.size() >
+                static_cast<std::size_t>(maximum_span_count) -
+                    std::min(
+                        static_cast<std::size_t>(maximum_span_count),
+                        result.values.size()))
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::capacity_exceeded;
+                result.message =
+                    "Animation Playback scheduling exceeded the configured immutable Clip Span count limit.";
+                return false;
+            }
+
+            result.values.reserve(result.values.size() + chunk.values.size());
+            for (scheduled_animation_clip_span& scheduled : chunk.values)
+            {
+                if (result.values.size() >=
+                    static_cast<std::size_t>(maximum_span_count) ||
+                    result.values.size() >=
+                    static_cast<std::size_t>(
+                        std::numeric_limits<uint32_t>::max()))
+                {
+                    result.values.clear();
+                    result.error = animation_channel_span_error::capacity_exceeded;
+                    result.message =
+                        "Animation Playback Span Index exceeds its configured or uint32 capacity.";
+                    return false;
+                }
+                scheduled.clip.span_index =
+                    static_cast<uint32_t>(result.values.size());
+                result.values.push_back(std::move(scheduled));
+            }
+            return true;
+        };
+
+        double remaining_world_time = world_time_duration;
+        double world_offset = 0.0;
+        double current_clip_time = clip_time_start;
+        uint32_t wrap_count = 0u;
+
+        if (playback_speed == 0.0 || clip_duration == 0.0)
+        {
+            if (!append_world_chunk(
+                    0.0, world_time_duration, current_clip_time, 0.0))
+            {
+                return result;
+            }
+            result.success = true;
+            return result;
+        }
+
+        while (remaining_world_time > 0.0)
+        {
+            if (loop)
+            {
+                if (playback_speed > 0.0 &&
+                    current_clip_time >= clip_duration)
+                {
+                    current_clip_time = 0.0;
+                    if (wrap_count == std::numeric_limits<uint32_t>::max())
+                    {
+                        result.values.clear();
+                        result.error = animation_channel_span_error::capacity_exceeded;
+                        result.message =
+                            "Animation Playback Loop wrap count exceeds uint32 capacity.";
+                        return result;
+                    }
+                    ++wrap_count;
+                }
+                else if (playback_speed < 0.0 && current_clip_time <= 0.0)
+                {
+                    current_clip_time = clip_duration;
+                    if (wrap_count == std::numeric_limits<uint32_t>::max())
+                    {
+                        result.values.clear();
+                        result.error = animation_channel_span_error::capacity_exceeded;
+                        result.message =
+                            "Animation Playback Loop wrap count exceeds uint32 capacity.";
+                        return result;
+                    }
+                    ++wrap_count;
+                }
+            }
+
+            const bool moving_forward = playback_speed > 0.0;
+            const double distance_to_boundary =
+                moving_forward
+                    ? clip_duration - current_clip_time
+                    : current_clip_time;
+            if (distance_to_boundary < 0.0 ||
+                !std::isfinite(distance_to_boundary))
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Animation Playback cursor moved outside its Clip boundary range.";
+                return result;
+            }
+
+            if (distance_to_boundary == 0.0)
+            {
+                if (loop)
+                {
+                    current_clip_time =
+                        moving_forward ? 0.0 : clip_duration;
+                    if (wrap_count == std::numeric_limits<uint32_t>::max())
+                    {
+                        result.values.clear();
+                        result.error = animation_channel_span_error::capacity_exceeded;
+                        result.message =
+                            "Animation Playback Loop wrap count exceeds uint32 capacity.";
+                        return result;
+                    }
+                    ++wrap_count;
+                    continue;
+                }
+
+                if (!append_world_chunk(
+                        world_offset,
+                        remaining_world_time,
+                        current_clip_time,
+                        0.0))
+                {
+                    return result;
+                }
+                world_offset += remaining_world_time;
+                remaining_world_time = 0.0;
+                break;
+            }
+
+            const double absolute_speed = std::abs(playback_speed);
+            const double world_time_to_boundary =
+                distance_to_boundary / absolute_speed;
+            if (std::isnan(world_time_to_boundary) ||
+                world_time_to_boundary <= 0.0)
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Animation Playback cannot derive a positive representable World-Time duration to its next Clip boundary.";
+                return result;
+            }
+
+            const bool reaches_boundary =
+                world_time_to_boundary <= remaining_world_time;
+            const double chunk_world_duration =
+                reaches_boundary
+                    ? world_time_to_boundary
+                    : remaining_world_time;
+            const double chunk_clip_delta =
+                playback_speed * chunk_world_duration;
+            if (!std::isfinite(chunk_clip_delta) ||
+                chunk_clip_delta == 0.0 ||
+                !std::isfinite(current_clip_time + chunk_clip_delta) ||
+                current_clip_time + chunk_clip_delta == current_clip_time)
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Animation Playback Clip-Time increment is not representable at the requested Speed and World-Time interval.";
+                return result;
+            }
+
+            const double next_clip_time =
+                reaches_boundary
+                    ? (moving_forward ? clip_duration : 0.0)
+                    : current_clip_time + chunk_clip_delta;
+            if (next_clip_time < 0.0 || next_clip_time > clip_duration ||
+                !append_world_chunk(
+                    world_offset,
+                    chunk_world_duration,
+                    current_clip_time,
+                    next_clip_time - current_clip_time))
+            {
+                if (result.error == animation_channel_span_error::none)
+                {
+                    result.error = animation_channel_span_error::invalid_time;
+                    result.message =
+                        "Animation Playback chunk crossed a Clip boundary without an explicit wrap record.";
+                }
+                result.values.clear();
+                return result;
+            }
+
+            world_offset += chunk_world_duration;
+            remaining_world_time -= chunk_world_duration;
+            if (remaining_world_time < 0.0 &&
+                remaining_world_time >=
+                    -std::numeric_limits<double>::epsilon() *
+                        world_time_duration * 8.0)
+            {
+                remaining_world_time = 0.0;
+            }
+            current_clip_time = next_clip_time;
+
+            if (reaches_boundary && remaining_world_time > 0.0 && !loop)
+            {
+                if (!append_world_chunk(
+                        world_offset,
+                        remaining_world_time,
+                        current_clip_time,
+                        0.0))
+                {
+                    return result;
+                }
+                world_offset += remaining_world_time;
+                remaining_world_time = 0.0;
+            }
+            else if (reaches_boundary && remaining_world_time > 0.0 && loop)
+            {
+                if (wrap_count == std::numeric_limits<uint32_t>::max())
+                {
+                    result.values.clear();
+                    result.error = animation_channel_span_error::capacity_exceeded;
+                    result.message =
+                        "Animation Playback Loop wrap count exceeds uint32 capacity.";
+                    return result;
+                }
+                ++wrap_count;
+                current_clip_time =
+                    moving_forward ? 0.0 : clip_duration;
+            }
+
+            if (world_offset > world_time_duration ||
+                !std::isfinite(world_time_start + world_offset))
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Animation Playback World-Time cursor exceeded the Logical Tick.";
+                return result;
+            }
+        }
+
+        result.success = !result.values.empty();
+        if (!result.success)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Playback Scheduler produced no Clip Spans for the Logical Tick.";
+        }
+        return result;
+    }
+
     animation_channel_span_sample_result evaluate_animation_channel_span(
         const animation_channel_span& span,
         double span_local_u,
