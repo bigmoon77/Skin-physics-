@@ -1674,6 +1674,7 @@ namespace skin_physics::runtime
         bool initialize_soft_body_gpu_mesh(
             uint32_t mesh_index,
             const model_mesh_physics_asset& mesh_asset,
+            const asset::skin* source_skin,
             const asset::mesh& render_mesh,
             const transform& root_transform,
             uint32_t render_candidate_slot_count,
@@ -1695,8 +1696,74 @@ namespace skin_physics::runtime
 
             soft_body_gpu_mesh candidate;
             candidate.mesh_index = mesh_index;
+            candidate.skin_node_index = mesh_asset.skin_node_index;
+            candidate.skin_index = mesh_asset.skin_index;
             candidate.vertex_count = static_cast<uint32_t>(mesh.rest_positions.size());
             candidate.tetrahedron_count = static_cast<uint32_t>(mesh.tetrahedra.size());
+            std::vector<gpu_soft_body_skin_weight_record> skin_weight_records;
+            if (mesh_asset.skin_index == asset::invalid_index)
+            {
+                if (source_skin != nullptr ||
+                    mesh_asset.skin_node_index != asset::invalid_index ||
+                    mesh.has_skin_weights || !mesh.skin_weights.empty())
+                {
+                    diagnostic =
+                        "Unskinned Soft Body Mesh contains unexpected Skin metadata or Physics Vertex influences.";
+                    return false;
+                }
+            }
+            else
+            {
+                if (source_skin == nullptr ||
+                    mesh_asset.skin_node_index == asset::invalid_index ||
+                    source_skin->joints.empty() ||
+                    !mesh.has_skin_weights ||
+                    mesh.skin_weights.size() != mesh.rest_positions.size())
+                {
+                    diagnostic =
+                        "Skinned Soft Body GPU Mesh requires a valid Mesh Node / Skin and one transferred Physics Vertex influence record per Vertex.";
+                    return false;
+                }
+
+                candidate.skin_joint_count =
+                    static_cast<uint32_t>(source_skin->joints.size());
+                skin_weight_records.resize(mesh.skin_weights.size());
+                for (std::size_t vertex_index = 0u;
+                    vertex_index < mesh.skin_weights.size(); ++vertex_index)
+                {
+                    const physics::physics_skin_weight& source_weights =
+                        mesh.skin_weights[vertex_index];
+                    gpu_soft_body_skin_weight_record& destination =
+                        skin_weight_records[vertex_index];
+                    double weight_sum = 0.0;
+                    for (std::size_t influence_index = 0u;
+                        influence_index < asset::max_skin_influences;
+                        ++influence_index)
+                    {
+                        const float weight = source_weights.weights[influence_index];
+                        const uint16_t joint = source_weights.joints[influence_index];
+                        if (!finite_float(weight) || weight < 0.0f ||
+                            (weight > 0.0f && joint >= candidate.skin_joint_count))
+                        {
+                            diagnostic =
+                                "GPU Skin Weight upload contains an invalid influence index or non-finite weight.";
+                            return false;
+                        }
+                        destination.joints[influence_index] =
+                            static_cast<uint32_t>(joint);
+                        destination.weights[influence_index] = weight;
+                        weight_sum += weight;
+                    }
+                    if (!finite_double(weight_sum) ||
+                        std::abs(weight_sum - 1.0) > 1.0e-3)
+                    {
+                        diagnostic =
+                            "GPU Skin Weight upload requires normalized Physics Vertex influences.";
+                        return false;
+                    }
+                }
+            }
+
             candidate.initial_positions.resize(mesh.rest_positions.size());
             candidate.initial_velocities.resize(mesh.rest_positions.size());
             candidate.initial_inverse_masses = mesh.inverse_mass;
@@ -1836,6 +1903,21 @@ namespace skin_physics::runtime
                     candidate.velocity_scratch_uav.GetAddressOf()))
             {
                 diagnostic = "Unable to allocate Soft Body Tick Scratch State.";
+                return false;
+            }
+
+            if (!skin_weight_records.empty() &&
+                (!create_structured_buffer_from_vector(
+                    device.Get(), skin_weight_records,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.skin_weights_buffer.GetAddressOf()) ||
+                 !create_structured_srv(
+                    device.Get(), candidate.skin_weights_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.skin_weights_srv.GetAddressOf())))
+            {
+                diagnostic =
+                    "Unable to upload immutable Physics Vertex Skin Weight records for the Soft Body GPU Mesh.";
                 return false;
             }
 
@@ -5738,9 +5820,14 @@ namespace skin_physics::runtime
         {
             implementation::soft_body_gpu_mesh gpu_mesh;
             std::string diagnostic;
+            const asset::skin* source_skin =
+                mesh_asset.skin_index == asset::invalid_index
+                    ? nullptr
+                    : &desc.source_model.skins[mesh_asset.skin_index];
             if (!runtime.initialize_soft_body_gpu_mesh(
                     mesh_asset.mesh_index,
                     mesh_asset,
+                    source_skin,
                     desc.source_model.meshes[mesh_asset.mesh_index],
                     root_transform,
                     static_cast<uint32_t>(world->render_candidate_slots.size()),
