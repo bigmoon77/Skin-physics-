@@ -811,6 +811,22 @@ namespace skin_physics::physics
             return result;
         }
 
+        if (track.keys.size() == 1u)
+        {
+            animation_channel_span_build_result only_span =
+                build_animation_channel_span(
+                    track, clip_time_start, clip_time_delta);
+            if (!only_span.success)
+            {
+                result.error = only_span.error;
+                result.message = only_span.message;
+                return result;
+            }
+            result.values.push_back(std::move(only_span.value));
+            result.success = true;
+            return result;
+        }
+
         const double clip_time_end = clip_time_start + clip_time_delta;
         std::vector<double> boundaries;
         boundaries.reserve(track.keys.size() + 2u);
