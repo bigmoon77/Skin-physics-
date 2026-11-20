@@ -570,33 +570,57 @@ namespace skin_physics::physics
     static_assert(sizeof(gpu_matrix4x4) == 64u);
     static_assert(alignof(gpu_matrix4x4) == 4u);
 
+    static_assert(std::is_standard_layout_v<animation_span_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_span_gpu_record>);
     static_assert(sizeof(animation_span_gpu_record) == 80u);
     static_assert(alignof(animation_span_gpu_record) == 4u);
+    static_assert(offsetof(animation_span_gpu_record, first_track_record) == 12u);
+    static_assert(offsetof(animation_span_gpu_record, first_channel_record) == 20u);
+    static_assert(offsetof(animation_span_gpu_record, first_blend_record) == 28u);
+    static_assert(offsetof(animation_span_gpu_record, first_collider_record) == 36u);
     static_assert(offsetof(animation_span_gpu_record, span_duration_seconds) == 48u);
     static_assert(offsetof(animation_span_gpu_record, quaternion_normalization_lower_bound) == 68u);
+    static_assert(offsetof(animation_span_gpu_record, reserved1) == 76u);
 
+    static_assert(std::is_standard_layout_v<animation_span_cursor_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_span_cursor_gpu_record>);
     static_assert(sizeof(animation_span_cursor_gpu_record) == 16u);
     static_assert(alignof(animation_span_cursor_gpu_record) == 4u);
+    static_assert(offsetof(animation_span_cursor_gpu_record, animation_input_version_low) == 4u);
     static_assert(offsetof(animation_span_cursor_gpu_record, u_segment_start) == 12u);
 
+    static_assert(std::is_standard_layout_v<animation_track_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_track_gpu_record>);
     static_assert(sizeof(animation_track_gpu_record) == 32u);
     static_assert(alignof(animation_track_gpu_record) == 4u);
     static_assert(offsetof(animation_track_gpu_record, clip_time_start) == 16u);
+    static_assert(offsetof(animation_track_gpu_record, playback_speed) == 24u);
 
+    static_assert(std::is_standard_layout_v<animation_channel_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_channel_gpu_record>);
     static_assert(sizeof(animation_channel_gpu_record) == 224u);
     static_assert(alignof(animation_channel_gpu_record) == 4u);
     static_assert(offsetof(animation_channel_gpu_record, translation_c0) == 32u);
     static_assert(offsetof(animation_channel_gpu_record, rotation_parameter0) == 96u);
     static_assert(offsetof(animation_channel_gpu_record, scale_c0) == 160u);
+    static_assert(offsetof(animation_channel_gpu_record, scale_c3) == 208u);
 
+    static_assert(std::is_standard_layout_v<animation_blend_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_blend_gpu_record>);
     static_assert(sizeof(animation_blend_gpu_record) == 48u);
     static_assert(alignof(animation_blend_gpu_record) == 4u);
     static_assert(offsetof(animation_blend_gpu_record, weight_coefficients) == 16u);
+    static_assert(offsetof(animation_blend_gpu_record, duration_seconds) == 32u);
+    static_assert(offsetof(animation_blend_gpu_record, blend_start_offset_seconds) == 40u);
 
+    static_assert(std::is_standard_layout_v<kinematic_collider_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<kinematic_collider_gpu_record>);
     static_assert(sizeof(kinematic_collider_gpu_record) == 128u);
     static_assert(alignof(kinematic_collider_gpu_record) == 4u);
     static_assert(offsetof(kinematic_collider_gpu_record, translation_start) == 16u);
+    static_assert(offsetof(kinematic_collider_gpu_record, angular_axis_and_angle) == 80u);
     static_assert(offsetof(kinematic_collider_gpu_record, duration_seconds) == 96u);
+    static_assert(offsetof(kinematic_collider_gpu_record, reserved1) == 124u);
 
     constexpr uint32_t animation_node_role_joint = 1u << 0u;
     constexpr uint32_t animation_node_role_mesh = 1u << 1u;
