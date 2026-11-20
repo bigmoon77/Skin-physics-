@@ -2317,12 +2317,12 @@ namespace
         using skin_physics::physics::animation_trajectory_track_span_input;
 
         model source_model;
-        source_model.meshes.resize(2u);
-        source_model.nodes.resize(5u);
+        source_model.meshes.resize(3u);
+        source_model.nodes.resize(6u);
 
         node& root_node = source_model.nodes[0u];
         root_node.name = "packet_root";
-        root_node.children = { 1u, 2u, 3u, 4u };
+        root_node.children = { 1u, 2u, 3u, 4u, 5u };
 
         node& joint_node = source_model.nodes[1u];
         joint_node.name = "packet_joint";
@@ -2351,6 +2351,15 @@ namespace
         second_mesh_node.uses_matrix = true;
         second_mesh_node.local_matrix = mat4{};
         second_mesh_node.local_matrix.value[12u] = 3.0f;
+
+        node& third_mesh_node = source_model.nodes[5u];
+        third_mesh_node.name = "packet_third_mesh";
+        third_mesh_node.parent_index = 0u;
+        third_mesh_node.mesh_index = 2u;
+        third_mesh_node.skin_index = 0u;
+        third_mesh_node.uses_matrix = true;
+        third_mesh_node.local_matrix = mat4{};
+        third_mesh_node.local_matrix.value[14u] = 4.0f;
 
         skin source_skin;
         source_skin.name = "packet_skin";
@@ -2412,7 +2421,7 @@ namespace
 
         const skin_physics::physics::animation_clip_span_schedule_result scheduled =
             skin_physics::physics::schedule_animation_clip_spans(
-                source_model.animations[0u], 5u,
+                source_model.animations[0u], 6u,
                 0.0, 1.0, 10.0, 0.5);
         require(scheduled.success && scheduled.values.size() == 1u &&
             scheduled.values[0u].world_time_start == 10.0 &&
@@ -2445,10 +2454,10 @@ namespace
                 build_desc.animation_input_version &&
             built.value.span_records.size() == 1u &&
             built.value.track_records.size() == 1u &&
-            built.value.channel_records.size() == 5u &&
+            built.value.channel_records.size() == 6u &&
             built.value.inverse_bind_matrices.size() == 3u &&
-            built.value.static_node_matrices.size() == 5u &&
-            built.value.skin_records.size() == 2u &&
+            built.value.static_node_matrices.size() == 6u &&
+            built.value.skin_records.size() == 3u &&
             built.value.skin_joint_records.size() == 3u &&
             built.value.collider_records.empty() &&
             built.value.span_world_time_starts ==
@@ -2465,7 +2474,7 @@ namespace
             span_record.first_track_record == 0u &&
             span_record.track_record_count == 1u &&
             span_record.first_channel_record == 0u &&
-            span_record.channel_record_count == 5u &&
+            span_record.channel_record_count == 6u &&
             span_record.first_blend_record == 0u &&
             span_record.blend_record_count == 0u &&
             span_record.span_duration_seconds == 0.5f &&
@@ -2477,7 +2486,7 @@ namespace
             "Span Record must preserve its immutable Input Version, contiguous Buffer Ranges, World-Time duration and certified Bounds.");
         require(track_record.clip_index == 0u &&
             track_record.first_channel_record == 0u &&
-            track_record.channel_record_count == 5u &&
+            track_record.channel_record_count == 6u &&
             track_record.clip_time_start == 0.0f &&
             track_record.clip_time_delta == 1.0f &&
             track_record.playback_speed == 2.0f &&
@@ -2504,14 +2513,16 @@ namespace
         const auto* mesh_channel = find_channel(2u);
         const auto* second_joint_channel = find_channel(3u);
         const auto* second_mesh_channel = find_channel(4u);
+        const auto* third_mesh_channel = find_channel(5u);
         require(root_channel != nullptr && joint_channel != nullptr &&
             mesh_channel != nullptr && second_joint_channel != nullptr &&
-            second_mesh_channel != nullptr &&
+            second_mesh_channel != nullptr && third_mesh_channel != nullptr &&
             root_channel->parent_index == skin_physics::asset::invalid_index &&
             joint_channel->parent_index == 0u &&
             mesh_channel->parent_index == 0u &&
             second_joint_channel->parent_index == 0u &&
-            second_mesh_channel->parent_index == 0u,
+            second_mesh_channel->parent_index == 0u &&
+            third_mesh_channel->parent_index == 0u,
             "Channel Records must be emitted in Parent-before-Child order with Span-local Parent Record Indices.");
         require((root_channel->node_role_flags &
                     skin_physics::physics::animation_node_role_model_root) != 0u &&
@@ -2526,6 +2537,8 @@ namespace
             (second_joint_channel->node_role_flags &
                     skin_physics::physics::animation_node_role_joint) != 0u &&
             (second_mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_mesh) != 0u &&
+            (third_mesh_channel->node_role_flags &
                     skin_physics::physics::animation_node_role_mesh) != 0u &&
             root_channel->inverse_bind_record_index == skin_physics::asset::invalid_index &&
             joint_channel->inverse_bind_record_index == 0u &&
@@ -2556,11 +2569,14 @@ namespace
             std::abs(
                 built.value.static_node_matrices[2u].column3.z - 2.0f) <= 1.0e-6f &&
             std::abs(
-                built.value.static_node_matrices[4u].column3.x - 3.0f) <= 1.0e-6f,
+                built.value.static_node_matrices[4u].column3.x - 3.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.static_node_matrices[5u].column3.z - 4.0f) <= 1.0e-6f,
             "Per-Skin Inverse Bind and dense Static Node Matrix payloads must retain their independent Asset Column-Major values.");
 
         const auto& first_skin_record = built.value.skin_records[0u];
         const auto& second_skin_record = built.value.skin_records[1u];
+        const auto& third_skin_record = built.value.skin_records[2u];
         require(first_skin_record.mesh_node_channel_offset == 2u &&
             first_skin_record.skin_index == 0u &&
             first_skin_record.first_joint_record == 0u &&
@@ -2568,7 +2584,11 @@ namespace
             second_skin_record.mesh_node_channel_offset == 4u &&
             second_skin_record.skin_index == 1u &&
             second_skin_record.first_joint_record == 1u &&
-            second_skin_record.joint_count == 2u,
+            second_skin_record.joint_count == 2u &&
+            third_skin_record.mesh_node_channel_offset == 5u &&
+            third_skin_record.skin_index == 0u &&
+            third_skin_record.first_joint_record == 0u &&
+            third_skin_record.joint_count == 1u,
             "Each Skinned Mesh Node must retain its own Skin Index and ordered Joint range, even when the Skin shares Joint Nodes with another Mesh.");
         const auto& first_skin_joint = built.value.skin_joint_records[0u];
         const auto& second_skin_shared_joint = built.value.skin_joint_records[1u];
