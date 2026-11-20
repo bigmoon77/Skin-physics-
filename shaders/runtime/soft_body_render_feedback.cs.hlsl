@@ -186,7 +186,9 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
 
     uint begin_index = vertex_triangle_offsets[render_vertex_index];
     uint end_index = vertex_triangle_offsets[render_vertex_index + 1u];
-    if (end_index > render_index_count / 3u || begin_index > end_index)
+    // Offsets index the Vertex-to-Triangle incidence array, whose length
+    // equals the number of mesh indices (three entries per triangle).
+    if (end_index > render_index_count || begin_index > end_index)
     {
         uint previous_failure = 0u;
         InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
