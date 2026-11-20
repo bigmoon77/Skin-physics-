@@ -50,10 +50,11 @@ A phase is not called complete merely because headers, shaders or test sources e
 **Status: in progress — first Runtime-connected Soft Body compute path added; numerical and feature-completeness gates remain open**
 
 - Implemented initial runtime upload of per-model Soft Body Tet / CSR / inverse-mass resources and two persistent position / velocity State Banks plus Tick Scratch.
-- Implemented gated Tet deformation-gradient / scaled-polar stress evaluation, deterministic Vertex-to-Tet CSR force gather, and damped force integration.
+- Implemented gated Tet deformation-gradient / scaled-polar stress evaluation with a proper-rotation 3×3 Jacobi SVD fallback, deterministic Vertex-to-Tet CSR force gather, and damped force integration.
 - Implemented World-preflight substep dispatch, odd-substep Scratch publication into the inactive bank, GPU failure validation, and success-only Tick Commit.
 - Added WARP Runtime coverage for two in-flight Ticks, three Substeps per Tick, alternating State Banks, Query observation, and Reset to the rest pose; source is registered but not yet executed by Windows CI.
-- Remaining: proper-rotation SVD fallback, inverted / near-singular parity, per-vertex attribute and density remapping, CFL-derived limits, Force / Impulse segmentation, animation / kinematic coupling, Collision / Contact coupling, and CPU oracle parity for the production Runtime path.
+- Added strict Tet rest-matrix / shape-gradient, unique-vertex and exact Vertex-to-Tet CSR validation before GPU upload; WARP source rejects malformed asset / CSR input.
+- Remaining: execute / numerically qualify the production Runtime SVD path on WARP (including near-singular parity), inverted-element fallback policy, per-vertex attribute and density remapping, CFL-derived limits, Force / Impulse segmentation, animation / kinematic coupling, Collision / Contact coupling, and CPU oracle parity for the production Runtime path.
 
 ### Phase 3 — R2 Cloth GPU iteration
 **Status: pending**
