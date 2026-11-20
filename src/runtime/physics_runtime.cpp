@@ -2787,9 +2787,9 @@ namespace skin_physics::runtime
                         std::to_string(gpu_mesh.mesh_index);
                     validate_pass.shader = soft_body_render_validate_shader.Get();
                     validate_pass.shader_resources = {
-                        { 0u, candidate.position_srv.Get() },
-                        { 1u, candidate.normal_srv.Get() },
-                        { 2u, candidate.tangent_srv.Get() }
+                        { 6u, candidate.position_srv.Get() },
+                        { 7u, candidate.normal_srv.Get() },
+                        { 8u, candidate.tangent_srv.Get() }
                     };
                     validate_pass.unordered_access_views = {
                         { 3u, world.commit_control_uav.Get(), 0xffffffffu }
