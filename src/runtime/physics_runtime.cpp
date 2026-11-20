@@ -4332,6 +4332,13 @@ namespace skin_physics::runtime
 
         if (has_head_reservation)
         {
+            if (world->budget_resolution ==
+                work_budget_resolution::hard_limit_reached)
+            {
+                return make_status(status_code::invalid_state,
+                    "The blocked Reservation exceeds an immutable Runtime Hard Limit; reset_world is required.");
+            }
+
             // No plan may be rebuilt while any earlier/later Submission or
             // Event Query from this World is still unobserved.
             if (!has_observed_retryable_budget_block ||
@@ -4340,11 +4347,6 @@ namespace skin_physics::runtime
             {
                 return make_status(status_code::busy,
                     "Budget Retry requires the oldest CPU-observed retryable Work Budget Reservation and zero in-flight Ticks.");
-            }
-            if (world->budget_resolution == work_budget_resolution::hard_limit_reached)
-            {
-                return make_status(status_code::invalid_state,
-                    "The blocked Reservation exceeds an immutable Runtime Hard Limit; reset_world is required.");
             }
             if (world->budget_block_origin ==
                     work_budget_block_origin::cpu_preflight &&
