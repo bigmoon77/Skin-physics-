@@ -671,7 +671,14 @@ namespace skin_physics::runtime
         bool valid_mesh_asset(const physics::physics_mesh& mesh)
         {
             const std::size_t vertex_count = mesh.rest_positions.size();
+            const std::size_t tetrahedron_count = mesh.tetrahedra.size();
             if (vertex_count == 0u ||
+                vertex_count >= static_cast<std::size_t>(asset::invalid_index) ||
+                tetrahedron_count == 0u ||
+                tetrahedron_count >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
+                mesh.vertex_tetrahedron_ids.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
                 mesh.mass.size() != vertex_count ||
                 mesh.inverse_mass.size() != vertex_count ||
                 mesh.vertex_tetrahedron_offsets.size() != vertex_count + 1u ||
@@ -689,41 +696,109 @@ namespace skin_physics::runtime
                     return false;
                 }
             }
-            for (std::size_t index = 0; index < vertex_count; ++index)
+
+            for (std::size_t vertex_index = 0u;
+                vertex_index < vertex_count; ++vertex_index)
             {
-                if (!finite_float(mesh.mass[index]) ||
-                    mesh.mass[index] < 0.0f ||
-                    !finite_float(mesh.inverse_mass[index]) ||
-                    mesh.inverse_mass[index] < 0.0f ||
-                    mesh.vertex_tetrahedron_offsets[index] >
-                        mesh.vertex_tetrahedron_offsets[index + 1u])
+                if (!finite_float(mesh.mass[vertex_index]) ||
+                    mesh.mass[vertex_index] < 0.0f ||
+                    !finite_float(mesh.inverse_mass[vertex_index]) ||
+                    mesh.inverse_mass[vertex_index] < 0.0f ||
+                    mesh.vertex_tetrahedron_offsets[vertex_index] >
+                        mesh.vertex_tetrahedron_offsets[vertex_index + 1u] ||
+                    mesh.vertex_tetrahedron_offsets[vertex_index + 1u] >
+                        mesh.vertex_tetrahedron_ids.size())
                 {
                     return false;
                 }
             }
-            for (uint32_t tetrahedron_id : mesh.vertex_tetrahedron_ids)
+
+            std::vector<std::vector<uint32_t>> expected_vertex_tetrahedra(
+                vertex_count);
+            for (uint32_t tetrahedron_index = 0u;
+                tetrahedron_index < static_cast<uint32_t>(tetrahedron_count);
+                ++tetrahedron_index)
             {
-                if (tetrahedron_id >= mesh.tetrahedra.size())
-                {
-                    return false;
-                }
-            }
-            for (const physics::tetrahedron& tetrahedron : mesh.tetrahedra)
-            {
+                const physics::tetrahedron& tetrahedron =
+                    mesh.tetrahedra[tetrahedron_index];
                 if (!finite_float(tetrahedron.rest_volume) ||
-                    tetrahedron.rest_volume <= 0.0f)
+                    tetrahedron.rest_volume <= 0.0f ||
+                    !finite_float(tetrahedron.quality) ||
+                    !finite_float(tetrahedron.minimum_dihedral_degrees))
                 {
                     return false;
                 }
-                for (uint32_t vertex_index : tetrahedron.vertices)
+
+                for (float value : tetrahedron.rest_inverse)
                 {
-                    if (vertex_index >= vertex_count)
+                    if (!finite_float(value))
                     {
                         return false;
                     }
                 }
+
+                for (const asset::vec3& gradient :
+                    tetrahedron.rest_shape_gradients)
+                {
+                    if (!finite_vec3(gradient))
+                    {
+                        return false;
+                    }
+                }
+
+                std::array<uint32_t, 4> sorted_vertices =
+                    tetrahedron.vertices;
+                std::sort(sorted_vertices.begin(), sorted_vertices.end());
+                if (sorted_vertices.front() == sorted_vertices.back())
+                {
+                    return false;
+                }
+
+                for (uint32_t local_vertex = 0u;
+                    local_vertex < 4u; ++local_vertex)
+                {
+                    const uint32_t vertex_index =
+                        tetrahedron.vertices[local_vertex];
+                    if (vertex_index >= vertex_count)
+                    {
+                        return false;
+                    }
+                    expected_vertex_tetrahedra[vertex_index].push_back(
+                        tetrahedron_index);
+                }
             }
-            return !mesh.tetrahedra.empty();
+
+            std::size_t expected_offset = 0u;
+            for (std::size_t vertex_index = 0u;
+                vertex_index < vertex_count; ++vertex_index)
+            {
+                const std::vector<uint32_t>& expected =
+                    expected_vertex_tetrahedra[vertex_index];
+                const uint32_t begin =
+                    mesh.vertex_tetrahedron_offsets[vertex_index];
+                const uint32_t end =
+                    mesh.vertex_tetrahedron_offsets[vertex_index + 1u];
+
+                if (begin != expected_offset ||
+                    static_cast<std::size_t>(end - begin) != expected.size())
+                {
+                    return false;
+                }
+
+                for (std::size_t incidence = 0u;
+                    incidence < expected.size(); ++incidence)
+                {
+                    if (mesh.vertex_tetrahedron_ids[
+                            static_cast<std::size_t>(begin) + incidence] !=
+                        expected[incidence])
+                    {
+                        return false;
+                    }
+                }
+                expected_offset = end;
+            }
+
+            return expected_offset == mesh.vertex_tetrahedron_ids.size();
         }
 
         uint32_t count_pending_ticks(double accumulator, double fixed_delta_time)
