@@ -1124,6 +1124,7 @@ namespace skin_physics::runtime
             tick_reservation reservation;
             uint64_t dispatch_id = 0u;
             uint64_t reservation_token = 0u;
+            uint64_t input_snapshot_version = 0u;
             uint64_t expected_predecessor_sequence = 0u;
             uint64_t expected_source_generation = 1u;
             uint32_t expected_source_state_set = 0u;
@@ -3534,6 +3535,17 @@ namespace skin_physics::runtime
             }
 
             const tick_reservation reservation = world.reservations.front();
+            if (reservation.input_snapshot == nullptr ||
+                reservation.input_snapshot->version == 0u)
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic =
+                    "Submission Reservation has no valid Immutable Input Snapshot Version.";
+                return false;
+            }
+            const uint64_t input_snapshot_version =
+                reservation.input_snapshot->version;
             gpu_tick_dispatch_plan plan;
             plan.expected_predecessor_sequence_low =
                 static_cast<uint32_t>(world.scheduled_predecessor_sequence);
@@ -3558,6 +3570,7 @@ namespace skin_physics::runtime
             uint64_t reservation_token =
                 (world_id * 0x9e3779b97f4a7c15ull) ^
                 (reservation.sequence * 0xbf58476d1ce4e5b9ull) ^
+                (input_snapshot_version * 0x94d049bb133111ebull) ^
                 next_dispatch_id;
             if (reservation_token == 0u)
             {
@@ -3811,6 +3824,7 @@ namespace skin_physics::runtime
             in_flight.reservation = reservation;
             in_flight.dispatch_id = next_dispatch_id;
             in_flight.reservation_token = reservation_token;
+            in_flight.input_snapshot_version = input_snapshot_version;
             in_flight.expected_predecessor_sequence =
                 world.scheduled_predecessor_sequence;
             in_flight.expected_source_generation =
@@ -5493,9 +5507,15 @@ namespace skin_physics::runtime
 
             const uint64_t status_dispatch_id = gpu_status.dispatch_id;
             const uint64_t status_reservation_token = gpu_status.reservation_token;
+            const bool matching_snapshot_identity =
+                completed_tick.input_snapshot_version != 0u &&
+                completed_tick.reservation.input_snapshot != nullptr &&
+                completed_tick.reservation.input_snapshot->version ==
+                    completed_tick.input_snapshot_version;
             const bool matching_status_identity =
                 status_dispatch_id == dispatch_id &&
-                status_reservation_token == completed_tick.reservation_token;
+                status_reservation_token == completed_tick.reservation_token &&
+                matching_snapshot_identity;
             if (!matching_status_identity)
             {
                 runtime.release_render_candidate_slot(
@@ -5509,7 +5529,7 @@ namespace skin_physics::runtime
                 result_world.state = tick_state::failed;
                 result_world.last_tick_status = status_code::gpu_execution_failed;
                 result_world.diagnostic =
-                    "GPU Tick Status Dispatch ID / Reservation Token did not match its immutable Submission Record.";
+                    "GPU Tick Status Dispatch ID / Reservation Token / Input Snapshot Version did not match its immutable Submission Record.";
                 continue;
             }
 
