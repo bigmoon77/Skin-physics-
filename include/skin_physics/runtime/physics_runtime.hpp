@@ -296,6 +296,7 @@ namespace skin_physics::runtime
         uint64_t submitted_sequence = 0;
         uint64_t gpu_committed_sequence = 0;
         uint64_t cpu_observed_sequence = 0;
+        uint64_t head_reserved_tick_sequence = 0;
         uint32_t planned_substeps = 0;
         uint32_t planned_integration_segments = 0;
         uint32_t executed_integration_segments = 0;
