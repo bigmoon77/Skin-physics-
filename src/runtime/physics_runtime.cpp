@@ -1454,6 +1454,213 @@ namespace skin_physics::runtime
             return false;
         }
 
+        bool append_soft_body_tick_passes(
+            world_slot& world,
+            uint32_t source_state_set,
+            uint32_t destination_state_set,
+            const tick_reservation& reservation,
+            simulation::d3d11_compute_graph& graph,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            if (source_state_set > 1u || destination_state_set > 1u ||
+                source_state_set == destination_state_set ||
+                reservation.planned_substeps == 0u ||
+                !world_has_soft_body_work(world))
+            {
+                diagnostic = "Soft Body Tick Passes require valid distinct State Banks and a non-empty Substep Schedule.";
+                return false;
+            }
+
+            const double delta_time_double =
+                reservation.delta_time /
+                static_cast<double>(reservation.planned_substeps);
+            const float delta_time = static_cast<float>(delta_time_double);
+            if (!finite_double(delta_time_double) ||
+                delta_time_double <= 0.0 ||
+                !finite_float(delta_time) ||
+                delta_time <= 0.0f ||
+                !finite_vec3(world.description.gravity))
+            {
+                diagnostic = "Soft Body Integration Segment time or World gravity is not representable as finite GPU float values.";
+                return false;
+            }
+
+            for (uint32_t model_index = 0u;
+                model_index < world.models.size(); ++model_index)
+            {
+                model_slot& model = world.models[model_index];
+                if (!model.occupied)
+                {
+                    continue;
+                }
+
+                for (soft_body_gpu_mesh& gpu_mesh : model.gpu_soft_body_meshes)
+                {
+                    float damping_rate = 0.0f;
+                    if (!update_soft_body_materials(
+                            model, gpu_mesh, damping_rate, diagnostic))
+                    {
+                        return false;
+                    }
+
+                    gpu_soft_body_integration_parameters integration_parameters;
+                    integration_parameters.vertex_count = gpu_mesh.vertex_count;
+                    integration_parameters.delta_time = delta_time;
+                    integration_parameters.damping_rate = damping_rate;
+                    integration_parameters.gravity[0] = world.description.gravity.x;
+                    integration_parameters.gravity[1] = world.description.gravity.y;
+                    integration_parameters.gravity[2] = world.description.gravity.z;
+                    immediate_context->UpdateSubresource(
+                        gpu_mesh.integration_parameters.Get(),
+                        0u,
+                        nullptr,
+                        &integration_parameters,
+                        0u,
+                        0u);
+
+                    bool source_is_scratch = false;
+                    uint32_t source_bank = source_state_set;
+                    for (uint32_t substep_index = 0u;
+                        substep_index < reservation.planned_substeps;
+                        ++substep_index)
+                    {
+                        ID3D11ShaderResourceView* source_position_srv =
+                            source_is_scratch
+                                ? gpu_mesh.position_scratch_srv.Get()
+                                : gpu_mesh.position_bank_srvs[source_bank].Get();
+                        ID3D11ShaderResourceView* source_velocity_srv =
+                            source_is_scratch
+                                ? gpu_mesh.velocity_scratch_srv.Get()
+                                : gpu_mesh.velocity_bank_srvs[source_bank].Get();
+
+                        const bool destination_is_scratch =
+                            (substep_index & 1u) == 0u;
+                        const uint32_t destination_bank = destination_state_set;
+                        ID3D11UnorderedAccessView* destination_position_uav =
+                            destination_is_scratch
+                                ? gpu_mesh.position_scratch_uav.Get()
+                                : gpu_mesh.position_bank_uavs[destination_bank].Get();
+                        ID3D11UnorderedAccessView* destination_velocity_uav =
+                            destination_is_scratch
+                                ? gpu_mesh.velocity_scratch_uav.Get()
+                                : gpu_mesh.velocity_bank_uavs[destination_bank].Get();
+
+                        simulation::compute_pass_desc fem_pass;
+                        fem_pass.name = "soft_body_fem_m" +
+                            std::to_string(model_index) + "_mesh" +
+                            std::to_string(gpu_mesh.mesh_index) + "_substep" +
+                            std::to_string(substep_index);
+                        fem_pass.shader = soft_body_fem_shader.Get();
+                        fem_pass.shader_resources = {
+                            { 0u, source_position_srv },
+                            { 1u, gpu_mesh.tetrahedron_srv.Get() }
+                        };
+                        fem_pass.unordered_access_views = {
+                            { 0u, gpu_mesh.tetrahedron_output_uav.Get(), 0xffffffffu },
+                            { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+                        };
+                        fem_pass.constant_buffers = {
+                            { 0u, gpu_mesh.fem_parameters.Get() }
+                        };
+                        fem_pass.group_count_x = std::max(
+                            1u, (gpu_mesh.tetrahedron_count + 63u) / 64u);
+                        if (!graph.add_pass(fem_pass, diagnostic))
+                        {
+                            return false;
+                        }
+
+                        simulation::compute_pass_desc gather_pass;
+                        gather_pass.name = "soft_body_force_gather_m" +
+                            std::to_string(model_index) + "_mesh" +
+                            std::to_string(gpu_mesh.mesh_index) + "_substep" +
+                            std::to_string(substep_index);
+                        gather_pass.shader = soft_body_force_gather_shader.Get();
+                        gather_pass.shader_resources = {
+                            { 0u, gpu_mesh.tetrahedron_output_srv.Get() },
+                            { 1u, gpu_mesh.tetrahedron_srv.Get() },
+                            { 2u, gpu_mesh.vertex_tetrahedron_offsets_srv.Get() },
+                            { 3u, gpu_mesh.vertex_tetrahedron_ids_srv.Get() }
+                        };
+                        gather_pass.unordered_access_views = {
+                            { 0u, gpu_mesh.vertex_force_uav.Get(), 0xffffffffu },
+                            { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+                        };
+                        gather_pass.constant_buffers = {
+                            { 0u, gpu_mesh.gather_parameters.Get() }
+                        };
+                        gather_pass.group_count_x = std::max(
+                            1u, (gpu_mesh.vertex_count + 63u) / 64u);
+                        if (!graph.add_pass(gather_pass, diagnostic))
+                        {
+                            return false;
+                        }
+
+                        simulation::compute_pass_desc integrate_pass;
+                        integrate_pass.name = "soft_body_integrate_m" +
+                            std::to_string(model_index) + "_mesh" +
+                            std::to_string(gpu_mesh.mesh_index) + "_substep" +
+                            std::to_string(substep_index);
+                        integrate_pass.shader = soft_body_integrate_shader.Get();
+                        integrate_pass.shader_resources = {
+                            { 0u, source_position_srv },
+                            { 1u, source_velocity_srv },
+                            { 2u, gpu_mesh.vertex_force_srv.Get() },
+                            { 3u, gpu_mesh.inverse_mass_srv.Get() }
+                        };
+                        integrate_pass.unordered_access_views = {
+                            { 0u, destination_position_uav, 0xffffffffu },
+                            { 1u, destination_velocity_uav, 0xffffffffu },
+                            { 2u, world.commit_control_uav.Get(), 0xffffffffu }
+                        };
+                        integrate_pass.constant_buffers = {
+                            { 0u, gpu_mesh.integration_parameters.Get() }
+                        };
+                        integrate_pass.group_count_x = std::max(
+                            1u, (gpu_mesh.vertex_count + 63u) / 64u);
+                        if (!graph.add_pass(integrate_pass, diagnostic))
+                        {
+                            return false;
+                        }
+
+                        source_is_scratch = destination_is_scratch;
+                        if (!destination_is_scratch)
+                        {
+                            source_bank = destination_bank;
+                        }
+                    }
+
+                    if (source_is_scratch)
+                    {
+                        simulation::compute_pass_desc copy_pass;
+                        copy_pass.name = "soft_body_publish_working_state_m" +
+                            std::to_string(model_index) + "_mesh" +
+                            std::to_string(gpu_mesh.mesh_index);
+                        copy_pass.shader = soft_body_copy_state_shader.Get();
+                        copy_pass.shader_resources = {
+                            { 0u, gpu_mesh.position_scratch_srv.Get() },
+                            { 1u, gpu_mesh.velocity_scratch_srv.Get() }
+                        };
+                        copy_pass.unordered_access_views = {
+                            { 0u, gpu_mesh.position_bank_uavs[destination_state_set].Get(), 0xffffffffu },
+                            { 1u, gpu_mesh.velocity_bank_uavs[destination_state_set].Get(), 0xffffffffu },
+                            { 2u, world.commit_control_uav.Get(), 0xffffffffu }
+                        };
+                        copy_pass.constant_buffers = {
+                            { 0u, gpu_mesh.integration_parameters.Get() }
+                        };
+                        copy_pass.group_count_x = std::max(
+                            1u, (gpu_mesh.vertex_count + 63u) / 64u);
+                        if (!graph.add_pass(copy_pass, diagnostic))
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
         void update_head_reservation_preflight(world_slot& world)
         {
             if (world.reservations.empty())
