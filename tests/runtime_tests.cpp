@@ -533,6 +533,17 @@ namespace
         require(runtime.add_model(world, model_desc, &model).success(),
             "Runtime must upload the Soft Body asset and allocate two persistent State Banks plus Tick Scratch.");
 
+        skin_physics::runtime::mesh_physics_parameters schedule_material;
+        schedule_material.density = 1000.0f;
+        schedule_material.young_modulus = 1.0f;
+        schedule_material.poisson_ratio = 0.3f;
+        schedule_material.damping = 0.0f;
+        require(runtime.set_mesh_physics_parameters(
+                world, model, 0u, schedule_material).success() &&
+            runtime.set_mesh_physics_parameters(
+                world, model, 1u, schedule_material).success(),
+            "Low-stiffness Soft Body materials must leave the World Substep schedule at its contact-time minimum.");
+
         skin_physics::runtime::attribute_edit_desc paint_edit;
         paint_edit.channel =
             skin_physics::asset::physics_attribute_channel::shape_recovery;
@@ -563,8 +574,8 @@ namespace
         force.duration = std::numeric_limits<double>::epsilon();
         require(runtime.enqueue_force(world, force).code == status_code::invalid_argument,
             "Runtime must reject a Force duration that collapses to a zero-width interval at its start time.");
-        force.start_time = 0.0;
-        force.duration = 0.1;
+        force.start_time = 0.0025;
+        force.duration = 0.0025;
         require(runtime.enqueue_force(world, force).success(),
             "Runtime must normalize and accept a finite non-unit Soft Body Force direction.");
 
@@ -576,7 +587,7 @@ namespace
         impulse.direction = { 0.0f, -3.0f, 0.0f };
         impulse.impulse_magnitude = 2.0f;
         impulse.radius = 1.0f;
-        impulse.event_time = 0.0;
+        impulse.event_time = 0.0075;
         require(runtime.enqueue_impulse(world, impulse).code == status_code::invalid_argument,
             "Force and Impulse descriptors must share one World-wide unique Event ID namespace.");
         impulse.event_id = 102u;
@@ -606,6 +617,8 @@ namespace
             force_status.last_tick_status == status_code::blocked_by_input &&
             force_status.head_reserved_tick_sequence == 1u &&
             force_status.head_input_snapshot_version != 0u &&
+            force_status.planned_substeps == 3u &&
+            force_status.planned_integration_segments == 6u &&
             force_status.diagnostic.find("Force / Impulse") != std::string::npos,
             "Runtime must explicitly report BLOCKED_BY_INPUT while Force / Impulse Segment scheduling is unimplemented.");
         const uint64_t force_snapshot_version =
