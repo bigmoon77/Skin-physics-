@@ -4741,6 +4741,7 @@ namespace skin_physics::runtime
             simulation::d3d11_compute_graph graph;
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>
                 segment_parameter_buffers;
+            force_distribution_global_scratch force_distribution_scratch;
             std::string diagnostic;
             simulation::compute_pass_desc begin_pass;
             begin_pass.name = "tick_begin_control";
@@ -4774,6 +4775,7 @@ namespace skin_physics::runtime
                         reservation,
                         graph,
                         segment_parameter_buffers,
+                        force_distribution_scratch,
                         diagnostic))
                 {
                     world.state = tick_state::failed;
@@ -4932,6 +4934,8 @@ namespace skin_physics::runtime
             in_flight.input_snapshot_version = input_snapshot_version;
             in_flight.segment_parameter_buffers =
                 std::move(segment_parameter_buffers);
+            in_flight.force_distribution_scratch =
+                std::move(force_distribution_scratch);
             in_flight.expected_predecessor_sequence =
                 world.scheduled_predecessor_sequence;
             in_flight.expected_source_generation =
