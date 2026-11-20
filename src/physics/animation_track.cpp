@@ -1070,6 +1070,12 @@ namespace skin_physics::physics
         {
             for (const asset::animation_track& track : clip.tracks)
             {
+                // A one-key sampler is constant over the entire Clip and
+                // therefore contributes no interpolation Span boundary.
+                if (track.keys.size() <= 1u)
+                {
+                    continue;
+                }
                 for (const asset::animation_key& key : track.keys)
                 {
                     const double key_time = static_cast<double>(key.time);
