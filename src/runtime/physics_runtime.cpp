@@ -1098,9 +1098,8 @@ namespace skin_physics::runtime
         model->source_model = {};
         model->mesh_physics_assets.clear();
         model->root_samples.clear();
-        model->animation_playbacks.clear();
-        model->animation_blends.clear();
-        model->animation_modes.clear();
+        model->has_animation_playback = false;
+        model->has_animation_blend = false;
         model->mesh_parameters.clear();
         model->mesh_parameters_valid.clear();
         if (model->generation == std::numeric_limits<uint32_t>::max())
