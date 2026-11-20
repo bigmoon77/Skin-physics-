@@ -3088,6 +3088,10 @@ namespace skin_physics::runtime
             if (world_has_unsupported_physics_work(world))
             {
                 world.state = tick_state::pending;
+                world.last_tick_status = status_code::unsupported_feature;
+                world.budget_block_origin = work_budget_block_origin::none;
+                world.budget_resolution = work_budget_resolution::none;
+                world.work_budget_block_flags = 0u;
                 world.diagnostic =
                     "GPU submission is deferred because this World contains Cloth or Collider work that is not yet connected to the Runtime scheduler.";
                 return false;
@@ -3104,6 +3108,10 @@ namespace skin_physics::runtime
                 status_ring->pending_count() >= status_ring->capacity())
             {
                 world.state = tick_state::pending;
+                world.last_tick_status = status_code::blocked_by_capacity;
+                world.budget_block_origin = work_budget_block_origin::none;
+                world.budget_resolution = work_budget_resolution::retryable;
+                world.work_budget_block_flags = 0u;
                 world.diagnostic =
                     "GPU Status Query Ring is full; the Tick Reservation remains pending.";
                 return false;
@@ -3424,6 +3432,10 @@ namespace skin_physics::runtime
             ++world.scheduled_source_generation;
             world.scheduled_source_state_set = plan.destination_state_set;
             world.state = tick_state::in_flight;
+            world.last_tick_status = status_code::ok;
+            world.budget_block_origin = work_budget_block_origin::none;
+            world.budget_resolution = work_budget_resolution::none;
+            world.work_budget_block_flags = 0u;
             world.diagnostic.clear();
             ++next_dispatch_id;
             return true;
@@ -4806,6 +4818,14 @@ namespace skin_physics::runtime
             std::min<uint64_t>(pending64, std::numeric_limits<uint32_t>::max()));
         out_report->in_flight_tick_count = world->in_flight_tick_count;
         out_report->accumulator_seconds = world->accumulator_seconds;
+        const bool has_pending_reservation = !world->reservations.empty();
+        out_report->render_binding_backpressure =
+            has_pending_reservation &&
+            world->last_tick_status == status_code::render_binding_busy;
+        out_report->capacity_blocked =
+            has_pending_reservation &&
+            (world->last_tick_status == status_code::blocked_by_capacity ||
+                world->last_tick_status == status_code::out_of_memory);
         if (!world->reservations.empty() && world->reservations.front().blocked)
         {
             out_report->cpu_preflight_blocked_tick_count = 1u;
