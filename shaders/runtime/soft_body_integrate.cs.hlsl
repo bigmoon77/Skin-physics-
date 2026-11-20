@@ -32,6 +32,21 @@ RWStructuredBuffer<float4> destination_positions : register(u0);
 RWStructuredBuffer<float4> destination_velocities : register(u1);
 RWStructuredBuffer<TickCommitControl> tick_commit_control_buffer : register(u2);
 
+void mark_tick_failure(uint diagnostic_code)
+{
+    uint previous_diagnostic = 0u;
+    InterlockedCompareExchange(
+        tick_commit_control_buffer[0].diagnostic,
+        0u,
+        diagnostic_code,
+        previous_diagnostic);
+    uint previous_failure = 0u;
+    InterlockedOr(
+        tick_commit_control_buffer[0].terminal_failure,
+        1u,
+        previous_failure);
+}
+
 cbuffer IntegrationParameters : register(b0)
 {
     uint vertex_count;
@@ -75,8 +90,7 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
     float vertex_damping_rate = vertex_damping_rates[index];
     if (!isfinite(vertex_damping_rate) || vertex_damping_rate < 0.0f)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(201u);
         return;
     }
 
@@ -105,8 +119,7 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
 
     if (!all(isfinite(next_velocity)) || !all(isfinite(next_position)))
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(202u);
         return;
     }
 
