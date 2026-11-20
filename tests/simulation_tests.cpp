@@ -1336,6 +1336,11 @@ namespace
             one_key_sample.value.world_time_derivative.y == 0.0f &&
             one_key_sample.value.world_time_derivative.z == 0.0f,
             "A one-key Animation Track must remain a constant Span even when the requested Clip-Time range crosses its only key.");
+        const skin_physics::physics::animation_channel_spans_build_result one_key_schedule =
+            skin_physics::physics::build_animation_channel_spans(
+                one_key_track, -2.0, 5.0);
+        require(one_key_schedule.success && one_key_schedule.values.size() == 1u,
+            "The Channel Span Scheduler must not manufacture a discontinuity at the only key of a constant Track.");
 
         animation_track key_bounded_track = linear_translation;
         animation_key middle_key;
