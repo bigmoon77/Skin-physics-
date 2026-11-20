@@ -1,5 +1,5 @@
 RWBuffer<uint> dispatch_arguments : register(u0);
-RWStructuredBuffer<uint> dispatch_output : register(u0);
+RWStructuredBuffer<uint> dispatch_output : register(u1);
 
 [numthreads(1, 1, 1)]
 void build_dispatch_arguments(uint3 dispatch_id : SV_DispatchThreadID)
