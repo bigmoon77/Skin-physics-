@@ -696,6 +696,22 @@ namespace skin_physics::runtime
                     return false;
                 }
             }
+            if (!mesh.vertex_attribute_weights.empty() &&
+                mesh.vertex_attribute_weights.size() != vertex_count)
+            {
+                return false;
+            }
+            for (const physics::physics_vertex_attribute_weights& weights :
+                mesh.vertex_attribute_weights)
+            {
+                for (float weight : weights)
+                {
+                    if (!finite_float(weight) || weight < 0.0f || weight > 1.0f)
+                    {
+                        return false;
+                    }
+                }
+            }
 
             for (std::size_t vertex_index = 0u;
                 vertex_index < vertex_count; ++vertex_index)
@@ -2784,6 +2800,18 @@ namespace skin_physics::runtime
                 return make_status(status_code::asset_invalid,
                     "Supplied Render Vertex Bindings failed Physics Mesh validation.");
             }
+
+            const physics::physics_attribute_transfer_result attribute_transfer =
+                physics::transfer_physics_vertex_attribute_weights(
+                    render_mesh, mesh_asset.physics_mesh);
+            if (!attribute_transfer.success)
+            {
+                return make_status(status_code::asset_invalid,
+                    "Physics Attribute Paint transfer failed: " +
+                        attribute_transfer.diagnostic);
+            }
+            mesh_asset.physics_mesh.vertex_attribute_weights =
+                attribute_transfer.vertex_weights;
         }
 
         for (uint32_t mesh_index = 0;
