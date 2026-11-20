@@ -366,9 +366,12 @@ namespace
 
         skin_physics::runtime::model_desc model_desc;
         model_desc.source_model.meshes.push_back(render_mesh);
+        model_desc.source_model.meshes.push_back(render_mesh);
         skin_physics::runtime::model_mesh_physics_asset mesh_asset;
         mesh_asset.mesh_index = 0u;
         mesh_asset.physics_mesh = built_mesh.value;
+        model_desc.mesh_physics_assets.push_back(mesh_asset);
+        mesh_asset.mesh_index = 1u;
         model_desc.mesh_physics_assets.push_back(std::move(mesh_asset));
 
         skin_physics::runtime::world_desc world_desc;
@@ -457,6 +460,13 @@ namespace
             std::abs(result.cpu_observed_completed_time - 0.02) <= 1.0e-12,
             "WARP must execute odd-substep Scratch publication, alternate the committed State Bank across Ticks, and observe the contiguous Commit prefix.");
 
+        skin_physics::runtime::advance_report third_tick_report;
+        require(runtime.advance(world, 0.01, &third_tick_report).success() &&
+            third_tick_report.submitted_tick_count == 1u &&
+            third_tick_report.in_flight_tick_count == 1u &&
+            third_tick_report.pending_tick_count == 0u,
+            "A third Tick must be submitted before the Host acquires the previous committed Render Candidate.");
+
         skin_physics::runtime::render_binding render_binding;
         require(runtime.get_render_binding(
                 world, model, 0u, &render_binding).success(),
@@ -473,21 +483,42 @@ namespace
             render_binding.lease_generation != 0u,
             "Render Binding must identify the committed Ring Slot and provide the expected GPU stream layout.");
 
+        // Tick 3 was already submitted when the Host acquired the Tick 2 Candidate.
+        // Its Query can commit a newer slot while the older slot remains leased.
+        bool third_query_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &result).success(),
+                "Render Lease must coexist with non-blocking Query observation.");
+            if (result.in_flight_tick_count == 0u)
+            {
+                third_query_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(third_query_observed &&
+            result.cpu_observed_sequence == 3u &&
+            result.gpu_committed_sequence == 3u,
+            "An already-submitted later Tick must be allowed to commit while an older Render Candidate is leased.");
+
         skin_physics::runtime::render_binding same_lease_binding;
         require(runtime.get_render_binding(
-                world, model, 0u, &same_lease_binding).success() &&
+                world, model, 1u, &same_lease_binding).success() &&
             same_lease_binding.lease_generation == render_binding.lease_generation &&
             same_lease_binding.render_slot_id == render_binding.render_slot_id &&
             same_lease_binding.render_slot_generation ==
-                render_binding.render_slot_generation,
-            "Repeated Mesh binding requests must share the same active World Render Lease.");
+                render_binding.render_slot_generation &&
+            same_lease_binding.committed_tick_sequence == 2u,
+            "A second Mesh request must stay pinned to the original leased Slot even after a newer Candidate becomes latest.");
 
         skin_physics::runtime::advance_report while_leased_report;
         require(runtime.advance(world, 0.01, &while_leased_report).success() &&
             while_leased_report.submitted_tick_count == 0u &&
             while_leased_report.in_flight_tick_count == 0u &&
             while_leased_report.pending_tick_count == 1u,
-            "A Host Render Lease must block Ring reuse and keep new Tick time pending without GPU submission.");
+            "A Host Render Lease must block reuse of its pinned Ring Slot and keep new Tick time pending.");
 
         require(runtime.release_render_bindings(
                 world, render_binding.lease_generation).success(),
