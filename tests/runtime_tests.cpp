@@ -163,21 +163,21 @@ namespace
         skin_physics::runtime::advance_report report;
         require(runtime.advance(world, 0.025, &report).success(),
             "Advance must accept valid wall-clock time.");
-        require(report.pending_tick_count == 1u &&
-            report.submitted_tick_count == 1u &&
-            report.in_flight_tick_count == 1u &&
-            std::abs(report.accumulator_seconds - 0.015) <= 1.0e-12,
-            "Advance must transfer one fixed interval to a GPU Tick Submission and preserve the unallocated remainder.");
+        require(report.pending_tick_count == 0u &&
+            report.submitted_tick_count == 2u &&
+            report.in_flight_tick_count == 2u &&
+            std::abs(report.accumulator_seconds - 0.005) <= 1.0e-12,
+            "Advance must submit two ordered GPU Ticks up to the World in-flight limit and preserve the fractional remainder.");
 
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::paused).success(),
             "World must enter Paused.");
         require(runtime.advance(world, 0.5, &report).success(),
             "Advance while Paused must still allow polling without consuming wall-clock time.");
-        require(report.pending_tick_count == 1u &&
-            report.in_flight_tick_count == 1u &&
-            std::abs(report.accumulator_seconds - 0.015) <= 1.0e-12,
-            "Paused Advance must preserve the unallocated remainder and keep the in-flight GPU Tick unchanged.");
+        require(report.pending_tick_count == 0u &&
+            report.in_flight_tick_count == 2u &&
+            std::abs(report.accumulator_seconds - 0.005) <= 1.0e-12,
+            "Paused Advance must preserve the unallocated remainder and keep both in-flight GPU Ticks unchanged.");
 
         require(runtime.set_fixed_delta_time(world, 0.02).code == status_code::busy,
             "Fixed Delta Time must not change while complete Tick requests remain in the Accumulator.");
@@ -200,10 +200,10 @@ namespace
         }
         require(status_observed &&
             world_status.state == skin_physics::runtime::tick_state::committed &&
-            world_status.gpu_committed_sequence == 1u &&
-            world_status.cpu_observed_sequence == 1u &&
-            std::abs(world_status.gpu_committed_simulation_time - 0.01) <= 1.0e-12 &&
-            std::abs(world_status.cpu_observed_completed_time - 0.01) <= 1.0e-12 &&
+            world_status.gpu_committed_sequence == 2u &&
+            world_status.cpu_observed_sequence == 2u &&
+            std::abs(world_status.gpu_committed_simulation_time - 0.02) <= 1.0e-12 &&
+            std::abs(world_status.cpu_observed_completed_time - 0.02) <= 1.0e-12 &&
             std::abs(world_status.requested_simulation_time - 0.025) <= 1.0e-12 &&
             std::abs(world_status.effective_requested_time - 0.025) <= 1.0e-12 &&
             std::abs(world_status.reserved_tick_time) <= 1.0e-12,
