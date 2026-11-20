@@ -594,7 +594,10 @@
             "STEP spans remain constant with zero target velocity, and paused Tracks sample the exact current Clip Time without generating velocity",
             "LINEAR Quaternion spans pre-evaluate their signed Clip-Time endpoints, use shortest-arc Slerp, and return a normalized quaternion with analytic tangent-space derivative",
             "CUBICSPLINE Quaternion raw component polynomials normalize at evaluation and project derivatives onto the quaternion tangent space",
-            "Spans crossing an interior Key boundary, malformed tangent arrays, invalid quaternion values and non-positive World-Time durations fail closed"
+            "Spans crossing an interior Key boundary, malformed tangent arrays, invalid quaternion values and non-positive World-Time durations fail closed",
+            "The Channel Span Scheduler splits every signed Clip-Time interval at all interior Keys in forward or reverse playback order",
+            "Adjacent forward and reverse LINEAR Span records produce matching channel values at their shared Key boundaries",
+            "Paused Tracks produce one zero-Clip-Time Span; duplicate / non-monotonic Keys fail atomically without partial Span records"
           ]
         }
       ],
