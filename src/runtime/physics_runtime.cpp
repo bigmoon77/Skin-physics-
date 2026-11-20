@@ -4181,6 +4181,7 @@ namespace skin_physics::runtime
         world.execution_budget.maximum_integration_segments_per_tick =
             desc.maximum_integration_segments_per_tick;
         world.execution_budget_revision = 1u;
+        world.next_input_snapshot_version = 1u;
         world.cpu_preflight_block_status_observed = false;
         world.gpu_dynamic_toi_block_status_observed = false;
         world.playback = playback_state::stopped;
@@ -5385,9 +5386,8 @@ namespace skin_physics::runtime
             has_pending_reservation &&
             world->last_tick_status == status_code::render_binding_busy;
         out_report->capacity_blocked =
-            has_pending_reservation &&
-            (world->last_tick_status == status_code::blocked_by_capacity ||
-                world->last_tick_status == status_code::out_of_memory);
+            world->last_tick_status == status_code::blocked_by_capacity ||
+            world->last_tick_status == status_code::out_of_memory;
         if (!world->reservations.empty() && world->reservations.front().blocked)
         {
             out_report->cpu_preflight_blocked_tick_count = 1u;
@@ -5866,6 +5866,11 @@ namespace skin_physics::runtime
         result.cpu_observed_sequence = world->cpu_observed_sequence;
         result.head_reserved_tick_sequence = world->reservations.empty()
             ? 0u : world->reservations.front().sequence;
+        result.head_input_snapshot_version =
+            world->reservations.empty() ||
+            world->reservations.front().input_snapshot == nullptr
+                ? 0u
+                : world->reservations.front().input_snapshot->version;
         result.planned_substeps = world->planned_substeps;
         result.planned_integration_segments = world->planned_integration_segments;
         result.executed_integration_segments = world->executed_integration_segments;
