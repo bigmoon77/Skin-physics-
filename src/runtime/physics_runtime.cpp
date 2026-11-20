@@ -3777,6 +3777,276 @@ namespace skin_physics::runtime
             return true;
         }
 
+        bool append_soft_body_animation_skinning_pass(
+            const model_slot& model,
+            const model_input_snapshot& model_snapshot,
+            const model_animation_tick_schedule& schedule,
+            const soft_body_gpu_mesh& gpu_mesh,
+            double world_time,
+            simulation::d3d11_compute_graph& graph,
+            std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
+                out_segment_parameter_buffers,
+            std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>&
+                out_segment_shader_resource_views,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            if (soft_body_animation_skinning_shader == nullptr ||
+                gpu_mesh.skin_index == asset::invalid_index ||
+                gpu_mesh.skin_node_index == asset::invalid_index ||
+                gpu_mesh.skin_joint_count == 0u ||
+                gpu_mesh.skin_weights_srv == nullptr ||
+                gpu_mesh.rest_positions_srv == nullptr ||
+                gpu_mesh.animation_target_positions_uav == nullptr ||
+                gpu_mesh.animation_target_velocities_uav == nullptr ||
+                gpu_mesh.animation_target_status_uav == nullptr ||
+                gpu_mesh.animation_target_status_buffer == nullptr ||
+                !finite_double(world_time))
+            {
+                diagnostic =
+                    "Animated Soft Body Mesh is missing its Skin / Joint mapping or GPU LBS target resources.";
+                return false;
+            }
+
+            const asset::animation_clip* source_clip = nullptr;
+            const asset::animation_clip* target_clip = nullptr;
+            const physics::scheduled_animation_clip_span* playback_span = nullptr;
+            const physics::animation_blend_clip_span* blend_span = nullptr;
+            double span_local_u = 0.0;
+            double span_duration = 0.0;
+
+            if (schedule.has_blend)
+            {
+                const auto iterator = std::find_if(
+                    schedule.blend_spans.begin(),
+                    schedule.blend_spans.end(),
+                    [world_time](const physics::animation_blend_clip_span& value)
+                    {
+                        return world_time >= value.world_time_start &&
+                            world_time <
+                                value.world_time_start + value.world_time_duration;
+                    });
+                if (iterator == schedule.blend_spans.end() ||
+                    model_snapshot.animation_blend.source_track.clip_index >=
+                        model.source_model.animations.size() ||
+                    model_snapshot.animation_blend.target_track.clip_index >=
+                        model.source_model.animations.size())
+                {
+                    diagnostic =
+                        "Animation Blend Segment start does not resolve one immutable synchronized Source / Target / Weight Span.";
+                    return false;
+                }
+                blend_span = &(*iterator);
+                source_clip = &model.source_model.animations[
+                    model_snapshot.animation_blend.source_track.clip_index];
+                target_clip = &model.source_model.animations[
+                    model_snapshot.animation_blend.target_track.clip_index];
+                span_duration = blend_span->world_time_duration;
+                span_local_u =
+                    (world_time - blend_span->world_time_start) / span_duration;
+            }
+            else
+            {
+                const auto iterator = std::find_if(
+                    schedule.playback_spans.begin(),
+                    schedule.playback_spans.end(),
+                    [world_time](const physics::scheduled_animation_clip_span& value)
+                    {
+                        return world_time >= value.world_time_start &&
+                            world_time <
+                                value.world_time_start + value.world_time_duration;
+                    });
+                if (iterator == schedule.playback_spans.end() ||
+                    !model_snapshot.has_animation_playback ||
+                    model_snapshot.animation_playback.track.clip_index >=
+                        model.source_model.animations.size())
+                {
+                    diagnostic =
+                        "Animation Playback Segment start does not resolve an immutable Key-bounded Clip Span.";
+                    return false;
+                }
+                playback_span = &(*iterator);
+                source_clip = &model.source_model.animations[
+                    model_snapshot.animation_playback.track.clip_index];
+                span_duration = playback_span->world_time_duration;
+                span_local_u =
+                    (world_time - playback_span->world_time_start) / span_duration;
+            }
+
+            if (source_clip == nullptr ||
+                !finite_double(span_duration) ||
+                span_duration <= 0.0 ||
+                !finite_double(span_local_u) ||
+                span_local_u < 0.0 || span_local_u > 1.0)
+            {
+                diagnostic =
+                    "Animation Segment has an invalid Clip reference, World duration or normalized Span coordinate.";
+                return false;
+            }
+
+            physics::animation_hierarchy_sample_result pose;
+            if (blend_span != nullptr)
+            {
+                pose = physics::evaluate_animation_blend_clip_hierarchy(
+                    model.source_model,
+                    *source_clip,
+                    *target_clip,
+                    *blend_span,
+                    span_local_u);
+            }
+            else
+            {
+                pose = physics::evaluate_animation_clip_hierarchy(
+                    model.source_model,
+                    *source_clip,
+                    playback_span->clip,
+                    span_local_u,
+                    span_duration);
+            }
+            if (!pose.success)
+            {
+                diagnostic =
+                    "CPU Animation Hierarchy / Skin Matrix evaluation failed before GPU Submission: " +
+                    pose.message;
+                return false;
+            }
+
+            const auto skin_pose_iterator = std::find_if(
+                pose.value.skin_poses.begin(),
+                pose.value.skin_poses.end(),
+                [&gpu_mesh](const physics::animation_skin_pose& value)
+                {
+                    return value.mesh_node_index == gpu_mesh.skin_node_index &&
+                        value.skin_index == gpu_mesh.skin_index;
+                });
+            if (skin_pose_iterator == pose.value.skin_poses.end() ||
+                skin_pose_iterator->skin_matrices.size() !=
+                    gpu_mesh.skin_joint_count ||
+                skin_pose_iterator->skin_matrix_derivatives.size() !=
+                    gpu_mesh.skin_joint_count)
+            {
+                diagnostic =
+                    "Animation Hierarchy did not publish the exact Mesh Node / Skin Joint mapping required by the registered Physics Mesh.";
+                return false;
+            }
+
+            const asset::mat4 root_matrix =
+                make_root_transform_matrix(model_snapshot.root_transform);
+            std::vector<physics::gpu_matrix4x4> skin_matrices(
+                gpu_mesh.skin_joint_count);
+            std::vector<physics::gpu_matrix4x4> skin_matrix_derivatives(
+                gpu_mesh.skin_joint_count);
+            for (uint32_t joint_index = 0u;
+                joint_index < gpu_mesh.skin_joint_count;
+                ++joint_index)
+            {
+                const asset::mat4 world_skin_matrix = multiply_asset_matrices(
+                    root_matrix,
+                    skin_pose_iterator->skin_matrices[joint_index]);
+                const asset::mat4 world_skin_derivative = multiply_asset_matrices(
+                    root_matrix,
+                    skin_pose_iterator->skin_matrix_derivatives[joint_index]);
+                if (!finite_asset_matrix(world_skin_matrix) ||
+                    !finite_asset_matrix(world_skin_derivative))
+                {
+                    diagnostic =
+                        "Animation Skin Matrix / analytic derivative became non-finite after Model Root composition.";
+                    return false;
+                }
+                skin_matrices[joint_index] =
+                    to_gpu_matrix(world_skin_matrix);
+                skin_matrix_derivatives[joint_index] =
+                    to_gpu_matrix(world_skin_derivative);
+            }
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_matrix_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> skin_matrix_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_matrix_derivative_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>
+                skin_matrix_derivative_srv;
+            if (!create_structured_buffer_from_vector(
+                    device.Get(),
+                    skin_matrices,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    skin_matrix_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(),
+                    skin_matrix_buffer.Get(),
+                    gpu_mesh.skin_joint_count,
+                    skin_matrix_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(),
+                    skin_matrix_derivatives,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    skin_matrix_derivative_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(),
+                    skin_matrix_derivative_buffer.Get(),
+                    gpu_mesh.skin_joint_count,
+                    skin_matrix_derivative_srv.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate immutable per-Segment GPU Skin Matrix / derivative buffers.";
+                return false;
+            }
+
+            gpu_soft_body_skinning_parameters parameters;
+            parameters.vertex_count = gpu_mesh.vertex_count;
+            parameters.joint_count = gpu_mesh.skin_joint_count;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
+            if (!create_constant_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(parameters)),
+                    &parameters,
+                    parameter_buffer.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate immutable per-Segment GPU Skinning Parameters.";
+                return false;
+            }
+
+            const uint32_t clear_status = 0u;
+            immediate_context->UpdateSubresource(
+                gpu_mesh.animation_target_status_buffer.Get(),
+                0u, nullptr, &clear_status, 0u, 0u);
+
+            simulation::compute_pass_desc skinning_pass;
+            skinning_pass.name =
+                "soft_body_animation_skinning_m" +
+                std::to_string(schedule.model_index) + "_mesh" +
+                std::to_string(gpu_mesh.mesh_index) + "_world_time" +
+                std::to_string(world_time);
+            skinning_pass.shader = soft_body_animation_skinning_shader.Get();
+            skinning_pass.shader_resources = {
+                { 0u, gpu_mesh.rest_positions_srv.Get() },
+                { 1u, gpu_mesh.skin_weights_srv.Get() },
+                { 2u, skin_matrix_srv.Get() },
+                { 3u, skin_matrix_derivative_srv.Get() }
+            };
+            skinning_pass.unordered_access_views = {
+                { 0u, gpu_mesh.animation_target_positions_uav.Get(), 0xffffffffu },
+                { 1u, gpu_mesh.animation_target_velocities_uav.Get(), 0xffffffffu },
+                { 2u, gpu_mesh.animation_target_status_uav.Get(), 0xffffffffu }
+            };
+            skinning_pass.constant_buffers = {
+                { 0u, parameter_buffer.Get() }
+            };
+            skinning_pass.group_count_x = std::max(
+                1u, (gpu_mesh.vertex_count + 63u) / 64u);
+            if (!graph.add_pass(skinning_pass, diagnostic))
+            {
+                return false;
+            }
+
+            out_segment_parameter_buffers.push_back(
+                std::move(parameter_buffer));
+            out_segment_shader_resource_views.push_back(
+                std::move(skin_matrix_srv));
+            out_segment_shader_resource_views.push_back(
+                std::move(skin_matrix_derivative_srv));
+            return true;
+        }
+
         bool append_soft_body_tick_passes(
             world_slot& world,
             const tick_input_snapshot& input_snapshot,
