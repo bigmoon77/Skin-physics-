@@ -527,6 +527,17 @@ namespace
                 world, render_binding.lease_generation).code == status_code::stale_handle,
             "A Render Lease generation must be released exactly once.");
 
+        skin_physics::runtime::render_binding latest_binding;
+        require(runtime.get_render_binding(
+                world, model, 1u, &latest_binding).success() &&
+            latest_binding.committed_tick_sequence == 3u &&
+            latest_binding.render_slot_id != render_binding.render_slot_id &&
+            latest_binding.lease_generation > render_binding.lease_generation,
+            "After the older Lease is released, the latest CPU-observed Render Candidate must become available.");
+        require(runtime.release_render_bindings(
+                world, latest_binding.lease_generation).success(),
+            "The newest Render Candidate Lease must also be releasable.");
+
         require(runtime.reset_world(world).success(),
             "Reset must restore both persistent Soft Body State Banks to the model's initial world-space pose and discard the CPU-only Tick held by the Render Lease.");
 
