@@ -674,13 +674,33 @@
             "Shader Model 5 HLSL StructuredBuffer fields read every CPU record field at the same 4-byte offsets and UAV copy preserves the complete record byte-for-byte",
             "WARP Readback covers all 8 record payload types, including the independent mutable Segment Cursor and both Matrix record arrays"
           ]
+        },
+        {
+          "id": "P09_ANIMATION_SKIN_JOINT_MAPPING",
+          "checks": [
+            "Every Skinned Mesh Node has one immutable Skin Record with its topological Channel offset, Asset Skin Index and contiguous ordered Joint range",
+            "Each Skin Joint Record references the Track-local topological Joint Channel offset, the Asset Joint Node Index and the absolute Skin-specific Inverse Bind Matrix index",
+            "Two Skinned Mesh Nodes may reference different Skin Joint sets, including overlapping Joint Nodes, without losing either Mesh-to-Skin association",
+            "A shared Joint Node may use a different Inverse Bind Matrix in each Skin; each Skin Joint record resolves its own matrix while the Channel compatibility field retains the first encountered matrix index",
+            "Invalid Skin, Joint, Inverse Bind or uint32 record range fails Packet construction atomically without publishing a partial Skin table"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
+          "checks": [
+            "C++ Animation Skin and Skin Joint records have a fixed 16-byte standard-layout / trivially-copyable ABI with explicit field offsets",
+            "Shader Model 5 StructuredBuffer SRV and UAV access reads every Skin / Joint mapping field at the expected offset",
+            "WARP Readback preserves both Skin Record and Skin Joint Record payloads byte-for-byte"
+          ]
         }
       ],
       "automated_cases": [
         "P09_ANIMATION_TARGET",
         "P09_WARP_ANIMATION_AND_TELEPORT",
         "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER",
-        "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI"
+        "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI",
+        "P09_ANIMATION_SKIN_JOINT_MAPPING",
+        "P09_WARP_ANIMATION_SKIN_JOINT_ABI"
       ],
       "unimplemented": [
         "Multi-key runtime clip sampling, cubic curves and node-hierarchy binding in the GPU path",
