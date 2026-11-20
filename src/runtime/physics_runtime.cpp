@@ -1006,6 +1006,7 @@ namespace skin_physics::runtime
             bool from_single_step = false;
             bool blocked = false;
             bool rejected = false;
+            bool predecessor_blocked = false;
             uint64_t budget_revision = 0u;
             uint32_t planned_substeps = 0u;
             uint32_t planned_integration_segments = 0u;
@@ -1034,6 +1035,7 @@ namespace skin_physics::runtime
             world_desc description;
             world_execution_budget execution_budget;
             uint64_t execution_budget_revision = 1u;
+            bool cpu_preflight_block_status_observed = false;
             playback_state playback = playback_state::stopped;
             double accumulator_seconds = 0.0;
             double requested_simulation_time = 0.0;
@@ -2820,6 +2822,7 @@ namespace skin_physics::runtime
                 }
                 world.planned_substeps = 0u;
                 world.planned_integration_segments = 0u;
+                world.cpu_preflight_block_status_observed = false;
                 if (world.in_flight_tick_count != 0u)
                 {
                     world.state = tick_state::in_flight;
@@ -2840,6 +2843,28 @@ namespace skin_physics::runtime
                 world.state = tick_state::rejected;
                 world.last_tick_status = status_code::step_rejected;
                 return;
+            }
+            if (reservation.predecessor_blocked)
+            {
+                const bool predecessor_is_now_committed =
+                    world.gpu_committed_sequence !=
+                        std::numeric_limits<uint64_t>::max() &&
+                    reservation.sequence ==
+                        world.gpu_committed_sequence + 1u;
+                if (!predecessor_is_now_committed)
+                {
+                    reservation.blocked = true;
+                    world.state = tick_state::blocked;
+                    world.last_tick_status = status_code::blocked_by_predecessor;
+                    world.budget_block_origin = work_budget_block_origin::none;
+                    world.budget_resolution = work_budget_resolution::retryable;
+                    world.work_budget_block_flags = 0u;
+                    world.cpu_preflight_block_status_observed = false;
+                    world.diagnostic =
+                        "Head Reservation remains blocked until its predecessor Commit is CPU-observed.";
+                    return;
+                }
+                reservation.predecessor_blocked = false;
             }
             reservation.blocked = false;
             double dt_limit = std::numeric_limits<double>::infinity();
@@ -2955,6 +2980,7 @@ namespace skin_physics::runtime
 
             if (reservation.blocked)
             {
+                world.cpu_preflight_block_status_observed = false;
                 world.budget_block_origin = work_budget_block_origin::cpu_preflight;
                 world.budget_resolution = hard_limit_exceeded
                     ? work_budget_resolution::hard_limit_reached
@@ -2970,6 +2996,7 @@ namespace skin_physics::runtime
             }
 
             reservation.blocked = false;
+            world.cpu_preflight_block_status_observed = false;
             world.state = tick_state::pending;
         }
 
@@ -3778,6 +3805,7 @@ namespace skin_physics::runtime
         world.execution_budget.maximum_integration_segments_per_tick =
             desc.maximum_integration_segments_per_tick;
         world.execution_budget_revision = 1u;
+        world.cpu_preflight_block_status_observed = false;
         world.playback = playback_state::stopped;
         world.accumulator_seconds = 0.0;
         world.requested_simulation_time = 0.0;
@@ -5467,6 +5495,7 @@ namespace skin_physics::runtime
         world->cpu_observed_sequence = 0u;
         world->next_tick_sequence = 1u;
         world->pending_single_step_requests = 0u;
+        world->cpu_preflight_block_status_observed = false;
         world->reservations.clear();
         world->in_flight_ticks.clear();
         world->in_flight_tick_count = 0u;
