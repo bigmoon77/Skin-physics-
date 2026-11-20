@@ -3760,8 +3760,8 @@ namespace
             create_constant_buffer(device.Get(), &parameters, sizeof(parameters));
         const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
             device.Get(),
-            test_support::fixture_path(
-                "phase09_animation/physics_mesh_skinning.cs.hlsl"),
+            test_support::fixture_directory().parent_path().parent_path() /
+                "shaders" / "runtime" / "soft_body_animation_skinning.cs.hlsl",
             "main");
 
         dispatch_compute(
