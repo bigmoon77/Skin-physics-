@@ -337,7 +337,8 @@ namespace skin_physics::physics
         invalid_transform,
         invalid_hierarchy,
         invalid_skin,
-        singular_mesh_node
+        singular_mesh_node,
+        invalid_blend
     };
 
     struct animation_skin_pose
