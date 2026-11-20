@@ -2210,4 +2210,385 @@ namespace skin_physics::physics
         return result;
     }
 
+    animation_blend_clip_span_schedule_result schedule_animation_blend_clip_spans(
+        const asset::animation_clip& source_clip,
+        uint32_t source_node_count,
+        double source_clip_time_start,
+        double source_playback_speed,
+        bool source_loop,
+        const asset::animation_clip& target_clip,
+        uint32_t target_node_count,
+        double target_clip_time_start,
+        double target_playback_speed,
+        bool target_loop,
+        const animation_blend_weight_curve_desc& blend_curve,
+        double world_time_start,
+        double world_time_duration,
+        uint32_t maximum_span_count)
+    {
+        animation_blend_clip_span_schedule_result result;
+        if (!std::isfinite(world_time_start) ||
+            !std::isfinite(world_time_duration) ||
+            world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_start + world_time_duration) ||
+            world_time_start + world_time_duration == world_time_start ||
+            maximum_span_count == 0u)
+        {
+            result.error = animation_blend_clip_span_error::invalid_time;
+            result.message =
+                "Animation Blend Clip scheduling requires one finite positive Logical Tick and a non-zero Span limit.";
+            return result;
+        }
+
+        animation_clip_span_schedule_result source_schedule =
+            schedule_animation_clip_playback_spans(
+                source_clip,
+                source_node_count,
+                source_clip_time_start,
+                source_playback_speed,
+                source_loop,
+                world_time_start,
+                world_time_duration,
+                maximum_span_count);
+        if (!source_schedule.success)
+        {
+            result.error =
+                source_schedule.error ==
+                    animation_channel_span_error::capacity_exceeded
+                    ? animation_blend_clip_span_error::capacity_exceeded
+                    : animation_blend_clip_span_error::invalid_source_clip;
+            result.message =
+                "Source Animation Clip could not be scheduled: " +
+                source_schedule.message;
+            return result;
+        }
+
+        animation_clip_span_schedule_result target_schedule =
+            schedule_animation_clip_playback_spans(
+                target_clip,
+                target_node_count,
+                target_clip_time_start,
+                target_playback_speed,
+                target_loop,
+                world_time_start,
+                world_time_duration,
+                maximum_span_count);
+        if (!target_schedule.success)
+        {
+            result.error =
+                target_schedule.error ==
+                    animation_channel_span_error::capacity_exceeded
+                    ? animation_blend_clip_span_error::capacity_exceeded
+                    : animation_blend_clip_span_error::invalid_target_clip;
+            result.message =
+                "Target Animation Clip could not be scheduled: " +
+                target_schedule.message;
+            return result;
+        }
+
+        animation_blend_weight_spans_build_result weight_schedule =
+            build_animation_blend_weight_spans(
+                blend_curve, world_time_start, world_time_duration);
+        if (!weight_schedule.success)
+        {
+            result.error =
+                weight_schedule.error == animation_blend_weight_error::invalid_time
+                    ? animation_blend_clip_span_error::invalid_time
+                    : animation_blend_clip_span_error::invalid_blend_curve;
+            result.message =
+                "Animation Blend Weight Curve could not be scheduled: " +
+                weight_schedule.message;
+            return result;
+        }
+
+        std::vector<double> boundaries;
+        boundaries.reserve(
+            2u +
+            source_schedule.values.size() * 2u +
+            target_schedule.values.size() * 2u +
+            weight_schedule.values.size() * 2u);
+        const double world_time_end =
+            world_time_start + world_time_duration;
+        boundaries.push_back(world_time_start);
+        boundaries.push_back(world_time_end);
+
+        const auto append_clip_boundaries =
+            [&boundaries](const animation_clip_span_schedule_result& schedule)
+        {
+            for (const scheduled_animation_clip_span& span : schedule.values)
+            {
+                boundaries.push_back(span.world_time_start);
+                boundaries.push_back(
+                    span.world_time_start + span.world_time_duration);
+            }
+        };
+        append_clip_boundaries(source_schedule);
+        append_clip_boundaries(target_schedule);
+        for (const animation_blend_weight_span& span : weight_schedule.values)
+        {
+            boundaries.push_back(span.world_time_start);
+            boundaries.push_back(span.world_time_start + span.world_time_duration);
+        }
+
+        std::sort(boundaries.begin(), boundaries.end());
+        boundaries.erase(
+            std::unique(boundaries.begin(), boundaries.end()),
+            boundaries.end());
+        if (boundaries.size() < 2u ||
+            boundaries.front() != world_time_start ||
+            boundaries.back() != world_time_end)
+        {
+            result.error = animation_blend_clip_span_error::invalid_time;
+            result.message =
+                "Merged Animation Blend Clip boundaries do not exactly cover the Logical Tick.";
+            return result;
+        }
+
+        if (boundaries.size() - 1u >
+            static_cast<std::size_t>(maximum_span_count) ||
+            boundaries.size() - 1u >
+            static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+        {
+            result.error = animation_blend_clip_span_error::capacity_exceeded;
+            result.message =
+                "Merged Animation Blend Clip Span count exceeds the configured or uint32 capacity.";
+            return result;
+        }
+
+        const auto find_covering_clip_span =
+            [](const animation_clip_span_schedule_result& schedule,
+                double interval_start,
+                double interval_end,
+                const scheduled_animation_clip_span*& out_span) -> bool
+        {
+            out_span = nullptr;
+            for (const scheduled_animation_clip_span& candidate : schedule.values)
+            {
+                const double candidate_end =
+                    candidate.world_time_start + candidate.world_time_duration;
+                if (candidate.world_time_start <= interval_start &&
+                    candidate_end >= interval_end)
+                {
+                    out_span = &candidate;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        const auto find_covering_weight_span =
+            [&weight_schedule](
+                double interval_start,
+                double interval_end,
+                const animation_blend_weight_span*& out_span) -> bool
+        {
+            out_span = nullptr;
+            for (const animation_blend_weight_span& candidate :
+                weight_schedule.values)
+            {
+                const double candidate_end =
+                    candidate.world_time_start + candidate.world_time_duration;
+                if (candidate.world_time_start <= interval_start &&
+                    candidate_end >= interval_end)
+                {
+                    out_span = &candidate;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        result.values.reserve(boundaries.size() - 1u);
+        for (std::size_t span_index = 0u;
+            span_index + 1u < boundaries.size(); ++span_index)
+        {
+            const double interval_start = boundaries[span_index];
+            const double interval_end = boundaries[span_index + 1u];
+            const double interval_duration =
+                interval_end - interval_start;
+            if (!std::isfinite(interval_start) ||
+                !std::isfinite(interval_end) ||
+                !std::isfinite(interval_duration) ||
+                interval_duration <= 0.0 ||
+                interval_start < world_time_start ||
+                interval_end > world_time_end)
+            {
+                result.values.clear();
+                result.error = animation_blend_clip_span_error::invalid_time;
+                result.message =
+                    "Merged Animation Blend Clip interval is not a positive ordered subinterval of the Logical Tick.";
+                return result;
+            }
+
+            const scheduled_animation_clip_span* source_span = nullptr;
+            const scheduled_animation_clip_span* target_span = nullptr;
+            const animation_blend_weight_span* weight_span = nullptr;
+            if (!find_covering_clip_span(
+                    source_schedule, interval_start, interval_end, source_span) ||
+                !find_covering_clip_span(
+                    target_schedule, interval_start, interval_end, target_span) ||
+                !find_covering_weight_span(
+                    interval_start, interval_end, weight_span) ||
+                source_span == nullptr || target_span == nullptr ||
+                weight_span == nullptr)
+            {
+                result.values.clear();
+                result.error = animation_blend_clip_span_error::invalid_time;
+                result.message =
+                    "A merged Animation Blend interval is not covered by exactly one Source, Target and Blend Weight Span.";
+                return result;
+            }
+
+            const auto rebuild_clip_interval =
+                [interval_start, interval_end, interval_duration](
+                    const scheduled_animation_clip_span& source,
+                    const asset::animation_clip& clip,
+                    uint32_t node_count,
+                    scheduled_animation_clip_span& output,
+                    std::string& diagnostic) -> bool
+            {
+                const double source_duration = source.world_time_duration;
+                if (!std::isfinite(source_duration) || source_duration <= 0.0)
+                {
+                    diagnostic =
+                        "Source scheduled Clip Span has a non-positive World-Time duration.";
+                    return false;
+                }
+                const double u0 =
+                    (interval_start - source.world_time_start) / source_duration;
+                const double u1 =
+                    (interval_end - source.world_time_start) / source_duration;
+                if (!std::isfinite(u0) || !std::isfinite(u1) ||
+                    u0 < 0.0 || u1 > 1.0 || u1 <= u0)
+                {
+                    diagnostic =
+                        "Merged Blend interval cannot be mapped into its source Clip Span local coordinate.";
+                    return false;
+                }
+                const double clip_time_start =
+                    source.clip.clip_time_start +
+                    source.clip.clip_time_delta * u0;
+                const double clip_time_delta =
+                    source.clip.clip_time_delta * (u1 - u0);
+                if (!std::isfinite(clip_time_start) ||
+                    !std::isfinite(clip_time_delta) ||
+                    !std::isfinite(clip_time_start + clip_time_delta) ||
+                    (source.clip.clip_time_delta != 0.0 &&
+                        clip_time_delta == 0.0))
+                {
+                    diagnostic =
+                        "Merged Blend interval cannot represent its source Clip-Time partition.";
+                    return false;
+                }
+
+                animation_clip_spans_build_result rebuilt =
+                    build_animation_clip_spans(
+                        clip, node_count, clip_time_start, clip_time_delta);
+                if (!rebuilt.success || rebuilt.values.size() != 1u)
+                {
+                    diagnostic =
+                        "Merged Blend interval could not rebuild one key-bounded Clip Span: " +
+                        rebuilt.message;
+                    return false;
+                }
+
+                output.clip = std::move(rebuilt.values.front());
+                output.world_time_start = interval_start;
+                output.world_time_duration = interval_duration;
+                return true;
+            };
+
+            animation_blend_clip_span scheduled;
+            scheduled.span_index = static_cast<uint32_t>(span_index);
+            scheduled.world_time_start = interval_start;
+            scheduled.world_time_duration = interval_duration;
+            std::string diagnostic;
+            if (!rebuild_clip_interval(
+                    *source_span, source_clip, source_node_count,
+                    scheduled.source, diagnostic))
+            {
+                result.values.clear();
+                result.error = animation_blend_clip_span_error::invalid_source_clip;
+                result.message =
+                    "Source Clip could not be synchronized to the merged Blend interval: " +
+                    diagnostic;
+                return result;
+            }
+            if (!rebuild_clip_interval(
+                    *target_span, target_clip, target_node_count,
+                    scheduled.target, diagnostic))
+            {
+                result.values.clear();
+                result.error = animation_blend_clip_span_error::invalid_target_clip;
+                result.message =
+                    "Target Clip could not be synchronized to the merged Blend interval: " +
+                    diagnostic;
+                return result;
+            }
+
+            const double weight_source_duration =
+                weight_span->world_time_duration;
+            const double weight_u0 =
+                (interval_start - weight_span->world_time_start) /
+                weight_source_duration;
+            const double weight_u1 =
+                (interval_end - weight_span->world_time_start) /
+                weight_source_duration;
+            const double weight_u_delta = weight_u1 - weight_u0;
+            if (!std::isfinite(weight_u0) ||
+                !std::isfinite(weight_u1) ||
+                !std::isfinite(weight_u_delta) ||
+                weight_u0 < 0.0 || weight_u1 > 1.0 ||
+                weight_u_delta <= 0.0)
+            {
+                result.values.clear();
+                result.error = animation_blend_clip_span_error::invalid_time;
+                result.message =
+                    "Merged Blend interval cannot be mapped into its Hermite Weight Span local coordinate.";
+                return result;
+            }
+
+            const double u0_squared = weight_u0 * weight_u0;
+            const double u_delta_squared = weight_u_delta * weight_u_delta;
+            const double c0 = weight_span->coefficients[0];
+            const double c1 = weight_span->coefficients[1];
+            const double c2 = weight_span->coefficients[2];
+            const double c3 = weight_span->coefficients[3];
+            scheduled.blend_weight.world_time_start = interval_start;
+            scheduled.blend_weight.world_time_duration = interval_duration;
+            scheduled.blend_weight.coefficients = {
+                ((c3 * weight_u0 + c2) * weight_u0 + c1) *
+                    weight_u0 + c0,
+                weight_u_delta *
+                    (c1 + 2.0 * c2 * weight_u0 +
+                        3.0 * c3 * u0_squared),
+                u_delta_squared *
+                    (c2 + 3.0 * c3 * weight_u0),
+                u_delta_squared * weight_u_delta * c3
+            };
+            if (!std::all_of(
+                    scheduled.blend_weight.coefficients.begin(),
+                    scheduled.blend_weight.coefficients.end(),
+                    [](double value) { return std::isfinite(value); }))
+            {
+                result.values.clear();
+                result.error = animation_blend_clip_span_error::invalid_blend_curve;
+                result.message =
+                    "Merged Blend Weight coefficient reparameterization produced a non-finite value.";
+                return result;
+            }
+
+            result.values.push_back(std::move(scheduled));
+        }
+
+        result.success = !result.values.empty();
+        if (!result.success)
+        {
+            result.error = animation_blend_clip_span_error::invalid_time;
+            result.message =
+                "Animation Blend Clip Scheduler produced an empty synchronized partition.";
+        }
+        return result;
+    }
+
 }
