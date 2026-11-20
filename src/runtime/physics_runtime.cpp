@@ -1988,6 +1988,22 @@ namespace skin_physics::runtime
             const std::vector<gpu_float4> empty_animation_targets(
                 mesh.rest_positions.size(), gpu_float4{});
             const std::vector<uint32_t> empty_animation_target_status(1u, 0u);
+            std::vector<float> initial_animation_tracking_weights(
+                mesh.rest_positions.size(), 1.0f);
+            if (mesh.vertex_attribute_weights.size() ==
+                mesh.rest_positions.size())
+            {
+                const std::size_t tracking_channel =
+                    static_cast<std::size_t>(
+                        asset::physics_attribute_channel::animation_tracking);
+                for (std::size_t vertex_index = 0u;
+                    vertex_index < mesh.rest_positions.size();
+                    ++vertex_index)
+                {
+                    initial_animation_tracking_weights[vertex_index] =
+                        mesh.vertex_attribute_weights[vertex_index][tracking_channel];
+                }
+            }
 
             const UINT state_bind_flags =
                 D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
@@ -2061,6 +2077,22 @@ namespace skin_physics::runtime
             {
                 diagnostic =
                     "Unable to upload immutable Mesh-local Rest Position records for the Soft Body GPU Mesh.";
+                return false;
+            }
+
+            if (!create_structured_buffer_from_vector(
+                    device.Get(),
+                    initial_animation_tracking_weights,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.animation_tracking_weights_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(),
+                    candidate.animation_tracking_weights_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.animation_tracking_weights_srv.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to upload per-vertex Animation Tracking Paint weights.";
                 return false;
             }
 
@@ -2675,12 +2707,37 @@ namespace skin_physics::runtime
                 inverse_mass = static_cast<float>(remapped);
             }
 
-            if (vertex_damping_rates.size() != gpu_mesh.vertex_count)
+            if (vertex_damping_rates.size() != gpu_mesh.vertex_count ||
+                mesh_snapshot->vertex_attribute_weights.size() !=
+                    gpu_mesh.vertex_count ||
+                gpu_mesh.animation_tracking_weights_buffer == nullptr)
             {
-                diagnostic = "Soft Body vertex damping-rate count changed after GPU resource creation.";
+                diagnostic =
+                    "Soft Body Damping / Animation Tracking Paint layout changed after GPU resource creation.";
                 return false;
             }
+            const std::size_t tracking_channel =
+                static_cast<std::size_t>(
+                    asset::physics_attribute_channel::animation_tracking);
+            std::vector<float> tracking_weights(gpu_mesh.vertex_count, 0.0f);
+            for (uint32_t vertex_index = 0u;
+                vertex_index < gpu_mesh.vertex_count; ++vertex_index)
+            {
+                const float weight =
+                    mesh_snapshot->vertex_attribute_weights[vertex_index]
+                        [tracking_channel];
+                if (!finite_float(weight) || weight < 0.0f || weight > 1.0f)
+                {
+                    diagnostic =
+                        "Soft Body Animation Tracking Paint contains a non-finite or out-of-range vertex weight.";
+                    return false;
+                }
+                tracking_weights[vertex_index] = weight;
+            }
 
+            immediate_context->UpdateSubresource(
+                gpu_mesh.animation_tracking_weights_buffer.Get(),
+                0u, nullptr, tracking_weights.data(), 0u, 0u);
             immediate_context->UpdateSubresource(
                 gpu_mesh.tetrahedron_buffer.Get(), 0u, nullptr,
                 tet_inputs.data(), 0u, 0u);
@@ -3808,6 +3865,17 @@ namespace skin_physics::runtime
                     work.model = &model;
                     work.gpu_mesh = &gpu_mesh;
                     work.damping_rate = damping_rate;
+                    const mesh_physics_parameters parameters =
+                        model_snapshot->mesh_parameters_valid[gpu_mesh.mesh_index]
+                            ? model_snapshot->mesh_parameters[gpu_mesh.mesh_index]
+                            : mesh_physics_parameters{};
+                    const std::size_t tracking_channel =
+                        static_cast<std::size_t>(
+                            asset::physics_attribute_channel::animation_tracking);
+                    work.tracking_stiffness = parameters.tracking_stiffness;
+                    work.tracking_damping = parameters.tracking_damping;
+                    work.tracking_attribute_multiplier =
+                        parameters.attribute_multipliers[tracking_channel];
                     work.source_bank = source_state_set;
                     mesh_work.push_back(work);
                 }
