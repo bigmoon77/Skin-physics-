@@ -1266,6 +1266,77 @@ namespace
             std::abs(paused_rotation.value.world_time_derivative.w) <= 1.0e-6f,
             "Paused LINEAR rotation must sample the current interpolated quaternion with zero velocity.");
 
+        animation_track cubic_rotation;
+        cubic_rotation.node_index = 7u;
+        cubic_rotation.path = animation_path::rotation;
+        cubic_rotation.mode = interpolation::cubic_spline;
+        cubic_rotation.component_count = 4u;
+        animation_key cubic_rotation_start;
+        cubic_rotation_start.time = 0.0f;
+        cubic_rotation_start.in_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cubic_rotation_start.value = { 0.0f, 0.0f, 0.0f, 1.0f };
+        cubic_rotation_start.out_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        animation_key cubic_rotation_end;
+        cubic_rotation_end.time = 2.0f;
+        cubic_rotation_end.in_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cubic_rotation_end.value = rotation_end.value;
+        cubic_rotation_end.out_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cubic_rotation.keys = {
+            cubic_rotation_start, cubic_rotation_end
+        };
+        const animation_channel_span_build_result cubic_rotation_span =
+            skin_physics::physics::build_animation_channel_span(
+                cubic_rotation, 0.5, 1.0);
+        const animation_channel_span_sample_result cubic_rotation_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                cubic_rotation_span.value, 0.5, 0.5);
+        const float cubic_rotation_norm = std::sqrt(
+            cubic_rotation_mid.value.value.x * cubic_rotation_mid.value.value.x +
+            cubic_rotation_mid.value.value.y * cubic_rotation_mid.value.value.y +
+            cubic_rotation_mid.value.value.z * cubic_rotation_mid.value.value.z +
+            cubic_rotation_mid.value.value.w * cubic_rotation_mid.value.value.w);
+        const float cubic_rotation_derivative_dot =
+            cubic_rotation_mid.value.value.x *
+                cubic_rotation_mid.value.world_time_derivative.x +
+            cubic_rotation_mid.value.value.y *
+                cubic_rotation_mid.value.world_time_derivative.y +
+            cubic_rotation_mid.value.value.z *
+                cubic_rotation_mid.value.world_time_derivative.z +
+            cubic_rotation_mid.value.value.w *
+                cubic_rotation_mid.value.world_time_derivative.w;
+        require(cubic_rotation_span.success && cubic_rotation_mid.success &&
+            std::abs(cubic_rotation_mid.value.value.z -
+                std::sin(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(cubic_rotation_mid.value.value.w -
+                std::cos(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(cubic_rotation_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(cubic_rotation_derivative_dot) <= 1.0e-5f,
+            "CUBICSPLINE Quaternion Span must normalize its raw Hermite polynomial and project its analytic derivative onto the quaternion tangent space.");
+
+        animation_track one_key_track;
+        one_key_track.node_index = 8u;
+        one_key_track.path = animation_path::translation;
+        one_key_track.mode = interpolation::linear;
+        one_key_track.component_count = 3u;
+        animation_key only_key;
+        only_key.time = 1.0f;
+        only_key.value = { 7.0f, 8.0f, 9.0f };
+        one_key_track.keys = { only_key };
+        const animation_channel_span_build_result one_key_span =
+            skin_physics::physics::build_animation_channel_span(
+                one_key_track, -2.0, 5.0);
+        const animation_channel_span_sample_result one_key_sample =
+            skin_physics::physics::evaluate_animation_channel_span(
+                one_key_span.value, 0.5, 0.5);
+        require(one_key_span.success && one_key_sample.success &&
+            one_key_sample.value.value.x == 7.0f &&
+            one_key_sample.value.value.y == 8.0f &&
+            one_key_sample.value.value.z == 9.0f &&
+            one_key_sample.value.world_time_derivative.x == 0.0f &&
+            one_key_sample.value.world_time_derivative.y == 0.0f &&
+            one_key_sample.value.world_time_derivative.z == 0.0f,
+            "A one-key Animation Track must remain a constant Span even when the requested Clip-Time range crosses its only key.");
+
         animation_track key_bounded_track = linear_translation;
         animation_key middle_key;
         middle_key.time = 1.0f;
