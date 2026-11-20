@@ -4,6 +4,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -373,6 +374,33 @@ namespace
         skin_physics::runtime::world_handle world;
         require(runtime.create_world(world_desc, &world).success(),
             "Soft Body Runtime World creation must succeed.");
+
+        skin_physics::runtime::model_desc invalid_rest_inverse_desc = model_desc;
+        invalid_rest_inverse_desc.mesh_physics_assets[0].physics_mesh
+            .tetrahedra[0].rest_inverse[0] =
+                std::numeric_limits<float>::quiet_NaN();
+        skin_physics::runtime::model_handle invalid_model;
+        require(runtime.add_model(
+                world, invalid_rest_inverse_desc, &invalid_model).code ==
+                    status_code::asset_invalid,
+            "Runtime must reject non-finite rest inverse data before allocating Soft Body GPU resources.");
+
+        skin_physics::runtime::model_desc invalid_csr_desc = model_desc;
+        invalid_csr_desc.mesh_physics_assets[0].physics_mesh
+            .vertex_tetrahedron_ids[0] =
+                std::numeric_limits<uint32_t>::max();
+        require(runtime.add_model(
+                world, invalid_csr_desc, &invalid_model).code ==
+                    status_code::asset_invalid,
+            "Runtime must reject Vertex-to-Tet CSR entries that do not exactly match Tet topology.");
+
+        skin_physics::runtime::model_desc duplicate_vertex_desc = model_desc;
+        duplicate_vertex_desc.mesh_physics_assets[0].physics_mesh
+            .tetrahedra[0].vertices[3] = 0u;
+        require(runtime.add_model(
+                world, duplicate_vertex_desc, &invalid_model).code ==
+                    status_code::asset_invalid,
+            "Runtime must reject tetrahedra with repeated vertex references.");
 
         skin_physics::runtime::model_handle model;
         require(runtime.add_model(world, model_desc, &model).success(),
