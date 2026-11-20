@@ -130,12 +130,14 @@
         "P02_TWO_TET",
         "P02_CENTER_STAR",
         "P02_CACHE",
-        "P02_TETRAHEDRALIZATION_RESOLUTION"
+        "P02_TETRAHEDRALIZATION_RESOLUTION",
+        "P02_PHYSICS_ATTRIBUTE_HARMONIC"
       ],
       "unimplemented": [
         "Running a version-pinned fTetWild executable against representative production surfaces in CI",
         "Target count is converted into a deterministic characteristic edge length; actual generated count remains fTetWild-version dependent and is recorded",
-        "External binary version detection and production-scale generator calibration"
+        "External binary version detection and production-scale generator calibration",
+        "Persisting transferred Physics Attribute Paint channels inside the binary physics asset cache"
       ],
       "automated_acceptance_tests": [
         "T13",
@@ -513,11 +515,13 @@
       ],
       "automated_cases": [
         "P10_ATTRIBUTE_PAINT",
-        "P10_WARP_ATTRIBUTE_PAINT"
+        "P10_WARP_ATTRIBUTE_PAINT",
+        "P02_PHYSICS_ATTRIBUTE_HARMONIC"
       ],
       "unimplemented": [
         "Editor brush falloff/selection UI and asset-editor persistence integration",
-        "Topology-neighbor Laplacian smoothing and multi-channel skin-weight normalization"
+        "Editor brush falloff/selection UI and asset-editor persistence integration",
+        "Runtime paint changes require a committed cache/asset serialization format for Physics Vertex weights"
       ]
     },
     {
@@ -815,7 +819,10 @@
       "include/skin_physics/simulation/d3d11_status_ring.hpp",
       "src/simulation/d3d11_status_ring.cpp",
       "tests/runtime_tests.cpp",
-      "tests/environment_tests.cpp"
+      "tests/environment_tests.cpp",
+      "include/skin_physics/physics/physics_mesh.hpp",
+      "include/skin_physics/physics/render_binding.hpp",
+      "src/physics/render_binding.cpp"
     ],
     "automated_test_groups": [
       "R0_RUNTIME_INITIALIZATION_AND_HANDLES",
@@ -823,7 +830,8 @@
       "R0_RUNTIME_SUBMISSION_THREAD_GUARD",
       "R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY",
       "R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW",
-      "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS"
+      "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
+      "P02_PHYSICS_ATTRIBUTE_HARMONIC"
     ],
     "covered_contracts": [
       "host_device_immediate_context_feature_level_and_device_identity_validation",
@@ -844,14 +852,20 @@
       "gpu_commit_status_requires_exact_state_generation_and_bank_transition",
       "soft_body_asset_upload_rejects_non_finite_rest_inverse_and_shape_gradients",
       "soft_body_asset_upload_rejects_duplicate_tetrahedron_vertices",
-      "vertex_to_tet_csr_matches_complete_ordered_topology_incidence"
+      "vertex_to_tet_csr_matches_complete_ordered_topology_incidence",
+      "render_surface_paint_transfer_to_boundary_physics_vertices",
+      "deterministic_double_precision_dirichlet_harmonic_extension_to_interior_physics_vertices",
+      "ambiguous_coincident_render_surfaces_with_conflicting_paint_are_rejected",
+      "runtime_paint_edit_refreshes_physics_mesh_attribute_transfer_transactionally",
+      "soft_body_tet_shape_and_volume_paint_average_and_vertex_damping_weight_upload"
     ],
     "remaining_r0": [
       "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
       "Render Candidate Ring, CPU-observed Render publication and Host Render Lease release",
       "Cloth / Collider solver integration into the World Runtime scheduler",
-      "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation"
+      "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation",
+      "CFL-based Soft Body stability limit now participates in World preflight; animation tracking stiffness limit and full Segment boundary table remain open"
     ],
-    "validation": "WARP runtime regression source is registered in the Windows test project; execution and C++ / HLSL compilation remain unverified until a Windows CI runner completes build-and-test."
+    "validation": "WARP / CPU regression sources are registered in the Windows test project; execution and C++ / HLSL compilation remain unverified because recent Windows CI jobs fail before reporting any build steps."
   }
 }
