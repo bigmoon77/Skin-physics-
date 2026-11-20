@@ -602,6 +602,16 @@ namespace skin_physics::physics
         const asset::animation_key& first = track.keys.front();
         const asset::animation_key& last = track.keys.back();
 
+        if (track.keys.size() == 1u)
+        {
+            // A one-key glTF sampler is constant for its entire Clip-Time
+            // domain. Its sole key is not an interior Span boundary.
+            write_constant_coefficients(candidate, first, component_count);
+            result.value = candidate;
+            result.success = true;
+            return result;
+        }
+
         if (clip_time_delta == 0.0)
         {
             if (clip_time_start <= first.time)
@@ -865,14 +875,37 @@ namespace skin_physics::physics
         double span_local_u,
         double span_duration_seconds)
     {
-        if (!std::isfinite(span_local_u) || span_local_u < 0.0 ||
+        if (span.node_index == asset::invalid_index ||
+            (span.path != asset::animation_path::translation &&
+                span.path != asset::animation_path::rotation &&
+                span.path != asset::animation_path::scale) ||
+            (span.interpolation_mode != asset::interpolation::step &&
+                span.interpolation_mode != asset::interpolation::linear &&
+                span.interpolation_mode != asset::interpolation::cubic_spline))
+        {
+            return make_span_sample_error(
+                animation_channel_span_error::invalid_track,
+                "Animation Span metadata contains an invalid Node Index, channel path or interpolation mode.");
+        }
+        if (!std::isfinite(span.clip_time_start) ||
+            !std::isfinite(span.clip_time_delta) ||
+            !std::isfinite(span_local_u) || span_local_u < 0.0 ||
             span_local_u > 1.0 ||
             !std::isfinite(span_duration_seconds) ||
             span_duration_seconds <= 0.0)
         {
             return make_span_sample_error(
                 animation_channel_span_error::invalid_time,
-                "Animation Span evaluation requires u in [0, 1] and a finite positive World-Time duration.");
+                "Animation Span evaluation requires finite Clip-Time metadata, u in [0, 1] and a finite positive World-Time duration.");
+        }
+        for (const asset::vec4& coefficient : span.coefficients)
+        {
+            if (!finite_asset_vec4(coefficient))
+            {
+                return make_span_sample_error(
+                    animation_channel_span_error::malformed_key,
+                    "Animation Span contains a non-finite coefficient.");
+            }
         }
 
         animation_channel_span_sample_result result;
