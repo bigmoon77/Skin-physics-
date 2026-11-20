@@ -15,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -97,6 +98,53 @@ namespace skin_physics::runtime
             "GPU Tick Dispatch Plan ABI must remain 64 bytes.");
         static_assert(sizeof(gpu_tick_commit_control) == 64,
             "GPU Tick Commit Control ABI must remain 64 bytes.");
+
+        struct alignas(16) gpu_soft_body_tet_input
+        {
+            uint32_t vertex_ids[4] = {};
+            float rest_inverse[3][4] = {};
+            float rest_gradients[4][4] = {};
+            float material0[4] = {};
+            float material1[4] = {};
+        };
+
+        struct alignas(16) gpu_soft_body_tet_output
+        {
+            float values[14][4] = {};
+        };
+
+        struct alignas(16) gpu_soft_body_fem_parameters
+        {
+            uint32_t tetrahedron_count = 0u;
+            uint32_t reserved[3] = {};
+        };
+
+        struct alignas(16) gpu_soft_body_gather_parameters
+        {
+            uint32_t vertex_count = 0u;
+            uint32_t reserved[3] = {};
+        };
+
+        struct alignas(16) gpu_soft_body_integration_parameters
+        {
+            uint32_t vertex_count = 0u;
+            float delta_time = 0.0f;
+            float damping_rate = 0.0f;
+            float reserved0 = 0.0f;
+            float gravity[3] = {};
+            float reserved1 = 0.0f;
+        };
+
+        static_assert(sizeof(gpu_soft_body_tet_input) == 160,
+            "Soft Body Tet Input ABI must remain 160 bytes.");
+        static_assert(sizeof(gpu_soft_body_tet_output) == 224,
+            "Soft Body Tet Output ABI must remain 224 bytes.");
+        static_assert(sizeof(gpu_soft_body_fem_parameters) == 16,
+            "Soft Body FEM Parameters ABI must remain 16 bytes.");
+        static_assert(sizeof(gpu_soft_body_gather_parameters) == 16,
+            "Soft Body Gather Parameters ABI must remain 16 bytes.");
+        static_assert(sizeof(gpu_soft_body_integration_parameters) == 32,
+            "Soft Body Integration Parameters ABI must remain 32 bytes.");
 
         struct transform_sample
         {
@@ -224,6 +272,92 @@ namespace skin_physics::runtime
                 &description,
                 initial_data != nullptr ? &initial : nullptr,
                 out_buffer));
+        }
+
+        template <typename T>
+        bool create_structured_buffer_from_vector(
+            ID3D11Device* device,
+            const std::vector<T>& values,
+            UINT bind_flags,
+            ID3D11Buffer** out_buffer)
+        {
+            static_assert(std::is_trivially_copyable<T>::value,
+                "Structured GPU buffer elements must be trivially copyable.");
+            if (values.empty() ||
+                values.size() >
+                    static_cast<std::size_t>(
+                        std::numeric_limits<uint32_t>::max() / sizeof(T)))
+            {
+                return false;
+            }
+
+            const uint32_t byte_width = static_cast<uint32_t>(
+                values.size() * sizeof(T));
+            return create_structured_buffer(
+                device,
+                byte_width,
+                static_cast<uint32_t>(sizeof(T)),
+                bind_flags,
+                values.data(),
+                out_buffer);
+        }
+
+        bool create_constant_buffer(
+            ID3D11Device* device,
+            uint32_t byte_width,
+            const void* initial_data,
+            ID3D11Buffer** out_buffer)
+        {
+            if (device == nullptr || out_buffer == nullptr ||
+                initial_data == nullptr || byte_width == 0u ||
+                (byte_width & 15u) != 0u ||
+                byte_width > D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16u)
+            {
+                return false;
+            }
+
+            D3D11_BUFFER_DESC description = {};
+            description.ByteWidth = byte_width;
+            description.Usage = D3D11_USAGE_DEFAULT;
+            description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            description.CPUAccessFlags = 0u;
+            description.MiscFlags = 0u;
+
+            D3D11_SUBRESOURCE_DATA initial = {};
+            initial.pSysMem = initial_data;
+            return SUCCEEDED(device->CreateBuffer(
+                &description, &initial, out_buffer));
+        }
+
+        asset::vec3 transform_position(
+            const transform& root,
+            const asset::vec3& local_position)
+        {
+            const asset::vec3 quaternion = {
+                root.rotation.x, root.rotation.y, root.rotation.z
+            };
+            const asset::vec3 cross0 = {
+                quaternion.y * local_position.z - quaternion.z * local_position.y,
+                quaternion.z * local_position.x - quaternion.x * local_position.z,
+                quaternion.x * local_position.y - quaternion.y * local_position.x
+            };
+            const asset::vec3 cross1 = {
+                quaternion.y * cross0.z - quaternion.z * cross0.y,
+                quaternion.z * cross0.x - quaternion.x * cross0.z,
+                quaternion.x * cross0.y - quaternion.y * cross0.x
+            };
+
+            return {
+                local_position.x + 2.0f *
+                    (root.rotation.w * cross0.x + cross1.x) +
+                    root.translation.x,
+                local_position.y + 2.0f *
+                    (root.rotation.w * cross0.y + cross1.y) +
+                    root.translation.y,
+                local_position.z + 2.0f *
+                    (root.rotation.w * cross0.z + cross1.z) +
+                    root.translation.z
+            };
         }
 
         bool create_structured_srv(
