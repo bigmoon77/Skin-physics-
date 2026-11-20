@@ -230,6 +230,42 @@ void tick_mark_empty_world_validated(uint3 dispatch_id : SV_DispatchThreadID)
 }
 
 [numthreads(1, 1, 1)]
+void tick_validate_soft_body(uint3 dispatch_id : SV_DispatchThreadID)
+{
+    if (dispatch_id.x != 0u)
+    {
+        return;
+    }
+
+    TickDispatchPlan plan = tick_dispatch_plan[0];
+    TickCommitControl control = tick_commit_control_buffer[0];
+
+    if (control.last_gate_state != TICK_GATE_READY ||
+        control.terminal_state != TICK_TERMINAL_IN_FLIGHT)
+    {
+        publish_tick_status(plan, control);
+        return;
+    }
+
+    if (control.terminal_failure != 0u)
+    {
+        control.terminal_state = TICK_TERMINAL_REJECTED;
+        control.terminal_failure = 1u;
+        control.validation_mask = 0u;
+        control.diagnostic = 5u;
+    }
+    else
+    {
+        control.validation_mask = control.required_validation_mask;
+        control.terminal_state = TICK_TERMINAL_VALIDATED;
+        control.diagnostic = 0u;
+    }
+
+    tick_commit_control_buffer[0] = control;
+    publish_tick_status(plan, control);
+}
+
+[numthreads(1, 1, 1)]
 void tick_commit_control(uint3 dispatch_id : SV_DispatchThreadID)
 {
     if (dispatch_id.x != 0u)
