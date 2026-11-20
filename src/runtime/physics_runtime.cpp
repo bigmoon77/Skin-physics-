@@ -1350,7 +1350,9 @@ namespace skin_physics::runtime
         bool initialize_soft_body_gpu_mesh(
             uint32_t mesh_index,
             const model_mesh_physics_asset& mesh_asset,
+            const asset::mesh& render_mesh,
             const transform& root_transform,
+            uint32_t render_candidate_slot_count,
             soft_body_gpu_mesh& out_mesh,
             std::string& diagnostic)
         {
@@ -1374,6 +1376,24 @@ namespace skin_physics::runtime
             candidate.initial_positions.resize(mesh.rest_positions.size());
             candidate.initial_velocities.resize(mesh.rest_positions.size());
             candidate.initial_inverse_masses = mesh.inverse_mass;
+            if (render_mesh.vertices.empty() ||
+                render_mesh.indices.empty() ||
+                (render_mesh.indices.size() % 3u) != 0u ||
+                render_mesh.vertices.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
+                render_mesh.indices.size() >
+                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
+                mesh_asset.render_bindings.size() != render_mesh.vertices.size() ||
+                render_candidate_slot_count < 2u)
+            {
+                diagnostic =
+                    "Soft Body Render Candidate requires valid triangle topology, one Binding per Render Vertex, and at least two Ring Slots.";
+                return false;
+            }
+            candidate.render_vertex_count =
+                static_cast<uint32_t>(render_mesh.vertices.size());
+            candidate.render_index_count =
+                static_cast<uint32_t>(render_mesh.indices.size());
 
             double total_rest_mass = 0.0;
             double total_rest_volume = 0.0;
@@ -1594,6 +1614,254 @@ namespace skin_physics::runtime
             {
                 diagnostic = "Unable to allocate Soft Body Compute Parameter buffers.";
                 return false;
+            }
+
+            std::vector<gpu_soft_body_render_binding_input> render_binding_inputs(
+                render_mesh.vertices.size());
+            for (std::size_t render_index = 0u;
+                render_index < render_mesh.vertices.size(); ++render_index)
+            {
+                const physics::render_vertex_binding& source_binding =
+                    mesh_asset.render_bindings[render_index];
+                gpu_soft_body_render_binding_input& destination =
+                    render_binding_inputs[render_index];
+                for (uint32_t local_index = 0u; local_index < 4u; ++local_index)
+                {
+                    destination.physics_vertices[local_index] =
+                        source_binding.physics_vertices[local_index];
+                    destination.barycentric[local_index] =
+                        source_binding.barycentric[local_index];
+                }
+                destination.rest_offset_local[0] =
+                    source_binding.rest_offset_local.x;
+                destination.rest_offset_local[1] =
+                    source_binding.rest_offset_local.y;
+                destination.rest_offset_local[2] =
+                    source_binding.rest_offset_local.z;
+                destination.rest_offset_local[3] = 0.0f;
+                destination.metadata[0] =
+                    static_cast<uint32_t>(source_binding.kind);
+            }
+
+            std::vector<gpu_soft_body_render_vertex_input> render_vertex_inputs(
+                render_mesh.vertices.size());
+            for (std::size_t render_index = 0u;
+                render_index < render_mesh.vertices.size(); ++render_index)
+            {
+                const asset::vertex& source_vertex =
+                    render_mesh.vertices[render_index];
+                gpu_soft_body_render_vertex_input& destination =
+                    render_vertex_inputs[render_index];
+                destination.texcoord[0] = source_vertex.texcoord_0.x;
+                destination.texcoord[1] = source_vertex.texcoord_0.y;
+                destination.fallback_normal[0] = source_vertex.normal.x;
+                destination.fallback_normal[1] = source_vertex.normal.y;
+                destination.fallback_normal[2] = source_vertex.normal.z;
+                destination.fallback_normal[3] = 0.0f;
+                destination.fallback_tangent[0] = source_vertex.tangent.x;
+                destination.fallback_tangent[1] = source_vertex.tangent.y;
+                destination.fallback_tangent[2] = source_vertex.tangent.z;
+                destination.fallback_tangent[3] = source_vertex.tangent.w;
+                destination.metadata[0] = source_vertex.attributes;
+            }
+
+            std::vector<uint32_t> vertex_triangle_offsets(
+                render_mesh.vertices.size() + 1u, 0u);
+            for (std::size_t index_offset = 0u;
+                index_offset < render_mesh.indices.size();
+                index_offset += 3u)
+            {
+                const uint32_t i0 = render_mesh.indices[index_offset];
+                const uint32_t i1 = render_mesh.indices[index_offset + 1u];
+                const uint32_t i2 = render_mesh.indices[index_offset + 2u];
+                if (i0 >= candidate.render_vertex_count ||
+                    i1 >= candidate.render_vertex_count ||
+                    i2 >= candidate.render_vertex_count ||
+                    i0 == i1 || i1 == i2 || i2 == i0)
+                {
+                    diagnostic =
+                        "Soft Body Render Candidate topology contains an invalid or repeated triangle vertex.";
+                    return false;
+                }
+                ++vertex_triangle_offsets[i0 + 1u];
+                ++vertex_triangle_offsets[i1 + 1u];
+                ++vertex_triangle_offsets[i2 + 1u];
+            }
+            for (std::size_t vertex_index = 1u;
+                vertex_index < vertex_triangle_offsets.size();
+                ++vertex_index)
+            {
+                const uint64_t next =
+                    static_cast<uint64_t>(vertex_triangle_offsets[vertex_index]) +
+                    vertex_triangle_offsets[vertex_index - 1u];
+                if (next > std::numeric_limits<uint32_t>::max())
+                {
+                    diagnostic =
+                        "Soft Body Render Vertex-to-Triangle incidence count exceeds uint32.";
+                    return false;
+                }
+                vertex_triangle_offsets[vertex_index] =
+                    static_cast<uint32_t>(next);
+            }
+
+            std::vector<uint32_t> vertex_triangle_ids(
+                render_mesh.indices.size(), 0u);
+            std::vector<uint32_t> triangle_cursor = vertex_triangle_offsets;
+            const uint32_t render_triangle_count =
+                candidate.render_index_count / 3u;
+            for (uint32_t triangle_index = 0u;
+                triangle_index < render_triangle_count;
+                ++triangle_index)
+            {
+                const std::size_t index_offset =
+                    static_cast<std::size_t>(triangle_index) * 3u;
+                for (uint32_t local_index = 0u; local_index < 3u; ++local_index)
+                {
+                    const uint32_t vertex_index =
+                        render_mesh.indices[index_offset + local_index];
+                    vertex_triangle_ids[triangle_cursor[vertex_index]++] =
+                        triangle_index;
+                }
+            }
+
+            gpu_soft_body_render_parameters render_parameters;
+            render_parameters.render_vertex_count = candidate.render_vertex_count;
+            render_parameters.render_index_count = candidate.render_index_count;
+            render_parameters.root_rotation[0] = root_transform.rotation.x;
+            render_parameters.root_rotation[1] = root_transform.rotation.y;
+            render_parameters.root_rotation[2] = root_transform.rotation.z;
+            render_parameters.root_rotation[3] = root_transform.rotation.w;
+            render_parameters.inverse_root_rotation[0] = -root_transform.rotation.x;
+            render_parameters.inverse_root_rotation[1] = -root_transform.rotation.y;
+            render_parameters.inverse_root_rotation[2] = -root_transform.rotation.z;
+            render_parameters.inverse_root_rotation[3] = root_transform.rotation.w;
+
+            const asset::vec3 negative_translation = {
+                -root_transform.translation.x,
+                -root_transform.translation.y,
+                -root_transform.translation.z
+            };
+            const asset::vec3 inverse_quaternion = {
+                render_parameters.inverse_root_rotation[0],
+                render_parameters.inverse_root_rotation[1],
+                render_parameters.inverse_root_rotation[2]
+            };
+            const asset::vec3 first_cross = {
+                inverse_quaternion.y * negative_translation.z -
+                    inverse_quaternion.z * negative_translation.y,
+                inverse_quaternion.z * negative_translation.x -
+                    inverse_quaternion.x * negative_translation.z,
+                inverse_quaternion.x * negative_translation.y -
+                    inverse_quaternion.y * negative_translation.x
+            };
+            const asset::vec3 second_cross = {
+                inverse_quaternion.y * first_cross.z -
+                    inverse_quaternion.z * first_cross.y,
+                inverse_quaternion.z * first_cross.x -
+                    inverse_quaternion.x * first_cross.z,
+                inverse_quaternion.x * first_cross.y -
+                    inverse_quaternion.y * first_cross.x
+            };
+            render_parameters.inverse_root_translation[0] =
+                negative_translation.x + 2.0f *
+                    (root_transform.rotation.w * first_cross.x + second_cross.x);
+            render_parameters.inverse_root_translation[1] =
+                negative_translation.y + 2.0f *
+                    (root_transform.rotation.w * first_cross.y + second_cross.y);
+            render_parameters.inverse_root_translation[2] =
+                negative_translation.z + 2.0f *
+                    (root_transform.rotation.w * first_cross.z + second_cross.z);
+            render_parameters.inverse_root_translation[3] = 0.0f;
+
+            const UINT render_static_bind_flags = D3D11_BIND_SHADER_RESOURCE;
+            if (!create_structured_buffer_from_vector(
+                    device.Get(), render_binding_inputs, render_static_bind_flags,
+                    candidate.render_binding_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.render_binding_buffer.Get(),
+                    candidate.render_vertex_count,
+                    candidate.render_binding_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), render_vertex_inputs, render_static_bind_flags,
+                    candidate.render_vertex_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.render_vertex_buffer.Get(),
+                    candidate.render_vertex_count,
+                    candidate.render_vertex_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), render_mesh.indices, render_static_bind_flags,
+                    candidate.render_index_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.render_index_buffer.Get(),
+                    candidate.render_index_count,
+                    candidate.render_index_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), vertex_triangle_offsets, render_static_bind_flags,
+                    candidate.render_vertex_triangle_offsets_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.render_vertex_triangle_offsets_buffer.Get(),
+                    candidate.render_vertex_count + 1u,
+                    candidate.render_vertex_triangle_offsets_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), vertex_triangle_ids, render_static_bind_flags,
+                    candidate.render_vertex_triangle_ids_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.render_vertex_triangle_ids_buffer.Get(),
+                    static_cast<uint32_t>(vertex_triangle_ids.size()),
+                    candidate.render_vertex_triangle_ids_srv.GetAddressOf()) ||
+                !create_constant_buffer(
+                    device.Get(), sizeof(render_parameters), &render_parameters,
+                    candidate.render_parameters.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate Soft Body Render Binding / Topology / Parameter resources.";
+                return false;
+            }
+
+            const std::vector<gpu_float4> empty_render_stream(
+                candidate.render_vertex_count, gpu_float4{});
+            candidate.render_candidate_slots.resize(render_candidate_slot_count);
+            for (render_candidate_mesh_slot& render_slot :
+                candidate.render_candidate_slots)
+            {
+                if (!create_structured_buffer_from_vector(
+                        device.Get(), empty_render_stream, state_bind_flags,
+                        render_slot.position_buffer.GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(), render_slot.position_buffer.Get(),
+                        candidate.render_vertex_count,
+                        render_slot.position_srv.GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(), render_slot.position_buffer.Get(),
+                        candidate.render_vertex_count,
+                        render_slot.position_uav.GetAddressOf()) ||
+                    !create_structured_buffer_from_vector(
+                        device.Get(), empty_render_stream, state_bind_flags,
+                        render_slot.normal_buffer.GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(), render_slot.normal_buffer.Get(),
+                        candidate.render_vertex_count,
+                        render_slot.normal_srv.GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(), render_slot.normal_buffer.Get(),
+                        candidate.render_vertex_count,
+                        render_slot.normal_uav.GetAddressOf()) ||
+                    !create_structured_buffer_from_vector(
+                        device.Get(), empty_render_stream, state_bind_flags,
+                        render_slot.tangent_buffer.GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(), render_slot.tangent_buffer.Get(),
+                        candidate.render_vertex_count,
+                        render_slot.tangent_srv.GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(), render_slot.tangent_buffer.Get(),
+                        candidate.render_vertex_count,
+                        render_slot.tangent_uav.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate the per-Tick Render Candidate Ring Buffers.";
+                    return false;
+                }
             }
 
             out_mesh = std::move(candidate);
