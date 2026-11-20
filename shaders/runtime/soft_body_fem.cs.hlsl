@@ -441,8 +441,8 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
     bool output_finite =
         all(isfinite(force0)) && all(isfinite(force1)) &&
         all(isfinite(force2)) && all(isfinite(force3)) &&
-        isfinite(current_volume) && isfinite(elastic_energy) &&
-        jacobian > 0.0f;
+        isfinite(jacobian) && isfinite(current_volume) &&
+        isfinite(elastic_energy);
     if (!output_finite)
     {
         uint previous_failure = 0u;
@@ -450,6 +450,9 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
         return;
     }
 
+    // Publish finite diagnostic / reference values for inverted Tets too.
+    // The numerical state is still non-committable: mark the Tick failed
+    // after writing the element output so CPU/WARP can compare the penalty path.
     TetOutput output;
     output.deformation_row0 = float4(deformation[0], 0.0f);
     output.deformation_row1 = float4(deformation[1], 0.0f);
@@ -468,4 +471,10 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
         jacobian, current_volume, elastic_energy,
         used_svd_fallback ? 2.0f : 1.0f);
     outputs[index] = output;
+
+    if (jacobian <= 0.0f)
+    {
+        uint previous_failure = 0u;
+        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+    }
 }
