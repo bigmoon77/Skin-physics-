@@ -2872,6 +2872,8 @@ namespace skin_physics::runtime
             reservation.blocked = false;
             world.cpu_preflight_block_status_observed = false;
             world.gpu_dynamic_toi_block_status_observed = false;
+            world.executed_integration_segments = 0u;
+            world.minimum_required_integration_segments = 0u;
             double dt_limit = std::numeric_limits<double>::infinity();
             if (world.description.world_max_substep_delta_time > 0.0)
             {
