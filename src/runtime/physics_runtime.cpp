@@ -938,6 +938,15 @@ namespace skin_physics::runtime
                 return make_status(status_code::asset_invalid,
                     "Render Vertex Binding count must match the Render Mesh Vertex count.");
             }
+            const physics::render_feedback_result binding_validation =
+                physics::apply_render_feedback(
+                    render_mesh, mesh_asset.physics_mesh,
+                    mesh_asset.render_bindings);
+            if (!binding_validation.success)
+            {
+                return make_status(status_code::asset_invalid,
+                    "Supplied Render Vertex Bindings failed Physics Mesh validation.");
+            }
         }
 
         for (uint32_t mesh_index = 0;
@@ -1070,6 +1079,9 @@ namespace skin_physics::runtime
                 "New Collider Handle could not be resolved.");
         }
         collider->kinematic = true;
+        collider->pose_samples.push_back({
+            0.0, collider->description.initial_transform, false
+        });
         return make_status(status_code::ok, {});
     }
 
@@ -1165,13 +1177,16 @@ namespace skin_physics::runtime
         {
             return make_status(status_code::invalid_argument, "Playback State is invalid.");
         }
-        if (world->playback == state) return make_status(status_code::ok, {});
-
         if (state == playback_state::stopped &&
             world->pending_single_step_requests != 0u)
         {
             const double cancelled = static_cast<double>(
                 world->pending_single_step_requests) * world->description.fixed_delta_time;
+            if (!finite_double(world->cancelled_requested_time + cancelled))
+            {
+                return make_status(status_code::capacity_exceeded,
+                    "Cancelled requested time would overflow the World timeline.");
+            }
             world->cancelled_requested_time += cancelled;
             world->pending_single_step_requests = 0u;
         }
@@ -1195,7 +1210,7 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Fixed Delta Time must be finite and positive.");
         }
-        if (world->playback == playback_state::playing ||
+        if (world->playback != playback_state::paused ||
             world->in_flight_tick_count != 0u ||
             world->reserved_tick_time > time_epsilon ||
             count_pending_ticks(world->accumulator_seconds,
