@@ -51,7 +51,18 @@ cbuffer RenderFeedbackParameters : register(b0)
     uint render_vertex_count;
     uint render_index_count;
     uint2 reserved;
+    float4 root_rotation;
+    float4 inverse_root_rotation;
+    float4 inverse_root_translation;
 };
+
+float3 rotate_by_quaternion(float3 value, float4 rotation)
+{
+    float3 quaternion = rotation.xyz;
+    float3 first_cross = cross(quaternion, value);
+    float3 second_cross = cross(quaternion, first_cross);
+    return value + 2.0f * (rotation.w * first_cross + second_cross);
+}
 
 static const uint ATTRIBUTE_NORMAL = 1u;
 static const uint ATTRIBUTE_TANGENT = 2u;
@@ -159,6 +170,8 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
         return;
     }
+    position = rotate_by_quaternion(position, inverse_root_rotation) +
+        inverse_root_translation.xyz;
 
     RenderVertexInput vertex = render_vertices[render_vertex_index];
     float3 normal = vertex.fallback_normal.xyz;
@@ -242,30 +255,36 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         }
     }
 
+    float3 world_normal = (vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u
+        ? safe_normalize(normal_sum, vertex.fallback_normal.xyz)
+        : safe_normalize(
+            rotate_by_quaternion(vertex.fallback_normal.xyz, root_rotation),
+            float3(0.0f, 1.0f, 0.0f));
     if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u)
     {
-        normal = safe_normalize(normal_sum, vertex.fallback_normal.xyz);
+        normal = rotate_by_quaternion(world_normal, inverse_root_rotation);
     }
 
     if ((vertex.metadata.x & ATTRIBUTE_TANGENT) != 0u)
     {
-        normal = safe_normalize(normal, vertex.fallback_normal.xyz);
         float3 projected_tangent = tangent_sum -
-            normal * dot(normal, tangent_sum);
+            world_normal * dot(world_normal, tangent_sum);
         float projected_squared = dot(projected_tangent, projected_tangent);
         if (!isfinite(projected_squared) || projected_squared <= 1.0e-20f)
         {
-            float3 axis = abs(normal.z) < 0.9f
+            float3 axis = abs(world_normal.z) < 0.9f
                 ? float3(0.0f, 0.0f, 1.0f)
                 : float3(0.0f, 1.0f, 0.0f);
-            projected_tangent = cross(axis, normal);
+            projected_tangent = cross(axis, world_normal);
         }
-        float3 tangent_direction = safe_normalize(
+        float3 tangent_world = safe_normalize(
             projected_tangent, float3(1.0f, 0.0f, 0.0f));
         float handedness =
-            dot(cross(normal, tangent_direction), bitangent_sum) < 0.0f
+            dot(cross(world_normal, tangent_world), bitangent_sum) < 0.0f
                 ? -1.0f : 1.0f;
-        tangent = float4(tangent_direction, handedness);
+        tangent = float4(
+            rotate_by_quaternion(tangent_world, inverse_root_rotation),
+            handedness);
     }
 
     if (!all(isfinite(position)) || !all(isfinite(normal)) ||
