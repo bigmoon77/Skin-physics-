@@ -3434,12 +3434,15 @@ namespace skin_physics::runtime
                     find_model_input_snapshot(
                         input_snapshot, model_index, model.generation);
                 if (model_snapshot == nullptr ||
-                    model_snapshot->has_animation_playback ||
-                    model_snapshot->has_animation_blend ||
                     !model_snapshot->root_samples.empty())
                 {
+                    // Root Transform samples still require their own immutable
+                    // trajectory records and discontinuity / velocity policy.
                     return true;
                 }
+                const bool animation_active =
+                    model_snapshot->has_animation_playback ||
+                    model_snapshot->has_animation_blend;
 
                 for (uint32_t mesh_index = 0u;
                     mesh_index < model.source_model.meshes.size(); ++mesh_index)
@@ -3450,18 +3453,39 @@ namespace skin_physics::runtime
                     {
                         continue;
                     }
-                    const bool has_soft_body_resources =
-                        std::any_of(
-                            model.gpu_soft_body_meshes.begin(),
-                            model.gpu_soft_body_meshes.end(),
-                            [mesh_index](const soft_body_gpu_mesh& value)
-                            {
-                                return value.mesh_index == mesh_index;
-                            });
+                    const auto gpu_mesh_iterator = std::find_if(
+                        model.gpu_soft_body_meshes.begin(),
+                        model.gpu_soft_body_meshes.end(),
+                        [mesh_index](const soft_body_gpu_mesh& value)
+                        {
+                            return value.mesh_index == mesh_index;
+                        });
                     if (mode != asset::physics_mode::soft_body ||
-                        !has_soft_body_resources)
+                        gpu_mesh_iterator == model.gpu_soft_body_meshes.end())
                     {
                         return true;
+                    }
+                    if (animation_active)
+                    {
+                        const soft_body_gpu_mesh& gpu_mesh =
+                            *gpu_mesh_iterator;
+                        if (gpu_mesh.skin_node_index == asset::invalid_index ||
+                            gpu_mesh.skin_index == asset::invalid_index ||
+                            gpu_mesh.skin_index >= model.source_model.skins.size() ||
+                            gpu_mesh.skin_node_index >= model.source_model.nodes.size() ||
+                            gpu_mesh.skin_joint_count == 0u ||
+                            gpu_mesh.skin_weights_srv == nullptr ||
+                            gpu_mesh.animation_target_positions_srv == nullptr ||
+                            gpu_mesh.animation_target_velocities_srv == nullptr ||
+                            gpu_mesh.animation_target_positions_uav == nullptr ||
+                            gpu_mesh.animation_target_velocities_uav == nullptr ||
+                            gpu_mesh.animation_tracking_weights_srv == nullptr)
+                        {
+                            // Animation currently targets only registered,
+                            // skinned Soft Body Meshes. Static / unskinned
+                            // simulation remains available without Animation.
+                            return true;
+                        }
                     }
                 }
             }
