@@ -2166,6 +2166,132 @@ namespace
             singular_skin.error ==
                 skin_physics::physics::animation_hierarchy_error::singular_mesh_node,
             "A singular Mesh Node Global Matrix must fail before emitting an invalid Skin Matrix.");
+
+        skin_physics::asset::animation_clip source_blend_clip = clip;
+        animation_track source_root_rotation;
+        source_root_rotation.node_index = 0u;
+        source_root_rotation.path = animation_path::rotation;
+        source_root_rotation.mode = interpolation::linear;
+        source_root_rotation.component_count = 4u;
+        animation_key source_rotation_start;
+        source_rotation_start.time = 0.0f;
+        source_rotation_start.value = { 0.0f, 0.0f, 0.0f, 1.0f };
+        animation_key source_rotation_end;
+        source_rotation_end.time = 2.0f;
+        source_rotation_end.value = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        source_root_rotation.keys = {
+            source_rotation_start, source_rotation_end
+        };
+        source_blend_clip.tracks.push_back(source_root_rotation);
+
+        skin_physics::asset::animation_clip target_blend_clip =
+            source_blend_clip;
+        target_blend_clip.name = "target_hierarchy_translation_rotation";
+        target_blend_clip.tracks[0u].keys[0u].value[0u] = 2.0f;
+        target_blend_clip.tracks[0u].keys[1u].value[0u] = 4.0f;
+        target_blend_clip.tracks[1u].keys[0u].value[1u] = 3.0f;
+        target_blend_clip.tracks[1u].keys[1u].value[1u] = 5.0f;
+        target_blend_clip.tracks[2u].keys[1u].value = {
+            0.0f, 0.0f, 1.0f, 0.0f
+        };
+
+        skin_physics::physics::animation_blend_weight_curve_desc blend_curve;
+        blend_curve.blend_start_time = 10.0;
+        blend_curve.blend_end_time = 12.0;
+        blend_curve.weight_start = 0.0f;
+        blend_curve.weight_end = 1.0f;
+        blend_curve.tangent_start = 0.0f;
+        blend_curve.tangent_end = 0.0f;
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            blend_schedule =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    source_blend_clip, 3u, 0.0, 1.0, false,
+                    target_blend_clip, 3u, 0.0, 1.0, false,
+                    blend_curve, 10.0, 2.0);
+        require(blend_schedule.success && blend_schedule.values.size() == 1u,
+            "Source / Target Clip and Hermite Weight boundaries must produce one shared World-Time Pose Span.");
+
+        const skin_physics::physics::animation_hierarchy_sample_result blended_pose =
+            skin_physics::physics::evaluate_animation_blend_clip_hierarchy(
+                source_model,
+                source_blend_clip,
+                target_blend_clip,
+                blend_schedule.values[0u],
+                0.5);
+        require(blended_pose.success &&
+            blended_pose.value.local_transforms.size() == source_model.nodes.size() &&
+            blended_pose.value.global_matrices.size() == source_model.nodes.size() &&
+            blended_pose.value.skin_poses.size() == 1u,
+            "CPU Blend Pose evaluation must combine Source / Target local transforms before rebuilding the complete hierarchy and Skin Pose.");
+
+        const skin_physics::animation_node_local_transform& blended_root =
+            blended_pose.value.local_transforms[0u];
+        const skin_physics::animation_node_local_transform& blended_joint =
+            blended_pose.value.local_transforms[1u];
+        require(std::abs(blended_root.translation.x - 2.0f) <= 1.0e-6f &&
+            std::abs(blended_root.translation_velocity.x - 2.5f) <= 1.0e-5f &&
+            std::abs(blended_joint.translation.y - 3.0f) <= 1.0e-6f &&
+            std::abs(blended_joint.translation_velocity.y - 2.5f) <= 1.0e-5f,
+            "Translation Blend must include w_dot * (Target - Source) in its analytic World-Time derivative.");
+
+        const float blended_rotation_norm = std::sqrt(
+            blended_root.rotation.x * blended_root.rotation.x +
+            blended_root.rotation.y * blended_root.rotation.y +
+            blended_root.rotation.z * blended_root.rotation.z +
+            blended_root.rotation.w * blended_root.rotation.w);
+        const float blended_rotation_tangent_dot =
+            blended_root.rotation.x * blended_root.rotation_velocity.x +
+            blended_root.rotation.y * blended_root.rotation_velocity.y +
+            blended_root.rotation.z * blended_root.rotation_velocity.z +
+            blended_root.rotation.w * blended_root.rotation_velocity.w;
+        require(std::abs(blended_rotation_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(blended_rotation_tangent_dot) <= 1.0e-5f &&
+            std::isfinite(blended_root.rotation_velocity.z) &&
+            std::isfinite(blended_root.rotation_velocity.w),
+            "Quaternion Blend must hemisphere-align Source / Target, normalize the result and project its analytic derivative into the quaternion tangent space.");
+
+        const mat4& blended_root_global =
+            blended_pose.value.global_matrices[0u];
+        const mat4& blended_joint_global =
+            blended_pose.value.global_matrices[1u];
+        const mat4& blended_root_global_derivative =
+            blended_pose.value.global_matrix_derivatives[0u];
+        require(std::abs(blended_root_global.value[12u] - 2.0f) <= 1.0e-5f &&
+            std::abs(blended_joint_global.value[13u] - 3.0f) <= 1.0e-5f &&
+            std::abs(blended_root_global_derivative.value[12u] - 2.5f) <= 1.0e-5f,
+            "Blended Local Pose must be propagated through Parent * Local hierarchy matrices and analytic derivatives.");
+
+        const mat4& blended_skin_matrix =
+            blended_pose.value.skin_poses[0u].skin_matrices[0u];
+        const mat4& blended_skin_derivative =
+            blended_pose.value.skin_poses[0u].skin_matrix_derivatives[0u];
+        require(std::abs(blended_skin_matrix.value[12u]) <= 1.0e-5f &&
+            std::abs(blended_skin_matrix.value[13u] - 3.0f) <= 1.0e-5f &&
+            std::abs(blended_skin_matrix.value[14u] + 2.0f) <= 1.0e-5f &&
+            std::abs(blended_skin_derivative.value[12u]) <= 1.0e-5f &&
+            std::abs(blended_skin_derivative.value[13u] - 2.5f) <= 1.0e-5f,
+            "Blended Skin Matrix / derivative must be rebuilt after the Source / Target local Pose blend and cancel shared Root motion.");
+
+        skin_physics::physics::animation_blend_clip_span mismatched_blend_span =
+            blend_schedule.values[0u];
+        mismatched_blend_span.target.world_time_duration += 0.25;
+        const skin_physics::physics::animation_hierarchy_sample_result
+            mismatched_blend_pose =
+                skin_physics::physics::evaluate_animation_blend_clip_hierarchy(
+                    source_model,
+                    source_blend_clip,
+                    target_blend_clip,
+                    mismatched_blend_span,
+                    0.5);
+        require(!mismatched_blend_pose.success &&
+            mismatched_blend_pose.value.global_matrices.empty() &&
+            mismatched_blend_pose.error ==
+                skin_physics::physics::animation_hierarchy_error::invalid_blend,
+            "Source / Target / Weight interval mismatch must fail atomically before publishing a blended hierarchy.");
     }
 
     void test_phase10_attribute_paint_and_serialization()
