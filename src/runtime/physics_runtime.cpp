@@ -4912,6 +4912,23 @@ namespace skin_physics::runtime
             result_world.in_flight_tick_count = static_cast<uint32_t>(
                 result_world.in_flight_ticks.size());
 
+            // A prior, older Submission may already have made the World terminal.
+            // Later in-flight Submissions can only report predecessor BLOCKED (or,
+            // in a corrupted command stream, an unexpected Commit). They must not
+            // downgrade the first terminal result or publish a later State Bank.
+            if (result_world.state == tick_state::failed ||
+                result_world.state == tick_state::rejected)
+            {
+                runtime.release_render_candidate_slot(
+                    result_world,
+                    completed_tick.render_candidate_slot_id,
+                    completed_tick.render_candidate_slot_generation);
+                completed_tick.reservation.blocked = true;
+                runtime.restore_reservation_in_sequence_order(
+                    result_world, std::move(completed_tick.reservation));
+                continue;
+            }
+
             const uint64_t status_dispatch_id = gpu_status.dispatch_id;
             const uint64_t status_reservation_token = gpu_status.reservation_token;
             const bool matching_status_identity =
@@ -5117,44 +5134,55 @@ namespace skin_physics::runtime
                     result_world,
                     completed_tick.render_candidate_slot_id,
                     completed_tick.render_candidate_slot_generation);
+                const uint64_t completed_sequence =
+                    completed_tick.reservation.sequence;
                 completed_tick.reservation.blocked = true;
                 completed_tick.reservation.rejected =
                     gpu_status.terminal_state == 4u ||
                     gpu_status.terminal_state == 5u;
-                result_world.reservations.push_front(
-                    std::move(completed_tick.reservation));
+                runtime.restore_reservation_in_sequence_order(
+                    result_world, std::move(completed_tick.reservation));
 
-                result_world.work_budget_block_flags =
-                    static_cast<uint8_t>(
-                        gpu_status.work_budget_block_flags & 0xffu);
-                result_world.budget_block_origin =
-                    static_cast<work_budget_block_origin>(
-                        std::min(gpu_status.work_budget_block_origin, 2u));
-                result_world.executed_integration_segments =
-                    gpu_status.executed_integration_segments;
-                result_world.minimum_required_integration_segments =
-                    gpu_status.minimum_required_integration_segments;
+                // Only the oldest uncommitted Reservation owns the World-level
+                // recovery state. Later GPU submissions are gated by this head and
+                // must not replace its original BLOCKED / REJECTED / FAILED reason.
+                const bool completed_tick_is_head =
+                    !result_world.reservations.empty() &&
+                    result_world.reservations.front().sequence == completed_sequence;
+                if (completed_tick_is_head)
+                {
+                    result_world.work_budget_block_flags =
+                        static_cast<uint8_t>(
+                            gpu_status.work_budget_block_flags & 0xffu);
+                    result_world.budget_block_origin =
+                        static_cast<work_budget_block_origin>(
+                            std::min(gpu_status.work_budget_block_origin, 2u));
+                    result_world.executed_integration_segments =
+                        gpu_status.executed_integration_segments;
+                    result_world.minimum_required_integration_segments =
+                        gpu_status.minimum_required_integration_segments;
 
-                if (gpu_status.terminal_state == 3u)
-                {
-                    result_world.state = tick_state::blocked;
-                    result_world.last_tick_status = status_code::blocked_by_predecessor;
-                    result_world.budget_resolution = work_budget_resolution::retryable;
+                    if (gpu_status.terminal_state == 3u)
+                    {
+                        result_world.state = tick_state::blocked;
+                        result_world.last_tick_status = status_code::blocked_by_predecessor;
+                        result_world.budget_resolution = work_budget_resolution::retryable;
+                    }
+                    else if (gpu_status.terminal_state == 4u)
+                    {
+                        result_world.state = tick_state::rejected;
+                        result_world.last_tick_status = status_code::step_rejected;
+                        result_world.budget_resolution = work_budget_resolution::none;
+                    }
+                    else
+                    {
+                        result_world.state = tick_state::failed;
+                        result_world.last_tick_status = status_code::gpu_execution_failed;
+                        result_world.budget_resolution = work_budget_resolution::none;
+                    }
+                    result_world.diagnostic =
+                        "GPU Tick ended without a COMMITTED terminal status; the active State Bank and reservation time were retained.";
                 }
-                else if (gpu_status.terminal_state == 4u)
-                {
-                    result_world.state = tick_state::rejected;
-                    result_world.last_tick_status = status_code::step_rejected;
-                    result_world.budget_resolution = work_budget_resolution::none;
-                }
-                else
-                {
-                    result_world.state = tick_state::failed;
-                    result_world.last_tick_status = status_code::gpu_execution_failed;
-                    result_world.budget_resolution = work_budget_resolution::none;
-                }
-                result_world.diagnostic =
-                    "GPU Tick ended without a COMMITTED terminal status; the active State Bank and reservation time were retained.";
             }
         }
 
