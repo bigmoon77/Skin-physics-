@@ -1413,6 +1413,11 @@ namespace skin_physics::runtime
 
         bool world_has_unsupported_physics_work(const world_slot& world) const
         {
+            if (!world.forces.empty() || !world.impulses.empty())
+            {
+                return true;
+            }
+
             for (const collider_slot& collider : world.colliders)
             {
                 if (collider.occupied)
@@ -3988,6 +3993,28 @@ namespace skin_physics::runtime
         for (implementation::model_slot& model : world->models)
         {
             model.root_samples.clear();
+            for (implementation::soft_body_gpu_mesh& gpu_mesh :
+                model.gpu_soft_body_meshes)
+            {
+                runtime.immediate_context->UpdateSubresource(
+                    gpu_mesh.position_banks[0].Get(), 0u, nullptr,
+                    gpu_mesh.initial_positions.data(), 0u, 0u);
+                runtime.immediate_context->UpdateSubresource(
+                    gpu_mesh.position_banks[1].Get(), 0u, nullptr,
+                    gpu_mesh.initial_positions.data(), 0u, 0u);
+                runtime.immediate_context->UpdateSubresource(
+                    gpu_mesh.velocity_banks[0].Get(), 0u, nullptr,
+                    gpu_mesh.initial_velocities.data(), 0u, 0u);
+                runtime.immediate_context->UpdateSubresource(
+                    gpu_mesh.velocity_banks[1].Get(), 0u, nullptr,
+                    gpu_mesh.initial_velocities.data(), 0u, 0u);
+                runtime.immediate_context->UpdateSubresource(
+                    gpu_mesh.position_scratch.Get(), 0u, nullptr,
+                    gpu_mesh.initial_positions.data(), 0u, 0u);
+                runtime.immediate_context->UpdateSubresource(
+                    gpu_mesh.velocity_scratch.Get(), 0u, nullptr,
+                    gpu_mesh.initial_velocities.data(), 0u, 0u);
+            }
         }
         for (implementation::collider_slot& collider : world->colliders)
         {
