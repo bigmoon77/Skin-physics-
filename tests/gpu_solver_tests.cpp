@@ -2519,10 +2519,22 @@ namespace
     void test_phase12_warp_gpu_generated_indirect_dispatch(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
+        ID3D11ComputeShader* produce_count_shader,
         ID3D11ComputeShader* build_arguments_shader,
         ID3D11ComputeShader* consume_arguments_shader)
     {
         using namespace skin_physics::simulation;
+
+        const std::vector<uint32_t> zero_count = { 0u };
+        const ComPtr<ID3D11Buffer> count_buffer =
+            create_structured_buffer(
+                device, zero_count, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> count_uav =
+            create_structured_uav<uint32_t>(
+                device, count_buffer.Get(), 1);
+        const ComPtr<ID3D11ShaderResourceView> count_srv =
+            create_structured_srv<uint32_t>(
+                device, count_buffer.Get(), 1);
 
         D3D11_BUFFER_DESC argument_buffer_description = {};
         argument_buffer_description.ByteWidth = sizeof(uint32_t) * 3u;
@@ -2558,24 +2570,38 @@ namespace
                 static_cast<UINT>(initial_output.size()));
 
         d3d11_compute_graph graph;
+        compute_pass_desc count_pass;
+        count_pass.name = "ProduceCandidateCount";
+        count_pass.shader = produce_count_shader;
+        count_pass.unordered_access_views = {
+            { 0, count_uav.Get(), 0xffffffffu }
+        };
+
         compute_pass_desc build_pass;
         build_pass.name = "BuildDispatchArguments";
         build_pass.shader = build_arguments_shader;
+        build_pass.shader_resources = {
+            { 0, count_srv.Get() }
+        };
         build_pass.unordered_access_views = {
-            { 0, argument_uav.Get(), 0xffffffffu }
+            { 1, argument_uav.Get(), 0xffffffffu }
         };
 
         compute_pass_desc consume_pass;
         consume_pass.name = "ConsumeDispatchArguments";
         consume_pass.shader = consume_arguments_shader;
         consume_pass.unordered_access_views = {
-            { 1, output_uav.Get(), 0xffffffffu }
+            { 2, output_uav.Get(), 0xffffffffu }
         };
         consume_pass.indirect_arguments = argument_buffer.Get();
 
         compute_pass_desc invalid_alignment = consume_pass;
         invalid_alignment.name = "InvalidIndirectAlignment";
         invalid_alignment.indirect_argument_offset = 2u;
+
+        compute_pass_desc invalid_range = consume_pass;
+        invalid_range.name = "InvalidIndirectRange";
+        invalid_range.indirect_argument_offset = 4u;
 
         compute_pass_desc invalid_argument_flags = consume_pass;
         invalid_argument_flags.name = "InvalidIndirectFlags";
@@ -2590,10 +2616,6 @@ namespace
         require(!graph.add_pass(invalid_alignment, diagnostic) &&
             diagnostic.find("DWORD-aligned") != std::string::npos,
             "Compute graph must reject a non-DWORD-aligned DispatchIndirect offset.");
-
-        compute_pass_desc invalid_range = consume_pass;
-        invalid_range.name = "InvalidIndirectRange";
-        invalid_range.indirect_argument_offset = 4u;
         require(!graph.add_pass(invalid_range, diagnostic) &&
             diagnostic.find("twelve readable argument bytes") != std::string::npos,
             "Compute graph must reject an indirect argument range shorter than three UINT values.");
@@ -2602,23 +2624,25 @@ namespace
             "Compute graph must reject a buffer without the indirect-argument misc flag.");
         require(!graph.add_pass(invalid_uav_alias, diagnostic) &&
             diagnostic.find("unbound from UAV") != std::string::npos,
-            "Compute graph must reject an indirect-argument buffer also bound as UAV in the consumer pass.");
+            "Compute graph must reject an indirect argument buffer also bound as UAV in the consumer pass.");
 
+        require(graph.add_pass(count_pass, diagnostic),
+            "Compute graph must accept a GPU Candidate Count pass: " + diagnostic);
         require(graph.add_pass(build_pass, diagnostic),
-            "Compute graph must accept a GPU argument producer pass: " + diagnostic);
+            "Compute graph must accept a GPU argument builder pass: " + diagnostic);
         require(graph.add_pass(consume_pass, diagnostic),
             "Compute graph must accept an indirect consumer pass: " + diagnostic);
         const compute_graph_result execution = graph.execute(context);
-        require(execution.success && execution.executed_pass_count == 2,
-            "Compute graph must execute the indirect consumer after its producer pass.");
+        require(execution.success && execution.executed_pass_count == 3,
+            "Compute graph must execute Count, argument generation and indirect consumption in explicit order.");
 
         const std::vector<uint32_t> actual_output =
             readback_structured_buffer<uint32_t>(
                 device, context, output_buffer.Get(), initial_output.size());
         require(actual_output == std::vector<uint32_t>{ 0x5a00u, 0x5a01u, 0x5a02u },
-            "GPU-generated group counts must drive DispatchIndirect without CPU readback.");
+            "GPU Candidate Count must generate DispatchIndirect arguments without CPU group-count readback.");
 
-        std::cout << "[PASS] P12_WARP_GPU_GENERATED_INDIRECT_DISPATCH\n";
+        std::cout << "[PASS] P12_WARP_GPU_GENERATED_INDIRECT_DISPATCH\\n";
     }
 
 
@@ -2675,6 +2699,9 @@ int run_gpu_solver_tests()
         const std::filesystem::path indirect_dispatch_shader_path =
             test_support::fixture_path(
                 "phase12_correction/indirect_dispatch.cs.hlsl");
+        const ComPtr<ID3D11ComputeShader> produce_candidate_count_shader =
+            compile_compute_shader(device.Get(), indirect_dispatch_shader_path,
+                "produce_candidate_count");
         const ComPtr<ID3D11ComputeShader> build_dispatch_arguments_shader =
             compile_compute_shader(device.Get(), indirect_dispatch_shader_path,
                 "build_dispatch_arguments");
@@ -2683,6 +2710,7 @@ int run_gpu_solver_tests()
                 "consume_dispatch_arguments");
         test_phase12_warp_gpu_generated_indirect_dispatch(
             device.Get(), context.Get(),
+            produce_candidate_count_shader.Get(),
             build_dispatch_arguments_shader.Get(),
             consume_dispatch_arguments_shader.Get());
         test_phase07_warp_vertex_triangle_contact(device.Get(), context.Get(), vt_shader.Get());
