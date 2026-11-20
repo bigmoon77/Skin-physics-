@@ -2670,30 +2670,36 @@ namespace skin_physics::runtime
             return true;
         }
 
-        bool world_has_unsupported_physics_work(const world_slot& world) const
+        bool world_has_unsupported_physics_work(
+            const world_slot& world,
+            const tick_input_snapshot& input_snapshot) const
         {
-            if (!world.forces.empty() || !world.impulses.empty())
+            if (!input_snapshot.forces.empty() || !input_snapshot.impulses.empty())
             {
                 return true;
             }
 
-            for (const collider_slot& collider : world.colliders)
+            if (!input_snapshot.colliders.empty())
             {
-                if (collider.occupied)
-                {
-                    return true;
-                }
+                return true;
             }
 
-            for (const model_slot& model : world.models)
+            for (uint32_t model_index = 0u;
+                model_index < world.models.size(); ++model_index)
             {
+                const model_slot& model = world.models[model_index];
                 if (!model.occupied)
                 {
                     continue;
                 }
-                if (model.has_animation_playback ||
-                    model.has_animation_blend ||
-                    !model.root_samples.empty())
+
+                const model_input_snapshot* model_snapshot =
+                    find_model_input_snapshot(
+                        input_snapshot, model_index, model.generation);
+                if (model_snapshot == nullptr ||
+                    model_snapshot->has_animation_playback ||
+                    model_snapshot->has_animation_blend ||
+                    !model_snapshot->root_samples.empty())
                 {
                     return true;
                 }
@@ -2727,6 +2733,7 @@ namespace skin_physics::runtime
 
         bool append_soft_body_tick_passes(
             world_slot& world,
+            const tick_input_snapshot& input_snapshot,
             uint32_t source_state_set,
             uint32_t destination_state_set,
             const tick_reservation& reservation,
@@ -2751,7 +2758,7 @@ namespace skin_physics::runtime
                 delta_time_double <= 0.0 ||
                 !finite_float(delta_time) ||
                 delta_time <= 0.0f ||
-                !finite_vec3(world.description.gravity))
+                !finite_vec3(input_snapshot.description.gravity))
             {
                 diagnostic = "Soft Body Integration Segment time or World gravity is not representable as finite GPU float values.";
                 return false;
@@ -2766,11 +2773,21 @@ namespace skin_physics::runtime
                     continue;
                 }
 
+                const model_input_snapshot* model_snapshot =
+                    find_model_input_snapshot(
+                        input_snapshot, model_index, model.generation);
+                if (model_snapshot == nullptr)
+                {
+                    diagnostic =
+                        "Tick Input Snapshot lost an occupied Model before Soft Body dispatch.";
+                    return false;
+                }
+
                 for (soft_body_gpu_mesh& gpu_mesh : model.gpu_soft_body_meshes)
                 {
                     float damping_rate = 0.0f;
                     if (!update_soft_body_materials(
-                            model, gpu_mesh, damping_rate, diagnostic))
+                            model, *model_snapshot, gpu_mesh, damping_rate, diagnostic))
                     {
                         return false;
                     }
@@ -2779,9 +2796,12 @@ namespace skin_physics::runtime
                     integration_parameters.vertex_count = gpu_mesh.vertex_count;
                     integration_parameters.delta_time = delta_time;
                     integration_parameters.damping_rate = damping_rate;
-                    integration_parameters.gravity[0] = world.description.gravity.x;
-                    integration_parameters.gravity[1] = world.description.gravity.y;
-                    integration_parameters.gravity[2] = world.description.gravity.z;
+                    integration_parameters.gravity[0] =
+                        input_snapshot.description.gravity.x;
+                    integration_parameters.gravity[1] =
+                        input_snapshot.description.gravity.y;
+                    integration_parameters.gravity[2] =
+                        input_snapshot.description.gravity.z;
                     immediate_context->UpdateSubresource(
                         gpu_mesh.integration_parameters.Get(),
                         0u,
@@ -2935,6 +2955,7 @@ namespace skin_physics::runtime
 
         bool append_soft_body_render_candidate_passes(
             world_slot& world,
+            const tick_input_snapshot& input_snapshot,
             uint32_t destination_state_set,
             uint32_t render_slot_id,
             simulation::d3d11_compute_graph& graph,
@@ -2960,7 +2981,17 @@ namespace skin_physics::runtime
                     continue;
                 }
 
-                const transform& root = model.root_transform;
+                const model_input_snapshot* model_snapshot =
+                    find_model_input_snapshot(
+                        input_snapshot, model_index, model.generation);
+                if (model_snapshot == nullptr)
+                {
+                    diagnostic =
+                        "Tick Input Snapshot lost an occupied Model before Render Candidate generation.";
+                    return false;
+                }
+
+                const transform& root = model_snapshot->root_transform;
                 gpu_soft_body_render_parameters parameters;
                 parameters.render_vertex_count = 0u;
                 parameters.render_index_count = 0u;
@@ -3145,27 +3176,44 @@ namespace skin_physics::runtime
                 }
                 reservation.predecessor_blocked = false;
             }
+
+            if (reservation.input_snapshot == nullptr ||
+                reservation.input_snapshot->version == 0u)
+            {
+                reservation.blocked = false;
+                reservation.rejected = true;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.state = tick_state::failed;
+                world.diagnostic =
+                    "Head Tick Reservation does not own a valid immutable Input Snapshot.";
+                return;
+            }
+            const tick_input_snapshot& input_snapshot =
+                *reservation.input_snapshot;
+
             reservation.blocked = false;
             world.cpu_preflight_block_status_observed = false;
             world.gpu_dynamic_toi_block_status_observed = false;
             world.executed_integration_segments = 0u;
             world.minimum_required_integration_segments = 0u;
             double dt_limit = std::numeric_limits<double>::infinity();
-            if (world.description.world_max_substep_delta_time > 0.0)
+            if (input_snapshot.description.world_max_substep_delta_time > 0.0)
             {
                 dt_limit = std::min(
-                    dt_limit, world.description.world_max_substep_delta_time);
+                    dt_limit,
+                    input_snapshot.description.world_max_substep_delta_time);
             }
-            if (world.description.contact_max_substep_delta_time > 0.0)
+            if (input_snapshot.description.contact_max_substep_delta_time > 0.0)
             {
                 dt_limit = std::min(
-                    dt_limit, world.description.contact_max_substep_delta_time);
+                    dt_limit,
+                    input_snapshot.description.contact_max_substep_delta_time);
             }
 
             double soft_body_dt_limit = std::numeric_limits<double>::infinity();
             std::string cfl_diagnostic;
             if (!compute_soft_body_cfl_time_limit(
-                    world, soft_body_dt_limit, cfl_diagnostic))
+                    world, input_snapshot, soft_body_dt_limit, cfl_diagnostic))
             {
                 reservation.blocked = false;
                 reservation.rejected = false;
@@ -3189,7 +3237,8 @@ namespace skin_physics::runtime
                 dt_limit = std::min(dt_limit, soft_body_dt_limit);
             }
 
-            double required_substeps = world.description.minimum_substeps;
+            double required_substeps =
+                input_snapshot.description.minimum_substeps;
             if (std::isfinite(dt_limit))
             {
                 required_substeps = std::max(
@@ -3315,12 +3364,39 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            if (world.next_input_snapshot_version == 0u ||
+                world.next_input_snapshot_version ==
+                    std::numeric_limits<uint64_t>::max())
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::capacity_exceeded;
+                world.diagnostic =
+                    "World Input Snapshot Version cannot advance without uint64 overflow.";
+                return false;
+            }
+
+            std::shared_ptr<const tick_input_snapshot> input_snapshot;
+            std::string snapshot_diagnostic;
+            if (!build_tick_input_snapshot(
+                    world,
+                    world.next_input_snapshot_version,
+                    input_snapshot,
+                    snapshot_diagnostic))
+            {
+                world.state = tick_state::pending;
+                world.last_tick_status = status_code::out_of_memory;
+                world.diagnostic = snapshot_diagnostic;
+                return false;
+            }
+
             tick_reservation reservation;
             reservation.sequence = world.next_tick_sequence;
             reservation.delta_time = world.description.fixed_delta_time;
+            reservation.input_snapshot = std::move(input_snapshot);
             reservation.from_single_step = from_single_step;
             reservation.budget_revision = world.execution_budget_revision;
 
+            ++world.next_input_snapshot_version;
             ++world.next_tick_sequence;
             if (from_single_step)
             {
@@ -3395,7 +3471,18 @@ namespace skin_physics::runtime
             {
                 return false;
             }
-            if (world_has_unsupported_physics_work(world))
+            if (world.reservations.front().input_snapshot == nullptr ||
+                world.reservations.front().input_snapshot->version == 0u)
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic =
+                    "GPU Submission requires the immutable Input Snapshot owned by its Tick Reservation.";
+                return false;
+            }
+            const tick_input_snapshot& input_snapshot =
+                *world.reservations.front().input_snapshot;
+            if (world_has_unsupported_physics_work(world, input_snapshot))
             {
                 // Keep the CPU Reservation pending and retryable. The Input
                 // Block is diagnostic; no quality or time reduction is allowed.
@@ -3564,6 +3651,7 @@ namespace skin_physics::runtime
             {
                 if (!append_soft_body_tick_passes(
                         world,
+                        input_snapshot,
                         plan.expected_source_state_set,
                         plan.destination_state_set,
                         reservation,
@@ -3601,6 +3689,7 @@ namespace skin_physics::runtime
 
                 if (!append_soft_body_render_candidate_passes(
                         world,
+                        input_snapshot,
                         plan.destination_state_set,
                         render_slot_id,
                         graph,
