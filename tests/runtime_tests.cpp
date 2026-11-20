@@ -1,0 +1,236 @@
+#include "skin_physics/runtime/physics_runtime.hpp"
+
+#include <cmath>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+
+#include <d3d11.h>
+#include <wrl/client.h>
+
+namespace
+{
+    using Microsoft::WRL::ComPtr;
+    using skin_physics::runtime::physics_runtime;
+    using skin_physics::runtime::status_code;
+
+    void require(bool condition, const std::string& message)
+    {
+        if (!condition)
+        {
+            throw std::runtime_error(message);
+        }
+    }
+
+    bool create_warp_device(
+        ComPtr<ID3D11Device>& device,
+        ComPtr<ID3D11DeviceContext>& context)
+    {
+        const D3D_FEATURE_LEVEL requested_levels[] = {
+            D3D_FEATURE_LEVEL_11_0
+        };
+        D3D_FEATURE_LEVEL selected_level = D3D_FEATURE_LEVEL_9_1;
+        const HRESULT result = D3D11CreateDevice(
+            nullptr,
+            D3D_DRIVER_TYPE_WARP,
+            nullptr,
+            0,
+            requested_levels,
+            1,
+            D3D11_SDK_VERSION,
+            device.GetAddressOf(),
+            &selected_level,
+            context.GetAddressOf());
+        return SUCCEEDED(result) &&
+            selected_level >= D3D_FEATURE_LEVEL_11_0;
+    }
+
+    void test_runtime_initialization_and_world_handles()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Runtime regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = "runtime-test-shaders";
+        runtime_desc.query_ring_capacity = 2u;
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime must accept a valid Host-owned WARP Device and Immediate Context.");
+        require(runtime.initialized(),
+            "Runtime initialized state must be observable.");
+
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).code ==
+            status_code::invalid_state,
+            "Runtime must reject a second initialize call.");
+
+        skin_physics::runtime::world_desc first_desc;
+        first_desc.fixed_delta_time = 0.01;
+        first_desc.maximum_in_flight_ticks = 2u;
+        skin_physics::runtime::world_handle first_world;
+        require(runtime.create_world(first_desc, &first_world).success(),
+            "Runtime must create a World with valid time and admission limits.");
+
+        skin_physics::runtime::world_desc second_desc;
+        second_desc.maximum_in_flight_ticks = 4u;
+        skin_physics::runtime::world_handle second_world;
+        require(runtime.create_world(second_desc, &second_world).success(),
+            "Runtime must grow the Status Query Ring when the aggregate World in-flight capacity grows.");
+
+        skin_physics::runtime::world_desc invalid_desc = first_desc;
+        invalid_desc.maximum_substeps =
+            runtime_desc.maximum_world_substeps_hard_limit + 1u;
+        skin_physics::runtime::world_handle invalid_world;
+        require(runtime.create_world(invalid_desc, &invalid_world).code ==
+            status_code::invalid_argument,
+            "World creation must reject an Admission Limit above the Runtime Hard Limit.");
+
+        require(runtime.destroy_world(first_world).success(),
+            "An idle World must be destroyable.");
+        require(runtime.poll(first_world, nullptr).code == status_code::stale_handle,
+            "Destroyed World Handles must be rejected as stale.");
+
+        require(runtime.destroy_world(second_world).success(),
+            "The second idle World must be destroyable.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime shutdown must release the Status Ring and Host COM references after all Worlds are destroyed.");
+    }
+
+    void test_runtime_time_budget_and_pause_contract()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Runtime regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = "runtime-test-shaders";
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime initialization must succeed for the time / budget regression.");
+
+        skin_physics::runtime::world_desc desc;
+        desc.fixed_delta_time = 0.01;
+        desc.maximum_steps_per_advance = 2u;
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world(desc, &world).success(),
+            "Time regression World creation must succeed.");
+
+        skin_physics::runtime::world_execution_budget budget;
+        budget.maximum_substeps = 64u;
+        budget.maximum_integration_segments_per_tick = 256u;
+        require(runtime.set_world_execution_budget(world, budget).success(),
+            "World Execution Budget must accept values below the Runtime Hard Limits.");
+
+        skin_physics::runtime::world_status world_status;
+        require(runtime.poll(world, &world_status).success() &&
+            world_status.execution_budget_revision == 2u,
+            "Each accepted Execution Budget update must advance its revision.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "World must enter Playing.");
+        skin_physics::runtime::advance_report report;
+        require(runtime.advance(world, 0.025, &report).success(),
+            "Advance must accept valid wall-clock time.");
+        require(report.pending_tick_count == 2u &&
+            std::abs(report.accumulator_seconds - 0.025) <= 1.0e-12,
+            "Advance must retain two whole fixed-step requests without dropping the fractional remainder.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::paused).success(),
+            "World must enter Paused.");
+        require(runtime.advance(world, 0.5, &report).success(),
+            "Advance while Paused must still allow polling without consuming wall-clock time.");
+        require(report.pending_tick_count == 2u &&
+            std::abs(report.accumulator_seconds - 0.025) <= 1.0e-12,
+            "Paused Advance must preserve the existing accumulator and ignore additional frame time.");
+
+        require(runtime.set_fixed_delta_time(world, 0.02).code == status_code::busy,
+            "Fixed Delta Time must not change while complete Tick requests remain in the Accumulator.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::stopped).success(),
+            "World must enter Stopped without discarding the Accumulator.");
+        require(runtime.poll(world, &world_status).success() &&
+            std::abs(world_status.requested_simulation_time - 0.025) <= 1.0e-12 &&
+            std::abs(world_status.effective_requested_time - 0.025) <= 1.0e-12,
+            "Requested and effective requested time must remain unchanged after Stop.");
+
+        require(runtime.reset_world(world).success(),
+            "Idle World Reset must explicitly discard pending requested time.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::paused).success(),
+            "World must be Paused before changing Fixed Delta Time.");
+        require(runtime.set_fixed_delta_time(world, 0.02).success(),
+            "Fixed Delta Time can change while Paused after whole pending Ticks are cleared.");
+
+        require(runtime.single_step(world, &report).success() &&
+            report.pending_tick_count == 1u,
+            "Single Step must enqueue exactly one fixed-step request while Paused.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::stopped).success(),
+            "Stop must cancel an unreserved single-step request.");
+        require(runtime.poll(world, &world_status).success() &&
+            world_status.pending_tick_count == 0u &&
+            std::abs(world_status.cancelled_requested_time - 0.02) <= 1.0e-12 &&
+            std::abs(world_status.effective_requested_time) <= 1.0e-12,
+            "Cancelled Step time must be tracked separately and excluded from effective requested time.");
+
+        require(runtime.reset_world(world).success(),
+            "World must reset after the Step cancellation regression.");
+        require(runtime.destroy_world(world).success(),
+            "World with no pending time or lease must be destroyable.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime must shut down after the time / budget regression.");
+    }
+
+    void test_runtime_submission_thread_guard()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Runtime regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = "runtime-test-shaders";
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime initialization must succeed for the thread guard regression.");
+
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world({}, &world).success(),
+            "Thread guard World creation must succeed.");
+
+        status_code worker_status = status_code::ok;
+        std::thread worker([&runtime, world, &worker_status]()
+        {
+            const skin_physics::runtime::status result =
+                runtime.set_time_scale(world, 0.5);
+            worker_status = result.code;
+        });
+        worker.join();
+
+        require(worker_status == status_code::submission_thread_violation,
+            "Runtime APIs that own Immediate Context scheduling must reject calls from a non-submission thread.");
+
+        require(runtime.destroy_world(world).success(),
+            "World must remain intact after a rejected non-submission-thread API call.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime must shut down after the thread guard regression.");
+    }
+}
+
+int run_runtime_tests()
+{
+    test_runtime_initialization_and_world_handles();
+    std::cout << "[PASS] R0_RUNTIME_INITIALIZATION_AND_HANDLES\n";
+    test_runtime_time_budget_and_pause_contract();
+    std::cout << "[PASS] R0_RUNTIME_TIME_BUDGET_AND_PAUSE\n";
+    test_runtime_submission_thread_guard();
+    std::cout << "[PASS] R0_RUNTIME_SUBMISSION_THREAD_GUARD\n";
+    std::cout << "RuntimeTests passed.\n";
+    return 0;
+}
