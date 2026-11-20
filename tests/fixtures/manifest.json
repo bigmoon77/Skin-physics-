@@ -335,7 +335,7 @@
         "P06_WARP_COROTATIONAL_FEM",
         "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
         "R1_RUNTIME_SOFT_BODY_ASSET_AND_CSR_VALIDATION",
-        "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_PARITY",
+        "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_AND_INVERSION_PARITY",
         "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
         "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE"
       ],
@@ -353,12 +353,13 @@
         "shaders/runtime/tick_transaction_control.cs.hlsl",
         "shaders/runtime/soft_body_render_feedback.cs.hlsl"
       ],
-      "status_note": "Runtime path contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / painted material and per-vertex damping / density remapping / CFL preflight / two-bank Commit / GPU Render Candidate Ring and Host Lease for Soft Body Meshes. CPU/WARP execution and numerical parity remain unverified because the Windows CI runner has not reported build steps.",
+      "status_note": "Runtime path contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / painted material and per-vertex damping / density remapping / CFL preflight / two-bank Commit / GPU Render Candidate Ring and Host Lease for Soft Body Meshes. Production WARP source now covers positive polar, near-singular positive SVD, and inverted finite diagnostic parity. CPU/WARP execution and numerical parity remain unverified because Windows CI has not reported build steps.",
       "warp_runtime_assertions": [
         "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",
         "positive_near_singular_deformation_selects_Proper_Rotation_Jacobi_SVD_fallback",
-        "valid_polar_and_SVD_results_do_not_set_GPU_terminal_failure"
+        "finite_inverted_deformation_publishes_CPU_parity_diagnostics_but_sets_terminal_failure",
+        "inverted_deformation_never_becomes_a_committed_Tick"
       ],
       "implemented_runtime_contracts": [
         "render_mesh_shape_recovery_and_volume_paint_transfers_to_boundary_physics_vertices",
@@ -377,7 +378,9 @@
         "latest_render_candidate_resource_generation_is_monotonic_per_world_slot_lifetime",
         "degenerate_deformed_render_triangles_fail_the_candidate_and_prevent_tick_commit",
         "model_root_translation_and_rotation_are_inverted_before_render_candidate_publication",
-        "accepted_near_unit_quaternions_are_normalized_before_initial_state_and_render_feedback"
+        "accepted_near_unit_quaternions_are_normalized_before_initial_state_and_render_feedback",
+        "finite_inverted_FEM_intermediates_match_CPU_reference_for_deformation_rotation_stress_force_and_energy",
+        "inverted_FEM_output_is_diagnostic_only_and_forces_terminal_failure_before_tick_commit"
       ]
     },
     {
@@ -931,7 +934,9 @@
       "terminal_blocked_without_dynamic_toi_origin_maps_to_blocked_by_predecessor",
       "gpu_dynamic_toi_required_segment_count_above_runtime_hard_limit_maps_to_work_budget_unsatisfiable",
       "gpu_dynamic_toi_status_origin_is_preserved_when_later_predecessor_status_is_observed",
-      "accepted_rigid_transform_quaternions_are_canonicalized_before_physics_upload_and_render_feedback"
+      "accepted_rigid_transform_quaternions_are_canonicalized_before_physics_upload_and_render_feedback",
+      "production_runtime_fem_positive_and_inverted_finite_intermediates_match_cpu_reference",
+      "inverted_fem_publishes_diagnostics_but_tick_commit_is_rejected"
     ],
     "remaining_r0": [
       "Cloth / Collider solver integration into the World Runtime scheduler",
