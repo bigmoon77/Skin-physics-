@@ -645,6 +645,15 @@ namespace skin_physics::runtime
             uint32_t planned_integration_segments = 0u;
         };
 
+        struct in_flight_tick
+        {
+            tick_reservation reservation;
+            uint64_t dispatch_id = 0u;
+            uint64_t reservation_token = 0u;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> plan_buffer;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> status_buffer;
+        };
+
         struct world_slot
         {
             uint32_t generation = 1u;
@@ -666,7 +675,12 @@ namespace skin_physics::runtime
             uint64_t next_tick_sequence = 1u;
             uint32_t pending_single_step_requests = 0u;
             std::deque<tick_reservation> reservations;
+            std::deque<in_flight_tick> in_flight_ticks;
             uint32_t in_flight_tick_count = 0u;
+            uint64_t gpu_state_generation = 1u;
+            uint32_t active_state_set = 0u;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> commit_control_buffer;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> commit_control_uav;
             bool render_lease_active = false;
             uint64_t render_lease_generation = 0u;
             tick_state state = tick_state::idle;
@@ -693,9 +707,13 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11Device> device;
         Microsoft::WRL::ComPtr<ID3D11DeviceContext> immediate_context;
         std::unique_ptr<simulation::d3d11_status_ring> status_ring;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_begin_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_empty_world_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
         std::vector<world_slot> worlds;
         std::thread::id submission_thread;
         uint64_t device_generation = 1u;
+        uint64_t next_dispatch_id = 1u;
         bool initialized = false;
         bool accepting_submissions = true;
 
@@ -965,6 +983,290 @@ namespace skin_physics::runtime
             world.reserved_tick_time += reservation.delta_time;
             world.reservations.push_back(reservation);
             update_head_reservation_preflight(world);
+            return true;
+        }
+
+        bool initialize_world_commit_control(
+            world_slot& world,
+            std::string& diagnostic)
+        {
+            gpu_tick_commit_control initial_control;
+            initial_control.state_generation_low = 1u;
+            initial_control.active_state_set = 0u;
+            initial_control.required_validation_mask = 1u;
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> control_buffer;
+            if (!create_structured_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(initial_control)),
+                    static_cast<uint32_t>(sizeof(initial_control)),
+                    D3D11_BIND_UNORDERED_ACCESS,
+                    &initial_control,
+                    control_buffer.GetAddressOf()))
+            {
+                diagnostic = "Unable to allocate the World GPU Commit Control Buffer.";
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> control_uav;
+            if (!create_structured_uav(
+                    device.Get(), control_buffer.Get(), 1u,
+                    control_uav.GetAddressOf()))
+            {
+                diagnostic = "Unable to create the World GPU Commit Control UAV.";
+                return false;
+            }
+
+            world.commit_control_buffer = std::move(control_buffer);
+            world.commit_control_uav = std::move(control_uav);
+            world.gpu_state_generation = 1u;
+            world.active_state_set = 0u;
+            return true;
+        }
+
+        bool world_has_physics_work(const world_slot& world) const
+        {
+            for (const model_slot& model : world.models)
+            {
+                if (!model.occupied)
+                {
+                    continue;
+                }
+                if (std::any_of(
+                        model.source_model.meshes.begin(),
+                        model.source_model.meshes.end(),
+                        [](const asset::mesh& mesh)
+                        {
+                            return mesh.mode != asset::physics_mode::none;
+                        }))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool submit_head_reservation(
+            world_slot& world,
+            uint32_t world_index)
+        {
+            if (world.reservations.empty() ||
+                world.reservations.front().blocked ||
+                world.in_flight_tick_count != 0u)
+            {
+                return false;
+            }
+            if (world_has_physics_work(world))
+            {
+                world.state = tick_state::pending;
+                world.diagnostic =
+                    "GPU submission is deferred until the active Soft Body / Cloth solver phases are integrated.";
+                return false;
+            }
+            if (status_ring == nullptr ||
+                status_ring->pending_count() >= status_ring->capacity())
+            {
+                world.state = tick_state::pending;
+                world.diagnostic =
+                    "GPU Status Query Ring is full; the Tick Reservation remains pending.";
+                return false;
+            }
+            if (next_dispatch_id == 0u ||
+                next_dispatch_id == std::numeric_limits<uint64_t>::max())
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::capacity_exceeded;
+                world.diagnostic = "Runtime Dispatch ID space is exhausted.";
+                return false;
+            }
+
+            const tick_reservation reservation = world.reservations.front();
+            gpu_tick_dispatch_plan plan;
+            plan.expected_predecessor_sequence_low =
+                static_cast<uint32_t>(world.gpu_committed_sequence);
+            plan.expected_predecessor_sequence_high =
+                static_cast<uint32_t>(world.gpu_committed_sequence >> 32u);
+            plan.expected_source_generation_low =
+                static_cast<uint32_t>(world.gpu_state_generation);
+            plan.expected_source_generation_high =
+                static_cast<uint32_t>(world.gpu_state_generation >> 32u);
+            plan.expected_source_state_set = world.active_state_set;
+            plan.destination_state_set = 1u - world.active_state_set;
+            plan.tick_sequence_low = static_cast<uint32_t>(reservation.sequence);
+            plan.tick_sequence_high = static_cast<uint32_t>(reservation.sequence >> 32u);
+            plan.dispatch_id_low = static_cast<uint32_t>(next_dispatch_id);
+            plan.dispatch_id_high = static_cast<uint32_t>(next_dispatch_id >> 32u);
+            plan.required_validation_mask = 1u;
+            plan.flags = 1u; // An empty World has no solver buffers to mutate or validate.
+
+            const uint64_t world_id = world_identity(world_index, world.generation);
+            uint64_t reservation_token =
+                (world_id * 0x9e3779b97f4a7c15ull) ^
+                (reservation.sequence * 0xbf58476d1ce4e5b9ull) ^
+                next_dispatch_id;
+            if (reservation_token == 0u)
+            {
+                reservation_token = next_dispatch_id;
+            }
+            plan.reservation_token_low =
+                static_cast<uint32_t>(reservation_token);
+            plan.reservation_token_high =
+                static_cast<uint32_t>(reservation_token >> 32u);
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> plan_buffer;
+            if (!create_structured_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(plan)),
+                    static_cast<uint32_t>(sizeof(plan)),
+                    D3D11_BIND_SHADER_RESOURCE,
+                    &plan,
+                    plan_buffer.GetAddressOf()))
+            {
+                world.state = tick_state::blocked;
+                world.last_tick_status = status_code::out_of_memory;
+                world.budget_resolution = work_budget_resolution::retryable;
+                world.diagnostic = "Unable to allocate an immutable GPU Tick Dispatch Plan Buffer.";
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> plan_srv;
+            if (!create_structured_srv(
+                    device.Get(), plan_buffer.Get(), 1u,
+                    plan_srv.GetAddressOf()))
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic = "Unable to create the immutable GPU Tick Dispatch Plan SRV.";
+                return false;
+            }
+
+            gpu_tick_status_record initial_status = {};
+            Microsoft::WRL::ComPtr<ID3D11Buffer> status_buffer;
+            if (!create_structured_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(initial_status)),
+                    static_cast<uint32_t>(sizeof(initial_status)),
+                    D3D11_BIND_UNORDERED_ACCESS,
+                    &initial_status,
+                    status_buffer.GetAddressOf()))
+            {
+                world.state = tick_state::blocked;
+                world.last_tick_status = status_code::out_of_memory;
+                world.budget_resolution = work_budget_resolution::retryable;
+                world.diagnostic = "Unable to allocate the GPU Tick Status Buffer.";
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> status_uav;
+            if (!create_structured_uav(
+                    device.Get(), status_buffer.Get(), 1u,
+                    status_uav.GetAddressOf()))
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic = "Unable to create the GPU Tick Status UAV.";
+                return false;
+            }
+
+            simulation::d3d11_compute_graph graph;
+            std::string diagnostic;
+            simulation::compute_pass_desc begin_pass;
+            begin_pass.name = "tick_begin_control";
+            begin_pass.shader = tick_begin_shader.Get();
+            begin_pass.shader_resources = {
+                { 0u, plan_srv.Get() }
+            };
+            begin_pass.unordered_access_views = {
+                { 1u, world.commit_control_uav.Get(), 0xffffffffu },
+                { 2u, status_uav.Get(), 0xffffffffu }
+            };
+            if (!graph.add_pass(begin_pass, diagnostic))
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic = diagnostic;
+                return false;
+            }
+
+            simulation::compute_pass_desc validate_pass;
+            validate_pass.name = "tick_validate_empty_world";
+            validate_pass.shader = tick_validate_empty_world_shader.Get();
+            validate_pass.shader_resources = {
+                { 0u, plan_srv.Get() }
+            };
+            validate_pass.unordered_access_views = {
+                { 1u, world.commit_control_uav.Get(), 0xffffffffu },
+                { 2u, status_uav.Get(), 0xffffffffu }
+            };
+            if (!graph.add_pass(validate_pass, diagnostic))
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic = diagnostic;
+                return false;
+            }
+
+            simulation::compute_pass_desc commit_pass;
+            commit_pass.name = "tick_commit_control";
+            commit_pass.shader = tick_commit_shader.Get();
+            commit_pass.shader_resources = {
+                { 0u, plan_srv.Get() }
+            };
+            commit_pass.unordered_access_views = {
+                { 1u, world.commit_control_uav.Get(), 0xffffffffu },
+                { 2u, status_uav.Get(), 0xffffffffu }
+            };
+            if (!graph.add_pass(commit_pass, diagnostic))
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic = diagnostic;
+                return false;
+            }
+
+            const simulation::compute_graph_result execution =
+                graph.execute(immediate_context.Get());
+            if (!execution.success)
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic = execution.diagnostic;
+                return false;
+            }
+
+            const simulation::d3d11_status_query_key query_key = {
+                world_id,
+                reservation.sequence,
+                next_dispatch_id
+            };
+            const simulation::d3d11_status_ring_error enqueue_result =
+                status_ring->enqueue(query_key, status_buffer.Get(), diagnostic);
+            if (enqueue_result != simulation::d3d11_status_ring_error::none)
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status =
+                    enqueue_result == simulation::d3d11_status_ring_error::device_removed
+                        ? status_code::device_removed
+                        : status_code::gpu_execution_failed;
+                world.diagnostic =
+                    "GPU Tick was dispatched but Status Query enqueue failed: " + diagnostic;
+                return false;
+            }
+
+            in_flight_tick in_flight;
+            in_flight.reservation = reservation;
+            in_flight.dispatch_id = next_dispatch_id;
+            in_flight.reservation_token = reservation_token;
+            in_flight.plan_buffer = std::move(plan_buffer);
+            in_flight.status_buffer = std::move(status_buffer);
+            world.in_flight_ticks.push_back(std::move(in_flight));
+            world.reservations.pop_front();
+            world.in_flight_tick_count = static_cast<uint32_t>(
+                world.in_flight_ticks.size());
+            world.submitted_sequence = reservation.sequence;
+            world.state = tick_state::in_flight;
+            world.diagnostic.clear();
+            ++next_dispatch_id;
             return true;
         }
 
