@@ -208,7 +208,7 @@ namespace skin_physics::physics
             if (packet.span_records.empty() ||
                 packet.span_world_time_starts.size() != packet.span_records.size() ||
                 packet.span_records.size() >
-                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+                    static_cast<std::size_t>((std::numeric_limits<uint32_t>::max)()))
             {
                 diagnostic =
                     "Animation Trajectory Packet must contain a non-empty Span table with matching CPU World-Time metadata.";
