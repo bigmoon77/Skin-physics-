@@ -335,13 +335,15 @@
         "P06_WARP_COROTATIONAL_FEM",
         "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
         "R1_RUNTIME_SOFT_BODY_ASSET_AND_CSR_VALIDATION",
-        "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_PARITY"
+        "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_PARITY",
+        "R1_WARP_SOFT_BODY_CFL_PREFLIGHT"
       ],
       "unimplemented": [
-        "WARP numeric parity and near-singular regression for the production Runtime Jacobi SVD fallback path",
-        "CFL-derived stability limits, per-vertex physics attribute weighting and density remapping",
-        "Force / Impulse event segmentation and animation / kinematic trajectory coupling",
-        "Full World collision, Cloth constraint and Contact solver integration"
+        "Physical / WARP numerical parity and SVD near-singular stress regression for the production Runtime path",
+        "Animation Tracking stiffness / damping CFL limit and immutable animation trajectory packets",
+        "Force / Impulse event-boundary Segment scheduling",
+        "Full World collision, Cloth constraint and Contact solver integration",
+        "Physics Attribute Paint cache serialization and topology-change remapping"
       ],
       "runtime_gpu_source_files": [
         "shaders/runtime/soft_body_fem.cs.hlsl",
@@ -349,12 +351,21 @@
         "shaders/runtime/soft_body_integrate.cs.hlsl",
         "shaders/runtime/tick_transaction_control.cs.hlsl"
       ],
-      "status_note": "Production Runtime shader test source compares CPU / WARP deformation, rotation, stress, nodal forces and energy for a compression case plus a positive near-singular case that must select the Jacobi SVD fallback. Execution remains unverified until Windows CI runs.",
+      "status_note": "Runtime path contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / painted material and per-vertex damping / density remapping / CFL preflight / two-bank Commit plumbing. CPU/WARP execution and numerical parity remain unverified because the Windows runner has not reported any build steps.",
       "warp_runtime_assertions": [
         "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",
         "positive_near_singular_deformation_selects_Proper_Rotation_Jacobi_SVD_fallback",
         "valid_polar_and_SVD_results_do_not_set_GPU_terminal_failure"
+      ],
+      "implemented_runtime_contracts": [
+        "render_mesh_shape_recovery_and_volume_paint_transfers_to_boundary_physics_vertices",
+        "interior_physics_vertex_paint_uses_double_precision_dirichlet_harmonic_extension",
+        "ambiguous_coincident_surface_paint_fails_model_registration",
+        "tet_shape_recovery_and_volume_coefficients_use_four_vertex_arithmetic_mean",
+        "vertex_damping_rate_uses_global_material_and_per_vertex_damping_paint",
+        "Soft Body Tet CFL limit contributes to the common World Substep Preflight",
+        "CFL budget block retains the same Reservation and plan through admission-budget recovery"
       ]
     },
     {
@@ -822,6 +833,9 @@
       "tests/environment_tests.cpp",
       "include/skin_physics/physics/physics_mesh.hpp",
       "include/skin_physics/physics/render_binding.hpp",
+      "src/physics/render_binding.cpp",
+      "include/skin_physics/physics/physics_mesh.hpp",
+      "include/skin_physics/physics/render_binding.hpp",
       "src/physics/render_binding.cpp"
     ],
     "automated_test_groups": [
@@ -831,7 +845,8 @@
       "R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY",
       "R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW",
       "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
-      "P02_PHYSICS_ATTRIBUTE_HARMONIC"
+      "P02_PHYSICS_ATTRIBUTE_HARMONIC",
+      "R1_WARP_SOFT_BODY_CFL_PREFLIGHT"
     ],
     "covered_contracts": [
       "host_device_immediate_context_feature_level_and_device_identity_validation",
@@ -857,7 +872,14 @@
       "deterministic_double_precision_dirichlet_harmonic_extension_to_interior_physics_vertices",
       "ambiguous_coincident_render_surfaces_with_conflicting_paint_are_rejected",
       "runtime_paint_edit_refreshes_physics_mesh_attribute_transfer_transactionally",
-      "soft_body_tet_shape_and_volume_paint_average_and_vertex_damping_weight_upload"
+      "soft_body_tet_shape_and_volume_paint_average_and_vertex_damping_weight_upload",
+      "render_surface_paint_transfers_to_physics_boundary_and_harmonic_interior",
+      "ambiguous_coincident_render_surface_paint_is_rejected",
+      "paint_edit_updates_render_and_physics_mesh_attribute_state_transactionally",
+      "soft_body_tet_shape_and_volume_paint_uses_four_vertex_arithmetic_mean",
+      "soft_body_vertex_damping_rate_uses_per_vertex_damping_paint",
+      "soft_body_fem_cfl_limit_contributes_to_common_world_substep_preflight",
+      "cfl_budget_recovery_preserves_the_same_tick_reservation_and_substep_plan"
     ],
     "remaining_r0": [
       "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
@@ -866,6 +888,6 @@
       "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation",
       "CFL-based Soft Body stability limit now participates in World preflight; animation tracking stiffness limit and full Segment boundary table remain open"
     ],
-    "validation": "WARP / CPU regression sources are registered in the Windows test project; execution and C++ / HLSL compilation remain unverified because recent Windows CI jobs fail before reporting any build steps."
+    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project; execution and C++ / HLSL compilation remain unverified because recent Windows CI jobs fail before reporting any build steps."
   }
 }
