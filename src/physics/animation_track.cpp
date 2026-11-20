@@ -2456,15 +2456,30 @@ namespace skin_physics::physics
                         "Source scheduled Clip Span has a non-positive World-Time duration.";
                     return false;
                 }
-                const double u0 =
+                double u0 =
                     (interval_start - source.world_time_start) / source_duration;
-                const double u1 =
+                double u1 =
                     (interval_end - source.world_time_start) / source_duration;
+                constexpr double local_fraction_tolerance =
+                    std::numeric_limits<double>::epsilon() * 64.0;
                 if (!std::isfinite(u0) || !std::isfinite(u1) ||
-                    u0 < 0.0 || u1 > 1.0 || u1 <= u0)
+                    u0 < -local_fraction_tolerance ||
+                    u0 > 1.0 + local_fraction_tolerance ||
+                    u1 < -local_fraction_tolerance ||
+                    u1 > 1.0 + local_fraction_tolerance)
                 {
                     diagnostic =
-                        "Merged Blend interval cannot be mapped into its source Clip Span local coordinate.";
+                        "Merged Blend interval cannot be mapped into its source Clip Span local coordinate. u0=" +
+                        std::to_string(u0) + " u1=" + std::to_string(u1);
+                    return false;
+                }
+                u0 = std::max(0.0, std::min(1.0, u0));
+                u1 = std::max(0.0, std::min(1.0, u1));
+                if (u1 <= u0)
+                {
+                    diagnostic =
+                        "Merged Blend interval collapsed after local-coordinate rounding. u0=" +
+                        std::to_string(u0) + " u1=" + std::to_string(u1);
                     return false;
                 }
                 const double clip_time_start =
@@ -2532,23 +2547,36 @@ namespace skin_physics::physics
 
             const double weight_source_duration =
                 weight_span->world_time_duration;
-            const double weight_u0 =
+            double weight_u0 =
                 (interval_start - weight_span->world_time_start) /
                 weight_source_duration;
-            const double weight_u1 =
+            double weight_u1 =
                 (interval_end - weight_span->world_time_start) /
                 weight_source_duration;
-            const double weight_u_delta = weight_u1 - weight_u0;
+            const double local_fraction_tolerance =
+                std::numeric_limits<double>::epsilon() * 64.0;
             if (!std::isfinite(weight_u0) ||
                 !std::isfinite(weight_u1) ||
-                !std::isfinite(weight_u_delta) ||
-                weight_u0 < 0.0 || weight_u1 > 1.0 ||
-                weight_u_delta <= 0.0)
+                weight_u0 < -local_fraction_tolerance ||
+                weight_u0 > 1.0 + local_fraction_tolerance ||
+                weight_u1 < -local_fraction_tolerance ||
+                weight_u1 > 1.0 + local_fraction_tolerance)
             {
                 result.values.clear();
                 result.error = animation_blend_clip_span_error::invalid_time;
                 result.message =
                     "Merged Blend interval cannot be mapped into its Hermite Weight Span local coordinate.";
+                return result;
+            }
+            weight_u0 = std::max(0.0, std::min(1.0, weight_u0));
+            weight_u1 = std::max(0.0, std::min(1.0, weight_u1));
+            const double weight_u_delta = weight_u1 - weight_u0;
+            if (!std::isfinite(weight_u_delta) || weight_u_delta <= 0.0)
+            {
+                result.values.clear();
+                result.error = animation_blend_clip_span_error::invalid_time;
+                result.message =
+                    "Merged Blend interval collapsed after Hermite Weight Span local-coordinate rounding.";
                 return result;
             }
 
