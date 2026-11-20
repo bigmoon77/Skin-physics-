@@ -1132,8 +1132,10 @@ namespace
         skin_physics::asset::animation_clip target_animation_clip =
             animation_clip;
         target_animation_clip.name = "runtime_joint_translation_target";
+        target_animation_clip.tracks[0].keys[0].value =
+            { 0.5f, 0.0f, 0.0f };
         target_animation_clip.tracks[0].keys[1].value =
-            { 2.0f, 0.0f, 0.0f };
+            { 2.5f, 0.0f, 0.0f };
         model_desc.source_model.animations.push_back(target_animation_clip);
 
         skin_physics::runtime::model_mesh_physics_asset mesh_asset;
@@ -1226,11 +1228,11 @@ namespace
         blend.target_track.time = 0.0;
         blend.target_track.speed = 1.0;
         blend.blend_start_time = 0.01;
-        blend.blend_end_time = 0.02;
-        blend.weight_start = 1.0f;
-        blend.weight_end = 1.0f;
-        blend.tangent_start = 0.0f;
-        blend.tangent_end = 0.0f;
+        blend.blend_end_time = 1.01;
+        blend.weight_start = 0.25f;
+        blend.weight_end = 0.75f;
+        blend.tangent_start = 0.5f;
+        blend.tangent_end = 0.5f;
         require(runtime.set_animation_blend(world, model, blend).success(),
             "Runtime must accept a synchronized Source / Target Animation Blend whose Hermite Weight selects the Target Clip.");
         skin_physics::runtime::advance_report blend_report;
@@ -1267,7 +1269,7 @@ namespace
                 blended_binding.vertex_count);
         require(!blended_positions.empty() &&
             blended_positions[0u].x > playback_position_x + 1.0e-5f,
-            "The Target-selected Hermite Blend Clip must produce a stronger analytic Target Velocity and move the Physics Vertex farther than Source Playback.");
+            "The non-constant Hermite Blend must include w_dot * (target - source) in its analytic Target Velocity and move the Physics Vertex farther than Source Playback.");
         require(runtime.release_render_bindings(
                 world, blended_binding.lease_generation).success(),
             "Blended Animation Render Candidate Host Lease must release after readback.");
