@@ -276,6 +276,8 @@ namespace
     }
 }
 
+int run_runtime_tests();
+
 int run_environment_tests()
 {
     test_phase04_scenario_json_round_trip();
@@ -286,6 +288,7 @@ int run_environment_tests()
     std::cout << "[PASS] SIM_PIPELINE_ORDER_AND_COMMIT\n";
     test_simulation_step_pipeline_failure_is_atomic();
     std::cout << "[PASS] SIM_PIPELINE_ATOMIC_ROLLBACK\n";
+    require(run_runtime_tests() == 0, "Runtime boundary tests failed.");
     std::cout << "EnvironmentTests passed.\n";
     return 0;
 }
