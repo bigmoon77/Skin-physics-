@@ -288,6 +288,11 @@ namespace
         require(runtime.single_step(world, &report).success() &&
             report.pending_tick_count == 1u,
             "Single Step must enqueue exactly one fixed-step request while Paused.");
+        skin_physics::runtime::world_execution_budget pending_step_budget = budget;
+        pending_step_budget.maximum_substeps = 32u;
+        require(runtime.set_world_execution_budget(
+                world, pending_step_budget).code == status_code::busy,
+            "An unreserved Single Step request must prevent an otherwise idle Execution Budget update.");
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::stopped).success(),
             "Stop must cancel an unreserved single-step request.");
