@@ -35,6 +35,21 @@ RWStructuredBuffer<float> partial_sums : register(u2);
 RWStructuredBuffer<float> normalized_weight_sum : register(u3);
 RWStructuredBuffer<float4> next_accumulator : register(u4);
 
+void mark_tick_failure(uint diagnostic_code)
+{
+    uint previous_diagnostic = 0u;
+    InterlockedCompareExchange(
+        tick_commit_control_buffer[0].diagnostic,
+        0u,
+        diagnostic_code,
+        previous_diagnostic);
+    uint previous_failure = 0u;
+    InterlockedOr(
+        tick_commit_control_buffer[0].terminal_failure,
+        1u,
+        previous_failure);
+}
+
 cbuffer EventParameters : register(b0)
 {
     uint vertex_count;
@@ -85,8 +100,7 @@ void soft_body_force_distribution_weight(uint3 dispatch_id : SV_DispatchThreadID
         !isfinite(rest_mass) ||
         rest_mass < 0.0f)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(301u);
         return;
     }
 
@@ -103,8 +117,7 @@ void soft_body_force_distribution_weight(uint3 dispatch_id : SV_DispatchThreadID
         !isfinite(radius_squared) ||
         radius_squared <= 0.0f)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(302u);
         return;
     }
 
@@ -122,8 +135,7 @@ void soft_body_force_distribution_weight(uint3 dispatch_id : SV_DispatchThreadID
     float q = rest_mass * phi;
     if (!isfinite(q) || q < 0.0f)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(303u);
         return;
     }
 
@@ -149,12 +161,8 @@ void soft_body_force_distribution_reduce(
         value = reduction_weights[vertex_index];
         if (!isfinite(value) || value < 0.0f)
         {
-            uint previous_failure = 0u;
-            InterlockedOr(
-                tick_commit_control_buffer[0].terminal_failure,
-                1u,
-                previous_failure);
-            value = 0.0f;
+            mark_tick_failure(304u);
+        value = 0.0f;
         }
     }
 
@@ -200,9 +208,7 @@ void soft_body_force_distribution_finalize(uint3 dispatch_id : SV_DispatchThread
         float partial = reduction_weights[group_index];
         if (!isfinite(partial) || partial < 0.0f)
         {
-            control.terminal_failure = 1u;
-            control.diagnostic = 5u;
-            tick_commit_control_buffer[0] = control;
+            mark_tick_failure(305u);
             normalized_weight_sum[0] = 0.0f;
             return;
         }
@@ -241,8 +247,7 @@ void soft_body_force_distribution_apply(uint3 dispatch_id : SV_DispatchThreadID)
     if (!isfinite(sum) || sum <= MINIMUM_WEIGHT_SUM ||
         !isfinite(q) || q < 0.0f)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(306u);
         return;
     }
 
@@ -254,8 +259,7 @@ void soft_body_force_distribution_apply(uint3 dispatch_id : SV_DispatchThreadID)
         previous_value.xyz + weight * direction * magnitude;
     if (!all(isfinite(next_value)))
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(307u);
         return;
     }
 
