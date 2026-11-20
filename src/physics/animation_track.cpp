@@ -576,11 +576,13 @@ namespace skin_physics::physics
         std::size_t component_count = 0u;
         if (!std::isfinite(clip_time_start) ||
             !std::isfinite(clip_time_delta) ||
-            !std::isfinite(clip_time_start + clip_time_delta))
+            !std::isfinite(clip_time_start + clip_time_delta) ||
+            (clip_time_delta != 0.0 &&
+                clip_time_start + clip_time_delta == clip_time_start))
         {
             result.error = animation_channel_span_error::invalid_time;
             result.message =
-                "Animation Span Clip-Time start / delta must be finite and representable.";
+                "Animation Span Clip-Time start / delta must be finite and advance at the requested double-precision magnitude.";
             return result;
         }
         if (!validate_asset_animation_track(
@@ -798,11 +800,13 @@ namespace skin_physics::physics
         std::size_t component_count = 0u;
         if (!std::isfinite(clip_time_start) ||
             !std::isfinite(clip_time_delta) ||
-            !std::isfinite(clip_time_start + clip_time_delta))
+            !std::isfinite(clip_time_start + clip_time_delta) ||
+            (clip_time_delta != 0.0 &&
+                clip_time_start + clip_time_delta == clip_time_start))
         {
             result.error = animation_channel_span_error::invalid_time;
             result.message =
-                "Animation Span schedule Clip-Time start / delta must be finite and representable.";
+                "Animation Span schedule Clip-Time start / delta must be finite and advance at the requested double-precision magnitude.";
             return result;
         }
         if (!validate_asset_animation_track(
@@ -886,6 +890,103 @@ namespace skin_physics::physics
         return result;
     }
 
+    animation_channel_span_schedule_result schedule_animation_channel_spans(
+        const asset::animation_track& track,
+        double clip_time_start,
+        double clip_time_delta,
+        double world_time_start,
+        double world_time_duration)
+    {
+        animation_channel_span_schedule_result result;
+        if (!std::isfinite(world_time_start) ||
+            !std::isfinite(world_time_duration) ||
+            world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_start + world_time_duration) ||
+            world_time_start + world_time_duration == world_time_start)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Span scheduling requires finite World-Time start and a positive representable Tick duration.";
+            return result;
+        }
+
+        animation_channel_spans_build_result channel_spans =
+            build_animation_channel_spans(
+                track, clip_time_start, clip_time_delta);
+        if (!channel_spans.success)
+        {
+            result.error = channel_spans.error;
+            result.message = channel_spans.message;
+            return result;
+        }
+
+        result.values.reserve(channel_spans.values.size());
+        for (const animation_channel_span& channel_span : channel_spans.values)
+        {
+            double world_start_fraction = 0.0;
+            double world_duration_fraction = 1.0;
+            if (clip_time_delta != 0.0)
+            {
+                world_start_fraction =
+                    (channel_span.clip_time_start - clip_time_start) /
+                    clip_time_delta;
+                world_duration_fraction =
+                    channel_span.clip_time_delta / clip_time_delta;
+            }
+
+            constexpr double fraction_tolerance =
+                std::numeric_limits<double>::epsilon() * 32.0;
+            if (!std::isfinite(world_start_fraction) ||
+                !std::isfinite(world_duration_fraction) ||
+                world_start_fraction < -fraction_tolerance ||
+                world_start_fraction > 1.0 + fraction_tolerance ||
+                world_duration_fraction <= 0.0 ||
+                world_duration_fraction > 1.0 + fraction_tolerance)
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Animation Span Clip-Time partition could not be mapped into a monotonic World-Time interval.";
+                return result;
+            }
+
+            world_start_fraction =
+                std::max(0.0, std::min(1.0, world_start_fraction));
+            world_duration_fraction =
+                std::max(0.0, std::min(1.0, world_duration_fraction));
+            scheduled_animation_channel_span scheduled;
+            scheduled.channel = channel_span;
+            scheduled.world_time_start =
+                world_time_start +
+                world_start_fraction * world_time_duration;
+            scheduled.world_time_duration =
+                world_duration_fraction * world_time_duration;
+            if (!std::isfinite(scheduled.world_time_start) ||
+                !std::isfinite(scheduled.world_time_duration) ||
+                scheduled.world_time_duration <= 0.0 ||
+                !std::isfinite(
+                    scheduled.world_time_start +
+                    scheduled.world_time_duration))
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Animation Span World-Time partition is not representable as positive finite intervals.";
+                return result;
+            }
+            result.values.push_back(std::move(scheduled));
+        }
+
+        result.success = !result.values.empty();
+        if (!result.success)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Span Scheduler produced an empty World-Time partition.";
+        }
+        return result;
+    }
+
     animation_channel_span_sample_result evaluate_animation_channel_span(
         const animation_channel_span& span,
         double span_local_u,
@@ -905,14 +1006,16 @@ namespace skin_physics::physics
         }
         if (!std::isfinite(span.clip_time_start) ||
             !std::isfinite(span.clip_time_delta) ||
+            !std::isfinite(span.clip_time_start + span.clip_time_delta) ||
             !std::isfinite(span_local_u) || span_local_u < 0.0 ||
             span_local_u > 1.0 ||
             !std::isfinite(span_duration_seconds) ||
-            span_duration_seconds <= 0.0)
+            span_duration_seconds <= 0.0 ||
+            !std::isfinite(1.0 / span_duration_seconds))
         {
             return make_span_sample_error(
                 animation_channel_span_error::invalid_time,
-                "Animation Span evaluation requires finite Clip-Time metadata, u in [0, 1] and a finite positive World-Time duration.");
+                "Animation Span evaluation requires finite Clip-Time metadata, u in [0, 1] and a finite positive World-Time duration with a representable reciprocal.");
         }
         for (const asset::vec4& coefficient : span.coefficients)
         {
