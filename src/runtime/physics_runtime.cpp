@@ -1473,6 +1473,14 @@ namespace skin_physics::runtime
                     candidate.vertex_count,
                     candidate.inverse_mass_srv.GetAddressOf()) ||
                 !create_structured_buffer_from_vector(
+                    device.Get(), initial_vertex_damping_rates,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.vertex_damping_rate_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.vertex_damping_rate_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.vertex_damping_rate_srv.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
                     device.Get(), vertex_force, state_bind_flags,
                     candidate.vertex_force_buffer.GetAddressOf()) ||
                 !create_structured_srv(
