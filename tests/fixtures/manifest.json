@@ -804,7 +804,8 @@
       "R0_RUNTIME_INITIALIZATION_AND_HANDLES",
       "R0_RUNTIME_TIME_BUDGET_AND_PAUSE",
       "R0_RUNTIME_SUBMISSION_THREAD_GUARD",
-      "R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY"
+      "R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY",
+      "R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW"
     ],
     "covered_contracts": [
       "host_device_immediate_context_feature_level_and_device_identity_validation",
@@ -817,7 +818,8 @@
       "fixed_delta_time_moves_once_from_accumulator_into_head_tick_reservation",
       "cpu_preflight_blocks_without_dropping_the_same_reservation_or_sequence",
       "execution_budget_revision_rechecks_the_same_head_reservation",
-      "world_input_mutation_is_rejected_while_a_tick_reservation_or_render_lease_exists"
+      "world_input_mutation_is_rejected_while_a_tick_reservation_or_render_lease_exists",
+      "cpu_preflight_work_count_overflow_transitions_to_terminal_failed_without_gpu_submission"
     ],
     "remaining_r0": [
       "GPU Tick Submission and per-World Dispatch Plan creation",
