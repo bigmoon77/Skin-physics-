@@ -2720,10 +2720,15 @@ namespace
         auto transient_state_result =
             create_correction_segment_candidate_state(7002, {}, 16);
         auto transient_state = transient_state_result.state;
+        const auto transient_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            transient_state, 7002, transient_epoch_primitives,
+            transient_settings.contact_thickness),
+            "Transient pipeline Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
         const correction_writer_epoch_result transient_epoch =
             process_correction_position_writer_epoch(
-                transient_state, 7002, 1,
-                make_vt_position_writer_epoch_primitives(transient_case.at("input")),
+                transient_state, 7002, 1, transient_epoch_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 transient_settings);
         require(transient_epoch.status == correction_writer_epoch_status::accepted &&
@@ -2740,10 +2745,15 @@ namespace
         auto latched_state_result =
             create_correction_segment_candidate_state(7010, {}, 16);
         auto latched_state = latched_state_result.state;
+        const auto latched_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            latched_state, 7010, latched_epoch_primitives,
+            transient_settings.contact_thickness),
+            "Side-latch pipeline Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
         const correction_writer_epoch_result latch_epoch_1 =
             process_correction_position_writer_epoch(
-                latched_state, 7010, 1,
-                make_vt_position_writer_epoch_primitives(transient_case.at("input")),
+                latched_state, 7010, 1, latched_epoch_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 transient_settings);
         require(latch_epoch_1.status == correction_writer_epoch_status::accepted &&
@@ -2794,10 +2804,15 @@ namespace
         auto crossing_state_result =
             create_correction_segment_candidate_state(7003, {}, 16);
         auto crossing_state = crossing_state_result.state;
+        const auto crossing_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(crossing_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            crossing_state, 7003, crossing_epoch_primitives,
+            crossing_settings.contact_thickness),
+            "Crossing pipeline Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
         const correction_writer_epoch_result crossing_epoch =
             process_correction_position_writer_epoch(
-                crossing_state, 7003, 1,
-                make_vt_position_writer_epoch_primitives(crossing_case.at("input")),
+                crossing_state, 7003, 1, crossing_epoch_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 crossing_settings);
         require(crossing_epoch.status == correction_writer_epoch_status::rejected &&
@@ -2813,10 +2828,15 @@ namespace
         auto ee_state_result =
             create_correction_segment_candidate_state(7004, {}, 16);
         auto ee_state = ee_state_result.state;
+        const auto ee_epoch_primitives =
+            make_ee_position_writer_epoch_primitives(ee_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            ee_state, 7004, ee_epoch_primitives,
+            ee_settings.contact_thickness),
+            "EE crossing Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
         const correction_writer_epoch_result ee_epoch =
             process_correction_position_writer_epoch(
-                ee_state, 7004, 1,
-                make_ee_position_writer_epoch_primitives(ee_case.at("input")),
+                ee_state, 7004, 1, ee_epoch_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 ee_settings);
         require(ee_epoch.status == correction_writer_epoch_status::rejected &&
@@ -2830,10 +2850,15 @@ namespace
         auto contact_capacity_state_result =
             create_correction_segment_candidate_state(7005, {}, 16);
         auto contact_capacity_state = contact_capacity_state_result.state;
+        const auto contact_capacity_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            contact_capacity_state, 7005, contact_capacity_primitives,
+            contact_capacity_settings.contact_thickness),
+            "Contact-capacity Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
         const correction_writer_epoch_result contact_capacity_epoch =
             process_correction_position_writer_epoch(
-                contact_capacity_state, 7005, 1,
-                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                contact_capacity_state, 7005, 1, contact_capacity_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 contact_capacity_settings);
         require(contact_capacity_epoch.status == correction_writer_epoch_status::blocked &&
@@ -2850,10 +2875,15 @@ namespace
         auto csr_capacity_state_result =
             create_correction_segment_candidate_state(7006, {}, 16);
         auto csr_capacity_state = csr_capacity_state_result.state;
+        const auto csr_capacity_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            csr_capacity_state, 7006, csr_capacity_primitives,
+            csr_capacity_settings.contact_thickness),
+            "CSR-capacity Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
         const correction_writer_epoch_result csr_capacity_epoch =
             process_correction_position_writer_epoch(
-                csr_capacity_state, 7006, 1,
-                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                csr_capacity_state, 7006, 1, csr_capacity_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 csr_capacity_settings);
         require(csr_capacity_epoch.status == correction_writer_epoch_status::blocked &&
@@ -2868,13 +2898,18 @@ namespace
         auto blocked_state_result =
             create_correction_segment_candidate_state(7005, {}, 16);
         auto blocked_state = blocked_state_result.state;
+        const auto blocked_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            blocked_state, 7005, blocked_epoch_primitives,
+            endpoint_settings.contact_thickness),
+            "Broadphase-capacity Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
         broadphase_settings blocked_broadphase =
             make_correction_epoch_broadphase_settings();
         blocked_broadphase.candidate_capacity = 0;
         const correction_writer_epoch_result blocked_epoch =
             process_correction_position_writer_epoch(
-                blocked_state, 7005, 1,
-                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                blocked_state, 7005, 1, blocked_epoch_primitives,
                 {}, blocked_broadphase, endpoint_settings);
         require(blocked_epoch.status == correction_writer_epoch_status::blocked &&
             blocked_epoch.capacity_overflow &&
