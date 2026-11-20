@@ -968,9 +968,12 @@ namespace skin_physics::physics
                     residual_squared += residual[index] * residual[index];
                     rhs_squared += rhs[index] * rhs[index];
                 }
+                const double rhs_norm = std::sqrt(rhs_squared);
+                const double residual_normalization =
+                    std::max(rhs_norm, 1.0e-30);
                 const double tolerance =
                     settings.harmonic_relative_tolerance *
-                    std::max(1.0, std::sqrt(rhs_squared));
+                    residual_normalization;
 
                 bool converged = std::sqrt(residual_squared) <= tolerance;
                 for (uint32_t iteration = 0u;
@@ -1027,7 +1030,7 @@ namespace skin_physics::physics
                 }
 
                 const double relative_residual =
-                    std::sqrt(residual_squared) / std::max(1.0, std::sqrt(rhs_squared));
+                    std::sqrt(residual_squared) / residual_normalization;
                 result.maximum_harmonic_relative_residual = std::max(
                     result.maximum_harmonic_relative_residual, relative_residual);
                 if (!converged ||
