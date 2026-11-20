@@ -4173,13 +4173,18 @@ namespace skin_physics::runtime
             const bool committed_sequence_valid =
                 status_committed_sequence == sequence;
 
+            // A later in-flight Tick may be gated after an earlier Tick failed.
+            // In that case the actual GPU state is an older committed prefix than
+            // this immutable Plan's expected predecessor. Status Query records are
+            // consumed in Immediate-Context order, so the current CPU-observed
+            // committed prefix is the authoritative non-Commit state to preserve.
             const bool non_commit_state_unchanged =
                 status_committed_sequence ==
-                    completed_tick.expected_predecessor_sequence &&
+                    result_world.gpu_committed_sequence &&
                 status_state_generation ==
-                    completed_tick.expected_source_generation &&
+                    result_world.gpu_state_generation &&
                 gpu_status.active_state_set ==
-                    completed_tick.expected_source_state_set;
+                    result_world.active_state_set;
 
             if (gpu_status.terminal_state != 6u &&
                 !non_commit_state_unchanged)
