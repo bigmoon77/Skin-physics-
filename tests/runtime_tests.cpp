@@ -233,6 +233,10 @@ namespace
             std::abs(before_retry.reserved_tick_time - 0.02) <= 1.0e-12,
             "CPU Preflight must report required work while preserving the exact head Reservation.");
 
+        require(runtime.set_gravity(
+                world, { 0.0f, -1.0f, 0.0f }).code == status_code::busy,
+            "World input mutation must be rejected while a Tick Reservation holds its immutable input snapshot.");
+
         skin_physics::runtime::world_execution_budget increased_budget;
         increased_budget.maximum_substeps = 4u;
         increased_budget.maximum_integration_segments_per_tick = 512u;
