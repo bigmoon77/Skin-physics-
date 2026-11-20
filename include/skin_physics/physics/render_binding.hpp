@@ -67,9 +67,6 @@ namespace skin_physics::physics
         bool success = false;
     };
 
-    using physics_vertex_attribute_weights = std::array<float,
-        static_cast<std::size_t>(asset::physics_attribute_channel::count)>;
-
     struct physics_attribute_transfer_settings
     {
         float maximum_surface_distance = 0.25f;
