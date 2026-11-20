@@ -1889,12 +1889,18 @@ namespace
             const ComPtr<ID3D11Buffer> pair_seed_buffer =
                 create_structured_buffer(
                     device, pair_seed_storage, D3D11_BIND_SHADER_RESOURCE);
+            // Count / Scan outputs are consumed by later Fill passes as SRVs.
+            // Keep both bindings on the same structured buffers so the compute
+            // graph can transition UAV writes to SRV reads without recreating
+            // or copying the intermediate arrays.
+            const UINT intermediate_bind_flags =
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
             const ComPtr<ID3D11Buffer> flags_buffer =
                 create_structured_buffer(
-                    device, initial_flags, D3D11_BIND_UNORDERED_ACCESS);
+                    device, initial_flags, intermediate_bind_flags);
             const ComPtr<ID3D11Buffer> prefix_buffer =
                 create_structured_buffer(
-                    device, initial_prefix, D3D11_BIND_UNORDERED_ACCESS);
+                    device, initial_prefix, intermediate_bind_flags);
             const ComPtr<ID3D11Buffer> output_buffer =
                 create_structured_buffer(
                     device, initial_output, D3D11_BIND_UNORDERED_ACCESS);
