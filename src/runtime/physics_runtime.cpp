@@ -2994,6 +2994,7 @@ namespace skin_physics::runtime
             initial_control.state_generation_low = 1u;
             initial_control.active_state_set = 0u;
             initial_control.required_validation_mask = 1u;
+            initial_control.reserved = 0x0000ffffu;
 
             Microsoft::WRL::ComPtr<ID3D11Buffer> control_buffer;
             if (!create_structured_buffer(
@@ -5166,6 +5167,8 @@ namespace skin_physics::runtime
                 "Render Lease Generation is stale or already released.");
         }
         world->render_lease_active = false;
+        world->leased_render_slot_id = asset::invalid_index;
+        world->leased_render_slot_generation = 0u;
         return make_status(status_code::ok, {});
     }
 
@@ -5204,12 +5207,25 @@ namespace skin_physics::runtime
         world->gpu_state_generation = 1u;
         world->active_state_set = 0u;
         world->scheduled_predecessor_sequence = 0u;
+        world->latest_render_slot_id = asset::invalid_index;
+        world->latest_render_slot_generation = 0u;
+        world->leased_render_slot_id = asset::invalid_index;
+        world->leased_render_slot_generation = 0u;
+        world->render_lease_active = false;
+        for (implementation::render_candidate_slot_state& slot :
+            world->render_candidate_slots)
+        {
+            slot.reserved = false;
+            slot.committed = false;
+            slot.committed_tick_sequence = 0u;
+        }
         world->scheduled_source_generation = 1u;
         world->scheduled_source_state_set = 0u;
         gpu_tick_commit_control initial_control;
         initial_control.state_generation_low = 1u;
         initial_control.active_state_set = 0u;
         initial_control.required_validation_mask = 1u;
+        initial_control.reserved = 0x0000ffffu;
         runtime.immediate_context->UpdateSubresource(
             world->commit_control_buffer.Get(), 0u, nullptr,
             &initial_control, 0u, 0u);
