@@ -2699,7 +2699,7 @@ namespace
             endpoint_epoch.state_committed &&
             endpoint_state.last_position_writer_epoch_id == 1 &&
             endpoint_state.position_writer_epoch_generation == 1 &&
-            endpoint_state.candidate_generation == 1 &&
+            endpoint_state.candidate_generation == 2 &&
             endpoint_state.candidates.size() == 1,
             std::string(
                 "A valid VT Position-Writer Epoch must atomically commit its correction and endpoint candidate union. status=") +
