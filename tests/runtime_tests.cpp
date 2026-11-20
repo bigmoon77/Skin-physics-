@@ -539,9 +539,36 @@ namespace
         require(runtime.apply_attribute_edit(world, model, 0u, paint_edit).success(),
             "An idle Soft Body Paint edit must update Render Mesh values and refresh the Physics Mesh harmonic transfer.");
 
+        skin_physics::runtime::transform sampled_root =
+            model_desc.world_transform;
+        sampled_root.translation.x += 0.5f;
+        require(runtime.set_model_transform_sample(
+                world, model, 0.0, sampled_root, false).success(),
+            "Runtime must accept a validated Root Transform Sample for the deferred-animation regression.");
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::playing).success(),
-            "Soft Body Runtime World must enter Playing.");
+            "Root Sample regression World must enter Playing.");
+
+        skin_physics::runtime::advance_report animation_report;
+        require(runtime.advance(world, 0.01, &animation_report).success() &&
+            animation_report.submitted_tick_count == 0u &&
+            animation_report.in_flight_tick_count == 0u &&
+            animation_report.pending_tick_count == 1u,
+            "A World with unintegrated Root Transform trajectory input must retain its Tick without GPU submission.");
+        skin_physics::runtime::world_status animation_status;
+        require(runtime.poll(world, &animation_status).success() &&
+            animation_status.state == skin_physics::runtime::tick_state::pending &&
+            animation_status.in_flight_tick_count == 0u &&
+            animation_status.head_reserved_tick_sequence == 1u &&
+            animation_status.diagnostic.find("Animation / Root Transform") !=
+                std::string::npos,
+            "Runtime must explicitly report deferred Root Transform trajectory work instead of committing a Tick with the input silently ignored.");
+        require(runtime.reset_world(world).success(),
+            "Reset must explicitly clear the CPU-only Reservation and unintegrated Root Transform Samples.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "Soft Body Runtime World must re-enter Playing after clearing the unsupported Root Transform Sample.");
 
         skin_physics::runtime::advance_report advance;
         require(runtime.advance(world, 0.02, &advance).success(),
@@ -1143,6 +1170,7 @@ int run_runtime_tests()
     std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW\n";
     test_runtime_soft_body_gpu_tick_and_state_bank_sequence();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS\n";
+    std::cout << "[PASS] R1_RUNTIME_ANIMATION_INPUT_DEFERRED\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE\n";
     test_runtime_multiple_in_flight_non_commit_preserves_head_sequence();
     std::cout << "[PASS] R0_WARP_PREDECESSOR_FAILURE_ORDER\n";
