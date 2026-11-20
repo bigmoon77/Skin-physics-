@@ -679,18 +679,19 @@
           "id": "P09_ANIMATION_SKIN_JOINT_MAPPING",
           "checks": [
             "Every Skinned Mesh Node has one immutable Skin Record with its topological Channel offset, Asset Skin Index and contiguous ordered Joint range",
+            "Each Asset Skin's ordered Joint list is uploaded once; multiple Skinned Mesh Nodes referencing the same Skin reuse the same Skin Joint record range",
             "Each Skin Joint Record references the Track-local topological Joint Channel offset, the Asset Joint Node Index and the absolute Skin-specific Inverse Bind Matrix index",
             "Two Skinned Mesh Nodes may reference different Skin Joint sets, including overlapping Joint Nodes, without losing either Mesh-to-Skin association",
             "A shared Joint Node may use a different Inverse Bind Matrix in each Skin; each Skin Joint record resolves its own matrix while the Channel compatibility field retains the first encountered matrix index",
-            "Invalid Skin, Joint, Inverse Bind or uint32 record range fails Packet construction atomically without publishing a partial Skin table"
+            "Duplicate Joint Nodes within one Skin, invalid Skin references, out-of-range Joint Nodes, invalid Inverse Bind matrices and uint32 record range overflow fail Packet construction atomically without publishing a partial Skin table"
           ]
         },
         {
           "id": "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
           "checks": [
             "C++ Animation Skin and Skin Joint records have a fixed 16-byte standard-layout / trivially-copyable ABI with explicit field offsets",
-            "Shader Model 5 StructuredBuffer SRV and UAV access reads every Skin / Joint mapping field at the expected offset",
-            "WARP Readback preserves both Skin Record and Skin Joint Record payloads byte-for-byte"
+            "Shader Model 5 StructuredBuffer access reads every Skin / Joint mapping field at the expected offset and UAV copy preserves the entire record byte-for-byte",
+            "WARP Readback covers both Skin Record and Skin Joint Record payloads with distinct mesh offset, Skin Index, Joint Range, Channel offset, per-Skin Inverse Bind Index and Asset Joint Node Index values"
           ]
         }
       ],
