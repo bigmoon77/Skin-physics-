@@ -1,8 +1,10 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "skin_physics/asset/types.hpp"
@@ -435,4 +437,260 @@ namespace skin_physics::physics
     animation_blend_weight_sample_result evaluate_animation_blend_weight_span(
         const animation_blend_weight_span& span,
         double span_local_u);
+
+    struct gpu_float4
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        float w = 0.0f;
+    };
+
+    struct gpu_matrix4x4
+    {
+        gpu_float4 column0;
+        gpu_float4 column1;
+        gpu_float4 column2;
+        gpu_float4 column3;
+    };
+
+    struct animation_span_gpu_record
+    {
+        uint32_t span_id = 0u;
+        uint32_t animation_input_version_low = 0u;
+        uint32_t animation_input_version_high = 0u;
+        uint32_t first_track_record = 0u;
+        uint32_t track_record_count = 0u;
+        uint32_t first_channel_record = 0u;
+        uint32_t channel_record_count = 0u;
+        uint32_t first_blend_record = 0u;
+        uint32_t blend_record_count = 0u;
+        uint32_t first_collider_record = 0u;
+        uint32_t collider_record_count = 0u;
+        uint32_t flags = 0u;
+        float span_duration_seconds = 0.0f;
+        float inverse_span_duration = 0.0f;
+        float speed_bound = 0.0f;
+        float acceleration_bound = 0.0f;
+        float chord_deviation_bound = 0.0f;
+        float quaternion_normalization_lower_bound = 1.0f;
+        float reserved0 = 0.0f;
+        float reserved1 = 0.0f;
+    };
+
+    struct animation_span_cursor_gpu_record
+    {
+        uint32_t span_record_index = asset::invalid_index;
+        uint32_t animation_input_version_low = 0u;
+        uint32_t animation_input_version_high = 0u;
+        float u_segment_start = 0.0f;
+    };
+
+    struct animation_track_gpu_record
+    {
+        uint32_t clip_index = asset::invalid_index;
+        uint32_t first_channel_record = 0u;
+        uint32_t channel_record_count = 0u;
+        uint32_t flags = 0u;
+        float clip_time_start = 0.0f;
+        float clip_time_delta = 0.0f;
+        float playback_speed = 0.0f;
+        float reserved0 = 0.0f;
+    };
+
+    struct animation_channel_gpu_record
+    {
+        uint32_t node_index = asset::invalid_index;
+        uint32_t parent_index = asset::invalid_index;
+        uint32_t inverse_bind_record_index = asset::invalid_index;
+        uint32_t interpolation_flags = 0u;
+        uint32_t channel_mask = 0u;
+        uint32_t node_role_flags = 0u;
+        uint32_t reserved0 = 0u;
+        uint32_t reserved1 = 0u;
+        gpu_float4 translation_c0;
+        gpu_float4 translation_c1;
+        gpu_float4 translation_c2;
+        gpu_float4 translation_c3;
+        gpu_float4 rotation_parameter0;
+        gpu_float4 rotation_parameter1;
+        gpu_float4 rotation_parameter2;
+        gpu_float4 rotation_parameter3;
+        gpu_float4 scale_c0;
+        gpu_float4 scale_c1;
+        gpu_float4 scale_c2;
+        gpu_float4 scale_c3;
+    };
+
+    struct animation_blend_gpu_record
+    {
+        uint32_t source_track_index = 0u;
+        uint32_t target_track_index = 1u;
+        uint32_t weight_curve_flags = 0u;
+        uint32_t reserved0 = 0u;
+        gpu_float4 weight_coefficients;
+        float duration_seconds = 0.0f;
+        float inverse_duration = 0.0f;
+        float blend_start_offset_seconds = 0.0f;
+        float reserved2 = 0.0f;
+    };
+
+    struct kinematic_collider_gpu_record
+    {
+        uint32_t stable_collider_id_low = 0u;
+        uint32_t stable_collider_id_high = 0u;
+        uint32_t span_sample_pair_id = 0u;
+        uint32_t flags = 0u;
+        gpu_float4 translation_start;
+        gpu_float4 translation_end;
+        gpu_float4 rotation_start;
+        gpu_float4 rotation_end;
+        gpu_float4 angular_axis_and_angle;
+        float duration_seconds = 0.0f;
+        float inverse_duration = 0.0f;
+        float linear_speed_bound = 0.0f;
+        float angular_speed_bound = 0.0f;
+        float maximum_local_radius = 0.0f;
+        float sagitta_bound = 0.0f;
+        float reserved0 = 0.0f;
+        float reserved1 = 0.0f;
+    };
+
+    static_assert(std::is_standard_layout_v<gpu_float4>);
+    static_assert(std::is_trivially_copyable_v<gpu_float4>);
+    static_assert(sizeof(gpu_float4) == 16u);
+    static_assert(alignof(gpu_float4) == 4u);
+    static_assert(offsetof(gpu_float4, x) == 0u);
+    static_assert(offsetof(gpu_float4, y) == 4u);
+    static_assert(offsetof(gpu_float4, z) == 8u);
+    static_assert(offsetof(gpu_float4, w) == 12u);
+
+    static_assert(std::is_standard_layout_v<gpu_matrix4x4>);
+    static_assert(std::is_trivially_copyable_v<gpu_matrix4x4>);
+    static_assert(sizeof(gpu_matrix4x4) == 64u);
+    static_assert(alignof(gpu_matrix4x4) == 4u);
+
+    static_assert(sizeof(animation_span_gpu_record) == 80u);
+    static_assert(alignof(animation_span_gpu_record) == 4u);
+    static_assert(offsetof(animation_span_gpu_record, span_duration_seconds) == 48u);
+    static_assert(offsetof(animation_span_gpu_record, quaternion_normalization_lower_bound) == 68u);
+
+    static_assert(sizeof(animation_span_cursor_gpu_record) == 16u);
+    static_assert(alignof(animation_span_cursor_gpu_record) == 4u);
+    static_assert(offsetof(animation_span_cursor_gpu_record, u_segment_start) == 12u);
+
+    static_assert(sizeof(animation_track_gpu_record) == 32u);
+    static_assert(alignof(animation_track_gpu_record) == 4u);
+    static_assert(offsetof(animation_track_gpu_record, clip_time_start) == 16u);
+
+    static_assert(sizeof(animation_channel_gpu_record) == 224u);
+    static_assert(alignof(animation_channel_gpu_record) == 4u);
+    static_assert(offsetof(animation_channel_gpu_record, translation_c0) == 32u);
+    static_assert(offsetof(animation_channel_gpu_record, rotation_parameter0) == 96u);
+    static_assert(offsetof(animation_channel_gpu_record, scale_c0) == 160u);
+
+    static_assert(sizeof(animation_blend_gpu_record) == 48u);
+    static_assert(alignof(animation_blend_gpu_record) == 4u);
+    static_assert(offsetof(animation_blend_gpu_record, weight_coefficients) == 16u);
+
+    static_assert(sizeof(kinematic_collider_gpu_record) == 128u);
+    static_assert(alignof(kinematic_collider_gpu_record) == 4u);
+    static_assert(offsetof(kinematic_collider_gpu_record, translation_start) == 16u);
+    static_assert(offsetof(kinematic_collider_gpu_record, duration_seconds) == 96u);
+
+    constexpr uint32_t animation_node_role_joint = 1u << 0u;
+    constexpr uint32_t animation_node_role_mesh = 1u << 1u;
+    constexpr uint32_t animation_node_role_model_root = 1u << 2u;
+    constexpr uint32_t animation_node_role_required_joint_ancestor = 1u << 3u;
+    constexpr uint32_t animation_node_role_static_matrix = 1u << 4u;
+
+    constexpr uint32_t animation_channel_mask_translation = 1u << 0u;
+    constexpr uint32_t animation_channel_mask_rotation = 1u << 1u;
+    constexpr uint32_t animation_channel_mask_scale = 1u << 2u;
+
+    constexpr uint32_t animation_span_flag_has_blend = 1u << 0u;
+    constexpr uint32_t animation_track_flag_loop = 1u << 0u;
+    constexpr uint32_t animation_track_flag_reverse_playback = 1u << 1u;
+    constexpr uint32_t animation_blend_flag_enabled = 1u << 0u;
+
+    struct animation_trajectory_span_bounds
+    {
+        // Must be conservative, outward-rounded bounds calculated by a
+        // certified interval-bound pass. The Packet Builder never guesses.
+        float speed_bound = 0.0f;
+        float acceleration_bound = 0.0f;
+        float chord_deviation_bound = 0.0f;
+        float quaternion_normalization_lower_bound = 1.0f;
+    };
+
+    struct animation_trajectory_track_span_input
+    {
+        uint32_t clip_index = asset::invalid_index;
+        scheduled_animation_clip_span scheduled;
+        bool loop = false;
+        bool reverse_playback = false;
+    };
+
+    struct animation_trajectory_span_input
+    {
+        uint32_t span_id = 0u;
+        double world_time_start = 0.0;
+        double world_time_duration = 0.0;
+        std::vector<animation_trajectory_track_span_input> tracks;
+        bool has_blend = false;
+        uint32_t source_track_index = 0u;
+        uint32_t target_track_index = 1u;
+        animation_blend_weight_curve_desc blend_curve;
+        animation_trajectory_span_bounds bounds;
+    };
+
+    struct animation_trajectory_packet_build_desc
+    {
+        uint64_t animation_input_version = 0u;
+        uint32_t maximum_span_count = 4096u;
+        std::vector<animation_trajectory_span_input> spans;
+    };
+
+    struct animation_trajectory_packet
+    {
+        uint64_t animation_input_version = 0u;
+        std::vector<animation_span_gpu_record> span_records;
+        std::vector<animation_track_gpu_record> track_records;
+        std::vector<animation_channel_gpu_record> channel_records;
+        std::vector<animation_blend_gpu_record> blend_records;
+        std::vector<gpu_matrix4x4> inverse_bind_matrices;
+        // Dense by Asset Node Index. TRS nodes contain Identity; static affine
+        // Matrix nodes contain their immutable local matrix and set role bit4.
+        std::vector<gpu_matrix4x4> static_node_matrices;
+        std::vector<kinematic_collider_gpu_record> collider_records;
+    };
+
+    enum class animation_trajectory_packet_error : uint8_t
+    {
+        none,
+        invalid_version,
+        invalid_model,
+        invalid_span,
+        invalid_track,
+        invalid_channel,
+        invalid_hierarchy,
+        invalid_skin,
+        unsupported_inverse_bind_layout,
+        invalid_bounds,
+        capacity_exceeded
+    };
+
+    struct animation_trajectory_packet_build_result
+    {
+        animation_trajectory_packet value;
+        animation_trajectory_packet_error error =
+            animation_trajectory_packet_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    animation_trajectory_packet_build_result build_animation_trajectory_packet(
+        const asset::model& model,
+        const animation_trajectory_packet_build_desc& desc);
+
 }
