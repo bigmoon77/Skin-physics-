@@ -4196,9 +4196,11 @@ namespace skin_physics::physics
             }
         }
 
-        // The static Skin table identifies which ordered Joint set each
-        // Skinned Mesh Node consumes. Joint entries carry Skin-specific IBM
-        // indices, even when a Joint Node is shared by multiple Skins.
+        // One Skin Joint range is uploaded per Asset Skin and reused by every
+        // Skinned Mesh Node that references it. Per-Skin IBM records remain
+        // distinct even when multiple Skins share the same Joint Node.
+        std::vector<uint32_t> skin_joint_first_record_by_skin(
+            model.skins.size(), asset::invalid_index);
         for (uint32_t mesh_node_index = 0u;
             mesh_node_index < node_count; ++mesh_node_index)
         {
@@ -4218,10 +4220,7 @@ namespace skin_physics::physics
             const asset::skin& skin = model.skins[mesh_node.skin_index];
             if (skin.joints.empty() ||
                 skin.joints.size() >
-                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
-                candidate.skin_joint_records.size() >
-                    static_cast<std::size_t>(asset::invalid_index) -
-                        skin.joints.size())
+                    static_cast<std::size_t>(asset::invalid_index))
             {
                 return fail(
                     animation_trajectory_packet_error::capacity_exceeded,
@@ -4235,49 +4234,68 @@ namespace skin_physics::physics
                     "Skin mapping count exceeds the uint32 record index space.");
             }
 
+            uint32_t first_joint_record =
+                skin_joint_first_record_by_skin[mesh_node.skin_index];
+            if (first_joint_record == asset::invalid_index)
+            {
+                if (candidate.skin_joint_records.size() >
+                    static_cast<std::size_t>(asset::invalid_index) -
+                        skin.joints.size())
+                {
+                    return fail(
+                        animation_trajectory_packet_error::capacity_exceeded,
+                        "Skin Joint mapping range exceeds the uint32 record index space.");
+                }
+
+                first_joint_record =
+                    static_cast<uint32_t>(
+                        candidate.skin_joint_records.size());
+                skin_joint_first_record_by_skin[mesh_node.skin_index] =
+                    first_joint_record;
+
+                for (std::size_t joint_slot = 0u;
+                    joint_slot < skin.joints.size(); ++joint_slot)
+                {
+                    const uint32_t joint_node_index = skin.joints[joint_slot];
+                    if (joint_node_index >= node_count ||
+                        inverse_bind_index_by_node[joint_node_index] ==
+                            asset::invalid_index ||
+                        node_channel_offset_by_node[joint_node_index] ==
+                            asset::invalid_index)
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_skin,
+                            "Skin Joint mapping references a Node without a validated Channel or Skin-specific Inverse Bind Matrix.");
+                    }
+
+                    const uint32_t skin_joint_inverse_bind_index =
+                        skin_inverse_bind_base_by_index[mesh_node.skin_index] +
+                        static_cast<uint32_t>(joint_slot);
+                    if (skin_joint_inverse_bind_index >=
+                        candidate.inverse_bind_matrices.size())
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_skin,
+                            "Skin-specific Inverse Bind record index is outside the immutable Buffer.");
+                    }
+
+                    animation_skin_joint_gpu_record joint_record;
+                    joint_record.joint_channel_offset =
+                        node_channel_offset_by_node[joint_node_index];
+                    joint_record.inverse_bind_record_index =
+                        skin_joint_inverse_bind_index;
+                    joint_record.joint_node_index = joint_node_index;
+                    candidate.skin_joint_records.push_back(joint_record);
+                }
+            }
+
             animation_skin_gpu_record skin_record;
             skin_record.mesh_node_channel_offset =
                 node_channel_offset_by_node[mesh_node_index];
             skin_record.skin_index = mesh_node.skin_index;
-            skin_record.first_joint_record =
-                static_cast<uint32_t>(candidate.skin_joint_records.size());
+            skin_record.first_joint_record = first_joint_record;
             skin_record.joint_count =
                 static_cast<uint32_t>(skin.joints.size());
-
-            for (std::size_t joint_slot = 0u;
-                joint_slot < skin.joints.size(); ++joint_slot)
-            {
-                const uint32_t joint_node_index = skin.joints[joint_slot];
-                if (joint_node_index >= node_count ||
-                    inverse_bind_index_by_node[joint_node_index] ==
-                        asset::invalid_index ||
-                    node_channel_offset_by_node[joint_node_index] ==
-                        asset::invalid_index)
-                {
-                    return fail(
-                        animation_trajectory_packet_error::invalid_skin,
-                        "Skin Joint mapping references a Node without a validated Channel or Skin-specific Inverse Bind Matrix.");
-                }
-
-                const uint32_t skin_joint_inverse_bind_index =
-                    skin_inverse_bind_base_by_index[mesh_node.skin_index] +
-                    static_cast<uint32_t>(joint_slot);
-                if (skin_joint_inverse_bind_index >=
-                    candidate.inverse_bind_matrices.size())
-                {
-                    return fail(
-                        animation_trajectory_packet_error::invalid_skin,
-                        "Skin-specific Inverse Bind record index is outside the immutable Buffer.");
-                }
-
-                animation_skin_joint_gpu_record joint_record;
-                joint_record.joint_channel_offset =
-                    node_channel_offset_by_node[joint_node_index];
-                joint_record.inverse_bind_record_index =
-                    skin_joint_inverse_bind_index;
-                joint_record.joint_node_index = joint_node_index;
-                candidate.skin_joint_records.push_back(joint_record);
-            }
             candidate.skin_records.push_back(skin_record);
         }
 
