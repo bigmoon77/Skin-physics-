@@ -789,5 +789,41 @@
     "tests": "not_started",
     "classification": "failed_before_any_reported_job_step",
     "note": "This attempt targets the latest implementation HEAD. GitHub reports the job as failed, but the job-step endpoint returns an empty array and no job log artifact is available. No compiler or test step is evidenced; runner allocation and the pre-step failure cause are unknown. This is not evidence of a source-code regression. DispatchIndirect, Tick transaction Commit Gate and fixed-step accumulator preservation WARP/CPU execution remain unverified."
+  },
+  "runtime_boundary_implementation": {
+    "status": "partially_implemented_source_unverified",
+    "source_files": [
+      "include/skin_physics/runtime/physics_runtime.hpp",
+      "src/runtime/physics_runtime.cpp",
+      "include/skin_physics/simulation/d3d11_status_ring.hpp",
+      "src/simulation/d3d11_status_ring.cpp",
+      "tests/runtime_tests.cpp",
+      "tests/environment_tests.cpp"
+    ],
+    "automated_test_groups": [
+      "R0_RUNTIME_INITIALIZATION_AND_HANDLES",
+      "R0_RUNTIME_TIME_BUDGET_AND_PAUSE",
+      "R0_RUNTIME_SUBMISSION_THREAD_GUARD"
+    ],
+    "covered_contracts": [
+      "host_device_immediate_context_feature_level_and_device_identity_validation",
+      "generation_checked_world_model_and_collider_handle_storage",
+      "aggregate_status_ring_capacity_growth",
+      "fixed_step_accumulator_pause_stop_single_step_reset_accounting",
+      "world_execution_budget_revision_and_hard_limit_validation",
+      "submission_thread_enforcement",
+      "world_drain_shutdown_and_render_lease_busy_guards"
+    ],
+    "remaining_r0": [
+      "GPU Tick Submission and per-World Dispatch Plan creation",
+      "GPU Begin / predecessor gate on every budgeted Physics pass",
+      "GPU Status Buffer production and per-Tick Event Query enqueue",
+      "asynchronous COMMITTED status parsing and contiguous observed-prefix recovery",
+      "two persistent State Banks and Segment Snapshot lifecycle",
+      "work-budget preflight reservation and same-Reservation retry",
+      "Render Candidate Ring and Host Render Lease publication",
+      "Public Runtime integration with the production Soft Body / Cloth / Collision solvers"
+    ],
+    "validation": "WARP test source is registered in the Windows test project; execution and C++ compilation remain unverified until a Windows CI runner executes build-and-test."
   }
 }
