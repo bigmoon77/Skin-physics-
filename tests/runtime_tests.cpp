@@ -2,6 +2,7 @@
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 
 #include <cmath>
+#include <array>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
