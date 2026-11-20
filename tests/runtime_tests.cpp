@@ -990,11 +990,14 @@ namespace
         require(result.state == skin_physics::runtime::tick_state::failed &&
             result.last_tick_status == status_code::gpu_execution_failed,
             "A Render Candidate numerical failure in the head Tick must remain the World terminal result after the successor reports BLOCKED_BY_PREDECESSOR.");
+        require(result.head_input_snapshot_version != 0u,
+            "A non-COMMITTED In-Flight Tick must retain its original Input Snapshot after Reservation restoration.");
         require(result.gpu_committed_sequence == 0u &&
             result.cpu_observed_sequence == 0u &&
             result.in_flight_tick_count == 0u &&
             result.head_reserved_tick_sequence == 1u &&
             result.pending_tick_count == 2u &&
+            result.head_input_snapshot_version != 0u &&
             std::abs(result.reserved_tick_time - 0.02) <= 1.0e-12,
             "Both non-committed Reservations must be retained in ascending Sequence order with full reserved time and no published State Bank.");
 
@@ -1003,7 +1006,9 @@ namespace
             repeated.state == skin_physics::runtime::tick_state::failed &&
             repeated.last_tick_status == status_code::gpu_execution_failed &&
             repeated.head_reserved_tick_sequence == 1u &&
-            repeated.pending_tick_count == 2u,
+            repeated.pending_tick_count == 2u &&
+            repeated.head_input_snapshot_version ==
+                result.head_input_snapshot_version,
             "A subsequent Poll must preserve the original FAILED result and the ordered diagnostic Reservations.");
 
         skin_physics::runtime::advance_report rejected_advance;
