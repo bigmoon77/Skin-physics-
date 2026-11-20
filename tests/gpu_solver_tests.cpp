@@ -558,13 +558,15 @@ namespace
         uint32_t reservation_token_high = 0u;
         uint32_t last_gate_state = 1u;
         uint32_t diagnostic = 0u;
-        uint32_t reserved = 0u;
+        uint32_t render_slot_id = skin_physics::asset::invalid_index;
+        uint32_t render_slot_generation = 0u;
+        uint32_t reserved[3] = {};
     };
 
     static_assert(sizeof(gpu_tet_input) == 160, "Tet input layout must match HLSL.");
     static_assert(sizeof(gpu_tet_output) == 224, "Tet output layout must match HLSL.");
-    static_assert(sizeof(gpu_tick_commit_control) == 64,
-        "Runtime Tick Commit Control layout must match HLSL.");
+    static_assert(sizeof(gpu_tick_commit_control) == 80,
+        "Production Runtime FEM Tick Commit Control layout must match HLSL.");
 
     void test_phase06_warp_corotational_fem()
     {
