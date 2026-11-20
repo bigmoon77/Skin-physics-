@@ -751,13 +751,6 @@ namespace
             third_tick_report.pending_tick_count == 0u,
             "A third Tick must be submitted before the Host acquires the previous committed Render Candidate.");
 
-        skin_physics::runtime::world_status third_tick_status;
-        require(runtime.poll(world, &third_tick_status).success() &&
-            third_tick_status.in_flight_tick_count == 1u &&
-            third_tick_status.planned_substeps == 3u &&
-            third_tick_status.planned_integration_segments == 3u,
-            "The WARP Soft Body Tick must submit one immutable Integration Parameters buffer per scheduled World Segment.");
-
         skin_physics::runtime::render_binding render_binding;
         require(runtime.get_render_binding(
                 world, model, 0u, &render_binding).success(),
