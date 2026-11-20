@@ -5254,8 +5254,113 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Render Binding output or Mesh Index is invalid.");
         }
-        return make_status(status_code::not_ready,
-            "Render Candidate publication and Host Lease integration are part of R5 and are not yet connected.");
+
+        *out_binding = {};
+        if (model->source_model.meshes[mesh_index].mode !=
+            asset::physics_mode::soft_body)
+        {
+            return make_status(status_code::unsupported_feature,
+                "GPU Render Candidates are currently provided for Soft Body Meshes only.");
+        }
+
+        const auto gpu_mesh_iterator = std::find_if(
+            model->gpu_soft_body_meshes.begin(),
+            model->gpu_soft_body_meshes.end(),
+            [mesh_index](const implementation::soft_body_gpu_mesh& value)
+            {
+                return value.mesh_index == mesh_index;
+            });
+        if (gpu_mesh_iterator == model->gpu_soft_body_meshes.end())
+        {
+            return make_status(status_code::not_ready,
+                "Soft Body Mesh has no GPU Render Candidate resources.");
+        }
+
+        if (world->latest_render_slot_id == asset::invalid_index ||
+            world->latest_render_slot_id >= world->render_candidate_slots.size())
+        {
+            return make_status(status_code::not_ready,
+                "No CPU-observed committed Render Candidate is available for this World.");
+        }
+
+        const uint32_t slot_id = world->latest_render_slot_id;
+        const uint32_t slot_generation = world->latest_render_slot_generation;
+        const implementation::render_candidate_slot_state& slot_state =
+            world->render_candidate_slots[slot_id];
+        if (!slot_state.committed ||
+            slot_state.reserved ||
+            slot_state.generation != slot_generation)
+        {
+            return make_status(status_code::not_ready,
+                "Latest Render Candidate Ring Slot is not committed and reusable.");
+        }
+
+        const implementation::render_candidate_mesh_slot& mesh_slot =
+            gpu_mesh_iterator->render_candidate_slots[slot_id];
+        if (mesh_slot.committed_generation != slot_generation ||
+            mesh_slot.committed_tick_sequence != slot_state.committed_tick_sequence)
+        {
+            return make_status(status_code::not_ready,
+                "This Model / Mesh did not participate in the latest committed Render Candidate.");
+        }
+
+        if (world->render_lease_active)
+        {
+            if (world->leased_render_slot_id != slot_id ||
+                world->leased_render_slot_generation != slot_generation)
+            {
+                return make_status(status_code::busy,
+                    "The active Host Render Lease pins a different Render Candidate Slot.");
+            }
+        }
+        else
+        {
+            if (world->render_lease_generation ==
+                std::numeric_limits<uint64_t>::max())
+            {
+                return make_status(status_code::capacity_exceeded,
+                    "Host Render Lease Generation cannot advance without uint64 overflow.");
+            }
+            ++world->render_lease_generation;
+            world->render_lease_active = true;
+            world->leased_render_slot_id = slot_id;
+            world->leased_render_slot_generation = slot_generation;
+        }
+
+        const asset::mesh& source_mesh = model->source_model.meshes[mesh_index];
+        const bool has_normals = std::any_of(
+            source_mesh.vertices.begin(),
+            source_mesh.vertices.end(),
+            [](const asset::vertex& vertex)
+            {
+                return (vertex.attributes & asset::attribute_normal) != 0u;
+            });
+        const bool has_tangents = std::any_of(
+            source_mesh.vertices.begin(),
+            source_mesh.vertices.end(),
+            [](const asset::vertex& vertex)
+            {
+                return (vertex.attributes & asset::attribute_tangent) != 0u;
+            });
+
+        out_binding->position_srv = mesh_slot.position_srv.Get();
+        out_binding->normal_srv = has_normals ? mesh_slot.normal_srv.Get() : nullptr;
+        out_binding->tangent_srv = has_tangents ? mesh_slot.tangent_srv.Get() : nullptr;
+        out_binding->format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+        out_binding->stride = sizeof(implementation::gpu_float4);
+        out_binding->vertex_count = gpu_mesh_iterator->render_vertex_count;
+        out_binding->index_count = gpu_mesh_iterator->render_index_count;
+        out_binding->resource_generation =
+            (static_cast<uint64_t>(world->generation) << 32u) |
+            (static_cast<uint64_t>(slot_generation) << 16u) |
+            static_cast<uint64_t>(slot_id & 0xffffu);
+        out_binding->device_generation = runtime.device_generation;
+        out_binding->committed_tick_sequence =
+            slot_state.committed_tick_sequence;
+        out_binding->render_slot_id = slot_id;
+        out_binding->render_slot_generation = slot_generation;
+        out_binding->lease_generation = world->render_lease_generation;
+        return make_status(status_code::ok, {});
     }
 
     status physics_runtime::release_render_bindings(
