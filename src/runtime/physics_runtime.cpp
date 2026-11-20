@@ -1308,6 +1308,7 @@ namespace skin_physics::runtime
             bool destination_is_scratch = false;
             ID3D11ShaderResourceView* integrated_force_srv = nullptr;
             ID3D11ShaderResourceView* integrated_impulse_srv = nullptr;
+            ID3D11ShaderResourceView* animation_target_status_srv = nullptr;
             float tracking_stiffness = 0.0f;
             float tracking_damping = 0.0f;
             float tracking_attribute_multiplier = 1.0f;
@@ -1326,6 +1327,8 @@ namespace skin_physics::runtime
                 segment_parameter_buffers;
             std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>
                 segment_shader_resource_views;
+            std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>
+                segment_unordered_access_views;
             force_distribution_global_scratch force_distribution_scratch;
             uint64_t expected_predecessor_sequence = 0u;
             uint64_t expected_source_generation = 1u;
@@ -3781,16 +3784,24 @@ namespace skin_physics::runtime
             const model_slot& model,
             const model_input_snapshot& model_snapshot,
             const model_animation_tick_schedule& schedule,
-            const soft_body_gpu_mesh& gpu_mesh,
+            soft_body_mesh_work_state& work,
             double world_time,
             simulation::d3d11_compute_graph& graph,
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
                 out_segment_parameter_buffers,
             std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>&
                 out_segment_shader_resource_views,
+            std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>&
+                out_segment_unordered_access_views,
             std::string& diagnostic)
         {
             diagnostic.clear();
+            if (work.gpu_mesh == nullptr)
+            {
+                diagnostic = "Animation Skinning work item lost its GPU Mesh.";
+                return false;
+            }
+            const soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
             if (soft_body_animation_skinning_shader == nullptr ||
                 gpu_mesh.skin_index == asset::invalid_index ||
                 gpu_mesh.skin_node_index == asset::invalid_index ||
@@ -4006,9 +4017,27 @@ namespace skin_physics::runtime
             }
 
             const uint32_t clear_status = 0u;
-            immediate_context->UpdateSubresource(
-                gpu_mesh.animation_target_status_buffer.Get(),
-                0u, nullptr, &clear_status, 0u, 0u);
+            Microsoft::WRL::ComPtr<ID3D11Buffer> segment_status_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> segment_status_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> segment_status_uav;
+            if (!create_structured_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(clear_status)),
+                    static_cast<uint32_t>(sizeof(clear_status)),
+                    D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+                    &clear_status,
+                    segment_status_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), segment_status_buffer.Get(), 1u,
+                    segment_status_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), segment_status_buffer.Get(), 1u,
+                    segment_status_uav.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate a Segment-owned Animation Target Validation Status Buffer.";
+                return false;
+            }
 
             simulation::compute_pass_desc skinning_pass;
             skinning_pass.name =
@@ -4026,7 +4055,7 @@ namespace skin_physics::runtime
             skinning_pass.unordered_access_views = {
                 { 0u, gpu_mesh.animation_target_positions_uav.Get(), 0xffffffffu },
                 { 1u, gpu_mesh.animation_target_velocities_uav.Get(), 0xffffffffu },
-                { 2u, gpu_mesh.animation_target_status_uav.Get(), 0xffffffffu }
+                { 2u, segment_status_uav.Get(), 0xffffffffu }
             };
             skinning_pass.constant_buffers = {
                 { 0u, parameter_buffer.Get() }
@@ -4044,6 +4073,12 @@ namespace skin_physics::runtime
                 std::move(skin_matrix_srv));
             out_segment_shader_resource_views.push_back(
                 std::move(skin_matrix_derivative_srv));
+            out_segment_shader_resource_views.push_back(
+                std::move(segment_status_srv));
+            out_segment_unordered_access_views.push_back(
+                std::move(segment_status_uav));
+            work.animation_target_status_srv =
+                out_segment_shader_resource_views.back().Get();
             return true;
         }
 
