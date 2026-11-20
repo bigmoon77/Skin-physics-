@@ -392,11 +392,60 @@ namespace
         const float radius = static_cast<float>(
             input.at("radius").as_number());
 
-        skin_physics::runtime::detail::force_distribution_mesh_view mesh_view;
-        mesh_view.segment_start_positions = &positions;
-        mesh_view.rest_lumped_masses = &rest_masses;
+        const test_json::value::array& partition_inputs =
+            input.at("mesh_partitions").as_array();
+        require(partition_inputs.size() == 3u,
+            "WARP fixture must describe three independent target Meshes.");
+
+        std::vector<std::vector<skin_physics::asset::vec3>> mesh_positions(
+            partition_inputs.size());
+        std::vector<std::vector<float>> mesh_rest_masses(
+            partition_inputs.size());
         std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
-            mesh_views = { mesh_view };
+            mesh_views;
+        std::vector<uint32_t> vertex_mesh_indices(vertex_count, 0u);
+        std::vector<uint32_t> vertex_mesh_local_indices(vertex_count, 0u);
+        mesh_views.reserve(partition_inputs.size());
+
+        uint32_t partition_offset = 0u;
+        for (uint32_t mesh_index = 0u;
+            mesh_index < static_cast<uint32_t>(partition_inputs.size());
+            ++mesh_index)
+        {
+            const double partition_size_value =
+                partition_inputs[mesh_index].as_number();
+            require(std::isfinite(partition_size_value) &&
+                partition_size_value > 0.0 &&
+                std::floor(partition_size_value) == partition_size_value &&
+                partition_size_value <=
+                    static_cast<double>(vertex_count - partition_offset),
+                "Every WARP Mesh partition must have a positive integral vertex count within the input range.");
+
+            const uint32_t partition_size =
+                static_cast<uint32_t>(partition_size_value);
+            mesh_positions[mesh_index].assign(
+                positions.begin() + partition_offset,
+                positions.begin() + partition_offset + partition_size);
+            mesh_rest_masses[mesh_index].assign(
+                rest_masses.begin() + partition_offset,
+                rest_masses.begin() + partition_offset + partition_size);
+
+            skin_physics::runtime::detail::force_distribution_mesh_view mesh_view;
+            mesh_view.segment_start_positions = &mesh_positions[mesh_index];
+            mesh_view.rest_lumped_masses = &mesh_rest_masses[mesh_index];
+            mesh_views.push_back(mesh_view);
+
+            for (uint32_t local_index = 0u;
+                local_index < partition_size; ++local_index)
+            {
+                const uint32_t global_index = partition_offset + local_index;
+                vertex_mesh_indices[global_index] = mesh_index;
+                vertex_mesh_local_indices[global_index] = local_index;
+            }
+            partition_offset += partition_size;
+        }
+        require(partition_offset == vertex_count,
+            "WARP Mesh partitions must cover every flattened GPU input exactly once.");
 
         skin_physics::runtime::detail::force_distribution_weights cpu_reference;
         std::string reference_diagnostic;
@@ -409,9 +458,16 @@ namespace
                 reference_diagnostic),
             "CPU double-precision Wendland C2 reference must build: " +
                 reference_diagnostic);
-        require(cpu_reference.mesh_weights.size() == 1u &&
-            cpu_reference.mesh_weights[0u].size() == vertex_count,
-            "CPU reference must contain one weight for each WARP test vertex.");
+        require(cpu_reference.mesh_weights.size() == partition_inputs.size(),
+            "CPU reference must preserve the three target Mesh weight arrays.");
+        for (uint32_t mesh_index = 0u;
+            mesh_index < static_cast<uint32_t>(partition_inputs.size());
+            ++mesh_index)
+        {
+            require(cpu_reference.mesh_weights[mesh_index].size() ==
+                mesh_positions[mesh_index].size(),
+                "CPU reference must preserve each target Mesh vertex count.");
+        }
 
         const double expected_weight_sum =
             expected.at("unnormalized_weight_sum").as_number();
@@ -420,13 +476,28 @@ namespace
         require(expected_weights.size() == vertex_count &&
             std::abs(cpu_reference.unnormalized_weight_sum -
                 expected_weight_sum) <= 1.0e-10,
-            "CPU double-precision Force distribution must match the persistent 130-vertex golden.");
+            "CPU double-precision Force distribution must match the persistent 130-vertex / three-Mesh golden.");
+        std::vector<double> per_mesh_weight_sums(mesh_views.size(), 0.0);
         for (uint32_t index = 0u; index < vertex_count; ++index)
         {
-            require(std::abs(cpu_reference.mesh_weights[0u][index] -
-                    expected_weights[index].as_number()) <= 1.0e-12,
-                "CPU double-precision per-vertex Force weights must match the persistent golden.");
+            const uint32_t mesh_index = vertex_mesh_indices[index];
+            const uint32_t local_index = vertex_mesh_local_indices[index];
+            const double weight =
+                cpu_reference.mesh_weights[mesh_index][local_index];
+            require(std::abs(weight - expected_weights[index].as_number()) <= 1.0e-12,
+                "CPU double-precision per-vertex Force weights must match the persistent golden across Mesh boundaries.");
+            per_mesh_weight_sums[mesh_index] += weight;
         }
+
+        double cpu_normalized_weight_sum = 0.0;
+        for (double mesh_sum : per_mesh_weight_sums)
+        {
+            require(mesh_sum > 0.0 && mesh_sum < 1.0,
+                "Every fixture Mesh must receive a partial share of the single global normalization denominator.");
+            cpu_normalized_weight_sum += mesh_sum;
+        }
+        require(std::abs(cpu_normalized_weight_sum - 1.0) <= 1.0e-12,
+            "CPU Force distribution must conserve one descriptor magnitude across all target Meshes.");
 
         test_gpu_force_distribution_event_parameters event_parameters;
         event_parameters.vertex_count = vertex_count;
@@ -609,8 +680,10 @@ namespace
         double normalized_weight_sum = 0.0;
         for (uint32_t index = 0u; index < vertex_count; ++index)
         {
+            const uint32_t mesh_index = vertex_mesh_indices[index];
+            const uint32_t local_index = vertex_mesh_local_indices[index];
             const double expected_q =
-                cpu_reference.mesh_weights[0u][index] *
+                cpu_reference.mesh_weights[mesh_index][local_index] *
                 cpu_reference.unnormalized_weight_sum;
             const double q_error = std::abs(
                 static_cast<double>(gpu_raw_weights[index]) - expected_q);
@@ -620,7 +693,7 @@ namespace
                 "GPU per-vertex unnormalized Wendland C2 q must match the CPU reference.");
 
             const double expected_weight =
-                cpu_reference.mesh_weights[0u][index];
+                cpu_reference.mesh_weights[mesh_index][local_index];
             const double normalized_error = std::abs(
                 static_cast<double>(gpu_distributed_weights[index].x) -
                 expected_weight);
