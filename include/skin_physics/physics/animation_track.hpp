@@ -556,6 +556,25 @@ namespace skin_physics::physics
         float reserved1 = 0.0f;
     };
 
+    // Static mapping from each Skinned Mesh Node to its ordered Joint set.
+    // Channel offsets are relative to a Track's first_channel_record so the
+    // same immutable Skin table works for every Track / Span in the Packet.
+    struct animation_skin_gpu_record
+    {
+        uint32_t mesh_node_channel_offset = asset::invalid_index;
+        uint32_t skin_index = asset::invalid_index;
+        uint32_t first_joint_record = 0u;
+        uint32_t joint_count = 0u;
+    };
+
+    struct animation_skin_joint_gpu_record
+    {
+        uint32_t joint_channel_offset = asset::invalid_index;
+        uint32_t inverse_bind_record_index = asset::invalid_index;
+        uint32_t joint_node_index = asset::invalid_index;
+        uint32_t reserved = 0u;
+    };
+
     static_assert(std::is_standard_layout_v<gpu_float4>);
     static_assert(std::is_trivially_copyable_v<gpu_float4>);
     static_assert(sizeof(gpu_float4) == 16u);
@@ -612,6 +631,19 @@ namespace skin_physics::physics
     static_assert(offsetof(animation_blend_gpu_record, weight_coefficients) == 16u);
     static_assert(offsetof(animation_blend_gpu_record, duration_seconds) == 32u);
     static_assert(offsetof(animation_blend_gpu_record, blend_start_offset_seconds) == 40u);
+
+    static_assert(std::is_standard_layout_v<animation_skin_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_skin_gpu_record>);
+    static_assert(sizeof(animation_skin_gpu_record) == 16u);
+    static_assert(alignof(animation_skin_gpu_record) == 4u);
+    static_assert(offsetof(animation_skin_gpu_record, first_joint_record) == 8u);
+
+    static_assert(std::is_standard_layout_v<animation_skin_joint_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_skin_joint_gpu_record>);
+    static_assert(sizeof(animation_skin_joint_gpu_record) == 16u);
+    static_assert(alignof(animation_skin_joint_gpu_record) == 4u);
+    static_assert(offsetof(animation_skin_joint_gpu_record, inverse_bind_record_index) == 4u);
+    static_assert(offsetof(animation_skin_joint_gpu_record, joint_node_index) == 8u);
 
     static_assert(std::is_standard_layout_v<kinematic_collider_gpu_record>);
     static_assert(std::is_trivially_copyable_v<kinematic_collider_gpu_record>);
@@ -686,6 +718,10 @@ namespace skin_physics::physics
         // Dense by Asset Node Index. TRS nodes contain Identity; static affine
         // Matrix nodes contain their immutable local matrix and set role bit4.
         std::vector<gpu_matrix4x4> static_node_matrices;
+        // Static Skin -> Joint mapping. Channel offsets are relative to each
+        // Track's first_channel_record; inverse-bind offsets are absolute.
+        std::vector<animation_skin_gpu_record> skin_records;
+        std::vector<animation_skin_joint_gpu_record> skin_joint_records;
         std::vector<kinematic_collider_gpu_record> collider_records;
         // CPU-only double World-Time metadata; this is never uploaded to the GPU.
         std::vector<double> span_world_time_starts;
