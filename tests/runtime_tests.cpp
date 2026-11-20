@@ -136,8 +136,8 @@ namespace
         require(runtime.advance(world, 0.025, &report).success(),
             "Advance must accept valid wall-clock time.");
         require(report.pending_tick_count == 2u &&
-            std::abs(report.accumulator_seconds - 0.025) <= 1.0e-12,
-            "Advance must retain two whole fixed-step requests without dropping the fractional remainder.");
+            std::abs(report.accumulator_seconds - 0.015) <= 1.0e-12,
+            "Advance must transfer one fixed interval into a Tick Reservation and preserve the unallocated remainder.");
 
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::paused).success(),
@@ -145,8 +145,8 @@ namespace
         require(runtime.advance(world, 0.5, &report).success(),
             "Advance while Paused must still allow polling without consuming wall-clock time.");
         require(report.pending_tick_count == 2u &&
-            std::abs(report.accumulator_seconds - 0.025) <= 1.0e-12,
-            "Paused Advance must preserve the existing accumulator and ignore additional frame time.");
+            std::abs(report.accumulator_seconds - 0.015) <= 1.0e-12,
+            "Paused Advance must preserve the unallocated remainder and ignore additional frame time.");
 
         require(runtime.set_fixed_delta_time(world, 0.02).code == status_code::busy,
             "Fixed Delta Time must not change while complete Tick requests remain in the Accumulator.");
@@ -185,6 +185,77 @@ namespace
             "World with no pending time or lease must be destroyable.");
         require(runtime.shutdown() == status_code::ok,
             "Runtime must shut down after the time / budget regression.");
+    }
+
+    void test_runtime_cpu_preflight_reservation_retry()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Runtime regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = "runtime-test-shaders";
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime initialization must succeed for the CPU Preflight regression.");
+
+        skin_physics::runtime::world_desc desc;
+        desc.fixed_delta_time = 0.02;
+        desc.minimum_substeps = 1u;
+        desc.maximum_substeps = 2u;
+        desc.contact_max_substep_delta_time = 0.005;
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world(desc, &world).success(),
+            "CPU Preflight World creation must succeed.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "CPU Preflight World must enter Playing.");
+
+        skin_physics::runtime::advance_report report;
+        require(runtime.advance(world, 0.02, &report).success(),
+            "Advance must accept time even when the derived CPU Preflight later blocks.");
+        require(report.cpu_preflight_blocked_tick_count == 1u &&
+            report.first_cpu_preflight_blocked_tick_sequence == 1u &&
+            report.pending_tick_count == 1u &&
+            std::abs(report.accumulator_seconds) <= 1.0e-12,
+            "CPU Preflight must create one blocked head Reservation and move its time out of the Accumulator.");
+
+        skin_physics::runtime::world_status before_retry;
+        require(runtime.poll(world, &before_retry).success() &&
+            before_retry.state == skin_physics::runtime::tick_state::blocked &&
+            before_retry.last_tick_status == status_code::work_budget_exceeded &&
+            before_retry.budget_block_origin ==
+                skin_physics::runtime::work_budget_block_origin::cpu_preflight &&
+            before_retry.planned_substeps == 4u &&
+            before_retry.head_reserved_tick_sequence == 1u &&
+            std::abs(before_retry.reserved_tick_time - 0.02) <= 1.0e-12,
+            "CPU Preflight must report required work while preserving the exact head Reservation.");
+
+        skin_physics::runtime::world_execution_budget increased_budget;
+        increased_budget.maximum_substeps = 4u;
+        increased_budget.maximum_integration_segments_per_tick = 512u;
+        require(runtime.set_world_execution_budget(world, increased_budget).success(),
+            "World budget recovery must accept the required Substep count below the Runtime Hard Limit.");
+
+        skin_physics::runtime::world_status after_retry;
+        require(runtime.poll(world, &after_retry).success() &&
+            after_retry.execution_budget_revision == 2u &&
+            after_retry.state == skin_physics::runtime::tick_state::pending &&
+            after_retry.last_tick_status == status_code::ok &&
+            after_retry.work_budget_block_flags == 0u &&
+            after_retry.head_reserved_tick_sequence == 1u &&
+            std::abs(after_retry.reserved_tick_time - 0.02) <= 1.0e-12 &&
+            after_retry.pending_tick_count == 1u,
+            "Budget recovery must re-evaluate the same Reservation without allocating a duplicate Tick or changing its reserved time.");
+
+        require(runtime.reset_world(world).success(),
+            "Reset must explicitly release a CPU-only pending Reservation.");
+        require(runtime.destroy_world(world).success(),
+            "World must be destroyable after Reservation Reset.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime must shut down after the CPU Preflight recovery regression.");
     }
 
     void test_runtime_submission_thread_guard()
@@ -231,6 +302,8 @@ int run_runtime_tests()
     std::cout << "[PASS] R0_RUNTIME_TIME_BUDGET_AND_PAUSE\n";
     test_runtime_submission_thread_guard();
     std::cout << "[PASS] R0_RUNTIME_SUBMISSION_THREAD_GUARD\n";
+    test_runtime_cpu_preflight_reservation_retry();
+    std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY\n";
     std::cout << "RuntimeTests passed.\n";
     return 0;
 }
