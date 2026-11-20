@@ -59,6 +59,21 @@ StructuredBuffer<TetInput> tetrahedra : register(t1);
 RWStructuredBuffer<TetOutput> outputs : register(u0);
 RWStructuredBuffer<TickCommitControl> tick_commit_control_buffer : register(u1);
 
+void mark_tick_failure(uint diagnostic_code)
+{
+    uint previous_diagnostic = 0u;
+    InterlockedCompareExchange(
+        tick_commit_control_buffer[0].diagnostic,
+        0u,
+        diagnostic_code,
+        previous_diagnostic);
+    uint previous_failure = 0u;
+    InterlockedOr(
+        tick_commit_control_buffer[0].terminal_failure,
+        1u,
+        previous_failure);
+}
+
 cbuffer DispatchParameters : register(b0)
 {
     uint tetrahedron_count;
@@ -504,8 +519,7 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
     if (!rotation_valid || !all(isfinite(deformation[0])) ||
         !all(isfinite(deformation[1])) || !all(isfinite(deformation[2])))
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(101u);
         return;
     }
 
@@ -565,8 +579,7 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
         isfinite(elastic_energy);
     if (!output_finite)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(102u);
         return;
     }
 
@@ -594,7 +607,6 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
 
     if (jacobian <= 0.0f)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-    }
+        mark_tick_failure(103u);
+        }
 }
