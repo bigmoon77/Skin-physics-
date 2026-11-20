@@ -5328,12 +5328,23 @@ namespace skin_physics::runtime
                     completed_tick.render_candidate_slot_generation);
                 const uint64_t completed_sequence =
                     completed_tick.reservation.sequence;
+                const work_budget_block_origin status_block_origin =
+                    static_cast<work_budget_block_origin>(
+                        std::min(gpu_status.work_budget_block_origin, 2u));
+                const bool gpu_dynamic_toi_block =
+                    gpu_status.terminal_state == 3u &&
+                    status_block_origin ==
+                        work_budget_block_origin::gpu_dynamic_toi;
+                const bool predecessor_block =
+                    gpu_status.terminal_state == 3u &&
+                    !gpu_dynamic_toi_block;
+
                 completed_tick.reservation.blocked = true;
                 completed_tick.reservation.rejected =
                     gpu_status.terminal_state == 4u ||
                     gpu_status.terminal_state == 5u;
                 completed_tick.reservation.predecessor_blocked =
-                    gpu_status.terminal_state == 3u;
+                    predecessor_block;
                 runtime.restore_reservation_in_sequence_order(
                     result_world, std::move(completed_tick.reservation));
 
@@ -5348,19 +5359,37 @@ namespace skin_physics::runtime
                     result_world.work_budget_block_flags =
                         static_cast<uint8_t>(
                             gpu_status.work_budget_block_flags & 0xffu);
-                    result_world.budget_block_origin =
-                        static_cast<work_budget_block_origin>(
-                            std::min(gpu_status.work_budget_block_origin, 2u));
+                    result_world.budget_block_origin = status_block_origin;
                     result_world.executed_integration_segments =
                         gpu_status.executed_integration_segments;
                     result_world.minimum_required_integration_segments =
                         gpu_status.minimum_required_integration_segments;
 
-                    if (gpu_status.terminal_state == 3u)
+                    if (gpu_dynamic_toi_block)
+                    {
+                        const bool dynamic_work_unsatisfiable =
+                            gpu_status.minimum_required_integration_segments == 0u ||
+                            gpu_status.minimum_required_integration_segments >
+                                runtime.desc.maximum_integration_segments_per_tick_hard_limit;
+                        result_world.state = tick_state::blocked;
+                        result_world.last_tick_status =
+                            dynamic_work_unsatisfiable
+                                ? status_code::work_budget_unsatisfiable
+                                : status_code::work_budget_exceeded;
+                        result_world.budget_resolution =
+                            dynamic_work_unsatisfiable
+                                ? work_budget_resolution::hard_limit_reached
+                                : work_budget_resolution::retryable;
+                        result_world.gpu_dynamic_toi_block_status_observed = false;
+                    }
+                    else if (predecessor_block)
                     {
                         result_world.state = tick_state::blocked;
                         result_world.last_tick_status = status_code::blocked_by_predecessor;
+                        result_world.budget_block_origin = work_budget_block_origin::none;
                         result_world.budget_resolution = work_budget_resolution::retryable;
+                        result_world.gpu_dynamic_toi_block_status_observed = false;
+                        result_world.cpu_preflight_block_status_observed = false;
                     }
                     else if (gpu_status.terminal_state == 4u)
                     {
