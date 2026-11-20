@@ -1512,7 +1512,7 @@ namespace
                 skin_physics::physics::animation_channel_span_error::non_monotonic_time,
             "The Channel Span Scheduler must fail atomically on duplicate Key times.");
 
-        asset::animation_clip synchronized_clip;
+        skin_physics::asset::animation_clip synchronized_clip;
         synchronized_clip.name = "synchronized_span_test";
         synchronized_clip.duration = 2.0f;
         animation_track synchronized_translation = key_bounded_track;
@@ -1609,7 +1609,7 @@ namespace
                 skin_physics::physics::animation_channel_span_error::invalid_track,
             "Multi-Track Clip scheduling must reject a Track Node Index outside the uploaded Model.");
 
-        animation_clip duplicate_channel_clip = synchronized_clip;
+        skin_physics::asset::animation_clip duplicate_channel_clip = synchronized_clip;
         duplicate_channel_clip.tracks.push_back(synchronized_translation);
         const skin_physics::physics::animation_clip_spans_build_result duplicate_channel =
             skin_physics::physics::build_animation_clip_spans(
