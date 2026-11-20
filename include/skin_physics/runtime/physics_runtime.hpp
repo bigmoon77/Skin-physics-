@@ -156,6 +156,11 @@ namespace skin_physics::runtime
     struct model_mesh_physics_asset
     {
         uint32_t mesh_index = asset::invalid_index;
+        // Resolved by Runtime from the unique Asset Node that instances this
+        // Soft Body Mesh with a Skin. One Physics State Bank currently maps to
+        // one Skinned Mesh Node; multiple instances require separate assets.
+        uint32_t skin_node_index = asset::invalid_index;
+        uint32_t skin_index = asset::invalid_index;
         physics::physics_mesh physics_mesh;
         std::vector<physics::render_vertex_binding> render_bindings;
         uint64_t cache_identity = 0;
