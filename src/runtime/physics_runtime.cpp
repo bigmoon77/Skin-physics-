@@ -1460,12 +1460,41 @@ namespace skin_physics::runtime
                 static_cast<int32_t>(removed_reason));
         }
 
+        std::string diagnostic;
+        const std::filesystem::path shader_root =
+            resolve_shader_package_root(desc.shader_package_root, diagnostic);
+        if (shader_root.empty())
+        {
+            return make_status(status_code::invalid_argument, diagnostic);
+        }
+        const std::filesystem::path tick_shader_path =
+            shader_root / "tick_transaction_control.cs.hlsl";
+
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_begin_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
+        if (!compile_runtime_compute_shader(
+                device, tick_shader_path, "tick_begin_control",
+                tick_begin_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, tick_shader_path, "tick_mark_empty_world_validated",
+                tick_validate_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, tick_shader_path, "tick_commit_control",
+                tick_commit_shader.GetAddressOf(), diagnostic))
+        {
+            return make_status(status_code::gpu_execution_failed,
+                "Runtime Tick Control shader initialization failed: " + diagnostic);
+        }
+
         runtime.desc = desc;
         runtime.device = device;
         runtime.immediate_context = immediate_context;
+        runtime.tick_begin_shader = std::move(tick_begin_shader);
+        runtime.tick_validate_empty_world_shader = std::move(tick_validate_shader);
+        runtime.tick_commit_shader = std::move(tick_commit_shader);
         runtime.submission_thread = std::this_thread::get_id();
 
-        std::string diagnostic;
         if (!runtime.ensure_status_capacity(desc.query_ring_capacity, diagnostic))
         {
             runtime.immediate_context.Reset();
