@@ -244,8 +244,8 @@ namespace skin_physics::runtime
             "Soft Body FEM Parameters ABI must remain 16 bytes.");
         static_assert(sizeof(gpu_soft_body_gather_parameters) == 16,
             "Soft Body Gather Parameters ABI must remain 16 bytes.");
-        static_assert(sizeof(gpu_soft_body_integration_parameters) == 32,
-            "Soft Body Integration Parameters ABI must remain 32 bytes.");
+        static_assert(sizeof(gpu_soft_body_integration_parameters) == 48,
+            "Soft Body Integration Parameters ABI must remain 48 bytes.");
 
         struct transform_sample
         {
