@@ -2076,6 +2076,7 @@ namespace
         auto non_finite_sweep = triangle_sweep;
         non_finite_sweep[2].after.y =
             std::numeric_limits<float>::quiet_NaN();
+        skin_physics::physics::collision_aabb correction_bounds;
         require(!skin_physics::physics::build_correction_swept_aabb(
             non_finite_sweep, 0.02f, correction_bounds),
             "A non-finite correction vertex must fail AABB construction.");
