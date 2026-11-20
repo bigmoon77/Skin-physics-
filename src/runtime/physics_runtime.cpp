@@ -2549,6 +2549,120 @@ namespace skin_physics::runtime
                             total_mass / total_volume);
                     }
 
+                    const bool has_animation_trajectory =
+                        model_snapshot->has_animation_playback ||
+                        model_snapshot->has_animation_blend ||
+                        !model_snapshot->root_samples.empty();
+                    const std::size_t tracking_channel =
+                        static_cast<std::size_t>(
+                            asset::physics_attribute_channel::animation_tracking);
+                    if (has_animation_trajectory &&
+                        parameters.tracking_stiffness > 0.0f &&
+                        parameters.attribute_multipliers[tracking_channel] > 0.0f)
+                    {
+                        const auto gpu_mesh_iterator = std::find_if(
+                            model.gpu_soft_body_meshes.begin(),
+                            model.gpu_soft_body_meshes.end(),
+                            [&mesh_asset](const soft_body_gpu_mesh& value)
+                            {
+                                return value.mesh_index == mesh_asset.mesh_index;
+                            });
+                        if (gpu_mesh_iterator == model.gpu_soft_body_meshes.end() ||
+                            !finite_double(gpu_mesh_iterator->rest_density) ||
+                            gpu_mesh_iterator->rest_density <= 0.0 ||
+                            mesh.inverse_mass.size() != mesh.rest_positions.size())
+                        {
+                            diagnostic =
+                                "Animation Tracking Preflight lost its Rest Density or inverse-mass vertex layout.";
+                            return false;
+                        }
+
+                        const double effective_tracking_stiffness =
+                            static_cast<double>(parameters.tracking_stiffness) *
+                            static_cast<double>(
+                                parameters.attribute_multipliers[tracking_channel]);
+                        const double density_mass_scale =
+                            static_cast<double>(parameters.density) /
+                            gpu_mesh_iterator->rest_density;
+                        if (!finite_double(effective_tracking_stiffness) ||
+                            effective_tracking_stiffness < 0.0 ||
+                            !finite_double(density_mass_scale) ||
+                            density_mass_scale <= 0.0)
+                        {
+                            diagnostic =
+                                "Animation Tracking Preflight produced an invalid effective stiffness or density scale.";
+                            return false;
+                        }
+
+                        double maximum_tracking_omega_squared = 0.0;
+                        for (std::size_t vertex_index = 0u;
+                            vertex_index < mesh.rest_positions.size();
+                            ++vertex_index)
+                        {
+                            const float tracking_weight =
+                                mesh_snapshot->vertex_attribute_weights[vertex_index]
+                                    [tracking_channel];
+                            const float rest_mass = mesh.mass[vertex_index];
+                            const float inverse_mass = mesh.inverse_mass[vertex_index];
+                            if (!finite_float(tracking_weight) ||
+                                tracking_weight < 0.0f || tracking_weight > 1.0f ||
+                                !finite_float(rest_mass) || rest_mass < 0.0f ||
+                                !finite_float(inverse_mass) || inverse_mass < 0.0f)
+                            {
+                                diagnostic =
+                                    "Animation Tracking Preflight encountered invalid per-vertex weight, mass or inverse mass.";
+                                return false;
+                            }
+                            if (tracking_weight == 0.0f ||
+                                rest_mass == 0.0f ||
+                                inverse_mass == 0.0f)
+                            {
+                                continue;
+                            }
+
+                            const double effective_mass =
+                                static_cast<double>(rest_mass) * density_mass_scale;
+                            const double vertex_tracking_stiffness =
+                                effective_tracking_stiffness *
+                                static_cast<double>(tracking_weight);
+                            const double omega_squared =
+                                vertex_tracking_stiffness / effective_mass;
+                            if (!finite_double(effective_mass) ||
+                                effective_mass <= 0.0 ||
+                                !finite_double(vertex_tracking_stiffness) ||
+                                vertex_tracking_stiffness < 0.0 ||
+                                !finite_double(omega_squared) ||
+                                omega_squared < 0.0)
+                            {
+                                diagnostic =
+                                    "Animation Tracking Preflight produced a non-finite per-vertex frequency.";
+                                return false;
+                            }
+                            maximum_tracking_omega_squared =
+                                std::max(maximum_tracking_omega_squared, omega_squared);
+                        }
+
+                        if (maximum_tracking_omega_squared > 0.0)
+                        {
+                            constexpr double tracking_stability_factor = 0.2;
+                            const double tracking_omega =
+                                std::sqrt(maximum_tracking_omega_squared);
+                            const double tracking_dt_limit =
+                                tracking_stability_factor / tracking_omega;
+                            if (!finite_double(tracking_omega) ||
+                                tracking_omega <= 0.0 ||
+                                !finite_double(tracking_dt_limit) ||
+                                tracking_dt_limit <= 0.0)
+                            {
+                                diagnostic =
+                                    "Animation Tracking Preflight produced an invalid Stability Time Limit.";
+                                return false;
+                            }
+                            out_dt_limit =
+                                std::min(out_dt_limit, tracking_dt_limit);
+                        }
+                    }
+
                     const double shear_denominator =
                         2.0 * (1.0 + static_cast<double>(parameters.poisson_ratio));
                     const double bulk_denominator =
