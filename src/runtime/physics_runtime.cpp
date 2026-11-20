@@ -160,8 +160,24 @@ namespace skin_physics::runtime
             float damping_rate = 0.0f;
             uint32_t has_impulse_events = 0u;
             float gravity[3] = {};
-            float reserved1 = 0.0f;
+            float tracking_stiffness = 0.0f;
+            float tracking_damping = 0.0f;
+            float tracking_attribute_multiplier = 0.0f;
+            uint32_t has_animation_target = 0u;
+            uint32_t reserved2 = 0u;
         };
+
+        struct alignas(16) gpu_soft_body_skinning_parameters
+        {
+            uint32_t vertex_count = 0u;
+            uint32_t joint_count = 0u;
+            uint32_t reserved[2] = {};
+        };
+
+        static_assert(sizeof(gpu_soft_body_integration_parameters) == 48u,
+            "Soft Body Integration Parameters must remain a 48-byte HLSL cbuffer.");
+        static_assert(sizeof(gpu_soft_body_skinning_parameters) == 16u,
+            "Soft Body Skinning Parameters must remain a 16-byte HLSL cbuffer.");
 
         struct alignas(16) gpu_soft_body_distribution_reduce_parameters
         {
@@ -478,6 +494,87 @@ namespace skin_physics::runtime
             initial.pSysMem = initial_data;
             return SUCCEEDED(device->CreateBuffer(
                 &description, &initial, out_buffer));
+        }
+
+        asset::mat4 make_root_transform_matrix(const transform& root)
+        {
+            const double x = root.rotation.x;
+            const double y = root.rotation.y;
+            const double z = root.rotation.z;
+            const double w = root.rotation.w;
+            asset::mat4 matrix;
+            matrix.value = {
+                static_cast<float>(1.0 - 2.0 * (y * y + z * z)),
+                static_cast<float>(2.0 * (x * y + z * w)),
+                static_cast<float>(2.0 * (x * z - y * w)),
+                0.0f,
+                static_cast<float>(2.0 * (x * y - z * w)),
+                static_cast<float>(1.0 - 2.0 * (x * x + z * z)),
+                static_cast<float>(2.0 * (y * z + x * w)),
+                0.0f,
+                static_cast<float>(2.0 * (x * z + y * w)),
+                static_cast<float>(2.0 * (y * z - x * w)),
+                static_cast<float>(1.0 - 2.0 * (x * x + y * y)),
+                0.0f,
+                root.translation.x,
+                root.translation.y,
+                root.translation.z,
+                1.0f
+            };
+            return matrix;
+        }
+
+        asset::mat4 multiply_asset_matrices(
+            const asset::mat4& left,
+            const asset::mat4& right)
+        {
+            asset::mat4 result;
+            result.value.fill(0.0f);
+            for (uint32_t column = 0u; column < 4u; ++column)
+            {
+                for (uint32_t row = 0u; row < 4u; ++row)
+                {
+                    double value = 0.0;
+                    for (uint32_t inner = 0u; inner < 4u; ++inner)
+                    {
+                        value += static_cast<double>(
+                            left.value[inner * 4u + row]) *
+                            right.value[column * 4u + inner];
+                    }
+                    result.value[column * 4u + row] =
+                        static_cast<float>(value);
+                }
+            }
+            return result;
+        }
+
+        physics::gpu_matrix4x4 to_gpu_matrix(const asset::mat4& source)
+        {
+            physics::gpu_matrix4x4 result;
+            result.column0 = {
+                source.value[0], source.value[1],
+                source.value[2], source.value[3]
+            };
+            result.column1 = {
+                source.value[4], source.value[5],
+                source.value[6], source.value[7]
+            };
+            result.column2 = {
+                source.value[8], source.value[9],
+                source.value[10], source.value[11]
+            };
+            result.column3 = {
+                source.value[12], source.value[13],
+                source.value[14], source.value[15]
+            };
+            return result;
+        }
+
+        bool finite_asset_matrix(const asset::mat4& matrix)
+        {
+            return std::all_of(
+                matrix.value.begin(), matrix.value.end(),
+                [](float value) { return finite_float(value); });
         }
 
         asset::vec3 transform_position(
@@ -982,6 +1079,8 @@ namespace skin_physics::runtime
             uint32_t tetrahedron_count = 0u;
             Microsoft::WRL::ComPtr<ID3D11Buffer> skin_weights_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> skin_weights_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> animation_tracking_weights_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> animation_tracking_weights_srv;
 
             // Immutable Mesh-local source positions; FEM State Banks remain World-space.
             Microsoft::WRL::ComPtr<ID3D11Buffer> rest_positions_buffer;
@@ -1209,6 +1308,10 @@ namespace skin_physics::runtime
             bool destination_is_scratch = false;
             ID3D11ShaderResourceView* integrated_force_srv = nullptr;
             ID3D11ShaderResourceView* integrated_impulse_srv = nullptr;
+            float tracking_stiffness = 0.0f;
+            float tracking_damping = 0.0f;
+            float tracking_attribute_multiplier = 1.0f;
+            bool has_animation_target = false;
             uint32_t force_event_count = 0u;
             uint32_t impulse_event_count = 0u;
         };
@@ -1221,6 +1324,8 @@ namespace skin_physics::runtime
             uint64_t input_snapshot_version = 0u;
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>
                 segment_parameter_buffers;
+            std::vector<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>>
+                segment_shader_resource_views;
             force_distribution_global_scratch force_distribution_scratch;
             uint64_t expected_predecessor_sequence = 0u;
             uint64_t expected_source_generation = 1u;
