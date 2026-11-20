@@ -2353,13 +2353,7 @@ namespace skin_physics::runtime
         }
         for (const implementation::world_slot& world : runtime.worlds)
         {
-            if (world.occupied &&
-                (world.in_flight_tick_count != 0u ||
-                    world.reserved_tick_time > time_epsilon ||
-                    world.render_lease_active ||
-                    world.pending_single_step_requests != 0u ||
-                    !world.reservations.empty() ||
-                    world.accumulator_seconds > time_epsilon))
+            if (world.occupied)
             {
                 return status_code::busy;
             }
