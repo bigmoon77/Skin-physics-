@@ -65,7 +65,8 @@ A phase is not called complete merely because headers, shaders or test sources e
 - The CPU-observed terminal path restores every non-COMMITTED Reservation in ascending Sequence order. Later predecessor-blocked Status cannot downgrade the earliest FAILED / REJECTED result. A WARP regression creates a degenerate Render-only face to fail Candidate validation while a dependent Tick is already in flight, then checks both Reservations remain ordered until Reset.
 - These sources remain unexecuted because the latest Windows CI run failed before reporting any build steps.
 - Added strict Tet rest-matrix / shape-gradient, unique-vertex and exact Vertex-to-Tet CSR validation before GPU upload; malformed asset / CSR input is rejected.
-- Remaining: CPU-oracle parity and physical/WARP numerical qualification; animation tracking stability limit and trajectories; Force / Impulse Segment boundaries; Cloth / Collision / Contact coupling; and Physics Attribute Paint cache persistence / remapping on topology rebuild.
+- Runtime explicitly defers Submission when Animation Playback / Blend or Root Transform Samples are registered but immutable Trajectory Packets are not connected; a WARP regression verifies the same CPU Reservation remains pending and can be cleared only by Reset. This prevents silently committing a Tick while ignoring accepted animation input.
+- Remaining: CPU-oracle parity and physical/WARP numerical qualification; animation tracking stability limit and immutable trajectories; Force / Impulse Segment boundaries; Cloth / Collision / Contact coupling; and Physics Attribute Paint cache persistence / remapping on topology rebuild.
 
 ### Phase 3 — R2 Cloth GPU iteration
 **Status: pending**
