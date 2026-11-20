@@ -819,9 +819,40 @@ namespace
         };
 
         std::vector<vec3> inverted_positions = raw_mesh.positions;
-        std::swap(
-            inverted_positions[source_tet.vertices[1]],
-            inverted_positions[source_tet.vertices[2]]);
+        const vec3& tet_origin = raw_mesh.positions[source_tet.vertices[0]];
+        const vec3& tet_rest_point1 = raw_mesh.positions[source_tet.vertices[1]];
+        const vec3& tet_rest_point2 = raw_mesh.positions[source_tet.vertices[2]];
+        const vec3& tet_rest_point3 = raw_mesh.positions[source_tet.vertices[3]];
+        const vec3 edge1 = {
+            tet_rest_point1.x - tet_origin.x,
+            tet_rest_point1.y - tet_origin.y,
+            tet_rest_point1.z - tet_origin.z
+        };
+        const vec3 edge2 = {
+            tet_rest_point2.x - tet_origin.x,
+            tet_rest_point2.y - tet_origin.y,
+            tet_rest_point2.z - tet_origin.z
+        };
+        const vec3 edge3 = {
+            tet_rest_point3.x - tet_origin.x,
+            tet_rest_point3.y - tet_origin.y,
+            tet_rest_point3.z - tet_origin.z
+        };
+        inverted_positions[source_tet.vertices[1]] = {
+            tet_origin.x - 0.9f * edge1.x,
+            tet_origin.y - 0.9f * edge1.y,
+            tet_origin.z - 0.9f * edge1.z
+        };
+        inverted_positions[source_tet.vertices[2]] = {
+            tet_origin.x + edge2.x,
+            tet_origin.y + edge2.y,
+            tet_origin.z + edge2.z
+        };
+        inverted_positions[source_tet.vertices[3]] = {
+            tet_origin.x + 1.1f * edge3.x,
+            tet_origin.y + 1.1f * edge3.y,
+            tet_origin.z + 1.1f * edge3.z
+        };
 
         const std::vector<test_case> cases = {
             {
