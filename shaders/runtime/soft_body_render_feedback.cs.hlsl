@@ -203,6 +203,12 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     for (uint incidence = begin_index; incidence < end_index; ++incidence)
     {
         uint triangle_index = vertex_triangle_ids[incidence];
+        if (triangle_index >= render_index_count / 3u)
+        {
+            uint previous_failure = 0u;
+            InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+            return;
+        }
         uint index_offset = triangle_index * 3u;
         if (index_offset + 2u >= render_index_count)
         {
