@@ -502,6 +502,8 @@ namespace skin_physics::physics
     {
         uint32_t node_index = asset::invalid_index;
         uint32_t parent_index = asset::invalid_index;
+        // First encountered IBM for this Joint Node (compatibility / diagnostics).
+        // Skin-specific LBS uses animation_skin_joint_gpu_record instead.
         uint32_t inverse_bind_record_index = asset::invalid_index;
         uint32_t interpolation_flags = 0u;
         uint32_t channel_mask = 0u;
