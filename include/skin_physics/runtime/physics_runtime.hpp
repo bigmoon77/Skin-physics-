@@ -254,7 +254,7 @@ namespace skin_physics::runtime
         float poisson_ratio = 0.3f;
         float damping = 0.01f;
         // Kelvin-Voigt Animation Tracking coefficients. Zero stiffness disables
-        // the tracking force and its explicit integration stability limit.
+        // the spring / frequency-limit term; both zero disable the full force.
         float tracking_stiffness = 0.0f;
         float tracking_damping = 0.0f;
         std::array<float,
