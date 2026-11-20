@@ -334,11 +334,18 @@
         "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS"
       ],
       "unimplemented": [
-        "GPU proper-rotation SVD fallback and inverted / near-singular element parity; the current Runtime FEM pass fails closed when the polar path is not committable",
+        "WARP numeric parity and near-singular regression for the production Runtime Jacobi SVD fallback path",
         "CFL-derived stability limits, per-vertex physics attribute weighting and density remapping",
         "Force / Impulse event segmentation and animation / kinematic trajectory coupling",
         "Full World collision, Cloth constraint and Contact solver integration"
-      ]
+      ],
+      "runtime_gpu_source_files": [
+        "shaders/runtime/soft_body_fem.cs.hlsl",
+        "shaders/runtime/soft_body_force_gather.cs.hlsl",
+        "shaders/runtime/soft_body_integrate.cs.hlsl",
+        "shaders/runtime/tick_transaction_control.cs.hlsl"
+      ],
+      "status_note": "Production Runtime path now contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / damped integration and two-bank Commit plumbing. Runtime WARP execution and numerical parity remain unverified until Windows CI runs."
     },
     {
       "phase": 7,
