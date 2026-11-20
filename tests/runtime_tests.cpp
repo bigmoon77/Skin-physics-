@@ -331,6 +331,9 @@ namespace
         skin_physics::runtime::world_handle world;
         require(runtime.create_world(desc, &world).success(),
             "CPU Preflight World creation must succeed.");
+        skin_physics::runtime::world_handle other_world;
+        require(runtime.create_world(desc, &other_world).success(),
+            "A second World is required to verify that shared Query Ring polling does not observe another World's CPU-only Status.");
 
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::playing).success(),
@@ -345,12 +348,16 @@ namespace
             std::abs(report.accumulator_seconds) <= 1.0e-12,
             "CPU Preflight must create one blocked head Reservation and move its time out of the Accumulator.");
 
+        skin_physics::runtime::world_status other_status;
+        require(runtime.poll(other_world, &other_status).success(),
+            "Polling an unrelated World must succeed while the first World has a CPU-only Preflight Block.");
+
         skin_physics::runtime::world_execution_budget unobserved_budget;
         unobserved_budget.maximum_substeps = 4u;
         unobserved_budget.maximum_integration_segments_per_tick = 512u;
         require(runtime.set_world_execution_budget(
                 world, unobserved_budget).code == status_code::busy,
-            "CPU Preflight Budget Retry must wait until poll() has returned the synchronous block Status.");
+            "Polling another World must not authorize CPU Preflight Budget Retry for this World.");
 
         skin_physics::runtime::world_status before_retry;
         require(runtime.poll(world, &before_retry).success() &&
@@ -389,6 +396,8 @@ namespace
             "Reset must explicitly release a CPU-only pending Reservation.");
         require(runtime.destroy_world(world).success(),
             "World must be destroyable after Reservation Reset.");
+        require(runtime.destroy_world(other_world).success(),
+            "The unrelated World must remain idle and destroyable after its Status Poll.");
         require(runtime.shutdown() == status_code::ok,
             "Runtime must shut down after the CPU Preflight recovery regression.");
     }
