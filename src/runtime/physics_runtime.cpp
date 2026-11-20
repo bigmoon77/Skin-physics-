@@ -3406,6 +3406,13 @@ namespace skin_physics::runtime
         world.scheduled_source_state_set = 0u;
         world.render_lease_active = false;
         world.render_lease_generation = 0u;
+        world.leased_render_slot_id = asset::invalid_index;
+        world.leased_render_slot_generation = 0u;
+        world.render_candidate_slots.clear();
+        world.render_candidate_slots.resize(
+            static_cast<std::size_t>(desc.maximum_in_flight_ticks) + 1u);
+        world.latest_render_slot_id = asset::invalid_index;
+        world.latest_render_slot_generation = 0u;
         world.state = tick_state::idle;
         world.last_tick_status = status_code::ok;
         world.budget_block_origin = work_budget_block_origin::none;
@@ -3556,7 +3563,9 @@ namespace skin_physics::runtime
             if (!runtime.initialize_soft_body_gpu_mesh(
                     mesh_asset.mesh_index,
                     mesh_asset,
+                    desc.source_model.meshes[mesh_asset.mesh_index],
                     desc.world_transform,
+                    static_cast<uint32_t>(world->render_candidate_slots.size()),
                     gpu_mesh,
                     diagnostic))
             {
