@@ -924,7 +924,11 @@
       "rejected_budget_update_preserves_revision_reservation_sequence_and_time",
       "predecessor_blocked_reservation_is_repreflighted_only_after_predecessor_commit_is_observed",
       "older_committed_tick_does_not_clear_newer_cpu_preflight_budget_block_status",
-      "budget_retry_preserves_gpu_dynamic_toi_minimum_required_segment_lower_bound"
+      "budget_retry_preserves_gpu_dynamic_toi_minimum_required_segment_lower_bound",
+      "gpu_terminal_blocked_with_gpu_dynamic_toi_origin_maps_to_work_budget_exceeded_retryable_state",
+      "terminal_blocked_without_dynamic_toi_origin_maps_to_blocked_by_predecessor",
+      "gpu_dynamic_toi_required_segment_count_above_runtime_hard_limit_maps_to_work_budget_unsatisfiable",
+      "gpu_dynamic_toi_status_origin_is_preserved_when_later_predecessor_status_is_observed"
     ],
     "remaining_r0": [
       "Cloth / Collider solver integration into the World Runtime scheduler",
@@ -932,6 +936,6 @@
       "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
       "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
     ],
-    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project. Render SRV readback, model-local output, normal/tangent validation, CPU-observation gating, Lease generation, backpressure reporting, multiple in-flight failure ordering, target-World budget observation, pending-Step exclusion, and monotonic / lower-bound Budget Retry regressions are authored but not yet executed. Recent Windows CI jobs fail before reporting any build steps; C++ / HLSL compilation and WARP execution remain unverified."
+    "validation": "Source-level Runtime / CPU / WARP regressions are registered in the Windows test project. Render SRV readback, model-local output, normal/tangent validation, CPU-observation gating, Lease generation, backpressure reporting, multiple in-flight failure ordering, target-World budget observation, pending-Step exclusion, and monotonic / lower-bound Budget Retry tests are authored but not executed. CPU handling of GPU Dynamic TOI Status Origin is implemented, but the production TOI producer / Segment scheduler is still an open integration phase. Latest Windows CI attempts fail before reporting any Build/Test steps; C++ / HLSL compilation and WARP execution remain unverified."
   }
 }
