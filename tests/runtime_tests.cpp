@@ -1291,7 +1291,27 @@ namespace
             force_retry_status.gpu_committed_sequence == 1u &&
             force_retry_status.cpu_observed_sequence == 1u &&
             force_retry_status.planned_substeps == 3u,
-            "Force / Impulse GPU execution must commit the same six-Segment Reservation after Budget Retry.");
+            std::string(
+                "Force / Impulse GPU execution must commit the same six-Segment Reservation after Budget Retry. observed=") +
+                (force_tick_observed ? "true" : "false") +
+                " state=" +
+                std::to_string(static_cast<int>(force_retry_status.state)) +
+                " status=" +
+                std::to_string(static_cast<int>(force_retry_status.last_tick_status)) +
+                " submitted=" + std::to_string(force_retry_status.submitted_sequence) +
+                " gpu_committed=" +
+                std::to_string(force_retry_status.gpu_committed_sequence) +
+                " cpu_observed=" +
+                std::to_string(force_retry_status.cpu_observed_sequence) +
+                " reserved=" +
+                std::to_string(force_retry_status.head_reserved_tick_sequence) +
+                " snapshot=" +
+                std::to_string(force_retry_status.head_input_snapshot_version) +
+                " planned_segments=" +
+                std::to_string(force_retry_status.planned_integration_segments) +
+                " executed_segments=" +
+                std::to_string(force_retry_status.executed_integration_segments) +
+                " diagnostic=" + force_retry_status.diagnostic);
 
         skin_physics::runtime::render_binding force_mesh_binding;
         skin_physics::runtime::render_binding untouched_mesh_binding;
