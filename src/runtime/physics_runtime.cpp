@@ -2678,6 +2678,25 @@ namespace skin_physics::runtime
             }
         }
 
+        std::vector<implementation::soft_body_gpu_mesh> gpu_soft_body_meshes;
+        gpu_soft_body_meshes.reserve(mesh_assets.size());
+        for (const model_mesh_physics_asset& mesh_asset : mesh_assets)
+        {
+            implementation::soft_body_gpu_mesh gpu_mesh;
+            std::string diagnostic;
+            if (!runtime.initialize_soft_body_gpu_mesh(
+                    mesh_asset.mesh_index,
+                    mesh_asset,
+                    desc.world_transform,
+                    gpu_mesh,
+                    diagnostic))
+            {
+                return make_status(status_code::out_of_memory,
+                    "Soft Body GPU State Bank creation failed: " + diagnostic);
+            }
+            gpu_soft_body_meshes.push_back(std::move(gpu_mesh));
+        }
+
         uint32_t index = asset::invalid_index;
         for (uint32_t candidate = 0; candidate < world->models.size(); ++candidate)
         {
@@ -2702,6 +2721,7 @@ namespace skin_physics::runtime
         implementation::model_slot& model = world->models[index];
         model.source_model = desc.source_model;
         model.mesh_physics_assets = std::move(mesh_assets);
+        model.gpu_soft_body_meshes = std::move(gpu_soft_body_meshes);
         model.root_transform = desc.world_transform;
         model.root_samples.clear();
         model.has_animation_playback = false;
@@ -2826,6 +2846,7 @@ namespace skin_physics::runtime
         model->occupied = false;
         model->source_model = {};
         model->mesh_physics_assets.clear();
+        model->gpu_soft_body_meshes.clear();
         model->root_samples.clear();
         model->has_animation_playback = false;
         model->has_animation_blend = false;
