@@ -2160,6 +2160,20 @@ namespace
         };
 
         auto segment_state = segment_state_result.state;
+        const std::vector<skin_physics::physics::correction_segment_vertex_snapshot>
+            segment_start_vertices = {
+                { 11u, { 0.25f, 0.25f, 0.0f } },
+                { 12u, { 0.0f, 0.0f, 0.0f } },
+                { 13u, { 1.0f, 0.0f, 0.0f } },
+                { 14u, { 0.0f, 1.0f, 0.0f } },
+                { 21u, { 0.0f, 0.0f, 0.0f } },
+                { 22u, { 1.0f, 0.0f, 0.0f } },
+                { 23u, { 0.5f, -0.5f, 0.0f } },
+                { 24u, { 0.5f, 0.5f, 0.0f } }
+            };
+        require(skin_physics::physics::initialize_correction_segment_geometry(
+                segment_state, 1001u, segment_start_vertices, physical_bounds),
+            "Segment Commit Gate fixtures must initialize the immutable Segment-start Vertex Snapshot and cumulative broadphase envelope.");
         std::vector<skin_physics::physics::correction_discrete_contact_input>
             vt_discrete_inputs = { make_vt_discrete_input(candidate_vt) };
         const auto initial_contact_refresh =
