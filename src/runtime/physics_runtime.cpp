@@ -6640,7 +6640,8 @@ namespace skin_physics::runtime
                         result_world.last_tick_status = status_code::gpu_execution_failed;
                         result_world.budget_resolution = work_budget_resolution::none;
                         result_world.diagnostic =
-                            "GPU Tick failed before Commit; the active State Bank and reservation time were retained. " +
+                            std::string(
+                                "GPU Tick failed before Commit; the active State Bank and reservation time were retained. ") +
                             "terminal_state=" +
                             std::to_string(gpu_status.terminal_state) +
                             " terminal_failure=" +
