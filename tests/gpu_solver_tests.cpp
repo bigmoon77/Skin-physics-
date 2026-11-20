@@ -2569,7 +2569,7 @@ namespace
         consume_pass.name = "ConsumeDispatchArguments";
         consume_pass.shader = consume_arguments_shader;
         consume_pass.unordered_access_views = {
-            { 0, output_uav.Get(), 0xffffffffu }
+            { 1, output_uav.Get(), 0xffffffffu }
         };
         consume_pass.indirect_arguments = argument_buffer.Get();
 
@@ -2590,6 +2590,13 @@ namespace
         require(!graph.add_pass(invalid_alignment, diagnostic) &&
             diagnostic.find("DWORD-aligned") != std::string::npos,
             "Compute graph must reject a non-DWORD-aligned DispatchIndirect offset.");
+
+        compute_pass_desc invalid_range = consume_pass;
+        invalid_range.name = "InvalidIndirectRange";
+        invalid_range.indirect_argument_offset = 4u;
+        require(!graph.add_pass(invalid_range, diagnostic) &&
+            diagnostic.find("twelve readable argument bytes") != std::string::npos,
+            "Compute graph must reject an indirect argument range shorter than three UINT values.");
         require(!graph.add_pass(invalid_argument_flags, diagnostic) &&
             diagnostic.find("DRAWINDIRECT_ARGS") != std::string::npos,
             "Compute graph must reject a buffer without the indirect-argument misc flag.");
