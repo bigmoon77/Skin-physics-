@@ -13,6 +13,9 @@
     <Filter Include="Source Files\Simulation">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E107}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\Runtime">
+      <UniqueIdentifier>{A65CC6C4-EA17-44E6-BE01-57C579F6D831}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Header Files">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E102}</UniqueIdentifier>
     </Filter>
@@ -24,6 +27,9 @@
     </Filter>
     <Filter Include="Header Files\Simulation">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E108}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\Runtime">
+      <UniqueIdentifier>{6CAEFDC9-D982-4313-9C6B-1AA99BE02132}</UniqueIdentifier>
     </Filter>
     <Filter Include="Third Party">
       <UniqueIdentifier>{0A6B8F6D-E266-4AE2-ACB2-1C17BFC0E104}</UniqueIdentifier>
@@ -90,6 +96,12 @@
     <ClCompile Include="src\simulation\fixed_step.cpp">
       <Filter>Source Files\Simulation</Filter>
     </ClCompile>
+    <ClCompile Include="src\simulation\d3d11_status_ring.cpp">
+      <Filter>Source Files\Simulation</Filter>
+    </ClCompile>
+    <ClCompile Include="src\runtime\physics_runtime.cpp">
+      <Filter>Source Files\Runtime</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\skin_physics\asset\types.hpp">
@@ -148,6 +160,12 @@
     </ClInclude>
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp">
       <Filter>Header Files\Simulation</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\simulation\d3d11_status_ring.hpp">
+      <Filter>Header Files\Simulation</Filter>
+    </ClInclude>
+    <ClInclude Include="include\skin_physics\runtime\physics_runtime.hpp">
+      <Filter>Header Files\Runtime</Filter>
     </ClInclude>
     <ClInclude Include="third_party\cgltf\cgltf.h">
       <Filter>Third Party</Filter>
