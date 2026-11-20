@@ -28,6 +28,10 @@ StructuredBuffer<float4> vertex_forces : register(t2);
 StructuredBuffer<float> inverse_masses : register(t3);
 StructuredBuffer<float> vertex_damping_rates : register(t4);
 StructuredBuffer<float4> vertex_impulses : register(t5);
+StructuredBuffer<float4> animation_target_positions : register(t6);
+StructuredBuffer<float4> animation_target_velocities : register(t7);
+StructuredBuffer<uint> animation_target_status : register(t8);
+StructuredBuffer<float> animation_tracking_weights : register(t9);
 RWStructuredBuffer<float4> destination_positions : register(u0);
 RWStructuredBuffer<float4> destination_velocities : register(u1);
 RWStructuredBuffer<TickCommitControl> tick_commit_control_buffer : register(u2);
@@ -54,7 +58,11 @@ cbuffer IntegrationParameters : register(b0)
     float damping_rate;
     uint has_impulse_events;
     float3 gravity;
-    float reserved1;
+    float tracking_stiffness;
+    float tracking_damping;
+    float tracking_attribute_multiplier;
+    uint has_animation_target;
+    uint reserved2;
 };
 
 static const uint TICK_GATE_READY = 1u;
@@ -113,6 +121,46 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
     float3 velocity_after_impulse =
         velocity_value.xyz + inverse_mass * impulse;
     float3 acceleration = inverse_mass * vertex_forces[index].xyz + gravity;
+
+    if (has_animation_target != 0u)
+    {
+        if (animation_target_status[0] != 0u)
+        {
+            mark_tick_failure(203u);
+            return;
+        }
+
+        float tracking_weight = animation_tracking_weights[index];
+        float4 target_position_value = animation_target_positions[index];
+        float4 target_velocity_value = animation_target_velocities[index];
+        if (!isfinite(tracking_weight) ||
+            tracking_weight < 0.0f || tracking_weight > 1.0f ||
+            !all(isfinite(target_position_value)) ||
+            !all(isfinite(target_velocity_value)) ||
+            !isfinite(tracking_stiffness) || tracking_stiffness < 0.0f ||
+            !isfinite(tracking_damping) || tracking_damping < 0.0f ||
+            !isfinite(tracking_attribute_multiplier) ||
+            tracking_attribute_multiplier < 0.0f)
+        {
+            mark_tick_failure(204u);
+            return;
+        }
+
+        float effective_weight =
+            tracking_weight * tracking_attribute_multiplier;
+        float3 tracking_force =
+            tracking_stiffness * effective_weight *
+                (target_position_value.xyz - position_value.xyz) +
+            tracking_damping * effective_weight *
+                (target_velocity_value.xyz - velocity_value.xyz);
+        if (!all(isfinite(tracking_force)))
+        {
+            mark_tick_failure(205u);
+            return;
+        }
+        acceleration += inverse_mass * tracking_force;
+    }
+
     float3 next_velocity =
         decay * velocity_after_impulse + damping_integral * acceleration;
     float3 next_position = position_value.xyz + delta_time * next_velocity;
