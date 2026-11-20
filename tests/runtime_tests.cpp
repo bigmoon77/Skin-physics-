@@ -502,6 +502,31 @@ namespace
         require(std::abs(cpu_normalized_weight_sum - 1.0) <= 1.0e-12,
             "CPU Force distribution must conserve one descriptor magnitude across all target Meshes.");
 
+        // A valid multi-Mesh result must remain intact when a later request fails.
+        skin_physics::runtime::detail::force_distribution_weights unchanged_output =
+            cpu_reference;
+        std::vector<skin_physics::asset::vec3> no_support_positions;
+        std::vector<float> no_support_masses;
+        skin_physics::runtime::detail::force_distribution_mesh_view no_support_mesh;
+        no_support_mesh.segment_start_positions = &no_support_positions;
+        no_support_mesh.rest_lumped_masses = &no_support_masses;
+        const std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            no_support_mesh_views = { no_support_mesh };
+        std::string no_support_diagnostic;
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                action_position,
+                radius,
+                no_support_mesh_views,
+                unchanged_output,
+                no_support_diagnostic),
+            "A target scope with no vertices must fail with NO_FORCE_TARGET.");
+        require(no_support_diagnostic.find("NO_FORCE_TARGET") != std::string::npos &&
+            unchanged_output.unnormalized_weight_sum ==
+                cpu_reference.unnormalized_weight_sum &&
+            unchanged_output.mesh_weights == cpu_reference.mesh_weights,
+            "A no-support failure must preserve the previous multi-Mesh output without partial mutation.");
+
         test_gpu_force_distribution_event_parameters event_parameters;
         event_parameters.vertex_count = vertex_count;
         event_parameters.action_position[0] = action_position.x;
