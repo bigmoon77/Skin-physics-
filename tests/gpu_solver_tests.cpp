@@ -2515,6 +2515,106 @@ namespace
         std::cout << "[PASS] P11_WARP_COMPUTE_PASS_GRAPH\n";
     }
 
+
+    void test_phase12_warp_gpu_generated_indirect_dispatch(
+        ID3D11Device* device,
+        ID3D11DeviceContext* context,
+        ID3D11ComputeShader* build_arguments_shader,
+        ID3D11ComputeShader* consume_arguments_shader)
+    {
+        using namespace skin_physics::simulation;
+
+        D3D11_BUFFER_DESC argument_buffer_description = {};
+        argument_buffer_description.ByteWidth = sizeof(uint32_t) * 3u;
+        argument_buffer_description.Usage = D3D11_USAGE_DEFAULT;
+        argument_buffer_description.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        argument_buffer_description.MiscFlags =
+            D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
+
+        ComPtr<ID3D11Buffer> argument_buffer;
+        require(SUCCEEDED(device->CreateBuffer(
+                &argument_buffer_description, nullptr,
+                argument_buffer.GetAddressOf())),
+            "WARP must create a GPU-writable DispatchIndirect argument buffer.");
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC argument_uav_description = {};
+        argument_uav_description.Format = DXGI_FORMAT_R32_UINT;
+        argument_uav_description.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        argument_uav_description.Buffer.FirstElement = 0;
+        argument_uav_description.Buffer.NumElements = 3;
+
+        ComPtr<ID3D11UnorderedAccessView> argument_uav;
+        require(SUCCEEDED(device->CreateUnorderedAccessView(
+                argument_buffer.Get(), &argument_uav_description,
+                argument_uav.GetAddressOf())),
+            "WARP must create a typed UAV for the DispatchIndirect argument buffer.");
+
+        const std::vector<uint32_t> initial_output(3, 0u);
+        const ComPtr<ID3D11Buffer> output_buffer =
+            create_structured_buffer(device, initial_output, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> output_uav =
+            create_structured_uav<uint32_t>(
+                device, output_buffer.Get(),
+                static_cast<UINT>(initial_output.size()));
+
+        d3d11_compute_graph graph;
+        compute_pass_desc build_pass;
+        build_pass.name = "BuildDispatchArguments";
+        build_pass.shader = build_arguments_shader;
+        build_pass.unordered_access_views = {
+            { 0, argument_uav.Get(), 0xffffffffu }
+        };
+
+        compute_pass_desc consume_pass;
+        consume_pass.name = "ConsumeDispatchArguments";
+        consume_pass.shader = consume_arguments_shader;
+        consume_pass.unordered_access_views = {
+            { 0, output_uav.Get(), 0xffffffffu }
+        };
+        consume_pass.indirect_arguments = argument_buffer.Get();
+
+        compute_pass_desc invalid_alignment = consume_pass;
+        invalid_alignment.name = "InvalidIndirectAlignment";
+        invalid_alignment.indirect_argument_offset = 2u;
+
+        compute_pass_desc invalid_argument_flags = consume_pass;
+        invalid_argument_flags.name = "InvalidIndirectFlags";
+        invalid_argument_flags.indirect_arguments = output_buffer.Get();
+
+        compute_pass_desc invalid_uav_alias = consume_pass;
+        invalid_uav_alias.name = "InvalidIndirectUavAlias";
+        invalid_uav_alias.unordered_access_views.push_back(
+            { 1, argument_uav.Get(), 0xffffffffu });
+
+        std::string diagnostic;
+        require(!graph.add_pass(invalid_alignment, diagnostic) &&
+            diagnostic.find("DWORD-aligned") != std::string::npos,
+            "Compute graph must reject a non-DWORD-aligned DispatchIndirect offset.");
+        require(!graph.add_pass(invalid_argument_flags, diagnostic) &&
+            diagnostic.find("DRAWINDIRECT_ARGS") != std::string::npos,
+            "Compute graph must reject a buffer without the indirect-argument misc flag.");
+        require(!graph.add_pass(invalid_uav_alias, diagnostic) &&
+            diagnostic.find("unbound from UAV") != std::string::npos,
+            "Compute graph must reject an indirect-argument buffer also bound as UAV in the consumer pass.");
+
+        require(graph.add_pass(build_pass, diagnostic),
+            "Compute graph must accept a GPU argument producer pass: " + diagnostic);
+        require(graph.add_pass(consume_pass, diagnostic),
+            "Compute graph must accept an indirect consumer pass: " + diagnostic);
+        const compute_graph_result execution = graph.execute(context);
+        require(execution.success && execution.executed_pass_count == 2,
+            "Compute graph must execute the indirect consumer after its producer pass.");
+
+        const std::vector<uint32_t> actual_output =
+            readback_structured_buffer<uint32_t>(
+                device, context, output_buffer.Get(), initial_output.size());
+        require(actual_output == std::vector<uint32_t>{ 0x5a00u, 0x5a01u, 0x5a02u },
+            "GPU-generated group counts must drive DispatchIndirect without CPU readback.");
+
+        std::cout << "[PASS] P12_WARP_GPU_GENERATED_INDIRECT_DISPATCH\n";
+    }
+
+
 }
 
 int run_gpu_solver_tests()
