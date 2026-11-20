@@ -222,6 +222,20 @@ namespace skin_physics::physics
         double world_time_start,
         double world_time_duration);
 
+    // Maps Playback Speed into key-bounded Clip Spans over one Logical Tick.
+    // Loop wraps are explicit boundaries; non-looping Playback holds the
+    // terminal Clip Pose for the remainder of the Tick. maximum_span_count
+    // bounds pathological high-speed Loop requests.
+    animation_clip_span_schedule_result schedule_animation_clip_playback_spans(
+        const asset::animation_clip& clip,
+        uint32_t node_count,
+        double clip_time_start,
+        double playback_speed,
+        bool loop,
+        double world_time_start,
+        double world_time_duration,
+        uint32_t maximum_span_count = 4096u);
+
     // Evaluates the immutable Span coefficients and analytic derivatives.
     // span_duration_seconds is the corresponding positive World-Time duration.
     animation_channel_span_sample_result evaluate_animation_channel_span(
