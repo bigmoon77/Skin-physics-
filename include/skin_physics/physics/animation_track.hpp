@@ -91,6 +91,7 @@ namespace skin_physics::physics
     // For LINEAR rotation, c0 / c1 hold the hemisphere-adjusted q0 / q1.
     struct animation_channel_span
     {
+        uint32_t track_index = asset::invalid_index;
         uint32_t node_index = asset::invalid_index;
         asset::animation_path path = asset::animation_path::translation;
         asset::interpolation interpolation_mode = asset::interpolation::step;
@@ -168,6 +169,33 @@ namespace skin_physics::physics
         double clip_time_delta,
         double world_time_start,
         double world_time_duration);
+
+    struct animation_clip_span
+    {
+        uint32_t span_index = 0u;
+        double clip_time_start = 0.0;
+        double clip_time_delta = 0.0;
+        // Channels are kept in original Asset Track order and share this
+        // exact Clip-Time interval across all Nodes / Paths in the Clip.
+        std::vector<animation_channel_span> channels;
+    };
+
+    struct animation_clip_spans_build_result
+    {
+        std::vector<animation_clip_span> values;
+        animation_channel_span_error error = animation_channel_span_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    // Builds a synchronized multi-Track schedule for one unwrapped interval
+    // inside the Clip duration. Every channel shares the union of all Track
+    // Key boundaries. Loop wrap / blend boundaries must be split upstream.
+    animation_clip_spans_build_result build_animation_clip_spans(
+        const asset::animation_clip& clip,
+        uint32_t node_count,
+        double clip_time_start,
+        double clip_time_delta);
 
     // Evaluates the immutable Span coefficients and analytic derivatives.
     // span_duration_seconds is the corresponding positive World-Time duration.
