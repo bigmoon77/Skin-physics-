@@ -375,6 +375,26 @@ namespace
                 world, { 0.0f, -1.0f, 0.0f }).code == status_code::busy,
             "World input mutation must be rejected while a Tick Reservation holds its immutable input snapshot.");
 
+        skin_physics::runtime::world_execution_budget insufficient_budget;
+        insufficient_budget.maximum_substeps = 3u;
+        insufficient_budget.maximum_integration_segments_per_tick = 512u;
+        require(runtime.set_world_execution_budget(
+                world, insufficient_budget).code == status_code::invalid_argument,
+            "A blocked Reservation must reject an Admission Limit below its derived Substep lower bound.");
+        skin_physics::runtime::world_execution_budget decreasing_budget;
+        decreasing_budget.maximum_substeps = 4u;
+        decreasing_budget.maximum_integration_segments_per_tick = 256u;
+        require(runtime.set_world_execution_budget(
+                world, decreasing_budget).code == status_code::invalid_argument,
+            "A blocked Reservation must reject lowering an unrelated Admission Limit even when the derived work fits.");
+        skin_physics::runtime::world_status after_rejected_budget;
+        require(runtime.poll(world, &after_rejected_budget).success() &&
+            after_rejected_budget.execution_budget_revision == 1u &&
+            after_rejected_budget.state == skin_physics::runtime::tick_state::blocked &&
+            after_rejected_budget.head_reserved_tick_sequence == 1u &&
+            std::abs(after_rejected_budget.reserved_tick_time - 0.02) <= 1.0e-12,
+            "Rejected Budget changes must leave Revision, blocked Reservation, Sequence and reserved time unchanged.");
+
         skin_physics::runtime::world_execution_budget increased_budget;
         increased_budget.maximum_substeps = 4u;
         increased_budget.maximum_integration_segments_per_tick = 512u;
