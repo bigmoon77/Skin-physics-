@@ -607,6 +607,17 @@
             "A paused Clip Track retains the full World-Time Tick as one zero-Clip-Time Span",
             "Non-zero Clip-Time or World-Time deltas that cannot advance at their absolute start under double precision fail closed"
           ]
+        },
+        {
+          "id": "P09_ANIMATION_BLEND_WEIGHT_SPAN",
+          "checks": [
+            "Blend Weight Hermite descriptors validate finite ordered times and weights in [0, 1] over the complete cubic domain, including interior extrema",
+            "Logical Tick scheduling inserts blend_start_time and blend_end_time as explicit World-Time Span boundaries",
+            "Outside the blend interval, endpoint weights are held constant with zero derivative",
+            "Inside the blend interval, Span-local cubic coefficients preserve the original Hermite Weight and analytic World-Time derivative",
+            "A Span crossing either Blend Curve boundary is rejected until the World Scheduler splits it",
+            "A Hermite curve with an interior overshoot outside [0, 1] is rejected before Span construction"
+          ]
         }
       ],
       "automated_cases": [
