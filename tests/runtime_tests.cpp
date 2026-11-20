@@ -1370,10 +1370,10 @@ namespace
             "Reset must release the Event ID namespace so a new Tick can register the same Event ID.");
         require(runtime.reset_world(world).success(),
             "A second Reset must clear the re-registered event before the Root Transform regression.");
-        skin_physics::runtime::world_status reset_status;
-        require(runtime.poll(world, &reset_status).success() &&
-            reset_status.head_input_snapshot_version == 0u,
-            "Reset must release the previous Tick Input Snapshot when its Reservation is cancelled.");
+        skin_physics::runtime::world_status reset_status_after_event_reuse;
+        require(runtime.poll(world, &reset_status_after_event_reuse).success() &&
+            reset_status_after_event_reuse.head_input_snapshot_version == 0u,
+            "Reset must release the previous Tick Input Snapshot after Event ID reuse.");
 
         skin_physics::runtime::transform sampled_root =
             model_desc.world_transform;
