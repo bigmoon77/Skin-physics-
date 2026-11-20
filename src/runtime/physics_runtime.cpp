@@ -91,13 +91,15 @@ namespace skin_physics::runtime
             uint32_t reservation_token_high = 0u;
             uint32_t last_gate_state = 0u;
             uint32_t diagnostic = 0u;
-            uint32_t reserved = 0u;
+            uint32_t render_slot_id = asset::invalid_index;
+            uint32_t render_slot_generation = 0u;
+            uint32_t reserved[3] = {};
         };
 
         static_assert(sizeof(gpu_tick_dispatch_plan) == 64,
             "GPU Tick Dispatch Plan ABI must remain 64 bytes.");
-        static_assert(sizeof(gpu_tick_commit_control) == 64,
-            "GPU Tick Commit Control ABI must remain 64 bytes.");
+        static_assert(sizeof(gpu_tick_commit_control) == 80,
+            "GPU Tick Commit Control ABI must remain 80 bytes.");
 
         struct alignas(16) gpu_float4
         {
@@ -3034,7 +3036,8 @@ namespace skin_physics::runtime
             initial_control.state_generation_low = 1u;
             initial_control.active_state_set = 0u;
             initial_control.required_validation_mask = 1u;
-            initial_control.reserved = 0x0000ffffu;
+            initial_control.render_slot_id = asset::invalid_index;
+        initial_control.render_slot_generation = 0u;
 
             Microsoft::WRL::ComPtr<ID3D11Buffer> control_buffer;
             if (!create_structured_buffer(
@@ -5448,7 +5451,8 @@ namespace skin_physics::runtime
         initial_control.state_generation_low = 1u;
         initial_control.active_state_set = 0u;
         initial_control.required_validation_mask = 1u;
-        initial_control.reserved = 0x0000ffffu;
+        initial_control.render_slot_id = asset::invalid_index;
+        initial_control.render_slot_generation = 0u;
         runtime.immediate_context->UpdateSubresource(
             world->commit_control_buffer.Get(), 0u, nullptr,
             &initial_control, 0u, 0u);
