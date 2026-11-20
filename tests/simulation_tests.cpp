@@ -1512,6 +1512,114 @@ namespace
                 skin_physics::physics::animation_channel_span_error::non_monotonic_time,
             "The Channel Span Scheduler must fail atomically on duplicate Key times.");
 
+        asset::animation_clip synchronized_clip;
+        synchronized_clip.name = "synchronized_span_test";
+        synchronized_clip.duration = 2.0f;
+        animation_track synchronized_translation = key_bounded_track;
+        synchronized_translation.node_index = 3u;
+        animation_track synchronized_scale;
+        synchronized_scale.node_index = 1u;
+        synchronized_scale.path = animation_path::scale;
+        synchronized_scale.mode = interpolation::step;
+        synchronized_scale.component_count = 3u;
+        animation_key scale_key0;
+        scale_key0.time = 0.0f;
+        scale_key0.value = { 1.0f, 1.0f, 1.0f };
+        animation_key scale_key1;
+        scale_key1.time = 0.5f;
+        scale_key1.value = { 2.0f, 2.0f, 2.0f };
+        animation_key scale_key2;
+        scale_key2.time = 2.0f;
+        scale_key2.value = { 1.5f, 1.5f, 1.5f };
+        synchronized_scale.keys = { scale_key0, scale_key1, scale_key2 };
+        animation_track synchronized_rotation = linear_rotation;
+        synchronized_rotation.node_index = 2u;
+        animation_key rotation_middle;
+        rotation_middle.time = 1.5f;
+        rotation_middle.value = rotation_end.value;
+        synchronized_rotation.keys = {
+            rotation_start, rotation_middle, rotation_end
+        };
+        synchronized_clip.tracks = {
+            synchronized_translation,
+            synchronized_scale,
+            synchronized_rotation
+        };
+
+        const skin_physics::physics::animation_clip_spans_build_result clip_spans =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 4u, 0.25, 1.5);
+        require(clip_spans.success && clip_spans.values.size() == 4u,
+            "An Animation Clip Span Scheduler must merge Key boundaries from all Tracks, not schedule each Node / Path independently.");
+        const double expected_clip_boundaries[5] = {
+            0.25, 0.5, 1.0, 1.5, 1.75
+        };
+        for (std::size_t span_index = 0u;
+            span_index < clip_spans.values.size(); ++span_index)
+        {
+            const skin_physics::physics::animation_clip_span& clip_span =
+                clip_spans.values[span_index];
+            require(clip_span.span_index == span_index &&
+                clip_span.channels.size() == synchronized_clip.tracks.size() &&
+                std::abs(clip_span.clip_time_start -
+                    expected_clip_boundaries[span_index]) <= 1.0e-12 &&
+                std::abs(clip_span.clip_time_start + clip_span.clip_time_delta -
+                    expected_clip_boundaries[span_index + 1u]) <= 1.0e-12,
+                "Every Clip Span must retain one globally merged interval and all original Asset Tracks.");
+            for (std::size_t track_index = 0u;
+                track_index < clip_span.channels.size(); ++track_index)
+            {
+                const skin_physics::physics::animation_channel_span& channel =
+                    clip_span.channels[track_index];
+                require(channel.track_index == track_index &&
+                    channel.node_index ==
+                        synchronized_clip.tracks[track_index].node_index &&
+                    channel.path == synchronized_clip.tracks[track_index].path &&
+                    channel.clip_time_start == clip_span.clip_time_start &&
+                    channel.clip_time_delta == clip_span.clip_time_delta,
+                    "All Node / Path channel records in a Clip Span must share the same Clip-Time interval and preserve original Track ordering.");
+            }
+        }
+
+        const skin_physics::physics::animation_clip_spans_build_result reverse_clip_spans =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 4u, 1.75, -1.5);
+        require(reverse_clip_spans.success &&
+            reverse_clip_spans.values.size() == 4u &&
+            std::abs(reverse_clip_spans.values[0u].clip_time_start - 1.75) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[0u].clip_time_delta + 0.25) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[1u].clip_time_start - 1.5) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[2u].clip_time_start - 1.0) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[3u].clip_time_start - 0.5) <= 1.0e-12,
+            "Multi-Track Clip Span scheduling must merge all Key times in descending order for reverse Playback.");
+
+        const skin_physics::physics::animation_clip_spans_build_result clip_out_of_range =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 4u, 1.75, 0.5);
+        require(!clip_out_of_range.success &&
+            clip_out_of_range.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A Clip Span must be split at loop-wrap boundaries before a scheduler accepts a range outside the Clip duration.");
+
+        const skin_physics::physics::animation_clip_spans_build_result invalid_clip_node =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 3u, 0.25, 0.5);
+        require(!invalid_clip_node.success &&
+            invalid_clip_node.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_track,
+            "Multi-Track Clip scheduling must reject a Track Node Index outside the uploaded Model.");
+
+        animation_clip duplicate_channel_clip = synchronized_clip;
+        duplicate_channel_clip.tracks.push_back(synchronized_translation);
+        const skin_physics::physics::animation_clip_spans_build_result duplicate_channel =
+            skin_physics::physics::build_animation_clip_spans(
+                duplicate_channel_clip, 4u, 0.25, 0.5);
+        require(!duplicate_channel.success &&
+            duplicate_channel.values.empty() &&
+            duplicate_channel.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_track,
+            "An Animation Clip must not publish ambiguous duplicate Node / Path channels.");
+
         const animation_channel_span_build_result invalid_world_duration_span =
             skin_physics::physics::build_animation_channel_span(
                 linear_translation, 0.5, 1.0);
