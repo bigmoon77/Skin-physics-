@@ -2261,7 +2261,7 @@ namespace
         const mat4& blended_root_global_derivative =
             blended_pose.value.global_matrix_derivatives[0u];
         const float expected_blended_joint_global_x =
-            6.0f * blended_root.rotation.z * blended_root.rotation.w;
+            -6.0f * blended_root.rotation.z * blended_root.rotation.w;
         const float expected_blended_joint_global_y =
             3.0f * (1.0f -
                 2.0f * blended_root.rotation.z * blended_root.rotation.z);
