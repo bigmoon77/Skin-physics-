@@ -156,7 +156,8 @@ namespace skin_physics::runtime
         {
             uint32_t vertex_count = 0u;
             uint32_t group_count = 0u;
-            uint32_t reserved[2] = {};
+            uint32_t partial_sum_offset = 0u;
+            uint32_t reserved = 0u;
         };
 
         struct alignas(16) gpu_soft_body_force_distribution_parameters
@@ -1179,6 +1180,36 @@ namespace skin_physics::runtime
             uint32_t planned_integration_segments = 0u;
         };
 
+        struct force_distribution_global_scratch
+        {
+            uint32_t partial_sum_capacity = 0u;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> partial_sum_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> partial_sum_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> partial_sum_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> normalized_sum_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> normalized_sum_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> normalized_sum_uav;
+        };
+
+        struct soft_body_mesh_work_state
+        {
+            uint32_t model_index = asset::invalid_index;
+            model_slot* model = nullptr;
+            soft_body_gpu_mesh* gpu_mesh = nullptr;
+            float damping_rate = 0.0f;
+            bool source_is_scratch = false;
+            uint32_t source_bank = 0u;
+            ID3D11ShaderResourceView* source_position_srv = nullptr;
+            ID3D11ShaderResourceView* source_velocity_srv = nullptr;
+            ID3D11UnorderedAccessView* destination_position_uav = nullptr;
+            ID3D11UnorderedAccessView* destination_velocity_uav = nullptr;
+            bool destination_is_scratch = false;
+            ID3D11ShaderResourceView* integrated_force_srv = nullptr;
+            ID3D11ShaderResourceView* integrated_impulse_srv = nullptr;
+            uint32_t force_event_count = 0u;
+            uint32_t impulse_event_count = 0u;
+        };
+
         struct in_flight_tick
         {
             tick_reservation reservation;
@@ -1187,6 +1218,7 @@ namespace skin_physics::runtime
             uint64_t input_snapshot_version = 0u;
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>
                 segment_parameter_buffers;
+            force_distribution_global_scratch force_distribution_scratch;
             uint64_t expected_predecessor_sequence = 0u;
             uint64_t expected_source_generation = 1u;
             uint32_t expected_source_state_set = 0u;
