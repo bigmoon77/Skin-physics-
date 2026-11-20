@@ -873,6 +873,8 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11Buffer> gather_parameters;
             Microsoft::WRL::ComPtr<ID3D11Buffer> integration_parameters;
 
+            double rest_density = 0.0;
+            std::vector<float> initial_inverse_masses;
             std::vector<gpu_float4> initial_positions;
             std::vector<gpu_float4> initial_velocities;
         };
@@ -1238,6 +1240,33 @@ namespace skin_physics::runtime
             candidate.tetrahedron_count = static_cast<uint32_t>(mesh.tetrahedra.size());
             candidate.initial_positions.resize(mesh.rest_positions.size());
             candidate.initial_velocities.resize(mesh.rest_positions.size());
+            candidate.initial_inverse_masses = mesh.inverse_mass;
+
+            double total_rest_mass = 0.0;
+            double total_rest_volume = 0.0;
+            for (float mass : mesh.mass)
+            {
+                total_rest_mass += static_cast<double>(mass);
+            }
+            for (const physics::tetrahedron& tetrahedron : mesh.tetrahedra)
+            {
+                total_rest_volume += static_cast<double>(tetrahedron.rest_volume);
+            }
+            if (!finite_double(total_rest_mass) ||
+                !finite_double(total_rest_volume) ||
+                total_rest_mass <= 0.0 ||
+                total_rest_volume <= 0.0)
+            {
+                diagnostic = "Soft Body Physics Mesh has an invalid total rest mass or rest volume.";
+                return false;
+            }
+            candidate.rest_density = total_rest_mass / total_rest_volume;
+            if (!finite_double(candidate.rest_density) ||
+                candidate.rest_density <= 0.0)
+            {
+                diagnostic = "Soft Body Physics Mesh rest density is not finite and positive.";
+                return false;
+            }
 
             for (std::size_t vertex_index = 0;
                 vertex_index < mesh.rest_positions.size(); ++vertex_index)
@@ -1449,10 +1478,14 @@ namespace skin_physics::runtime
                 return false;
             }
 
-            const mesh_physics_parameters parameters =
+            mesh_physics_parameters parameters =
                 model.mesh_parameters_valid[gpu_mesh.mesh_index]
                     ? model.mesh_parameters[gpu_mesh.mesh_index]
                     : mesh_physics_parameters{};
+            if (!model.mesh_parameters_valid[gpu_mesh.mesh_index])
+            {
+                parameters.density = static_cast<float>(gpu_mesh.rest_density);
+            }
 
             std::vector<gpu_soft_body_tet_input> tet_inputs;
             if (!build_soft_body_tet_inputs(
@@ -1464,15 +1497,42 @@ namespace skin_physics::runtime
             {
                 return false;
             }
-            if (tet_inputs.size() != gpu_mesh.tetrahedron_count)
+            if (tet_inputs.size() != gpu_mesh.tetrahedron_count ||
+                gpu_mesh.initial_inverse_masses.size() != gpu_mesh.vertex_count)
             {
-                diagnostic = "Soft Body Tet count changed after the GPU resource layout was created.";
+                diagnostic = "Soft Body Tet / inverse-mass layout changed after GPU resources were created.";
                 return false;
+            }
+
+            const double density_scale =
+                gpu_mesh.rest_density / static_cast<double>(parameters.density);
+            if (!finite_double(density_scale) || density_scale <= 0.0)
+            {
+                diagnostic = "Soft Body density remapping produced an invalid inverse-mass scale.";
+                return false;
+            }
+            std::vector<float> remapped_inverse_masses =
+                gpu_mesh.initial_inverse_masses;
+            for (float& inverse_mass : remapped_inverse_masses)
+            {
+                const double remapped =
+                    static_cast<double>(inverse_mass) * density_scale;
+                if (!finite_double(remapped) || remapped < 0.0 ||
+                    remapped > static_cast<double>(
+                        std::numeric_limits<float>::max()))
+                {
+                    diagnostic = "Soft Body density remapping produced a non-finite inverse mass.";
+                    return false;
+                }
+                inverse_mass = static_cast<float>(remapped);
             }
 
             immediate_context->UpdateSubresource(
                 gpu_mesh.tetrahedron_buffer.Get(), 0u, nullptr,
                 tet_inputs.data(), 0u, 0u);
+            immediate_context->UpdateSubresource(
+                gpu_mesh.inverse_mass_buffer.Get(), 0u, nullptr,
+                remapped_inverse_masses.data(), 0u, 0u);
             return true;
         }
 
