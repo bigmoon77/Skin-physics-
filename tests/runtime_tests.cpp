@@ -1210,6 +1210,9 @@ namespace
         require(runtime.release_render_bindings(
                 world, animated_binding.lease_generation).success(),
             "Skinned Animation Render Candidate Host Lease must release after readback.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::stopped).success(),
+            "Skinned Animation Runtime World must Stop before Model / World destruction.");
 
         require(runtime.destroy_model(world, model).success(),
             "Skinned Soft Body Model must release transferred CPU and GPU Skin Weight resources.");
