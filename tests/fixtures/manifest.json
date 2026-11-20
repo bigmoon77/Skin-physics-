@@ -336,7 +336,8 @@
         "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
         "R1_RUNTIME_SOFT_BODY_ASSET_AND_CSR_VALIDATION",
         "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_PARITY",
-        "R1_WARP_SOFT_BODY_CFL_PREFLIGHT"
+        "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
+        "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE"
       ],
       "unimplemented": [
         "Physical / WARP numerical parity and SVD near-singular stress regression for the production Runtime path",
@@ -349,9 +350,10 @@
         "shaders/runtime/soft_body_fem.cs.hlsl",
         "shaders/runtime/soft_body_force_gather.cs.hlsl",
         "shaders/runtime/soft_body_integrate.cs.hlsl",
-        "shaders/runtime/tick_transaction_control.cs.hlsl"
+        "shaders/runtime/tick_transaction_control.cs.hlsl",
+        "shaders/runtime/soft_body_render_feedback.cs.hlsl"
       ],
-      "status_note": "Runtime path contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / painted material and per-vertex damping / density remapping / CFL preflight / two-bank Commit plumbing. CPU/WARP execution and numerical parity remain unverified because the Windows runner has not reported any build steps.",
+      "status_note": "Runtime path contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / painted material and per-vertex damping / density remapping / CFL preflight / two-bank Commit / GPU Render Candidate Ring and Host Lease for Soft Body Meshes. CPU/WARP execution and numerical parity remain unverified because the Windows CI runner has not reported build steps.",
       "warp_runtime_assertions": [
         "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",
@@ -365,7 +367,12 @@
         "tet_shape_recovery_and_volume_coefficients_use_four_vertex_arithmetic_mean",
         "vertex_damping_rate_uses_global_material_and_per_vertex_damping_paint",
         "Soft Body Tet CFL limit contributes to the common World Substep Preflight",
-        "CFL budget block retains the same Reservation and plan through admission-budget recovery"
+        "CFL budget block retains the same Reservation and plan through admission-budget recovery",
+        "gpu_render_feedback_evaluates_offline_vertex_bindings_from_inactive_state_bank",
+        "gpu_render_feedback_recomputes_normal_and_tangent_streams_before_commit",
+        "per_world_render_candidate_ring_has_one_spare_slot_beyond_maximum_in_flight_ticks",
+        "gpu_status_publishes_full_width_slot_identity_and_cpu_observation_publishes_candidate",
+        "host_render_lease_pins_cpu_observed_slot_and_blocks_ring_reuse"
       ]
     },
     {
@@ -833,7 +840,8 @@
       "tests/environment_tests.cpp",
       "include/skin_physics/physics/physics_mesh.hpp",
       "include/skin_physics/physics/render_binding.hpp",
-      "src/physics/render_binding.cpp"
+      "src/physics/render_binding.cpp",
+      "shaders/runtime/soft_body_render_feedback.cs.hlsl"
     ],
     "automated_test_groups": [
       "R0_RUNTIME_INITIALIZATION_AND_HANDLES",
@@ -843,7 +851,8 @@
       "R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW",
       "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
       "P02_PHYSICS_ATTRIBUTE_HARMONIC",
-      "R1_WARP_SOFT_BODY_CFL_PREFLIGHT"
+      "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
+      "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE"
     ],
     "covered_contracts": [
       "host_device_immediate_context_feature_level_and_device_identity_validation",
@@ -876,14 +885,22 @@
       "soft_body_tet_shape_and_volume_paint_uses_four_vertex_arithmetic_mean",
       "soft_body_vertex_damping_rate_uses_per_vertex_damping_paint",
       "soft_body_fem_cfl_limit_contributes_to_common_world_substep_preflight",
-      "cfl_budget_recovery_preserves_the_same_tick_reservation_and_substep_plan"
+      "cfl_budget_recovery_preserves_the_same_tick_reservation_and_substep_plan",
+      "world_render_candidate_ring_uses_maximum_in_flight_plus_one_slots",
+      "render_candidate_position_normal_tangent_feedback_runs_on_gpu_before_tick_commit",
+      "gpu_commit_status_publishes_full_width_render_slot_id_and_generation",
+      "host_render_binding_exposes_only_cpu_observed_committed_candidate",
+      "multiple_mesh_bindings_share_one_world_render_lease_generation",
+      "host_render_lease_blocks_candidate_slot_reuse_and_new_gpu_submission",
+      "render_candidate_slot_is_released_only_by_terminal_non_commit_or_cpu_observed_commit"
     ],
     "remaining_r0": [
       "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
-      "Render Candidate Ring, CPU-observed Render publication and Host Render Lease release",
       "Cloth / Collider solver integration into the World Runtime scheduler",
       "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation",
-      "CFL-based Soft Body stability limit now participates in World preflight; animation tracking stiffness limit and full Segment boundary table remain open"
+      "CFL-based Soft Body stability limit now participates in World preflight; animation tracking stiffness limit and full Segment boundary table remain open",
+      "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
+      "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
     ],
     "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project; execution and C++ / HLSL compilation remain unverified because recent Windows CI jobs fail before reporting any build steps."
   }
