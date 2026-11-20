@@ -1782,6 +1782,12 @@ namespace skin_physics::runtime
                     std::max(result_world.gpu_committed_simulation_time,
                         static_cast<double>(sequence) *
                             result_world.description.fixed_delta_time);
+                result_world.state = tick_state::committed;
+                result_world.last_tick_status = status_code::ok;
+                result_world.budget_block_origin = work_budget_block_origin::none;
+                result_world.budget_resolution = work_budget_resolution::none;
+                result_world.work_budget_block_flags = 0u;
+                result_world.diagnostic.clear();
             }
             else if (gpu_status.terminal_state == 3u)
             {
