@@ -987,6 +987,158 @@ namespace skin_physics::physics
         return result;
     }
 
+    animation_clip_spans_build_result build_animation_clip_spans(
+        const asset::animation_clip& clip,
+        uint32_t node_count,
+        double clip_time_start,
+        double clip_time_delta)
+    {
+        animation_clip_spans_build_result result;
+        if (node_count == 0u || clip.tracks.empty())
+        {
+            result.error = animation_channel_span_error::invalid_track;
+            result.message =
+                "Animation Clip Span scheduling requires at least one Node and one Track.";
+            return result;
+        }
+        if (!std::isfinite(static_cast<double>(clip.duration)) ||
+            clip.duration < 0.0f ||
+            !std::isfinite(clip_time_start) ||
+            !std::isfinite(clip_time_delta) ||
+            !std::isfinite(clip_time_start + clip_time_delta))
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Clip duration and requested Clip-Time interval must be finite and representable.";
+            return result;
+        }
+
+        const double clip_time_end = clip_time_start + clip_time_delta;
+        const double duration = static_cast<double>(clip.duration);
+        if (clip_time_start < 0.0 || clip_time_start > duration ||
+            clip_time_end < 0.0 || clip_time_end > duration)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Clip Span interval must remain inside one already-unwrapped Clip duration.";
+            return result;
+        }
+
+        std::size_t component_count = 0u;
+        for (std::size_t track_index = 0u;
+            track_index < clip.tracks.size(); ++track_index)
+        {
+            const asset::animation_track& track = clip.tracks[track_index];
+            if (!validate_asset_animation_track(
+                    track, component_count, result.error, result.message))
+            {
+                return result;
+            }
+            if (track.node_index >= node_count ||
+                static_cast<double>(track.keys.back().time) > duration)
+            {
+                result.error = animation_channel_span_error::invalid_track;
+                result.message =
+                    "Animation Clip Track references a Node outside the Model or a Key beyond the Clip duration.";
+                return result;
+            }
+
+            for (std::size_t previous_index = 0u;
+                previous_index < track_index; ++previous_index)
+            {
+                const asset::animation_track& previous =
+                    clip.tracks[previous_index];
+                if (previous.node_index == track.node_index &&
+                    previous.path == track.path)
+                {
+                    result.error = animation_channel_span_error::invalid_track;
+                    result.message =
+                        "Animation Clip contains more than one Track for the same Node / Path channel.";
+                    return result;
+                }
+            }
+        }
+
+        const double minimum_time =
+            std::min(clip_time_start, clip_time_end);
+        const double maximum_time =
+            std::max(clip_time_start, clip_time_end);
+        std::vector<double> boundaries;
+        boundaries.reserve(clip.tracks.size() * 2u + 2u);
+        boundaries.push_back(clip_time_start);
+        if (clip_time_delta != 0.0)
+        {
+            for (const asset::animation_track& track : clip.tracks)
+            {
+                for (const asset::animation_key& key : track.keys)
+                {
+                    const double key_time = static_cast<double>(key.time);
+                    if (key_time > minimum_time && key_time < maximum_time)
+                    {
+                        boundaries.push_back(key_time);
+                    }
+                }
+            }
+
+            if (clip_time_delta < 0.0)
+            {
+                std::sort(
+                    boundaries.begin() + 1,
+                    boundaries.end(),
+                    [](double left, double right)
+                    {
+                        return left > right;
+                    });
+            }
+            else
+            {
+                std::sort(boundaries.begin() + 1, boundaries.end());
+            }
+            boundaries.erase(
+                std::unique(boundaries.begin() + 1, boundaries.end()),
+                boundaries.end());
+        }
+        boundaries.push_back(clip_time_end);
+
+        result.values.reserve(boundaries.size() - 1u);
+        for (std::size_t span_index = 0u;
+            span_index + 1u < boundaries.size(); ++span_index)
+        {
+            animation_clip_span clip_span;
+            clip_span.span_index = static_cast<uint32_t>(span_index);
+            clip_span.clip_time_start = boundaries[span_index];
+            clip_span.clip_time_delta =
+                boundaries[span_index + 1u] - boundaries[span_index];
+            clip_span.channels.reserve(clip.tracks.size());
+
+            for (std::size_t track_index = 0u;
+                track_index < clip.tracks.size(); ++track_index)
+            {
+                animation_channel_span_build_result channel_result =
+                    build_animation_channel_span(
+                        clip.tracks[track_index],
+                        clip_span.clip_time_start,
+                        clip_span.clip_time_delta);
+                if (!channel_result.success)
+                {
+                    result.values.clear();
+                    result.error = channel_result.error;
+                    result.message = channel_result.message;
+                    return result;
+                }
+                channel_result.value.track_index =
+                    static_cast<uint32_t>(track_index);
+                clip_span.channels.push_back(
+                    std::move(channel_result.value));
+            }
+
+            result.values.push_back(std::move(clip_span));
+        }
+
+        result.success = true;
+        return result;
+    }
+
     animation_channel_span_sample_result evaluate_animation_channel_span(
         const animation_channel_span& span,
         double span_local_u,
