@@ -1087,6 +1087,221 @@ namespace
             "Teleport zero-velocity policy must not generate an artificial velocity spike.");
     }
 
+    void test_phase09_animation_channel_span_coefficients()
+    {
+        using skin_physics::asset::animation_key;
+        using skin_physics::asset::animation_path;
+        using skin_physics::asset::animation_track;
+        using skin_physics::asset::interpolation;
+        using skin_physics::physics::animation_channel_span_build_result;
+        using skin_physics::physics::animation_channel_span_sample_result;
+
+        animation_track linear_translation;
+        linear_translation.node_index = 3u;
+        linear_translation.path = animation_path::translation;
+        linear_translation.mode = interpolation::linear;
+        linear_translation.component_count = 3u;
+        animation_key linear_start;
+        linear_start.time = 0.0f;
+        linear_start.value = { 0.0f, 1.0f, 2.0f };
+        animation_key linear_end;
+        linear_end.time = 2.0f;
+        linear_end.value = { 4.0f, 5.0f, 6.0f };
+        linear_translation.keys = { linear_start, linear_end };
+
+        const animation_channel_span_build_result linear_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_translation, 0.5, 1.0);
+        require(linear_span.success &&
+            linear_span.value.node_index == 3u &&
+            linear_span.value.interpolation_mode == interpolation::linear,
+            "LINEAR Animation Channel must build one immutable Key-bounded Span.");
+
+        const animation_channel_span_sample_result linear_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                linear_span.value, 0.5, 0.5);
+        require(linear_mid.success &&
+            std::abs(linear_mid.value.value.x - 2.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.value.y - 3.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.value.z - 4.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.world_time_derivative.x - 4.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.world_time_derivative.y - 4.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.world_time_derivative.z - 4.0f) <= 1.0e-6f,
+            "LINEAR Span evaluation must return Position and analytic World-Time velocity.");
+
+        animation_track reverse_translation = linear_translation;
+        const animation_channel_span_build_result reverse_span =
+            skin_physics::physics::build_animation_channel_span(
+                reverse_translation, 1.5, -1.0);
+        require(reverse_span.success,
+            "A signed Clip-Time Delta must support reverse Playback inside one Key interval.");
+        const animation_channel_span_sample_result reverse_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                reverse_span.value, 0.5, 0.5);
+        require(reverse_mid.success &&
+            std::abs(reverse_mid.value.value.x - 2.0f) <= 1.0e-6f &&
+            std::abs(reverse_mid.value.world_time_derivative.x + 4.0f) <= 1.0e-6f,
+            "Reverse Span evaluation must reverse the analytic Target Velocity without reversing the world-time cursor.");
+
+        animation_track cubic_translation;
+        cubic_translation.node_index = 4u;
+        cubic_translation.path = animation_path::translation;
+        cubic_translation.mode = interpolation::cubic_spline;
+        cubic_translation.component_count = 3u;
+        animation_key cubic_start;
+        cubic_start.time = 0.0f;
+        cubic_start.in_tangent = { 0.0f, 0.0f, 0.0f };
+        cubic_start.value = { 0.0f, 0.0f, 0.0f };
+        cubic_start.out_tangent = { 0.0f, 0.0f, 0.0f };
+        animation_key cubic_end;
+        cubic_end.time = 2.0f;
+        cubic_end.in_tangent = { 0.0f, 0.0f, 0.0f };
+        cubic_end.value = { 1.0f, 2.0f, 3.0f };
+        cubic_end.out_tangent = { 0.0f, 0.0f, 0.0f };
+        cubic_translation.keys = { cubic_start, cubic_end };
+
+        const animation_channel_span_build_result cubic_span =
+            skin_physics::physics::build_animation_channel_span(
+                cubic_translation, 0.5, 1.0);
+        require(cubic_span.success &&
+            cubic_span.value.interpolation_mode == interpolation::cubic_spline,
+            "glTF CUBICSPLINE tangents must be converted into Span-local cubic coefficients.");
+        const animation_channel_span_sample_result cubic_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                cubic_span.value, 0.5, 0.5);
+        require(cubic_mid.success &&
+            std::abs(cubic_mid.value.value.x - 0.5f) <= 1.0e-6f &&
+            std::abs(cubic_mid.value.value.y - 1.0f) <= 1.0e-6f &&
+            std::abs(cubic_mid.value.value.z - 1.5f) <= 1.0e-6f &&
+            std::abs(cubic_mid.value.world_time_derivative.x - 1.5f) <= 1.0e-5f &&
+            std::abs(cubic_mid.value.world_time_derivative.y - 3.0f) <= 1.0e-5f &&
+            std::abs(cubic_mid.value.world_time_derivative.z - 4.5f) <= 1.0e-5f,
+            "CUBICSPLINE Span coefficients must preserve Hermite values and analytic derivatives after Clip-Time reparameterization.");
+
+        animation_track step_translation;
+        step_translation.node_index = 5u;
+        step_translation.path = animation_path::translation;
+        step_translation.mode = interpolation::step;
+        step_translation.component_count = 3u;
+        animation_key step_start;
+        step_start.time = 0.0f;
+        step_start.value = { 1.0f, 2.0f, 3.0f };
+        animation_key step_end;
+        step_end.time = 1.0f;
+        step_end.value = { 5.0f, 6.0f, 7.0f };
+        step_translation.keys = { step_start, step_end };
+        const animation_channel_span_build_result step_span =
+            skin_physics::physics::build_animation_channel_span(
+                step_translation, 0.25, 0.5);
+        require(step_span.success &&
+            step_span.value.interpolation_mode == interpolation::step,
+            "STEP Animation Channel must build a constant Span between Key boundaries.");
+        const animation_channel_span_sample_result step_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                step_span.value, 0.5, 0.5);
+        require(step_mid.success &&
+            step_mid.value.value.x == 1.0f &&
+            step_mid.value.value.y == 2.0f &&
+            step_mid.value.value.z == 3.0f &&
+            step_mid.value.world_time_derivative.x == 0.0f &&
+            step_mid.value.world_time_derivative.y == 0.0f &&
+            step_mid.value.world_time_derivative.z == 0.0f,
+            "STEP Span evaluation must produce a constant value and zero analytic velocity.");
+
+        animation_track linear_rotation;
+        linear_rotation.node_index = 6u;
+        linear_rotation.path = animation_path::rotation;
+        linear_rotation.mode = interpolation::linear;
+        linear_rotation.component_count = 4u;
+        animation_key rotation_start;
+        rotation_start.time = 0.0f;
+        rotation_start.value = { 0.0f, 0.0f, 0.0f, 1.0f };
+        animation_key rotation_end;
+        rotation_end.time = 2.0f;
+        rotation_end.value = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        linear_rotation.keys = { rotation_start, rotation_end };
+        const animation_channel_span_build_result rotation_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_rotation, 0.5, 1.0);
+        require(rotation_span.success,
+            "LINEAR Quaternion Span must pre-evaluate its exact Clip-Time endpoints before Slerp.");
+        const animation_channel_span_sample_result rotation_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                rotation_span.value, 0.5, 0.5);
+        const float quaternion_norm = std::sqrt(
+            rotation_mid.value.value.x * rotation_mid.value.value.x +
+            rotation_mid.value.value.y * rotation_mid.value.value.y +
+            rotation_mid.value.value.z * rotation_mid.value.value.z +
+            rotation_mid.value.value.w * rotation_mid.value.value.w);
+        const float quaternion_derivative_dot =
+            rotation_mid.value.value.x * rotation_mid.value.world_time_derivative.x +
+            rotation_mid.value.value.y * rotation_mid.value.world_time_derivative.y +
+            rotation_mid.value.value.z * rotation_mid.value.world_time_derivative.z +
+            rotation_mid.value.value.w * rotation_mid.value.world_time_derivative.w;
+        require(rotation_mid.success &&
+            std::abs(rotation_mid.value.value.z -
+                std::sin(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(rotation_mid.value.value.w -
+                std::cos(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(quaternion_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(quaternion_derivative_dot) <= 1.0e-5f,
+            "LINEAR Quaternion Span must use shortest-arc Slerp and its tangent-space analytic derivative.");
+
+        const animation_channel_span_build_result paused_rotation_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_rotation, 1.0, 0.0);
+        require(paused_rotation_span.success,
+            "A paused LINEAR rotation Track must build a constant Span at its current Clip Time.");
+        const animation_channel_span_sample_result paused_rotation =
+            skin_physics::physics::evaluate_animation_channel_span(
+                paused_rotation_span.value, 0.75, 0.25);
+        require(paused_rotation.success &&
+            std::abs(paused_rotation.value.value.z -
+                std::sin(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(paused_rotation.value.world_time_derivative.z) <= 1.0e-6f &&
+            std::abs(paused_rotation.value.world_time_derivative.w) <= 1.0e-6f,
+            "Paused LINEAR rotation must sample the current interpolated quaternion with zero velocity.");
+
+        animation_track key_bounded_track = linear_translation;
+        animation_key middle_key;
+        middle_key.time = 1.0f;
+        middle_key.value = { 2.0f, 3.0f, 4.0f };
+        key_bounded_track.keys.insert(
+            key_bounded_track.keys.begin() + 1, middle_key);
+        const animation_channel_span_build_result crossing_span =
+            skin_physics::physics::build_animation_channel_span(
+                key_bounded_track, 0.5, 1.0);
+        require(!crossing_span.success &&
+            crossing_span.error ==
+                skin_physics::physics::animation_channel_span_error::span_crosses_key_boundary,
+            "An Animation Span crossing an interior Key must be rejected for Scheduler subdivision.");
+
+        const animation_channel_span_build_result invalid_world_duration_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_translation, 0.5, 1.0);
+        const animation_channel_span_sample_result invalid_world_duration =
+            skin_physics::physics::evaluate_animation_channel_span(
+                invalid_world_duration_span.value, 0.5, 0.0);
+        require(!invalid_world_duration.success &&
+            invalid_world_duration.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "Span derivative evaluation must reject a zero World-Time duration.");
+
+        animation_track malformed_cubic = cubic_translation;
+        malformed_cubic.keys[1].in_tangent.pop_back();
+        const animation_channel_span_build_result malformed_span =
+            skin_physics::physics::build_animation_channel_span(
+                malformed_cubic, 0.5, 0.5);
+        require(!malformed_span.success &&
+            malformed_span.error ==
+                skin_physics::physics::animation_channel_span_error::malformed_key,
+            "CUBICSPLINE Span construction must reject a tangent array with the wrong component count.");
+    }
+
     void test_phase10_attribute_paint_and_serialization()
     {
         const test_json::value input = test_json::load(
