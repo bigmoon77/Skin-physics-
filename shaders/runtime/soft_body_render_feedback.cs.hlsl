@@ -53,6 +53,21 @@ RWStructuredBuffer<float4> candidate_normals : register(u1);
 RWStructuredBuffer<float4> candidate_tangents : register(u2);
 RWStructuredBuffer<TickCommitControl> tick_commit_control_buffer : register(u3);
 
+void mark_tick_failure(uint diagnostic_code)
+{
+    uint previous_diagnostic = 0u;
+    InterlockedCompareExchange(
+        tick_commit_control_buffer[0].diagnostic,
+        0u,
+        diagnostic_code,
+        previous_diagnostic);
+    uint previous_failure = 0u;
+    InterlockedOr(
+        tick_commit_control_buffer[0].terminal_failure,
+        1u,
+        previous_failure);
+}
+
 cbuffer RenderFeedbackParameters : register(b0)
 {
     uint render_vertex_count;
@@ -173,8 +188,7 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     float3 position = 0.0f;
     if (!evaluate_render_position(render_vertex_index, position))
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(401u);
         return;
     }
     position = rotate_by_quaternion(position, inverse_root_rotation) +
@@ -190,8 +204,7 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     // equals the number of mesh indices (three entries per triangle).
     if (end_index > render_index_count || begin_index > end_index)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(402u);
         return;
     }
 
@@ -205,16 +218,14 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         uint triangle_index = vertex_triangle_ids[incidence];
         if (triangle_index >= render_index_count / 3u)
         {
-            uint previous_failure = 0u;
-            InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-            return;
+            mark_tick_failure(403u);
+        return;
         }
         uint index_offset = triangle_index * 3u;
         if (index_offset + 2u >= render_index_count)
         {
-            uint previous_failure = 0u;
-            InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-            return;
+            mark_tick_failure(404u);
+        return;
         }
 
         uint i0 = render_indices[index_offset];
@@ -225,9 +236,8 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
             (i0 != render_vertex_index && i1 != render_vertex_index &&
                 i2 != render_vertex_index))
         {
-            uint previous_failure = 0u;
-            InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-            return;
+            mark_tick_failure(405u);
+        return;
         }
 
         float3 p0 = 0.0f;
@@ -237,9 +247,8 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
             !evaluate_render_position(i1, p1) ||
             !evaluate_render_position(i2, p2))
         {
-            uint previous_failure = 0u;
-            InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-            return;
+            mark_tick_failure(406u);
+        return;
         }
 
         float3 edge1 = p1 - p0;
@@ -248,9 +257,8 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         float face_normal_squared = dot(face_normal, face_normal);
         if (!isfinite(face_normal_squared) || face_normal_squared <= 1.0e-20f)
         {
-            uint previous_failure = 0u;
-            InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-            return;
+            mark_tick_failure(407u);
+        return;
         }
         normal_sum += face_normal;
 
@@ -311,8 +319,7 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     if (!all(isfinite(position)) || !all(isfinite(normal)) ||
         !all(isfinite(tangent)))
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+        mark_tick_failure(408u);
         return;
     }
 
@@ -365,7 +372,6 @@ void validate_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     }
     if (!valid_streams)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-    }
+        mark_tick_failure(409u);
+        }
 }
