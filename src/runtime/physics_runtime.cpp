@@ -1624,6 +1624,279 @@ namespace skin_physics::runtime
             return false;
         }
 
+        bool compute_soft_body_cfl_time_limit(
+            const world_slot& world,
+            double& out_dt_limit,
+            std::string& diagnostic) const
+        {
+            constexpr double cfl_factor = 0.2;
+            out_dt_limit = std::numeric_limits<double>::infinity();
+            diagnostic.clear();
+
+            for (const model_slot& model : world.models)
+            {
+                if (!model.occupied)
+                {
+                    continue;
+                }
+
+                for (const model_mesh_physics_asset& mesh_asset :
+                    model.mesh_physics_assets)
+                {
+                    if (mesh_asset.mesh_index >= model.source_model.meshes.size() ||
+                        model.source_model.meshes[mesh_asset.mesh_index].mode !=
+                            asset::physics_mode::soft_body)
+                    {
+                        continue;
+                    }
+
+                    const physics::physics_mesh& mesh = mesh_asset.physics_mesh;
+                    if (mesh.vertex_attribute_weights.size() !=
+                            mesh.rest_positions.size() ||
+                        mesh.mass.size() != mesh.rest_positions.size() ||
+                        mesh.tetrahedra.empty())
+                    {
+                        diagnostic =
+                            "Soft Body CFL Preflight requires transferred per-vertex paint, lumped mass and Tet data.";
+                        return false;
+                    }
+
+                    mesh_physics_parameters parameters =
+                        mesh_asset.mesh_index < model.mesh_parameters.size() &&
+                        mesh_asset.mesh_index < model.mesh_parameters_valid.size() &&
+                        model.mesh_parameters_valid[mesh_asset.mesh_index]
+                            ? model.mesh_parameters[mesh_asset.mesh_index]
+                            : mesh_physics_parameters{};
+
+                    if (!(mesh_asset.mesh_index < model.mesh_parameters_valid.size() &&
+                        model.mesh_parameters_valid[mesh_asset.mesh_index]))
+                    {
+                        double total_mass = 0.0;
+                        double total_volume = 0.0;
+                        for (float mass : mesh.mass)
+                        {
+                            total_mass += static_cast<double>(mass);
+                        }
+                        for (const physics::tetrahedron& tet : mesh.tetrahedra)
+                        {
+                            total_volume += static_cast<double>(tet.rest_volume);
+                        }
+                        if (!finite_double(total_mass) ||
+                            !finite_double(total_volume) ||
+                            total_mass <= 0.0 ||
+                            total_volume <= 0.0)
+                        {
+                            diagnostic =
+                                "Soft Body CFL Preflight could not derive the default Rest Density.";
+                            return false;
+                        }
+                        parameters.density = static_cast<float>(
+                            total_mass / total_volume);
+                    }
+
+                    const double shear_denominator =
+                        2.0 * (1.0 + static_cast<double>(parameters.poisson_ratio));
+                    const double bulk_denominator =
+                        3.0 * (1.0 - 2.0 * static_cast<double>(parameters.poisson_ratio));
+                    if (!finite_float(parameters.density) ||
+                        parameters.density <= 0.0f ||
+                        !finite_float(parameters.young_modulus) ||
+                        parameters.young_modulus <= 0.0f ||
+                        !finite_float(parameters.poisson_ratio) ||
+                        parameters.poisson_ratio <= -1.0f ||
+                        parameters.poisson_ratio >= 0.5f ||
+                        !std::isfinite(shear_denominator) ||
+                        !std::isfinite(bulk_denominator) ||
+                        shear_denominator <= 0.0 ||
+                        bulk_denominator <= 0.0)
+                    {
+                        diagnostic = "Soft Body CFL Preflight material values are invalid.";
+                        return false;
+                    }
+
+                    const double shear_modulus =
+                        static_cast<double>(parameters.young_modulus) /
+                        shear_denominator;
+                    const double bulk_modulus =
+                        static_cast<double>(parameters.young_modulus) /
+                        bulk_denominator;
+                    const std::size_t shape_channel = static_cast<std::size_t>(
+                        asset::physics_attribute_channel::shape_recovery);
+                    const std::size_t volume_channel = static_cast<std::size_t>(
+                        asset::physics_attribute_channel::volume);
+
+                    const double shape_multiplier =
+                        parameters.attribute_multipliers[shape_channel];
+                    const double volume_multiplier =
+                        parameters.attribute_multipliers[volume_channel];
+                    if (!finite_double(shear_modulus) ||
+                        !finite_double(bulk_modulus) ||
+                        !finite_double(shape_multiplier) ||
+                        !finite_double(volume_multiplier) ||
+                        shape_multiplier < 0.0 ||
+                        volume_multiplier < 0.0)
+                    {
+                        diagnostic =
+                            "Soft Body CFL Preflight material scaling is non-finite or negative.";
+                        return false;
+                    }
+
+                    const auto subtract_position = [](
+                        const asset::vec3& left,
+                        const asset::vec3& right)
+                    {
+                        return std::array<double, 3>{
+                            static_cast<double>(left.x) - right.x,
+                            static_cast<double>(left.y) - right.y,
+                            static_cast<double>(left.z) - right.z
+                        };
+                    };
+                    const auto cross_product = [](
+                        const std::array<double, 3>& left,
+                        const std::array<double, 3>& right)
+                    {
+                        return std::array<double, 3>{
+                            left[1] * right[2] - left[2] * right[1],
+                            left[2] * right[0] - left[0] * right[2],
+                            left[0] * right[1] - left[1] * right[0]
+                        };
+                    };
+                    const auto vector_length = [](
+                        const std::array<double, 3>& value)
+                    {
+                        return std::sqrt(
+                            value[0] * value[0] +
+                            value[1] * value[1] +
+                            value[2] * value[2]);
+                    };
+
+                    static const uint32_t face_vertices[4][3] = {
+                        { 0u, 1u, 2u },
+                        { 0u, 1u, 3u },
+                        { 0u, 2u, 3u },
+                        { 1u, 2u, 3u }
+                    };
+
+                    for (const physics::tetrahedron& tet : mesh.tetrahedra)
+                    {
+                        if (!finite_float(tet.rest_volume) || tet.rest_volume <= 0.0f)
+                        {
+                            diagnostic =
+                                "Soft Body CFL Preflight encountered an invalid Tet Rest Volume.";
+                            return false;
+                        }
+
+                        double average_shape_weight = 0.0;
+                        double average_volume_weight = 0.0;
+                        for (uint32_t local_vertex = 0u;
+                            local_vertex < 4u; ++local_vertex)
+                        {
+                            const uint32_t vertex_index = tet.vertices[local_vertex];
+                            if (vertex_index >= mesh.rest_positions.size())
+                            {
+                                diagnostic =
+                                    "Soft Body CFL Preflight encountered an out-of-range Tet Vertex.";
+                                return false;
+                            }
+                            const physics::physics_vertex_attribute_weights& weights =
+                                mesh.vertex_attribute_weights[vertex_index];
+                            const float shape_weight = weights[shape_channel];
+                            const float volume_weight = weights[volume_channel];
+                            if (!finite_float(shape_weight) ||
+                                !finite_float(volume_weight) ||
+                                shape_weight < 0.0f || shape_weight > 1.0f ||
+                                volume_weight < 0.0f || volume_weight > 1.0f)
+                            {
+                                diagnostic =
+                                    "Soft Body CFL Preflight encountered invalid Shape Recovery / Volume Paint.";
+                                return false;
+                            }
+                            average_shape_weight +=
+                                static_cast<double>(shape_weight) * 0.25;
+                            average_volume_weight +=
+                                static_cast<double>(volume_weight) * 0.25;
+                        }
+
+                        const double effective_shear =
+                            shear_modulus * shape_multiplier * average_shape_weight;
+                        const double effective_bulk =
+                            bulk_modulus * volume_multiplier * average_volume_weight;
+                        const double wave_speed_squared =
+                            (effective_bulk + 4.0 * effective_shear / 3.0) /
+                            static_cast<double>(parameters.density);
+                        if (!finite_double(wave_speed_squared) ||
+                            wave_speed_squared < 0.0)
+                        {
+                            diagnostic =
+                                "Soft Body CFL Preflight produced an invalid longitudinal wave speed.";
+                            return false;
+                        }
+                        if (wave_speed_squared <= 1.0e-24)
+                        {
+                            // Fully painted-out Shape / Volume channels contribute no
+                            // explicit elastic wave-speed restriction for this Tet.
+                            continue;
+                        }
+
+                        std::array<asset::vec3, 4> positions = {};
+                        for (uint32_t local_vertex = 0u;
+                            local_vertex < 4u; ++local_vertex)
+                        {
+                            positions[local_vertex] =
+                                mesh.rest_positions[tet.vertices[local_vertex]];
+                        }
+
+                        double maximum_face_area = 0.0;
+                        for (const auto& face : face_vertices)
+                        {
+                            const std::array<double, 3> edge0 = subtract_position(
+                                positions[face[1]], positions[face[0]]);
+                            const std::array<double, 3> edge1 = subtract_position(
+                                positions[face[2]], positions[face[0]]);
+                            const double face_area = 0.5 * vector_length(
+                                cross_product(edge0, edge1));
+                            if (!finite_double(face_area))
+                            {
+                                diagnostic =
+                                    "Soft Body CFL Preflight produced a non-finite Tet face area.";
+                                return false;
+                            }
+                            maximum_face_area =
+                                std::max(maximum_face_area, face_area);
+                        }
+
+                        if (maximum_face_area <= 1.0e-20)
+                        {
+                            diagnostic =
+                                "Soft Body CFL Preflight encountered a degenerate Rest Tet face.";
+                            return false;
+                        }
+
+                        const double minimum_altitude =
+                            3.0 * static_cast<double>(tet.rest_volume) /
+                            maximum_face_area;
+                        const double wave_speed = std::sqrt(wave_speed_squared);
+                        const double dt_limit =
+                            cfl_factor * minimum_altitude / wave_speed;
+                        if (!finite_double(minimum_altitude) ||
+                            minimum_altitude <= 0.0 ||
+                            !finite_double(wave_speed) ||
+                            wave_speed <= 0.0 ||
+                            !finite_double(dt_limit) ||
+                            dt_limit <= 0.0)
+                        {
+                            diagnostic =
+                                "Soft Body CFL Preflight produced an invalid Tet Stability Time Limit.";
+                            return false;
+                        }
+
+                        out_dt_limit = std::min(out_dt_limit, dt_limit);
+                    }
+                }
+            }
+            return true;
+        }
+
         bool world_has_unsupported_physics_work(const world_slot& world) const
         {
             if (!world.forces.empty() || !world.impulses.empty())
