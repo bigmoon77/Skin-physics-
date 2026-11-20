@@ -3788,7 +3788,7 @@ namespace skin_physics::runtime
         world.scheduled_source_generation = 1u;
         world.scheduled_source_state_set = 0u;
         world.render_lease_active = false;
-        world.render_lease_generation = 0u;
+        // Keep the lease generation monotonic when a World slot is reused.
         world.leased_render_slot_id = asset::invalid_index;
         world.leased_render_slot_generation = 0u;
         world.render_candidate_slots.clear();
@@ -5356,8 +5356,7 @@ namespace skin_physics::runtime
         out_binding->vertex_count = gpu_mesh_iterator->render_vertex_count;
         out_binding->index_count = gpu_mesh_iterator->render_index_count;
         out_binding->resource_generation =
-            (static_cast<uint64_t>(world->generation) << 32u) |
-            static_cast<uint64_t>(slot_generation);
+            world->render_lease_generation;
         out_binding->device_generation = runtime.device_generation;
         out_binding->committed_tick_sequence =
             slot_state.committed_tick_sequence;
