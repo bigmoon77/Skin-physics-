@@ -395,11 +395,16 @@ namespace skin_physics::runtime
         status poll(world_handle world, world_status* out_status);
         status single_step(world_handle world, advance_report* out_report);
 
+        // Exposes the latest CPU-observed committed Candidate and opens a World Render Lease.
+        // Repeated Mesh requests while leased return the same pinned Candidate Slot.
         status get_render_binding(
             world_handle world,
             model_handle model,
             uint32_t mesh_index,
             render_binding* out_binding);
+
+        // Release only after all returned SRVs are unbound from every shader stage and
+        // every command list that references them has executed on the Immediate Context.
         status release_render_bindings(world_handle world, uint64_t lease_generation);
 
         status reset_world(world_handle world);
