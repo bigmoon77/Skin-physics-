@@ -3,6 +3,7 @@
 #include "skin_physics/physics/soft_body_fem.hpp"
 #include "skin_physics/physics/collision.hpp"
 #include "skin_physics/physics/animation_track.hpp"
+#include "skin_physics/physics/animation_gpu_resources.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
 #include "skin_physics/physics/ccd.hpp"
 #include "skin_physics/physics/correction_ccd.hpp"
@@ -72,6 +73,39 @@ namespace
         {
             throw std::runtime_error(message);
         }
+    }
+
+    void require_immutable_structured_buffer(
+        ID3D11Buffer* buffer,
+        uint32_t element_count,
+        uint32_t element_stride,
+        const std::string& label)
+    {
+        require(buffer != nullptr, label + " GPU buffer must exist.");
+        D3D11_BUFFER_DESC description = {};
+        buffer->GetDesc(&description);
+        require(description.Usage == D3D11_USAGE_IMMUTABLE &&
+            description.BindFlags == D3D11_BIND_SHADER_RESOURCE &&
+            description.CPUAccessFlags == 0u &&
+            description.MiscFlags == D3D11_RESOURCE_MISC_BUFFER_STRUCTURED &&
+            description.StructureByteStride == element_stride &&
+            description.ByteWidth == element_count * element_stride,
+            label + " must use an immutable SRV-only StructuredBuffer with the exact record stride and count.");
+    }
+
+    void require_structured_srv_element_count(
+        ID3D11ShaderResourceView* view,
+        uint32_t element_count,
+        const std::string& label)
+    {
+        require(view != nullptr, label + " SRV must exist.");
+        D3D11_SHADER_RESOURCE_VIEW_DESC description = {};
+        view->GetDesc(&description);
+        require(description.Format == DXGI_FORMAT_UNKNOWN &&
+            description.ViewDimension == D3D11_SRV_DIMENSION_BUFFER &&
+            description.Buffer.FirstElement == 0u &&
+            description.Buffer.NumElements == element_count,
+            label + " SRV must expose the complete immutable StructuredBuffer range.");
     }
 
     HRESULT create_warp_device(
@@ -3332,6 +3366,235 @@ namespace
     }
 
 
+    void test_phase09_warp_animation_trajectory_packet_upload()
+    {
+        using skin_physics::physics::animation_blend_gpu_record;
+        using skin_physics::physics::animation_channel_gpu_record;
+        using skin_physics::physics::animation_skin_gpu_record;
+        using skin_physics::physics::animation_skin_joint_gpu_record;
+        using skin_physics::physics::animation_span_cursor_gpu_record;
+        using skin_physics::physics::animation_span_gpu_record;
+        using skin_physics::physics::animation_track_gpu_record;
+        using skin_physics::physics::animation_trajectory_gpu_resources;
+        using skin_physics::physics::animation_trajectory_packet;
+        using skin_physics::physics::gpu_matrix4x4;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Animation Trajectory Packet Upload regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        animation_trajectory_packet packet;
+        packet.animation_input_version = 0x1122334455667788ull;
+        packet.span_world_time_starts = { 3.25 };
+        packet.span_records.resize(1u);
+        packet.track_records.resize(1u);
+        packet.channel_records.resize(1u);
+        packet.inverse_bind_matrices.resize(1u);
+        packet.static_node_matrices.resize(2u);
+        packet.skin_records.resize(1u);
+        packet.skin_joint_records.resize(1u);
+
+        animation_span_gpu_record& span = packet.span_records[0u];
+        span.span_id = 0x1234u;
+        span.animation_input_version_low =
+            static_cast<uint32_t>(packet.animation_input_version & 0xffffffffull);
+        span.animation_input_version_high =
+            static_cast<uint32_t>(packet.animation_input_version >> 32u);
+        span.first_track_record = 0u;
+        span.track_record_count = 1u;
+        span.first_channel_record = 0u;
+        span.channel_record_count = 1u;
+        span.first_blend_record = 0u;
+        span.blend_record_count = 0u;
+        span.first_collider_record = 0u;
+        span.collider_record_count = 0u;
+        span.span_duration_seconds = 0.5f;
+        span.inverse_span_duration = 2.0f;
+        span.speed_bound = 3.0f;
+        span.acceleration_bound = 4.0f;
+        span.chord_deviation_bound = 0.125f;
+        span.quaternion_normalization_lower_bound = 0.75f;
+
+        animation_track_gpu_record& track = packet.track_records[0u];
+        track.clip_index = 2u;
+        track.first_channel_record = 0u;
+        track.channel_record_count = 1u;
+        track.clip_time_start = 0.25f;
+        track.clip_time_delta = 0.5f;
+        track.playback_speed = 1.0f;
+
+        animation_channel_gpu_record& channel = packet.channel_records[0u];
+        channel.node_index = 1u;
+        channel.parent_index = skin_physics::asset::invalid_index;
+        channel.inverse_bind_record_index = 0u;
+        channel.channel_mask =
+            skin_physics::physics::animation_channel_mask_translation;
+        channel.node_role_flags =
+            skin_physics::physics::animation_node_role_joint;
+        channel.translation_c0 = { 1.0f, 2.0f, 3.0f, 0.0f };
+        channel.translation_c1 = { 4.0f, 5.0f, 6.0f, 0.0f };
+
+        gpu_matrix4x4& inverse_bind = packet.inverse_bind_matrices[0u];
+        inverse_bind.column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
+        inverse_bind.column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
+        inverse_bind.column2 = { 0.0f, 0.0f, 1.0f, 0.0f };
+        inverse_bind.column3 = { 2.0f, 3.0f, 4.0f, 1.0f };
+        packet.static_node_matrices[0u] = gpu_matrix4x4{};
+        packet.static_node_matrices[1u] = inverse_bind;
+
+        packet.skin_records[0u] = { 0u, 0u, 0u, 1u };
+        packet.skin_joint_records[0u] = { 0u, 0u, 1u, 0u };
+
+        animation_span_cursor_gpu_record cursor;
+        cursor.span_record_index = 0u;
+        cursor.animation_input_version_low = span.animation_input_version_low;
+        cursor.animation_input_version_high = span.animation_input_version_high;
+        cursor.u_segment_start = 0.375f;
+
+        animation_trajectory_gpu_resources resources;
+        std::string diagnostic;
+        const bool uploaded = skin_physics::physics::upload_animation_trajectory_packet(
+            device.Get(), packet, cursor, resources, diagnostic);
+        require(uploaded && resources.valid(),
+            "A valid CPU Animation Packet must upload every immutable StructuredBuffer and its independent mutable Cursor: " +
+            diagnostic);
+        require(resources.animation_input_version() == packet.animation_input_version &&
+            resources.counts().spans == 1u &&
+            resources.counts().tracks == 1u &&
+            resources.counts().channels == 1u &&
+            resources.counts().blends == 0u &&
+            resources.counts().inverse_bind_matrices == 1u &&
+            resources.counts().static_node_matrices == 2u &&
+            resources.counts().skins == 1u &&
+            resources.counts().skin_joints == 1u &&
+            resources.counts().colliders == 0u,
+            "GPU resource metadata must preserve the Packet Version and every structured record count.");
+
+        require_immutable_structured_buffer(
+            resources.span_buffer(), 1u, sizeof(animation_span_gpu_record), "Span");
+        require_immutable_structured_buffer(
+            resources.track_buffer(), 1u, sizeof(animation_track_gpu_record), "Track");
+        require_immutable_structured_buffer(
+            resources.channel_buffer(), 1u, sizeof(animation_channel_gpu_record), "Channel");
+        require_immutable_structured_buffer(
+            resources.inverse_bind_matrix_buffer(), 1u, sizeof(gpu_matrix4x4), "Inverse Bind Matrix");
+        require_immutable_structured_buffer(
+            resources.static_node_matrix_buffer(), 2u, sizeof(gpu_matrix4x4), "Static Node Matrix");
+        require_immutable_structured_buffer(
+            resources.skin_buffer(), 1u, sizeof(animation_skin_gpu_record), "Skin");
+        require_immutable_structured_buffer(
+            resources.skin_joint_buffer(), 1u, sizeof(animation_skin_joint_gpu_record), "Skin Joint");
+
+        require_structured_srv_element_count(
+            resources.span_srv(), 1u, "Span");
+        require_structured_srv_element_count(
+            resources.track_srv(), 1u, "Track");
+        require_structured_srv_element_count(
+            resources.channel_srv(), 1u, "Channel");
+        require_structured_srv_element_count(
+            resources.inverse_bind_matrix_srv(), 1u, "Inverse Bind Matrix");
+        require_structured_srv_element_count(
+            resources.static_node_matrix_srv(), 2u, "Static Node Matrix");
+        require_structured_srv_element_count(
+            resources.skin_srv(), 1u, "Skin");
+        require_structured_srv_element_count(
+            resources.skin_joint_srv(), 1u, "Skin Joint");
+        require(resources.blend_buffer() == nullptr &&
+            resources.blend_srv() == nullptr &&
+            resources.collider_buffer() == nullptr &&
+            resources.collider_srv() == nullptr,
+            "Empty optional Blend / Collider arrays must remain absent rather than creating meaningless dummy Packet records.");
+
+        D3D11_BUFFER_DESC cursor_description = {};
+        resources.cursor_buffer()->GetDesc(&cursor_description);
+        require(cursor_description.ByteWidth == sizeof(animation_span_cursor_gpu_record) &&
+            cursor_description.Usage == D3D11_USAGE_DEFAULT &&
+            cursor_description.BindFlags ==
+                (D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS) &&
+            cursor_description.CPUAccessFlags == 0u &&
+            cursor_description.MiscFlags == D3D11_RESOURCE_MISC_BUFFER_STRUCTURED &&
+            cursor_description.StructureByteStride ==
+                sizeof(animation_span_cursor_gpu_record) &&
+            resources.cursor_srv() != nullptr &&
+            resources.cursor_uav() != nullptr,
+            "The per-World Segment Cursor must be a separate mutable StructuredBuffer with SRV / UAV views.");
+
+        const std::vector<animation_span_cursor_gpu_record> cursor_readback =
+            readback_structured_buffer<animation_span_cursor_gpu_record>(
+                device.Get(), context.Get(), resources.cursor_buffer(), 1u);
+        require(std::memcmp(
+                &cursor_readback[0u], &cursor,
+                sizeof(animation_span_cursor_gpu_record)) == 0,
+            "GPU-uploaded Segment Cursor must preserve the immutable Packet Version and initial normalized coordinate.");
+
+        const std::vector<animation_span_gpu_record> span_readback =
+            readback_structured_buffer<animation_span_gpu_record>(
+                device.Get(), context.Get(), resources.span_buffer(), 1u);
+        const std::vector<animation_track_gpu_record> track_readback =
+            readback_structured_buffer<animation_track_gpu_record>(
+                device.Get(), context.Get(), resources.track_buffer(), 1u);
+        const std::vector<animation_channel_gpu_record> channel_readback =
+            readback_structured_buffer<animation_channel_gpu_record>(
+                device.Get(), context.Get(), resources.channel_buffer(), 1u);
+        const std::vector<animation_skin_gpu_record> skin_readback =
+            readback_structured_buffer<animation_skin_gpu_record>(
+                device.Get(), context.Get(), resources.skin_buffer(), 1u);
+        const std::vector<animation_skin_joint_gpu_record> joint_readback =
+            readback_structured_buffer<animation_skin_joint_gpu_record>(
+                device.Get(), context.Get(), resources.skin_joint_buffer(), 1u);
+        require(std::memcmp(
+                span_readback.data(), packet.span_records.data(),
+                sizeof(animation_span_gpu_record)) == 0 &&
+            std::memcmp(
+                track_readback.data(), packet.track_records.data(),
+                sizeof(animation_track_gpu_record)) == 0 &&
+            std::memcmp(
+                channel_readback.data(), packet.channel_records.data(),
+                sizeof(animation_channel_gpu_record)) == 0 &&
+            std::memcmp(
+                skin_readback.data(), packet.skin_records.data(),
+                sizeof(animation_skin_gpu_record)) == 0 &&
+            std::memcmp(
+                joint_readback.data(), packet.skin_joint_records.data(),
+                sizeof(animation_skin_joint_gpu_record)) == 0,
+            "Immutable Packet SRV backing buffers must retain their exact CPU record bytes after GPU upload.");
+
+        ID3D11Buffer* const committed_span_buffer = resources.span_buffer();
+        const uint64_t committed_version = resources.animation_input_version();
+        animation_span_cursor_gpu_record wrong_version_cursor = cursor;
+        wrong_version_cursor.animation_input_version_low ^= 1u;
+        const bool rejected_wrong_cursor =
+            skin_physics::physics::upload_animation_trajectory_packet(
+                device.Get(), packet, wrong_version_cursor, resources, diagnostic);
+        require(!rejected_wrong_cursor &&
+            resources.valid() &&
+            resources.span_buffer() == committed_span_buffer &&
+            resources.animation_input_version() == committed_version,
+            "A Cursor from another immutable Packet Version must be rejected without replacing the previously uploaded GPU resources.");
+
+        animation_trajectory_packet invalid_blend_packet = packet;
+        animation_blend_gpu_record invalid_blend;
+        invalid_blend.source_track_index = 0u;
+        invalid_blend.target_track_index = 0u;
+        invalid_blend.duration_seconds = 0.5f;
+        invalid_blend.inverse_duration = 2.0f;
+        invalid_blend_packet.blend_records.push_back(invalid_blend);
+        invalid_blend_packet.span_records[0u].blend_record_count = 1u;
+        const bool rejected_invalid_blend =
+            skin_physics::physics::upload_animation_trajectory_packet(
+                device.Get(), invalid_blend_packet, cursor, resources, diagnostic);
+        require(!rejected_invalid_blend &&
+            resources.span_buffer() == committed_span_buffer &&
+            resources.animation_input_version() == committed_version,
+            "A Blend Record referencing one Track as both Source and Target must fail before upload and preserve the previous GPU Packet.");
+
+        std::cout << "[PASS] P09_WARP_ANIMATION_TRAJECTORY_PACKET_UPLOAD\n";
+    }
+
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
@@ -3552,6 +3815,7 @@ int run_gpu_solver_tests()
     test_r1_warp_runtime_soft_body_fem_svd_parity();
     test_phase09_warp_animation_trajectory_packet_abi();
     test_phase09_warp_animation_skin_abi();
+    test_phase09_warp_animation_trajectory_packet_upload();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
