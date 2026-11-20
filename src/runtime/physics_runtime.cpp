@@ -1036,6 +1036,7 @@ namespace skin_physics::runtime
             world_execution_budget execution_budget;
             uint64_t execution_budget_revision = 1u;
             bool cpu_preflight_block_status_observed = false;
+            bool gpu_dynamic_toi_block_status_observed = false;
             playback_state playback = playback_state::stopped;
             double accumulator_seconds = 0.0;
             double requested_simulation_time = 0.0;
@@ -2823,6 +2824,7 @@ namespace skin_physics::runtime
                 world.planned_substeps = 0u;
                 world.planned_integration_segments = 0u;
                 world.cpu_preflight_block_status_observed = false;
+                world.gpu_dynamic_toi_block_status_observed = false;
                 if (world.in_flight_tick_count != 0u)
                 {
                     world.state = tick_state::in_flight;
@@ -2867,6 +2869,8 @@ namespace skin_physics::runtime
                 reservation.predecessor_blocked = false;
             }
             reservation.blocked = false;
+            world.cpu_preflight_block_status_observed = false;
+            world.gpu_dynamic_toi_block_status_observed = false;
             double dt_limit = std::numeric_limits<double>::infinity();
             if (world.description.world_max_substep_delta_time > 0.0)
             {
@@ -3806,6 +3810,7 @@ namespace skin_physics::runtime
             desc.maximum_integration_segments_per_tick;
         world.execution_budget_revision = 1u;
         world.cpu_preflight_block_status_observed = false;
+        world.gpu_dynamic_toi_block_status_observed = false;
         world.playback = playback_state::stopped;
         world.accumulator_seconds = 0.0;
         world.requested_simulation_time = 0.0;
@@ -4355,6 +4360,13 @@ namespace skin_physics::runtime
                 return make_status(status_code::busy,
                     "CPU Preflight Status must be returned by poll() before changing the World Execution Budget.");
             }
+            if (world->budget_block_origin ==
+                    work_budget_block_origin::gpu_dynamic_toi &&
+                !world->gpu_dynamic_toi_block_status_observed)
+            {
+                return make_status(status_code::busy,
+                    "GPU Dynamic TOI Status must be returned by poll(world) before changing the World Execution Budget.");
+            }
 
             const uint32_t required_segments =
                 world->budget_block_origin ==
@@ -4412,6 +4424,8 @@ namespace skin_physics::runtime
                 // admission requirement; do not replace it with the base plan.
                 reservation.blocked = false;
                 reservation.predecessor_blocked = false;
+                world->gpu_dynamic_toi_block_status_observed = false;
+                world->cpu_preflight_block_status_observed = false;
                 world->state = tick_state::pending;
                 world->last_tick_status = status_code::ok;
                 world->budget_block_origin = work_budget_block_origin::none;
@@ -5352,15 +5366,26 @@ namespace skin_physics::runtime
 
         if (world->state == tick_state::blocked &&
             world->last_tick_status == status_code::work_budget_exceeded &&
-            world->budget_block_origin ==
-                work_budget_block_origin::cpu_preflight &&
             !world->reservations.empty() &&
             world->reservations.front().blocked &&
             !world->reservations.front().predecessor_blocked)
         {
-            // A CPU-only Preflight Block is observable synchronously through this
-            // returned world_status; it does not require an Event Query.
-            world->cpu_preflight_block_status_observed = true;
+            if (world->budget_block_origin ==
+                work_budget_block_origin::cpu_preflight)
+            {
+                // A CPU-only Preflight Block is observable synchronously through
+                // this returned world_status; it does not require an Event Query.
+                world->cpu_preflight_block_status_observed = true;
+            }
+            else if (world->budget_block_origin ==
+                    work_budget_block_origin::gpu_dynamic_toi &&
+                world->in_flight_tick_count == 0u)
+            {
+                // Only poll(world) returns this Work Budget Status to the Host.
+                // Polling another World may have consumed the shared Query Ring
+                // entry internally, but does not authorize a Budget Retry here.
+                world->gpu_dynamic_toi_block_status_observed = true;
+            }
         }
 
         world_status result;
@@ -5636,6 +5661,7 @@ namespace skin_physics::runtime
         world->next_tick_sequence = 1u;
         world->pending_single_step_requests = 0u;
         world->cpu_preflight_block_status_observed = false;
+        world->gpu_dynamic_toi_block_status_observed = false;
         world->reservations.clear();
         world->in_flight_ticks.clear();
         world->in_flight_tick_count = 0u;
