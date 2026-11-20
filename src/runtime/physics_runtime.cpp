@@ -569,6 +569,16 @@ namespace skin_physics::runtime
                 world.reserved_tick_time > time_epsilon;
         }
 
+        status validate_input_mutation(const world_slot& world) const
+        {
+            if (has_world_submission(world) || world.render_lease_active)
+            {
+                return make_status(status_code::busy,
+                    "World input cannot change after a Tick Reservation or Render Lease has fixed the current input state.");
+            }
+            return make_status(status_code::ok, {});
+        }
+
         uint64_t world_identity(uint32_t index, uint32_t generation) const
         {
             return (static_cast<uint64_t>(generation) << 32u) | index;
@@ -716,11 +726,12 @@ namespace skin_physics::runtime
             }
 
             if (world.next_tick_sequence == 0u ||
+                world.next_tick_sequence == std::numeric_limits<uint64_t>::max() ||
                 !finite_double(world.reserved_tick_time +
                     world.description.fixed_delta_time))
             {
                 world.state = tick_state::failed;
-                world.last_tick_status = status_code::gpu_execution_failed;
+                world.last_tick_status = status_code::capacity_exceeded;
                 world.diagnostic = "Tick Reservation Sequence or reserved time cannot advance without overflow.";
                 return false;
             }
@@ -1481,6 +1492,8 @@ namespace skin_physics::runtime
         if (!thread.success()) return thread;
         implementation::world_slot* world = runtime.find_world(world_handle_value);
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         if (!finite_vec3(gravity))
         {
             return make_status(status_code::invalid_argument,
@@ -1501,6 +1514,8 @@ namespace skin_physics::runtime
         if (!thread.success()) return thread;
         implementation::world_slot* world = runtime.find_world(world_handle_value);
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         if (force.event_id == 0u ||
             !finite_vec3(force.position) ||
             !finite_vec3(force.direction) ||
@@ -1542,6 +1557,8 @@ namespace skin_physics::runtime
         if (!thread.success()) return thread;
         implementation::world_slot* world = runtime.find_world(world_handle_value);
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         if (impulse.event_id == 0u ||
             !finite_vec3(impulse.position) ||
             !finite_vec3(impulse.direction) ||
@@ -1584,6 +1601,8 @@ namespace skin_physics::runtime
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         implementation::model_slot* model = runtime.find_model(*world, model_handle_value);
         if (model == nullptr) return make_status(status_code::stale_handle, "Model Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         if (!valid_animation_track(model->source_model, desc.track) ||
             !finite_float(desc.w_event) ||
             desc.w_event < 0.0f || desc.w_event > 1.0f)
@@ -1611,6 +1630,8 @@ namespace skin_physics::runtime
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         implementation::model_slot* model = runtime.find_model(*world, model_handle_value);
         if (model == nullptr) return make_status(status_code::stale_handle, "Model Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
 
         if (!valid_animation_track(model->source_model, desc.source_track) ||
             !valid_animation_track(model->source_model, desc.target_track) ||
@@ -1650,6 +1671,8 @@ namespace skin_physics::runtime
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         implementation::model_slot* model = runtime.find_model(*world, model_handle_value);
         if (model == nullptr) return make_status(status_code::stale_handle, "Model Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         if (!finite_double(sample_time) || sample_time < 0.0 ||
             !valid_transform(world_transform))
         {
@@ -1689,6 +1712,8 @@ namespace skin_physics::runtime
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         implementation::model_slot* model = runtime.find_model(*world, model_handle_value);
         if (model == nullptr) return make_status(status_code::stale_handle, "Model Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         if (mesh_index >= model->source_model.meshes.size() ||
             model->source_model.meshes[mesh_index].mode == asset::physics_mode::none ||
             !valid_mesh_physics_parameters(parameters))
@@ -1716,6 +1741,8 @@ namespace skin_physics::runtime
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         implementation::model_slot* model = runtime.find_model(*world, model_handle_value);
         if (model == nullptr) return make_status(status_code::stale_handle, "Model Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         const std::size_t channel = static_cast<std::size_t>(edit.channel);
         if (mesh_index >= model->source_model.meshes.size() ||
             model->source_model.meshes[mesh_index].mode == asset::physics_mode::none ||
@@ -1822,6 +1849,8 @@ namespace skin_physics::runtime
         implementation::collider_slot* collider =
             runtime.find_collider(*world, collider_handle_value);
         if (collider == nullptr) return make_status(status_code::stale_handle, "Collider Handle is stale.");
+        const status input_status = runtime.validate_input_mutation(*world);
+        if (!input_status.success()) return input_status;
         if (!collider->kinematic)
         {
             return make_status(status_code::invalid_state,
