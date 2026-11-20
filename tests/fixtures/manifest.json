@@ -652,11 +652,26 @@
             "The blended local Pose is propagated through Parent * Local matrices and rebuilt Skin Matrices / derivatives, preserving Root-motion cancellation",
             "Source / Target / Weight World-Time interval mismatch fails atomically without publishing a blended hierarchy"
           ]
+        },
+        {
+          "id": "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER",
+          "checks": [
+            "An immutable Packet requires a non-zero Animation Input Version and a bounded non-empty Span sequence",
+            "Span Records retain version low / high words, contiguous positive World-Time ranges, unique Span IDs, absolute Track / Channel / Blend / Collider Buffer Ranges and certified Bounds",
+            "Track Records preserve Clip Index, Clip-Time start, signed Clip-Time delta, World-Time Playback Speed, Loop / Reverse flags and the complete per-Node Channel Range",
+            "Channel Records are emitted in parent-before-child order and preserve every Asset Node, Parent Record Index, Node Role, per-Path mask, interpolation flags, Rest TRS, static affine Matrix and Span coefficient",
+            "Skin Joint Nodes map to immutable Inverse Bind Matrix records; non-Joint Nodes use UINT32_MAX; conflicting per-Skin Inverse Bind layouts fail closed",
+            "A skinned Mesh Node and every Joint / Mesh Node ancestor are represented in the dense Node Channel payload",
+            "Blend Packet Records reference the local Source / Target Track indices and retain finite Hermite coefficients / normalized time metadata",
+            "Segment Cursor maps positive World Time into the selected immutable Span normalized coordinate and copies the exact Animation Input Version",
+            "Invalid Version, malformed Track Channel Range, invalid certified Bounds, duplicate Span IDs, non-contiguous Span intervals and out-of-Span Cursor requests fail atomically without replacing prior output"
+          ]
         }
       ],
       "automated_cases": [
         "P09_ANIMATION_TARGET",
-        "P09_WARP_ANIMATION_AND_TELEPORT"
+        "P09_WARP_ANIMATION_AND_TELEPORT",
+        "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER"
       ],
       "unimplemented": [
         "Multi-key runtime clip sampling, cubic curves and node-hierarchy binding in the GPU path",
