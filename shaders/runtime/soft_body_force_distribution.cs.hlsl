@@ -138,22 +138,29 @@ void soft_body_force_distribution_reduce(
     uint3 group_thread_id : SV_GroupThreadID)
 {
     TickCommitControl control = tick_commit_control_buffer[0];
-    if (!tick_distribution_is_active(control) ||
-        group_id.x >= group_count)
-    {
-        return;
-    }
+    const bool group_active =
+        tick_distribution_is_active(control) &&
+        group_id.x < group_count;
 
     uint vertex_index = group_id.x * 64u + group_thread_id.x;
-    float value = vertex_index < reduction_vertex_count
-        ? reduction_weights[vertex_index]
-        : 0.0f;
-    if (!isfinite(value) || value < 0.0f)
+    float value = 0.0f;
+    if (group_active && vertex_index < reduction_vertex_count)
     {
-        uint previous_failure = 0u;
-        InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
-        value = 0.0f;
+        value = reduction_weights[vertex_index];
+        if (!isfinite(value) || value < 0.0f)
+        {
+            uint previous_failure = 0u;
+            InterlockedOr(
+                tick_commit_control_buffer[0].terminal_failure,
+                1u,
+                previous_failure);
+            value = 0.0f;
+        }
     }
+
+    // Every thread in a dispatched group must participate in every group
+    // barrier. Runtime activity and tail bounds only gate memory operations;
+    // they must never gate the synchronization sequence.
     group_weight_values[group_thread_id.x] = value;
     GroupMemoryBarrierWithGroupSync();
 
@@ -167,7 +174,7 @@ void soft_body_force_distribution_reduce(
         GroupMemoryBarrierWithGroupSync();
     }
 
-    if (group_thread_id.x == 0u)
+    if (group_thread_id.x == 0u && group_active)
     {
         partial_sums[group_id.x] = group_weight_values[0];
     }
