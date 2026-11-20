@@ -332,7 +332,8 @@
         "P06_INVERSION_ROLLBACK",
         "P06_WARP_COROTATIONAL_FEM",
         "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
-        "R1_RUNTIME_SOFT_BODY_ASSET_AND_CSR_VALIDATION"
+        "R1_RUNTIME_SOFT_BODY_ASSET_AND_CSR_VALIDATION",
+        "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_PARITY"
       ],
       "unimplemented": [
         "WARP numeric parity and near-singular regression for the production Runtime Jacobi SVD fallback path",
@@ -346,7 +347,13 @@
         "shaders/runtime/soft_body_integrate.cs.hlsl",
         "shaders/runtime/tick_transaction_control.cs.hlsl"
       ],
-      "status_note": "Production Runtime path now contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / damped integration, two-bank Commit plumbing, and strict Tet / CSR Asset validation. Runtime WARP execution and numeric parity remain unverified until Windows CI runs."
+      "status_note": "Production Runtime shader test source compares CPU / WARP deformation, rotation, stress, nodal forces and energy for a compression case plus a positive near-singular case that must select the Jacobi SVD fallback. Execution remains unverified until Windows CI runs.",
+      "warp_runtime_assertions": [
+        "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
+        "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",
+        "positive_near_singular_deformation_selects_Proper_Rotation_Jacobi_SVD_fallback",
+        "valid_polar_and_SVD_results_do_not_set_GPU_terminal_failure"
+      ]
     },
     {
       "phase": 7,
