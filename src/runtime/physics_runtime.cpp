@@ -908,16 +908,17 @@ namespace skin_physics::runtime
             {
                 reservation.planned_substeps = 0u;
                 reservation.planned_integration_segments = 0u;
-                reservation.blocked = true;
+                reservation.blocked = false;
+                reservation.rejected = false;
                 world.planned_substeps = 0u;
                 world.planned_integration_segments = 0u;
-                world.work_budget_block_flags = 0x03u;
-                world.budget_block_origin = work_budget_block_origin::cpu_preflight;
-                world.budget_resolution = work_budget_resolution::hard_limit_reached;
-                world.last_tick_status = status_code::work_budget_unsatisfiable;
-                world.state = tick_state::blocked;
+                world.work_budget_block_flags = 0u;
+                world.budget_block_origin = work_budget_block_origin::none;
+                world.budget_resolution = work_budget_resolution::none;
+                world.last_tick_status = status_code::capacity_exceeded;
+                world.state = tick_state::failed;
                 world.diagnostic =
-                    "CPU Preflight could not represent the required World Substep count.";
+                    "CPU Preflight Work Count Overflow: required World Substep count is not representable as uint32.";
                 return;
             }
 
