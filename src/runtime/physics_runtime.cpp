@@ -118,6 +118,15 @@ namespace skin_physics::runtime
         static_assert(sizeof(gpu_float4) == 16,
             "GPU float4 ABI must remain 16 bytes.");
 
+        struct gpu_soft_body_skin_weight_record
+        {
+            uint32_t joints[asset::max_skin_influences] = {};
+            float weights[asset::max_skin_influences] = {};
+        };
+
+        static_assert(sizeof(gpu_soft_body_skin_weight_record) == 64u,
+            "GPU Physics Vertex Skin Weight records must remain 64 bytes.");
+
         struct alignas(16) gpu_soft_body_tet_input
         {
             uint32_t vertex_ids[4] = {};
@@ -966,8 +975,13 @@ namespace skin_physics::runtime
         struct soft_body_gpu_mesh
         {
             uint32_t mesh_index = asset::invalid_index;
+            uint32_t skin_node_index = asset::invalid_index;
+            uint32_t skin_index = asset::invalid_index;
+            uint32_t skin_joint_count = 0u;
             uint32_t vertex_count = 0u;
             uint32_t tetrahedron_count = 0u;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_weights_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> skin_weights_srv;
 
             std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> position_banks;
             std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
