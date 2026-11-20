@@ -1671,7 +1671,7 @@ namespace
 
         const skin_physics::physics::animation_clip_spans_build_result reverse_clip_spans =
             skin_physics::physics::build_animation_clip_spans(
-                synchronized_clip, 4u, 1.75, -1.5);
+                synchronized_clip, 5u, 1.75, -1.5);
         require(reverse_clip_spans.success &&
             reverse_clip_spans.values.size() == 4u &&
             std::abs(reverse_clip_spans.values[0u].clip_time_start - 1.75) <= 1.0e-12 &&
