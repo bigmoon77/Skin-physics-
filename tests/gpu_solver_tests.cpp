@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -540,8 +541,30 @@ namespace
         uint32_t reserved[3] = {};
     };
 
+    struct alignas(16) gpu_tick_commit_control
+    {
+        uint32_t committed_sequence_low = 0u;
+        uint32_t committed_sequence_high = 0u;
+        uint32_t state_generation_low = 1u;
+        uint32_t state_generation_high = 0u;
+        uint32_t active_state_set = 0u;
+        uint32_t terminal_state = 1u;
+        uint32_t terminal_failure = 0u;
+        uint32_t validation_mask = 0u;
+        uint32_t required_validation_mask = 1u;
+        uint32_t dispatch_id_low = 1u;
+        uint32_t dispatch_id_high = 0u;
+        uint32_t reservation_token_low = 1u;
+        uint32_t reservation_token_high = 0u;
+        uint32_t last_gate_state = 1u;
+        uint32_t diagnostic = 0u;
+        uint32_t reserved = 0u;
+    };
+
     static_assert(sizeof(gpu_tet_input) == 160, "Tet input layout must match HLSL.");
     static_assert(sizeof(gpu_tet_output) == 224, "Tet output layout must match HLSL.");
+    static_assert(sizeof(gpu_tick_commit_control) == 64,
+        "Runtime Tick Commit Control layout must match HLSL.");
 
     void test_phase06_warp_corotational_fem()
     {
@@ -718,6 +741,231 @@ namespace
         std::cout << "[PASS] P06_WARP_COROTATIONAL_FEM\n";
     }
 
+
+    void test_r1_warp_runtime_soft_body_fem_svd_parity()
+    {
+        skin_physics::physics::raw_tet_mesh raw_mesh;
+        raw_mesh.positions = {
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f },
+            { 0.0f, 0.0f, 1.0f }
+        };
+        raw_mesh.tetrahedra = { { 0u, 1u, 2u, 3u } };
+        const auto built = skin_physics::physics::build_physics_mesh(raw_mesh);
+        require(built.success && built.value.tetrahedra.size() == 1u,
+            "Runtime Soft Body SVD fixture must build one valid tetrahedron.");
+
+        skin_physics::physics::soft_body_material material;
+        material.shear_modulus = 1000.0f;
+        material.bulk_modulus = 5000.0f;
+        material.density = 1000.0f;
+        material.inversion_stiffness = 10000.0f;
+        material.minimum_jacobian = 0.1f;
+
+        const skin_physics::physics::tetrahedron& source_tet =
+            built.value.tetrahedra[0];
+        gpu_tet_input tet_input;
+        for (std::size_t index = 0u; index < 4u; ++index)
+        {
+            tet_input.vertex_ids[index] = source_tet.vertices[index];
+            const vec3& gradient = source_tet.rest_shape_gradients[index];
+            tet_input.rest_gradients[index] = {
+                gradient.x, gradient.y, gradient.z, 0.0f
+            };
+        }
+        for (std::size_t row = 0u; row < 3u; ++row)
+        {
+            tet_input.rest_inverse[row] = {
+                source_tet.rest_inverse[row * 3u],
+                source_tet.rest_inverse[row * 3u + 1u],
+                source_tet.rest_inverse[row * 3u + 2u],
+                0.0f
+            };
+        }
+        tet_input.material0 = {
+            source_tet.rest_volume,
+            material.shear_modulus,
+            material.bulk_modulus,
+            material.shape_recovery_scale
+        };
+        tet_input.material1 = {
+            material.volume_retention_scale,
+            material.inversion_stiffness,
+            material.minimum_jacobian,
+            0.0f
+        };
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Runtime Soft Body SVD parity requires a D3D11 WARP device.");
+
+        const std::filesystem::path shader_path =
+            test_support::fixture_directory().parent_path().parent_path() /
+            "shaders" / "runtime" / "soft_body_fem.cs.hlsl";
+        require(std::filesystem::is_regular_file(shader_path),
+            "Production Runtime Soft Body FEM shader must be present in the repository shader package.");
+        const ComPtr<ID3D11ComputeShader> shader =
+            compile_compute_shader(device.Get(), shader_path, "soft_body_fem");
+
+        struct test_case
+        {
+            std::vector<vec3> positions;
+            bool expect_svd_fallback = false;
+        };
+
+        const std::vector<test_case> cases = {
+            {
+                {
+                    { 0.0f, 0.0f, 0.0f },
+                    { 0.9f, 0.0f, 0.0f },
+                    { 0.0f, 1.0f, 0.0f },
+                    { 0.0f, 0.0f, 1.0f }
+                },
+                false
+            },
+            {
+                {
+                    { 0.0f, 0.0f, 0.0f },
+                    { 1.0e-15f, 0.0f, 0.0f },
+                    { 0.0f, 1.0f, 0.0f },
+                    { 0.0f, 0.0f, 1.0f }
+                },
+                true
+            }
+        };
+
+        for (const test_case& item : cases)
+        {
+            const skin_physics::physics::corotational_tet_result cpu =
+                skin_physics::physics::evaluate_corotational_tetrahedron(
+                    built.value, 0u, item.positions, material);
+            require(cpu.success && cpu.state_committable,
+                "Runtime FEM CPU Reference must accept each positive-Jacobian SVD parity case.");
+            require(cpu.used_svd_fallback == item.expect_svd_fallback,
+                "CPU FEM must select the expected polar or SVD path for the parity fixture.");
+
+            std::vector<gpu_float4> gpu_positions;
+            gpu_positions.reserve(item.positions.size());
+            for (const vec3& position : item.positions)
+            {
+                gpu_positions.push_back({
+                    position.x, position.y, position.z, 1.0f
+                });
+            }
+
+            const std::vector<gpu_tet_input> tet_inputs = { tet_input };
+            const std::vector<gpu_tet_output> initial_outputs(1u);
+            const std::vector<gpu_tick_commit_control> initial_control = {
+                gpu_tick_commit_control{}
+            };
+
+            const ComPtr<ID3D11Buffer> positions_buffer =
+                create_structured_buffer(
+                    device.Get(), gpu_positions, D3D11_BIND_SHADER_RESOURCE);
+            const ComPtr<ID3D11Buffer> tet_buffer =
+                create_structured_buffer(
+                    device.Get(), tet_inputs, D3D11_BIND_SHADER_RESOURCE);
+            const ComPtr<ID3D11Buffer> output_buffer =
+                create_structured_buffer(
+                    device.Get(), initial_outputs, D3D11_BIND_UNORDERED_ACCESS);
+            const ComPtr<ID3D11Buffer> control_buffer =
+                create_structured_buffer(
+                    device.Get(), initial_control, D3D11_BIND_UNORDERED_ACCESS);
+
+            const ComPtr<ID3D11ShaderResourceView> positions_srv =
+                create_structured_srv<gpu_float4>(
+                    device.Get(), positions_buffer.Get(), 4u);
+            const ComPtr<ID3D11ShaderResourceView> tet_srv =
+                create_structured_srv<gpu_tet_input>(
+                    device.Get(), tet_buffer.Get(), 1u);
+            const ComPtr<ID3D11UnorderedAccessView> output_uav =
+                create_structured_uav<gpu_tet_output>(
+                    device.Get(), output_buffer.Get(), 1u);
+            const ComPtr<ID3D11UnorderedAccessView> control_uav =
+                create_structured_uav<gpu_tick_commit_control>(
+                    device.Get(), control_buffer.Get(), 1u);
+
+            gpu_tet_dispatch_parameters dispatch_parameters;
+            const ComPtr<ID3D11Buffer> constants =
+                create_constant_buffer(
+                    device.Get(),
+                    &dispatch_parameters,
+                    static_cast<UINT>(sizeof(dispatch_parameters)));
+
+            dispatch_compute(
+                context.Get(),
+                shader.Get(),
+                { positions_srv.Get(), tet_srv.Get() },
+                { output_uav.Get(), control_uav.Get() },
+                constants.Get(),
+                1u);
+
+            const std::vector<gpu_tet_output> gpu_outputs =
+                readback_structured_buffer<gpu_tet_output>(
+                    device.Get(), context.Get(), output_buffer.Get(), 1u);
+            const std::vector<gpu_tick_commit_control> control =
+                readback_structured_buffer<gpu_tick_commit_control>(
+                    device.Get(), context.Get(), control_buffer.Get(), 1u);
+            const gpu_tet_output& gpu = gpu_outputs[0];
+
+            const float tolerance = 3.0e-3f;
+            for (std::size_t row = 0u; row < 3u; ++row)
+            {
+                const float gpu_deformation[3] = {
+                    gpu.deformation[row].x,
+                    gpu.deformation[row].y,
+                    gpu.deformation[row].z
+                };
+                const float gpu_rotation[3] = {
+                    gpu.rotation[row].x,
+                    gpu.rotation[row].y,
+                    gpu.rotation[row].z
+                };
+                const float gpu_stress[3] = {
+                    gpu.stress[row].x,
+                    gpu.stress[row].y,
+                    gpu.stress[row].z
+                };
+                for (std::size_t column = 0u; column < 3u; ++column)
+                {
+                    const std::size_t matrix_index = row * 3u + column;
+                    require(std::abs(gpu_deformation[column] -
+                        cpu.deformation_gradient.value[matrix_index]) <= 1.0e-5f,
+                        "Production Runtime FEM deformation gradient must match CPU Reference.");
+                    require(std::abs(gpu_rotation[column] -
+                        cpu.rotation.value[matrix_index]) <= tolerance,
+                        "Production Runtime FEM polar / SVD rotation must match CPU Reference.");
+                    require(std::abs(gpu_stress[column] -
+                        cpu.first_piola_stress.value[matrix_index]) <= tolerance,
+                        "Production Runtime FEM stress must match CPU Reference.");
+                }
+            }
+
+            for (std::size_t vertex = 0u; vertex < 4u; ++vertex)
+            {
+                const vec3& expected = cpu.internal_forces[vertex];
+                const gpu_float4& actual = gpu.forces[vertex];
+                require(std::abs(actual.x - expected.x) <= tolerance &&
+                    std::abs(actual.y - expected.y) <= tolerance &&
+                    std::abs(actual.z - expected.z) <= tolerance,
+                    "Production Runtime FEM nodal forces must match CPU Reference.");
+            }
+
+            require(std::abs(gpu.metrics.x - cpu.jacobian) <= 1.0e-5f &&
+                std::abs(gpu.metrics.y - cpu.current_volume) <= 1.0e-5f &&
+                std::abs(gpu.metrics.z - cpu.elastic_energy) <= tolerance &&
+                gpu.metrics.w == (item.expect_svd_fallback ? 2.0f : 1.0f),
+                "Production Runtime FEM must report matching measures and the selected polar / SVD path.");
+            require(control[0].terminal_failure == 0u,
+                "A valid positive-Jacobian polar / SVD result must leave the Tick Commit Control committable.");
+        }
+
+        std::cout << "[PASS] R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_PARITY\n";
+    }
 
     struct gpu_vt_result
     {
@@ -2865,6 +3113,7 @@ int run_gpu_solver_tests()
 {
     test_phase05_warp_cloth_all_constraint_types();
     test_phase06_warp_corotational_fem();
+    test_r1_warp_runtime_soft_body_fem_svd_parity();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
