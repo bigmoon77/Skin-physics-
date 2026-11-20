@@ -2899,21 +2899,60 @@ namespace skin_physics::runtime
         }
 
 
-        bool supports_single_mesh_soft_body_target(
+        bool force_target_matches_mesh(
+            const target_filter& target,
+            uint32_t model_index,
+            const model_slot& model,
+            uint32_t mesh_index) const
+        {
+            if (target.model.index == asset::invalid_index)
+            {
+                return target.mesh_index == asset::invalid_index;
+            }
+            if (target.model.index != model_index ||
+                target.model.generation != model.generation)
+            {
+                return false;
+            }
+            return target.mesh_index == asset::invalid_index ||
+                target.mesh_index == mesh_index;
+        }
+
+        bool supports_soft_body_target_scope(
             const world_slot& world,
             const target_filter& target) const
         {
-            if (target.model.index == asset::invalid_index ||
-                target.mesh_index == asset::invalid_index ||
-                target.model.index >= world.models.size())
+            if (target.model.index == asset::invalid_index)
+            {
+                if (target.mesh_index != asset::invalid_index)
+                {
+                    return false;
+                }
+                for (const model_slot& model : world.models)
+                {
+                    if (model.occupied && !model.gpu_soft_body_meshes.empty())
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            if (target.model.index >= world.models.size())
+            {
+                return false;
+            }
+            const model_slot& model = world.models[target.model.index];
+            if (!model.occupied || model.generation != target.model.generation)
             {
                 return false;
             }
 
-            const model_slot& model = world.models[target.model.index];
-            if (!model.occupied ||
-                model.generation != target.model.generation ||
-                target.mesh_index >= model.source_model.meshes.size() ||
+            if (target.mesh_index == asset::invalid_index)
+            {
+                return !model.gpu_soft_body_meshes.empty();
+            }
+            if (target.mesh_index >= model.source_model.meshes.size() ||
                 model.source_model.meshes[target.mesh_index].mode !=
                     asset::physics_mode::soft_body)
             {
@@ -2935,7 +2974,7 @@ namespace skin_physics::runtime
         {
             for (const force_desc& force : input_snapshot.forces)
             {
-                if (!supports_single_mesh_soft_body_target(world, force.target))
+                if (!supports_soft_body_target_scope(world, force.target))
                 {
                     return true;
                 }
@@ -2943,7 +2982,7 @@ namespace skin_physics::runtime
 
             for (const impulse_desc& impulse : input_snapshot.impulses)
             {
-                if (!supports_single_mesh_soft_body_target(world, impulse.target))
+                if (!supports_soft_body_target_scope(world, impulse.target))
                 {
                     return true;
                 }
@@ -4305,7 +4344,7 @@ namespace skin_physics::runtime
                 world.budget_resolution = work_budget_resolution::none;
                 world.work_budget_block_flags = 0u;
                 world.diagnostic =
-                    "GPU submission is deferred because this World contains a broad Force / Impulse target, Animation / Root Transform, Cloth or Collider input without a connected solver path. Force / Impulse currently require one exact Soft Body Model Mesh target.";
+                    "GPU submission is deferred because this World contains an unsupported Force / Impulse target, Animation / Root Transform, Cloth or Collider input. Force / Impulse scopes now include one exact Mesh, every Soft Body Mesh in a Model, or every Soft Body Mesh in the World.";
                 return false;
             }
             if (world.render_lease_active)
