@@ -552,6 +552,12 @@ namespace
         require(runtime.enqueue_force(world, force).code == status_code::invalid_argument,
             "Runtime must reject a zero-length Force direction before reserving its Event ID.");
         force.direction = { 0.0f, 5.0f, 0.0f };
+        force.start_time = std::numeric_limits<double>::max() * 0.5;
+        force.duration = std::numeric_limits<double>::max();
+        require(runtime.enqueue_force(world, force).code == status_code::invalid_argument,
+            "Runtime must reject a Force interval whose finite endpoints overflow or collapse in World time.");
+        force.start_time = 0.0;
+        force.duration = 0.1;
         require(runtime.enqueue_force(world, force).success(),
             "Runtime must normalize and accept a finite non-unit Soft Body Force direction.");
 
