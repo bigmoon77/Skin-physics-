@@ -8740,6 +8740,11 @@ namespace skin_physics::runtime
         for (implementation::model_slot& model : world->models)
         {
             model.root_samples.clear();
+            // Reset restarts the World Simulation Time epoch. Keep retained
+            // Playback / Blend descriptors at their authored Clip Time by
+            // rebasing their immutable input origin to the new World time.
+            model.animation_world_time_origin =
+                world->gpu_committed_simulation_time;
             for (implementation::soft_body_gpu_mesh& gpu_mesh :
                 model.gpu_soft_body_meshes)
             {
