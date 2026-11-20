@@ -2867,7 +2867,7 @@ int run_simulation_tests()
     test_phase04_overload_and_callback_failure();
     std::cout << "[PASS] P04_FIXED_STEP_OVERLOAD\n";
     test_phase04_pause_stop_and_reconfigure_preserve_accumulator();
-    std::cout << "[PASS] P04_STOP_PRESERVES_ACCUMULATOR\\n";
+    std::cout << "[PASS] P04_STOP_PRESERVES_ACCUMULATOR\n";
     test_phase05_cloth_fixture_and_bend_gradient();
     std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
     test_phase05_cloth_compliance_monotonicity();
