@@ -377,6 +377,17 @@
             "Force and Impulse event-ID accumulation order, per-Segment start-position sampling, FEM composition, one-shot Impulse timing and atomic Tick Commit remain unchanged",
             "A sibling Mesh receives no event response for an exact-Mesh target"
           ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_ANIMATION_TRACKING_STABILITY_PREFLIGHT",
+          "checks": [
+            "Mesh Physics Parameters accept finite non-negative Kelvin-Voigt tracking stiffness / damping and reject NaN / negative coefficients",
+            "For an active Animation Trajectory, per-vertex tracking frequency uses tracking_stiffness multiplied by Animation Tracking Paint and attribute multiplier, divided by density-remapped lumped mass",
+            "World common Substep scheduling includes dt_tracking_limit = 0.2 / omega_max alongside the FEM CFL limit",
+            "Zero Animation Tracking Paint and fixed / zero-mass vertices contribute no tracking frequency restriction",
+            "A tracking-driven CPU Preflight budget block retains the same Reservation and reports its planned common Substep count",
+            "Painted-out tracking remains BLOCKED_BY_INPUT until the immutable trajectory / solver path is connected; the stability term is removed without silently submitting the unsupported trajectory"
+          ]
         }
       ],
       "automated_cases": [
