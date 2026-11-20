@@ -389,6 +389,17 @@
             "A tracking-driven CPU Preflight budget block retains the same Reservation and reports its planned common Substep count",
             "Painted-out tracking remains BLOCKED_BY_INPUT until the immutable trajectory / solver path is connected; the stability term is removed without silently submitting the unsupported trajectory"
           ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_SKIN_WEIGHT_TRANSFER_UPLOAD",
+          "checks": [
+            "A Soft Body Physics Mesh with one unique Skinned Mesh Node resolves and retains its Mesh Node Index and Asset Skin Index",
+            "If Physics Vertex Skin Weights are not pre-supplied, Runtime transfers the Render Mesh's normalized 8-influence skin weights to Physics boundary vertices and harmonically extends them to the Tet interior",
+            "The transferred Physics Vertex influence set is validated for finite non-negative weights, Skin Joint range and unit sum before GPU upload",
+            "Physics Vertex skinning weights are uploaded as one 64-byte-per-vertex uint32 joint / float weight StructuredBuffer and exposed as an SRV",
+            "A Soft Body Asset Mesh referenced by multiple Skinned Mesh Node instances is rejected until the Runtime provides separate Physics State Banks per instance",
+            "A Skinned Mesh Node with incomplete Render Vertex Skin Attributes is rejected before GPU resources are committed"
+          ]
         }
       ],
       "automated_cases": [
