@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 
+#include <windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
 
@@ -134,7 +135,7 @@ namespace
 
         physics_runtime runtime;
         skin_physics::runtime::runtime_desc runtime_desc;
-        runtime_desc.shader_package_root = "runtime-test-shaders";
+        runtime_desc.shader_package_root = runtime_shader_root();
         require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
             "Runtime initialization must succeed for the time / budget regression.");
 
@@ -245,7 +246,7 @@ namespace
 
         physics_runtime runtime;
         skin_physics::runtime::runtime_desc runtime_desc;
-        runtime_desc.shader_package_root = "runtime-test-shaders";
+        runtime_desc.shader_package_root = runtime_shader_root();
         require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
             "Runtime initialization must succeed for the CPU Preflight regression.");
 
@@ -320,7 +321,7 @@ namespace
 
         physics_runtime runtime;
         skin_physics::runtime::runtime_desc runtime_desc;
-        runtime_desc.shader_package_root = "runtime-test-shaders";
+        runtime_desc.shader_package_root = runtime_shader_root();
         require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
             "Runtime initialization must succeed for the thread guard regression.");
 
