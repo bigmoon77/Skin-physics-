@@ -270,35 +270,37 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     float3 fallback_world_normal = safe_normalize(
         rotate_by_quaternion(vertex.fallback_normal.xyz, root_rotation),
         float3(0.0f, 1.0f, 0.0f));
-    float3 world_normal = (vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u
-        ? safe_normalize(normal_sum, fallback_world_normal)
-        : fallback_world_normal;
-    if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u)
-    {
-        normal = rotate_by_quaternion(world_normal, inverse_root_rotation);
-    }
+    float3 world_normal = safe_normalize(normal_sum, fallback_world_normal);
+    normal = rotate_by_quaternion(world_normal, inverse_root_rotation);
 
-    if ((vertex.metadata.x & ATTRIBUTE_TANGENT) != 0u)
+    float3 projected_tangent = tangent_sum -
+        world_normal * dot(world_normal, tangent_sum);
+    float projected_squared = dot(projected_tangent, projected_tangent);
+    if (!isfinite(projected_squared) || projected_squared <= 1.0e-20f)
     {
-        float3 projected_tangent = tangent_sum -
-            world_normal * dot(world_normal, tangent_sum);
-        float projected_squared = dot(projected_tangent, projected_tangent);
-        if (!isfinite(projected_squared) || projected_squared <= 1.0e-20f)
-        {
-            float3 axis = abs(world_normal.z) < 0.9f
-                ? float3(0.0f, 0.0f, 1.0f)
-                : float3(0.0f, 1.0f, 0.0f);
-            projected_tangent = cross(axis, world_normal);
-        }
-        float3 tangent_world = safe_normalize(
-            projected_tangent, float3(1.0f, 0.0f, 0.0f));
-        float handedness =
-            dot(cross(world_normal, tangent_world), bitangent_sum) < 0.0f
-                ? -1.0f : 1.0f;
-        tangent = float4(
-            rotate_by_quaternion(tangent_world, inverse_root_rotation),
-            handedness);
+        float3 fallback_tangent_world = rotate_by_quaternion(
+            vertex.fallback_tangent.xyz, root_rotation);
+        projected_tangent = fallback_tangent_world -
+            world_normal * dot(world_normal, fallback_tangent_world);
+        projected_squared = dot(projected_tangent, projected_tangent);
     }
+    if (!isfinite(projected_squared) || projected_squared <= 1.0e-20f)
+    {
+        float3 axis = abs(world_normal.z) < 0.9f
+            ? float3(0.0f, 0.0f, 1.0f)
+            : float3(0.0f, 1.0f, 0.0f);
+        projected_tangent = cross(axis, world_normal);
+    }
+    float3 tangent_world = safe_normalize(
+        projected_tangent, float3(1.0f, 0.0f, 0.0f));
+    float handedness_measure =
+        dot(cross(world_normal, tangent_world), bitangent_sum);
+    float handedness = abs(handedness_measure) > 1.0e-12f
+        ? (handedness_measure < 0.0f ? -1.0f : 1.0f)
+        : (vertex.fallback_tangent.w < 0.0f ? -1.0f : 1.0f);
+    tangent = float4(
+        rotate_by_quaternion(tangent_world, inverse_root_rotation),
+        handedness);
 
     if (!all(isfinite(position)) || !all(isfinite(normal)) ||
         !all(isfinite(tangent)))
