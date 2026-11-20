@@ -8,6 +8,7 @@
 #include <cmath>
 #include <array>
 #include <cstring>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -591,9 +592,10 @@ namespace
             gpu_normalized_sum.size() == 1u &&
             gpu_control.size() == 1u,
             "GPU Force distribution readback must preserve all per-vertex outputs and the scalar normalization sum.");
-        require(gpu_control[0u].values[6] == 0u &&
+        require(gpu_control[0u].values[5] == 1u &&
+            gpu_control[0u].values[6] == 0u &&
             gpu_control[0u].values[14] == 0u,
-            "GPU Force distribution Weight / Reduction / Finalize / Apply stages must complete without terminal failure.");
+            "GPU Force distribution Weight / Reduction / Finalize / Apply stages must preserve the In-Flight Commit Control without terminal failure.");
 
         const double gpu_sum_error = std::abs(
             static_cast<double>(gpu_normalized_sum[0u]) -
@@ -625,8 +627,9 @@ namespace
             require(normalized_error <= 2.0e-6,
                 "GPU per-vertex normalized Force weight must match the CPU double-precision reference.");
             require(std::abs(gpu_distributed_weights[index].y) <= 1.0e-7f &&
-                std::abs(gpu_distributed_weights[index].z) <= 1.0e-7f,
-                "The GPU distribution Apply stage must preserve the authored direction in the output accumulator.");
+                std::abs(gpu_distributed_weights[index].z) <= 1.0e-7f &&
+                std::abs(gpu_distributed_weights[index].w) <= 1.0e-7f,
+                "The GPU distribution Apply stage must preserve the authored direction in the output accumulator and keep the unused component zero.");
 
             normalized_weight_sum += gpu_distributed_weights[index].x;
         }
