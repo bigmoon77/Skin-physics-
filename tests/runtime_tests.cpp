@@ -392,6 +392,9 @@ namespace
         const float radius = static_cast<float>(
             input.at("radius").as_number());
 
+        // Keep the CPU inputs as distinct Mesh views while packing the same
+        // deterministic Mesh order into the contiguous GPU buffers below. This
+        // verifies one shared target-scope denominator across Mesh boundaries.
         const test_json::value::array& partition_inputs =
             input.at("mesh_partitions").as_array();
         require(partition_inputs.size() == 3u,
