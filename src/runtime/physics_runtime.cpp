@@ -6,6 +6,7 @@
 
 #include "skin_physics/asset/importer.hpp"
 #include "skin_physics/physics/animation_track.hpp"
+#include "skin_physics/physics/skin_weights.hpp"
 #include "skin_physics/simulation/d3d11_status_ring.hpp"
 #include "skin_physics/simulation/d3d11_compute_graph.hpp"
 
@@ -5538,6 +5539,133 @@ namespace skin_physics::runtime
                 return make_status(status_code::invalid_argument,
                     "Physics Mesh Assets are accepted only for Soft Body Meshes.");
             }
+
+            std::vector<uint32_t> mesh_node_indices;
+            for (uint32_t node_index = 0u;
+                node_index < desc.source_model.nodes.size(); ++node_index)
+            {
+                if (desc.source_model.nodes[node_index].mesh_index ==
+                    mesh_asset.mesh_index)
+                {
+                    mesh_node_indices.push_back(node_index);
+                }
+            }
+            if (mesh_node_indices.size() > 1u)
+            {
+                return make_status(status_code::unsupported_feature,
+                    "A Soft Body Physics Mesh currently requires one unique Asset Mesh Node instance. Multiple Node instances need separate Physics State Banks.");
+            }
+
+            if (mesh_node_indices.empty())
+            {
+                if (mesh_asset.skin_node_index != asset::invalid_index ||
+                    mesh_asset.skin_index != asset::invalid_index ||
+                    mesh_asset.physics_mesh.has_skin_weights ||
+                    !mesh_asset.physics_mesh.skin_weights.empty())
+                {
+                    return make_status(status_code::asset_invalid,
+                        "Physics Skin Weights require a unique Skinned Mesh Node in the Source Model.");
+                }
+            }
+            else
+            {
+                const uint32_t skin_node_index = mesh_node_indices.front();
+                const asset::node& skin_node =
+                    desc.source_model.nodes[skin_node_index];
+                if (mesh_asset.skin_node_index != asset::invalid_index &&
+                    mesh_asset.skin_node_index != skin_node_index)
+                {
+                    return make_status(status_code::asset_invalid,
+                        "Physics Mesh Asset Skin Node Index disagrees with the Source Model Node hierarchy.");
+                }
+                mesh_asset.skin_node_index = skin_node_index;
+
+                if (skin_node.skin_index == asset::invalid_index)
+                {
+                    if (mesh_asset.skin_index != asset::invalid_index ||
+                        mesh_asset.physics_mesh.has_skin_weights ||
+                        !mesh_asset.physics_mesh.skin_weights.empty())
+                    {
+                        return make_status(status_code::asset_invalid,
+                            "An unskinned Mesh Node cannot own Physics Skin Weights or a Skin Index.");
+                    }
+                    mesh_asset.skin_index = asset::invalid_index;
+                }
+                else
+                {
+                    if (skin_node.skin_index >= desc.source_model.skins.size() ||
+                        (mesh_asset.skin_index != asset::invalid_index &&
+                            mesh_asset.skin_index != skin_node.skin_index))
+                    {
+                        return make_status(status_code::asset_invalid,
+                            "Physics Mesh Asset Skin Index disagrees with the Source Model Skinned Mesh Node.");
+                    }
+                    mesh_asset.skin_index = skin_node.skin_index;
+
+                    const asset::skin& source_skin =
+                        desc.source_model.skins[mesh_asset.skin_index];
+                    if (!mesh_asset.physics_mesh.has_skin_weights)
+                    {
+                        if (!mesh_asset.physics_mesh.skin_weights.empty())
+                        {
+                            return make_status(status_code::asset_invalid,
+                                "Physics Skin Weight storage is non-empty while its validity flag is false.");
+                        }
+
+                        const physics::skin_weight_transfer_result skin_transfer =
+                            physics::transfer_skin_weights(
+                                render_mesh, source_skin, mesh_asset.physics_mesh);
+                        if (!skin_transfer.success)
+                        {
+                            const std::string diagnostic =
+                                skin_transfer.diagnostics.empty()
+                                    ? "unknown skin transfer failure"
+                                    : skin_transfer.diagnostics.front().message;
+                            return make_status(status_code::asset_invalid,
+                                "Physics Skin Weight transfer failed: " + diagnostic);
+                        }
+                    }
+
+                    if (!mesh_asset.physics_mesh.has_skin_weights ||
+                        mesh_asset.physics_mesh.skin_weights.size() !=
+                            mesh_asset.physics_mesh.rest_positions.size())
+                    {
+                        return make_status(status_code::asset_invalid,
+                            "Transferred Physics Skin Weight count must match the Physics Vertex count.");
+                    }
+
+                    for (std::size_t vertex_index = 0u;
+                        vertex_index < mesh_asset.physics_mesh.skin_weights.size();
+                        ++vertex_index)
+                    {
+                        const physics::physics_skin_weight& weights =
+                            mesh_asset.physics_mesh.skin_weights[vertex_index];
+                        double weight_sum = 0.0;
+                        for (std::size_t influence_index = 0u;
+                            influence_index < asset::max_skin_influences;
+                            ++influence_index)
+                        {
+                            const float weight = weights.weights[influence_index];
+                            if (!finite_float(weight) || weight < 0.0f ||
+                                (weight > 0.0f &&
+                                    weights.joints[influence_index] >=
+                                        source_skin.joints.size()))
+                            {
+                                return make_status(status_code::asset_invalid,
+                                    "Physics Skin Weight contains a non-finite weight or an influence outside the selected Skin Joint range.");
+                            }
+                            weight_sum += weight;
+                        }
+                        if (!std::isfinite(weight_sum) ||
+                            std::abs(weight_sum - 1.0) > 1.0e-3)
+                        {
+                            return make_status(status_code::asset_invalid,
+                                "Every Physics Vertex Skin Weight must be normalized to one.");
+                        }
+                    }
+                }
+            }
+
             if (mesh_asset.render_bindings.empty())
             {
                 const physics::render_binding_build_result binding_result =
