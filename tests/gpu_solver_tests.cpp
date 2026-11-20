@@ -2647,6 +2647,217 @@ namespace
     }
 
 
+    void test_phase12_warp_tick_transaction_commit_gate(
+        ID3D11Device* device,
+        ID3D11DeviceContext* context,
+        ID3D11ComputeShader* begin_shader,
+        ID3D11ComputeShader* validate_shader,
+        ID3D11ComputeShader* incomplete_shader,
+        ID3D11ComputeShader* blocked_shader,
+        ID3D11ComputeShader* rejected_shader,
+        ID3D11ComputeShader* commit_shader)
+    {
+        using namespace skin_physics::simulation;
+
+        struct alignas(16) gpu_tick_dispatch_plan
+        {
+            uint32_t expected_predecessor_sequence_low = 0;
+            uint32_t expected_predecessor_sequence_high = 0;
+            uint32_t expected_source_generation_low = 0;
+            uint32_t expected_source_generation_high = 0;
+            uint32_t expected_source_state_set = 0;
+            uint32_t destination_state_set = 0;
+            uint32_t tick_sequence_low = 0;
+            uint32_t tick_sequence_high = 0;
+            uint32_t dispatch_id_low = 0;
+            uint32_t dispatch_id_high = 0;
+            uint32_t reservation_token_low = 0;
+            uint32_t reservation_token_high = 0;
+            uint32_t reserved[4] = {};
+        };
+
+        struct alignas(16) gpu_tick_commit_control
+        {
+            uint32_t committed_sequence_low = 0;
+            uint32_t committed_sequence_high = 0;
+            uint32_t state_generation_low = 0;
+            uint32_t state_generation_high = 0;
+            uint32_t active_state_set = 0;
+            uint32_t terminal_state = 0;
+            uint32_t terminal_failure = 0;
+            uint32_t validation_mask = 0;
+            uint32_t required_validation_mask = 0;
+            uint32_t dispatch_id_low = 0;
+            uint32_t dispatch_id_high = 0;
+            uint32_t reservation_token_low = 0;
+            uint32_t reservation_token_high = 0;
+            uint32_t last_gate_state = 0;
+            uint32_t diagnostic = 0;
+            uint32_t reserved = 0;
+        };
+
+        static_assert(sizeof(gpu_tick_dispatch_plan) == 64,
+            "Immutable GPU Tick Dispatch Plan ABI must be 64 bytes.");
+        static_assert(sizeof(gpu_tick_commit_control) == 64,
+            "GPU Tick Commit Control ABI must be 64 bytes.");
+
+        const auto make_plan = [](
+            uint32_t expected_sequence,
+            uint32_t expected_generation,
+            uint32_t source_state_set,
+            uint32_t destination_state_set,
+            uint32_t tick_sequence,
+            uint32_t dispatch_id,
+            uint32_t reservation_token)
+        {
+            gpu_tick_dispatch_plan plan;
+            plan.expected_predecessor_sequence_low = expected_sequence;
+            plan.expected_source_generation_low = expected_generation;
+            plan.expected_source_state_set = source_state_set;
+            plan.destination_state_set = destination_state_set;
+            plan.tick_sequence_low = tick_sequence;
+            plan.dispatch_id_low = dispatch_id;
+            plan.reservation_token_low = reservation_token;
+            return plan;
+        };
+
+        const auto make_control = []()
+        {
+            gpu_tick_commit_control control;
+            control.committed_sequence_low = 4u;
+            control.state_generation_low = 9u;
+            control.active_state_set = 0u;
+            control.required_validation_mask = 0x1fu;
+            return control;
+        };
+
+        const auto run_case = [&](
+            const gpu_tick_dispatch_plan& plan,
+            ID3D11ComputeShader* terminal_shader)
+        {
+            const gpu_tick_commit_control initial_control = make_control();
+            const ComPtr<ID3D11Buffer> plan_buffer =
+                create_structured_buffer(
+                    device, std::vector<gpu_tick_dispatch_plan>{ plan },
+                    D3D11_BIND_SHADER_RESOURCE);
+            const ComPtr<ID3D11Buffer> control_buffer =
+                create_structured_buffer(
+                    device, std::vector<gpu_tick_commit_control>{ initial_control },
+                    D3D11_BIND_UNORDERED_ACCESS);
+            const ComPtr<ID3D11ShaderResourceView> plan_srv =
+                create_structured_srv<gpu_tick_dispatch_plan>(
+                    device, plan_buffer.Get(), 1);
+            const ComPtr<ID3D11UnorderedAccessView> control_uav =
+                create_structured_uav<gpu_tick_commit_control>(
+                    device, control_buffer.Get(), 1);
+
+            d3d11_compute_graph graph;
+            std::string diagnostic;
+            compute_pass_desc begin_pass;
+            begin_pass.name = "TickBeginControl";
+            begin_pass.shader = begin_shader;
+            begin_pass.shader_resources = {
+                { 0, plan_srv.Get() }
+            };
+            begin_pass.unordered_access_views = {
+                { 1, control_uav.Get(), 0xffffffffu }
+            };
+            require(graph.add_pass(begin_pass, diagnostic),
+                "Tick Begin Control pass must register: " + diagnostic);
+
+            if (terminal_shader != nullptr)
+            {
+                compute_pass_desc terminal_pass;
+                terminal_pass.name = "TickTerminalValidation";
+                terminal_pass.shader = terminal_shader;
+                terminal_pass.unordered_access_views = {
+                    { 1, control_uav.Get(), 0xffffffffu }
+                };
+                require(graph.add_pass(terminal_pass, diagnostic),
+                    "Tick terminal validation pass must register: " + diagnostic);
+            }
+
+            compute_pass_desc commit_pass;
+            commit_pass.name = "TickCommitControl";
+            commit_pass.shader = commit_shader;
+            commit_pass.shader_resources = {
+                { 0, plan_srv.Get() }
+            };
+            commit_pass.unordered_access_views = {
+                { 1, control_uav.Get(), 0xffffffffu }
+            };
+            require(graph.add_pass(commit_pass, diagnostic),
+                "Tick Commit Control pass must register: " + diagnostic);
+
+            const compute_graph_result execution = graph.execute(context);
+            require(execution.success &&
+                execution.executed_pass_count == graph.pass_count(),
+                "Tick Begin / Terminal / Commit GPU control passes must execute in sequence.");
+
+            const std::vector<gpu_tick_dispatch_plan> final_plan =
+                readback_structured_buffer<gpu_tick_dispatch_plan>(
+                    device, context, plan_buffer.Get(), 1);
+            const std::vector<gpu_tick_commit_control> final_control =
+                readback_structured_buffer<gpu_tick_commit_control>(
+                    device, context, control_buffer.Get(), 1);
+            return std::make_pair(final_plan[0], final_control[0]);
+        };
+
+        const gpu_tick_dispatch_plan successful_plan =
+            make_plan(4u, 9u, 0u, 1u, 5u, 1u, 101u);
+        const auto successful = run_case(successful_plan, validate_shader);
+        require(successful.first.dispatch_id_low == successful_plan.dispatch_id_low &&
+            successful.first.reservation_token_low == successful_plan.reservation_token_low &&
+            successful.second.last_gate_state == 1u &&
+            successful.second.terminal_state == 6u &&
+            successful.second.committed_sequence_low == 5u &&
+            successful.second.state_generation_low == 10u &&
+            successful.second.active_state_set == 1u,
+            "A fully validated Tick must atomically publish the destination State Bank, Sequence and Generation without mutating the immutable Dispatch Plan.");
+
+        const auto stale_predecessor = run_case(
+            make_plan(3u, 9u, 0u, 1u, 4u, 2u, 102u),
+            validate_shader);
+        require(stale_predecessor.second.last_gate_state == 2u &&
+            stale_predecessor.second.terminal_state == 3u &&
+            stale_predecessor.second.committed_sequence_low == 4u &&
+            stale_predecessor.second.state_generation_low == 9u &&
+            stale_predecessor.second.active_state_set == 0u,
+            "A stale predecessor plan must be BLOCKED before Commit and preserve the active State Bank.");
+
+        const auto incomplete_validation = run_case(
+            make_plan(4u, 9u, 0u, 1u, 5u, 3u, 103u),
+            incomplete_shader);
+        require(incomplete_validation.second.last_gate_state == 1u &&
+            incomplete_validation.second.terminal_state == 4u &&
+            incomplete_validation.second.committed_sequence_low == 4u &&
+            incomplete_validation.second.state_generation_low == 9u &&
+            incomplete_validation.second.active_state_set == 0u,
+            "Missing GPU validation bits must reject Commit without publishing a partial State Bank.");
+
+        const auto blocked = run_case(
+            make_plan(4u, 9u, 0u, 1u, 5u, 4u, 104u),
+            blocked_shader);
+        require(blocked.second.terminal_state == 3u &&
+            blocked.second.committed_sequence_low == 4u &&
+            blocked.second.state_generation_low == 9u &&
+            blocked.second.active_state_set == 0u,
+            "A Capacity / Budget BLOCKED result must retain the old committed State Bank and generation.");
+
+        const auto rejected = run_case(
+            make_plan(4u, 9u, 0u, 1u, 5u, 5u, 105u),
+            rejected_shader);
+        require(rejected.second.terminal_state == 4u &&
+            rejected.second.committed_sequence_low == 4u &&
+            rejected.second.state_generation_low == 9u &&
+            rejected.second.active_state_set == 0u,
+            "A REJECTED Tick must preserve the last committed State Bank, Sequence and Generation.");
+
+        std::cout << "[PASS] P12_WARP_TICK_TRANSACTION_COMMIT_GATE\\n";
+    }
+
+
+
 }
 
 int run_gpu_solver_tests()
@@ -2697,6 +2908,35 @@ int run_gpu_solver_tests()
         const ComPtr<ID3D11ComputeShader> correction_candidate_deduplicate_shader =
             compile_compute_shader(device.Get(), correction_candidate_shader_path,
                 "correction_candidate_deduplicate");
+        const std::filesystem::path tick_transaction_shader_path =
+            test_support::fixture_path(
+                "phase12_correction/tick_transaction_control.cs.hlsl");
+        const ComPtr<ID3D11ComputeShader> tick_begin_shader =
+            compile_compute_shader(device.Get(), tick_transaction_shader_path,
+                "tick_begin_control");
+        const ComPtr<ID3D11ComputeShader> tick_validate_shader =
+            compile_compute_shader(device.Get(), tick_transaction_shader_path,
+                "tick_mark_validated");
+        const ComPtr<ID3D11ComputeShader> tick_incomplete_shader =
+            compile_compute_shader(device.Get(), tick_transaction_shader_path,
+                "tick_mark_incomplete");
+        const ComPtr<ID3D11ComputeShader> tick_blocked_shader =
+            compile_compute_shader(device.Get(), tick_transaction_shader_path,
+                "tick_mark_blocked");
+        const ComPtr<ID3D11ComputeShader> tick_rejected_shader =
+            compile_compute_shader(device.Get(), tick_transaction_shader_path,
+                "tick_mark_rejected");
+        const ComPtr<ID3D11ComputeShader> tick_commit_shader =
+            compile_compute_shader(device.Get(), tick_transaction_shader_path,
+                "tick_commit_control");
+        test_phase12_warp_tick_transaction_commit_gate(
+            device.Get(), context.Get(),
+            tick_begin_shader.Get(),
+            tick_validate_shader.Get(),
+            tick_incomplete_shader.Get(),
+            tick_blocked_shader.Get(),
+            tick_rejected_shader.Get(),
+            tick_commit_shader.Get());
         const std::filesystem::path indirect_dispatch_shader_path =
             test_support::fixture_path(
                 "phase12_correction/indirect_dispatch.cs.hlsl");
