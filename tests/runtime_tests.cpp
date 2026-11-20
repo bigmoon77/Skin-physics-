@@ -369,6 +369,7 @@ namespace
                 skin_physics::runtime::work_budget_block_origin::cpu_preflight &&
             before_retry.planned_substeps == 4u &&
             before_retry.head_reserved_tick_sequence == 1u &&
+            before_retry.head_input_snapshot_version != 0u &&
             std::abs(before_retry.reserved_tick_time - 0.02) <= 1.0e-12,
             "CPU Preflight must report required work while preserving the exact head Reservation.");
 
@@ -409,6 +410,8 @@ namespace
             after_retry.last_tick_status == status_code::ok &&
             after_retry.work_budget_block_flags == 0u &&
             after_retry.head_reserved_tick_sequence == 1u &&
+            after_retry.head_input_snapshot_version ==
+                before_retry.head_input_snapshot_version &&
             std::abs(after_retry.reserved_tick_time - 0.02) <= 1.0e-12 &&
             after_retry.pending_tick_count == 1u,
             "Budget recovery must re-evaluate the same Reservation without allocating a duplicate Tick or changing its reserved time.");
@@ -602,8 +605,11 @@ namespace
             force_status.state == skin_physics::runtime::tick_state::blocked &&
             force_status.last_tick_status == status_code::blocked_by_input &&
             force_status.head_reserved_tick_sequence == 1u &&
+            force_status.head_input_snapshot_version != 0u &&
             force_status.diagnostic.find("Force / Impulse") != std::string::npos,
             "Runtime must explicitly report BLOCKED_BY_INPUT while Force / Impulse Segment scheduling is unimplemented.");
+        const uint64_t force_snapshot_version =
+            force_status.head_input_snapshot_version;
         require(runtime.reset_world(world).success(),
             "Reset must explicitly clear the unsupported Force / Impulse Events and retained Reservation.");
         require(runtime.enqueue_force(world, force).success(),
@@ -633,6 +639,7 @@ namespace
             animation_status.last_tick_status == status_code::blocked_by_input &&
             animation_status.in_flight_tick_count == 0u &&
             animation_status.head_reserved_tick_sequence == 1u &&
+            animation_status.head_input_snapshot_version > force_snapshot_version &&
             animation_status.diagnostic.find("Animation / Root Transform") !=
                 std::string::npos,
             "Runtime must explicitly report BLOCKED_BY_INPUT for deferred Root Transform trajectory work instead of committing a Tick with the input silently ignored.");
