@@ -2228,9 +2228,9 @@ namespace
             blended_pose.value.skin_poses.size() == 1u,
             "CPU Blend Pose evaluation must combine Source / Target local transforms before rebuilding the complete hierarchy and Skin Pose.");
 
-        const skin_physics::animation_node_local_transform& blended_root =
+        const skin_physics::physics::animation_node_local_transform& blended_root =
             blended_pose.value.local_transforms[0u];
-        const skin_physics::animation_node_local_transform& blended_joint =
+        const skin_physics::physics::animation_node_local_transform& blended_joint =
             blended_pose.value.local_transforms[1u];
         require(std::abs(blended_root.translation.x - 2.0f) <= 1.0e-6f &&
             std::abs(blended_root.translation_velocity.x - 2.5f) <= 1.0e-5f &&
