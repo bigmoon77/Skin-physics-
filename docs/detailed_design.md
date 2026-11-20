@@ -638,7 +638,7 @@ Impact後に次Segmentが存在する場合、Impact後の位置・速度を次S
             tracking_stiffness * (animation_target - position)
           + tracking_damping * (animation_velocity - velocity))
 
-tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1で、Physics Attribute Paintのanimation_tracking channelとMeshのattribute multiplierから得る。材料のmu/Kと独立して調整できる。tracking_stiffness = 0は追従ForceとTracking固有の安定時間刻み制限を無効にする。過大な値は時間刻み安定条件に影響するため、後述の安定性推定に含める。
+tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1で、Physics Attribute Paintのanimation_tracking channelとMeshのattribute multiplierから得る。材料のmu/Kと独立して調整できる。tracking_stiffness = 0はバネ成分とTracking固有の周波数制限を無効にするが、tracking_dampingが正なら減衰成分は残る。両係数が0の場合に追従Force全体が無効となる。過大なstiffnessは時間刻み安定条件に影響するため、後述の安定性推定に含める。
 
 ### 6.7.1 アニメーション不連続イベント
 
