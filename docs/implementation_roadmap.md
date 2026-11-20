@@ -47,14 +47,17 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Lifecycle and retry tests cover all documented BUSY / BLOCKED / REJECTED / FAILED boundaries.
 
 ### Phase 2 — R1 Soft Body GPU integration
-**Status: in progress — first Runtime-connected Soft Body compute path added; numerical and feature-completeness gates remain open**
+**Status: in progress — gated Soft Body GPU path, paint transfer and CFL preflight are connected; numerical execution gates remain open**
 
-- Implemented initial runtime upload of per-model Soft Body Tet / CSR / inverse-mass resources and two persistent position / velocity State Banks plus Tick Scratch.
+- Implemented per-model Soft Body Tet / CSR / inverse-mass resources, two persistent position / velocity State Banks, and Tick Scratch.
 - Implemented gated Tet deformation-gradient / scaled-polar stress evaluation with a proper-rotation 3×3 Jacobi SVD fallback, deterministic Vertex-to-Tet CSR force gather, and damped force integration.
-- Implemented World-preflight substep dispatch, odd-substep Scratch publication into the inactive bank, GPU failure validation, and success-only Tick Commit.
-- Added WARP Runtime coverage for two in-flight Ticks, three Substeps per Tick, alternating State Banks, Query observation, and Reset to the rest pose; source is registered but not yet executed by Windows CI.
-- Added strict Tet rest-matrix / shape-gradient, unique-vertex and exact Vertex-to-Tet CSR validation before GPU upload; WARP source rejects malformed asset / CSR input.
-- Remaining: execute / numerically qualify the production Runtime SVD path on WARP (including near-singular parity), inverted-element fallback policy, per-vertex attribute and density remapping, CFL-derived limits, Force / Impulse segmentation, animation / kinematic coupling, Collision / Contact coupling, and CPU oracle parity for the production Runtime path.
+- Render Mesh Paint channels transfer to boundary Physics Vertices and use double-precision Dirichlet harmonic extension for interior vertices; ambiguous coincident surface samples fail Model registration.
+- Tet Shape Recovery / Volume use four-vertex mean Paint values; Damping uses each Physics Vertex's Paint value. Density remaps inverse masses while preserving Rest Density calibration.
+- World Preflight aggregates the FEM CFL limit with World / Contact limits. Budget overflow blocks the same Reservation; increasing the admission budget retries the same derived Substep plan.
+- Odd-substep Scratch publication, GPU failure validation, success-only Tick Commit, and Reset to rest pose are wired into the Runtime.
+- Added WARP source coverage for two in-flight Ticks, three Substeps, alternating State Banks, Query observation, CFL budget recovery, and Reset; the sources remain unexecuted because CI has not reported a build step.
+- Added strict Tet rest-matrix / shape-gradient, unique-vertex and exact Vertex-to-Tet CSR validation before GPU upload; malformed asset / CSR input is rejected.
+- Remaining: CPU-oracle parity and physical/WARP numerical qualification; animation tracking stability limit and trajectories; Force / Impulse Segment boundaries; Cloth / Collision / Contact coupling; and Physics Attribute Paint cache persistence / remapping on topology rebuild.
 
 ### Phase 3 — R2 Cloth GPU iteration
 **Status: pending**
