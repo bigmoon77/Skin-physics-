@@ -195,7 +195,7 @@ namespace skin_physics::runtime
         uint64_t event_id = 0;
         target_filter target;
         asset::vec3 position;
-        asset::vec3 direction = { 0.0f, 1.0f, 0.0f };
+        asset::vec3 direction = { 0.0f, 1.0f, 0.0f }; // Normalized by enqueue_force.
         float magnitude = 0.0f;
         float radius = 1.0f;
         double duration = 0.0;
@@ -207,7 +207,7 @@ namespace skin_physics::runtime
         uint64_t event_id = 0;
         target_filter target;
         asset::vec3 position;
-        asset::vec3 direction = { 0.0f, 1.0f, 0.0f };
+        asset::vec3 direction = { 0.0f, 1.0f, 0.0f }; // Normalized by enqueue_impulse.
         float impulse_magnitude = 0.0f;
         float radius = 1.0f;
         double event_time = 0.0;
