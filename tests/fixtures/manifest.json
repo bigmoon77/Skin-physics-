@@ -901,7 +901,12 @@
       "render_slot_id_and_generation_are_published_and_compared_as_full_32_bit_values",
       "host_render_lease_release_resubmits_the_same_pending_tick_reservation_without_new_frame_time",
       "latest_render_candidate_resource_generation_is_monotonic_per_world_slot_lifetime",
-      "degenerate_deformed_render_triangles_fail_the_candidate_and_prevent_tick_commit"
+      "degenerate_deformed_render_triangles_fail_the_candidate_and_prevent_tick_commit",
+      "gpu_submitted_render_candidate_is_not_public_until_cpu_observes_event_query_and_committed_status",
+      "host_readback_confirms_committed_position_normal_and_tangent_srvs_contain_valid_model_local_geometry",
+      "render_feedback_inverse_root_translation_restores_model_local_position_space",
+      "mismatched_future_render_lease_generation_is_rejected_without_releasing_active_lease",
+      "render_candidate_readback_validates_normalization_tangent_orthogonality_and_handedness"
     ],
     "remaining_r0": [
       "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
@@ -910,6 +915,6 @@
       "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
       "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
     ],
-    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project; execution and C++ / HLSL compilation remain unverified because recent Windows CI jobs fail before reporting any build steps."
+    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project. Runtime Render Candidate SRV readback, model-local transform, normal/tangent validation, and Lease generation regressions are authored but not yet executed. Recent Windows CI jobs fail before reporting any build steps, so C++ / HLSL compilation and WARP execution remain unverified."
   }
 }
