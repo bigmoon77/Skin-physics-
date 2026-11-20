@@ -544,25 +544,31 @@ namespace
         force.target.model = model;
         force.target.mesh_index = 0u;
         force.position = { 2.0f, 3.0f, 4.0f };
-        force.direction = { 0.0f, 1.0f, 0.0f };
+        force.direction = { 0.0f, 0.0f, 0.0f };
         force.magnitude = 10.0f;
         force.radius = 1.0f;
         force.duration = 0.1;
         force.start_time = 0.0;
+        require(runtime.enqueue_force(world, force).code == status_code::invalid_argument,
+            "Runtime must reject a zero-length Force direction before reserving its Event ID.");
+        force.direction = { 0.0f, 5.0f, 0.0f };
         require(runtime.enqueue_force(world, force).success(),
-            "Runtime must accept a valid Soft Body Force Event into its immutable input queue.");
+            "Runtime must normalize and accept a finite non-unit Soft Body Force direction.");
 
         skin_physics::runtime::impulse_desc impulse;
         impulse.event_id = 102u;
         impulse.target.model = model;
         impulse.target.mesh_index = 0u;
         impulse.position = { 2.0f, 3.0f, 4.0f };
-        impulse.direction = { 0.0f, 1.0f, 0.0f };
+        impulse.direction = { 0.0f, 0.0f, 0.0f };
         impulse.impulse_magnitude = 2.0f;
         impulse.radius = 1.0f;
         impulse.event_time = 0.0;
+        require(runtime.enqueue_impulse(world, impulse).code == status_code::invalid_argument,
+            "Runtime must reject a zero-length Impulse direction before reserving its Event ID.");
+        impulse.direction = { 0.0f, -3.0f, 0.0f };
         require(runtime.enqueue_impulse(world, impulse).success(),
-            "Runtime must accept a valid Soft Body Impulse Event into its immutable input queue.");
+            "Runtime must normalize and accept a finite non-unit Soft Body Impulse direction.");
 
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::playing).success(),
