@@ -348,6 +348,7 @@ namespace
             "phase09_animation/target_motion.input.json",
             "phase09_animation/target_motion.expected.json",
             "phase09_animation/animation_trajectory_abi.cs.hlsl",
+            "phase09_animation/animation_skin_abi.cs.hlsl",
             "phase10_paint/paint.input.json",
             "phase10_paint/paint.expected.json",
             "phase11_performance/scale_profiles.input.json",
