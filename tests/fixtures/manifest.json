@@ -693,6 +693,17 @@
             "Shader Model 5 StructuredBuffer access reads every Skin / Joint mapping field at the expected offset and UAV copy preserves the entire record byte-for-byte",
             "WARP Readback covers both Skin Record and Skin Joint Record payloads with distinct mesh offset, Skin Index, Joint Range, Channel offset, per-Skin Inverse Bind Index and Asset Joint Node Index values"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_TRAJECTORY_PACKET_UPLOAD",
+          "checks": [
+            "All non-empty Animation Trajectory record arrays upload as D3D11_USAGE_IMMUTABLE StructuredBuffers with shader-resource-only binding and exact CPU record stride",
+            "The mutable per-World Segment Cursor is a separate D3D11_USAGE_DEFAULT StructuredBuffer with both SRV and UAV views",
+            "Packet Version, per-Span record ranges, Track Channel ranges, Span-local Blend Track indices, Skin Joint ranges and certified Bounds are validated before upload",
+            "Empty optional Blend / Collider tables remain absent and are represented by zero element counts",
+            "WARP readback of the uploaded immutable Span / Track / Channel / Skin / Skin Joint records and initial Cursor matches the source CPU records byte-for-byte",
+            "An invalid Cursor Version or invalid Span-local Blend reference fails without replacing the previously uploaded Packet resources"
+          ]
         }
       ],
       "automated_cases": [
