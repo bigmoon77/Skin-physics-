@@ -754,6 +754,22 @@
             "indirect_execution_has_no_cpu_group_count_readback"
           ],
           "status": "executor, shader, and WARP readback test added; Windows build and execution not verified"
+        },
+        {
+          "test_group": "P12_WARP_TICK_TRANSACTION_COMMIT_GATE",
+          "gpu_source_files": [
+            "tests/fixtures/phase12_correction/tick_transaction_control.cs.hlsl",
+            "tests/gpu_solver_tests.cpp"
+          ],
+          "gpu_assertions": [
+            "immutable_dispatch_plan_checked_against_predecessor_and_source_generation",
+            "successful_commit_switches_bank_sequence_and_generation",
+            "stale_predecessor_blocks_before_state_publication",
+            "incomplete_validation_mask_rejects_commit",
+            "blocked_tick_preserves_committed_state",
+            "rejected_tick_preserves_committed_state"
+          ],
+          "status": "GPU control shader and WARP regression source added; production Solver gate wiring and Windows execution remain pending"
         }
       ]
     }
