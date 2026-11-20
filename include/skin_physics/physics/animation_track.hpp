@@ -197,6 +197,31 @@ namespace skin_physics::physics
         double clip_time_start,
         double clip_time_delta);
 
+    struct scheduled_animation_clip_span
+    {
+        animation_clip_span clip;
+        double world_time_start = 0.0;
+        double world_time_duration = 0.0;
+    };
+
+    struct animation_clip_span_schedule_result
+    {
+        std::vector<scheduled_animation_clip_span> values;
+        animation_channel_span_error error = animation_channel_span_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    // Maps synchronized Clip Spans to positive World-Time intervals within one
+    // Logical Tick. Loop-wrap / Blend boundaries must already be split upstream.
+    animation_clip_span_schedule_result schedule_animation_clip_spans(
+        const asset::animation_clip& clip,
+        uint32_t node_count,
+        double clip_time_start,
+        double clip_time_delta,
+        double world_time_start,
+        double world_time_duration);
+
     // Evaluates the immutable Span coefficients and analytic derivatives.
     // span_duration_seconds is the corresponding positive World-Time duration.
     animation_channel_span_sample_result evaluate_animation_channel_span(
