@@ -417,42 +417,105 @@ namespace skin_physics::physics
         return _counts;
     }
 
-#define SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(name, member) \
-    ID3D11Buffer* animation_trajectory_gpu_resources::name() const noexcept \
-    { \
-        return member.Get(); \
+    ID3D11Buffer* animation_trajectory_gpu_resources::span_buffer() const noexcept
+    {
+        return _span_buffer.Get();
     }
 
-#define SKIN_PHYSICS_ANIMATION_SRV_GETTER(name, member) \
-    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::name() const noexcept \
-    { \
-        return member.Get(); \
+    ID3D11Buffer* animation_trajectory_gpu_resources::cursor_buffer() const noexcept
+    {
+        return _cursor_buffer.Get();
     }
 
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(span_buffer, _span_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(cursor_buffer, _cursor_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(track_buffer, _track_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(channel_buffer, _channel_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(blend_buffer, _blend_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(inverse_bind_matrix_buffer, _inverse_bind_matrix_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(static_node_matrix_buffer, _static_node_matrix_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(skin_buffer, _skin_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(skin_joint_buffer, _skin_joint_buffer)
-    SKIN_PHYSICS_ANIMATION_BUFFER_GETTER(collider_buffer, _collider_buffer)
+    ID3D11Buffer* animation_trajectory_gpu_resources::track_buffer() const noexcept
+    {
+        return _track_buffer.Get();
+    }
 
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(span_srv, _span_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(cursor_srv, _cursor_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(track_srv, _track_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(channel_srv, _channel_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(blend_srv, _blend_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(inverse_bind_matrix_srv, _inverse_bind_matrix_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(static_node_matrix_srv, _static_node_matrix_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(skin_srv, _skin_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(skin_joint_srv, _skin_joint_srv)
-    SKIN_PHYSICS_ANIMATION_SRV_GETTER(collider_srv, _collider_srv)
+    ID3D11Buffer* animation_trajectory_gpu_resources::channel_buffer() const noexcept
+    {
+        return _channel_buffer.Get();
+    }
 
-#undef SKIN_PHYSICS_ANIMATION_BUFFER_GETTER
-#undef SKIN_PHYSICS_ANIMATION_SRV_GETTER
+    ID3D11Buffer* animation_trajectory_gpu_resources::blend_buffer() const noexcept
+    {
+        return _blend_buffer.Get();
+    }
+
+    ID3D11Buffer* animation_trajectory_gpu_resources::inverse_bind_matrix_buffer() const noexcept
+    {
+        return _inverse_bind_matrix_buffer.Get();
+    }
+
+    ID3D11Buffer* animation_trajectory_gpu_resources::static_node_matrix_buffer() const noexcept
+    {
+        return _static_node_matrix_buffer.Get();
+    }
+
+    ID3D11Buffer* animation_trajectory_gpu_resources::skin_buffer() const noexcept
+    {
+        return _skin_buffer.Get();
+    }
+
+    ID3D11Buffer* animation_trajectory_gpu_resources::skin_joint_buffer() const noexcept
+    {
+        return _skin_joint_buffer.Get();
+    }
+
+    ID3D11Buffer* animation_trajectory_gpu_resources::collider_buffer() const noexcept
+    {
+        return _collider_buffer.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::span_srv() const noexcept
+    {
+        return _span_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::cursor_srv() const noexcept
+    {
+        return _cursor_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::track_srv() const noexcept
+    {
+        return _track_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::channel_srv() const noexcept
+    {
+        return _channel_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::blend_srv() const noexcept
+    {
+        return _blend_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::inverse_bind_matrix_srv() const noexcept
+    {
+        return _inverse_bind_matrix_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::static_node_matrix_srv() const noexcept
+    {
+        return _static_node_matrix_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::skin_srv() const noexcept
+    {
+        return _skin_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::skin_joint_srv() const noexcept
+    {
+        return _skin_joint_srv.Get();
+    }
+
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::collider_srv() const noexcept
+    {
+        return _collider_srv.Get();
+    }
 
     ID3D11UnorderedAccessView*
         animation_trajectory_gpu_resources::cursor_uav() const noexcept
