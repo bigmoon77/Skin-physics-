@@ -2,6 +2,7 @@
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <limits>
@@ -47,6 +48,70 @@ namespace
         const std::filesystem::path repository_root =
             executable.parent_path().parent_path().parent_path().parent_path();
         return (repository_root / "shaders" / "runtime").string();
+    }
+
+    struct alignas(16) test_gpu_float4
+    {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        float w = 0.0f;
+    };
+
+    static_assert(sizeof(test_gpu_float4) == 16,
+        "Runtime Render SRV test element must remain 16 bytes.");
+
+    template <typename T>
+    std::vector<T> readback_render_srv(
+        ID3D11Device* device,
+        ID3D11DeviceContext* context,
+        ID3D11ShaderResourceView* source_view,
+        std::size_t element_count)
+    {
+        require(device != nullptr && context != nullptr && source_view != nullptr,
+            "Render SRV readback requires a Device, Immediate Context and SRV.");
+        require(element_count > 0u &&
+            element_count <= static_cast<std::size_t>(
+                std::numeric_limits<UINT>::max() / sizeof(T)),
+            "Render SRV readback element count exceeds the D3D11 Buffer range.");
+
+        ComPtr<ID3D11Resource> source_resource;
+        source_view->GetResource(source_resource.GetAddressOf());
+        require(source_resource != nullptr,
+            "Render SRV must reference an allocated D3D11 Resource.");
+
+        ComPtr<ID3D11Buffer> source_buffer;
+        require(SUCCEEDED(source_resource.As(&source_buffer)) &&
+            source_buffer != nullptr,
+            "Render SRV resource must be a structured D3D11 Buffer.");
+
+        D3D11_BUFFER_DESC source_description = {};
+        source_buffer->GetDesc(&source_description);
+        const UINT expected_byte_width = static_cast<UINT>(
+            element_count * sizeof(T));
+        require(source_description.ByteWidth == expected_byte_width,
+            "Render SRV Buffer ByteWidth must match the requested typed stream.");
+
+        D3D11_BUFFER_DESC staging_description = {};
+        staging_description.ByteWidth = source_description.ByteWidth;
+        staging_description.Usage = D3D11_USAGE_STAGING;
+        staging_description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+        ComPtr<ID3D11Buffer> staging_buffer;
+        require(SUCCEEDED(device->CreateBuffer(
+                &staging_description, nullptr, staging_buffer.GetAddressOf())),
+            "Render SRV staging Buffer creation must succeed.");
+        context->CopyResource(staging_buffer.Get(), source_buffer.Get());
+
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        require(SUCCEEDED(context->Map(
+                staging_buffer.Get(), 0u, D3D11_MAP_READ, 0u, &mapped)),
+            "Render SRV staging Buffer must be mappable for CPU readback.");
+
+        std::vector<T> result(element_count);
+        std::memcpy(result.data(), mapped.pData, expected_byte_width);
+        context->Unmap(staging_buffer.Get(), 0u);
+        return result;
     }
 
     bool create_warp_device(
@@ -367,6 +432,7 @@ namespace
         skin_physics::runtime::model_desc model_desc;
         model_desc.source_model.meshes.push_back(render_mesh);
         model_desc.source_model.meshes.push_back(render_mesh);
+        model_desc.world_transform.translation = { 2.0f, 3.0f, 4.0f };
         skin_physics::runtime::model_mesh_physics_asset mesh_asset;
         mesh_asset.mesh_index = 0u;
         mesh_asset.physics_mesh = built_mesh.value;
@@ -435,6 +501,12 @@ namespace
             advance.pending_tick_count == 0u,
             "Runtime must submit two consecutive gated Soft Body Ticks within the World in-flight limit.");
 
+        skin_physics::runtime::render_binding unobserved_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &unobserved_binding).code ==
+                    status_code::not_ready,
+            "A GPU-submitted Render Candidate must remain private until its Event Query and COMMITTED Status are CPU-observed.");
+
         skin_physics::runtime::world_status result;
         bool all_queries_observed = false;
         for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
@@ -483,6 +555,65 @@ namespace
             render_binding.lease_generation != 0u,
             "Render Binding must identify the committed Ring Slot and provide the expected GPU stream layout.");
 
+        const std::vector<test_gpu_float4> rendered_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), render_binding.position_srv,
+                render_binding.vertex_count);
+        const std::vector<test_gpu_float4> rendered_normals =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), render_binding.normal_srv,
+                render_binding.vertex_count);
+        const std::vector<test_gpu_float4> rendered_tangents =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), render_binding.tangent_srv,
+                render_binding.vertex_count);
+
+        require(rendered_positions.size() == render_mesh.vertices.size() &&
+            rendered_normals.size() == render_mesh.vertices.size() &&
+            rendered_tangents.size() == render_mesh.vertices.size(),
+            "GPU Render Candidate streams must preserve the Render Mesh Vertex count.");
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < rendered_positions.size(); ++vertex_index)
+        {
+            const test_gpu_float4& position = rendered_positions[vertex_index];
+            const test_gpu_float4& normal = rendered_normals[vertex_index];
+            const test_gpu_float4& tangent = rendered_tangents[vertex_index];
+            const skin_physics::asset::vec3& rest_position =
+                render_mesh.vertices[vertex_index].position;
+
+            require(std::isfinite(position.x) && std::isfinite(position.y) &&
+                std::isfinite(position.z) && position.w == 1.0f,
+                "Committed Render Position SRV must contain finite homogeneous model-local positions.");
+            require(std::abs(position.x - rest_position.x) <= 1.0e-3f &&
+                std::abs(position.z - rest_position.z) <= 1.0e-3f &&
+                position.y < rest_position.y &&
+                position.y > rest_position.y - 0.01f,
+                "Render Feedback must invert the non-zero Model Root Translation and preserve the expected small gravity displacement in model-local space.");
+
+            const double normal_length_squared =
+                static_cast<double>(normal.x) * normal.x +
+                static_cast<double>(normal.y) * normal.y +
+                static_cast<double>(normal.z) * normal.z;
+            const double tangent_length_squared =
+                static_cast<double>(tangent.x) * tangent.x +
+                static_cast<double>(tangent.y) * tangent.y +
+                static_cast<double>(tangent.z) * tangent.z;
+            const double normal_tangent_dot =
+                static_cast<double>(normal.x) * tangent.x +
+                static_cast<double>(normal.y) * tangent.y +
+                static_cast<double>(normal.z) * tangent.z;
+
+            require(std::isfinite(normal_length_squared) &&
+                std::abs(normal_length_squared - 1.0) <= 1.0e-3,
+                "Committed Render Normal SRV must contain normalized finite normals.");
+            require(std::isfinite(tangent_length_squared) &&
+                std::abs(tangent_length_squared - 1.0) <= 1.0e-3 &&
+                std::abs(normal_tangent_dot) <= 1.0e-3 &&
+                std::abs(std::abs(tangent.w) - 1.0f) <= 1.0e-4f,
+                "Committed Render Tangent SRV must contain normalized, orthogonal tangents with a valid handedness sign.");
+        }
+
         // Tick 3 was already submitted when the Host acquired the Tick 2 Candidate.
         // Its Query can commit a newer slot while the older slot remains leased.
         bool third_query_observed = false;
@@ -512,6 +643,11 @@ namespace
                 render_binding.render_slot_generation &&
             same_lease_binding.committed_tick_sequence == 2u,
             "A second Mesh request must stay pinned to the original leased Slot even after a newer Candidate becomes latest.");
+
+        require(runtime.release_render_bindings(
+                world, render_binding.lease_generation + 1u).code ==
+                    status_code::stale_handle,
+            "A mismatched future Lease Generation must be rejected without releasing the active Host Lease.");
 
         skin_physics::runtime::advance_report while_leased_report;
         require(runtime.advance(world, 0.01, &while_leased_report).success() &&
