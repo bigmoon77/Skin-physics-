@@ -417,13 +417,9 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
     float inversion_distance = min(jacobian - input.material1.z, 0.0f);
     float inversion_energy_density =
         0.5f * input.material1.y * inversion_distance * inversion_distance;
-    float3x3 inversion_stress = (float3x3)0.0f;
-    float3x3 inverse_deformation;
-    if (abs(jacobian) > 1.0e-12f && inverse3(deformation, inverse_deformation))
-    {
-        inversion_stress = transpose(inverse_deformation) *
-            (jacobian * input.material1.y * inversion_distance);
-    }
+    float3x3 inversion_stress =
+        cofactor3(deformation) *
+        (input.material1.y * inversion_distance);
     float3x3 total_stress = first_piola + inversion_stress;
 
     float rest_volume = input.material0.x;
