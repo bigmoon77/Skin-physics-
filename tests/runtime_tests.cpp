@@ -557,12 +557,13 @@ namespace
             "A World with unintegrated Root Transform trajectory input must retain its Tick without GPU submission.");
         skin_physics::runtime::world_status animation_status;
         require(runtime.poll(world, &animation_status).success() &&
-            animation_status.state == skin_physics::runtime::tick_state::pending &&
+            animation_status.state == skin_physics::runtime::tick_state::blocked &&
+            animation_status.last_tick_status == status_code::blocked_by_input &&
             animation_status.in_flight_tick_count == 0u &&
             animation_status.head_reserved_tick_sequence == 1u &&
             animation_status.diagnostic.find("Animation / Root Transform") !=
                 std::string::npos,
-            "Runtime must explicitly report deferred Root Transform trajectory work instead of committing a Tick with the input silently ignored.");
+            "Runtime must explicitly report BLOCKED_BY_INPUT for deferred Root Transform trajectory work instead of committing a Tick with the input silently ignored.");
         require(runtime.reset_world(world).success(),
             "Reset must explicitly clear the CPU-only Reservation and unintegrated Root Transform Samples.");
 
