@@ -2691,13 +2691,24 @@ namespace
                 endpoint_state, 7001, 1, endpoint_epoch_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 endpoint_settings);
+        const std::string endpoint_epoch_ccd_diagnostic =
+            endpoint_epoch.correction_ccd_results.empty()
+                ? "none"
+                : endpoint_epoch.correction_ccd_results[0].result.diagnostic;
         require(endpoint_epoch.status == correction_writer_epoch_status::accepted &&
             endpoint_epoch.state_committed &&
             endpoint_state.last_position_writer_epoch_id == 1 &&
             endpoint_state.position_writer_epoch_generation == 1 &&
             endpoint_state.candidate_generation == 1 &&
             endpoint_state.candidates.size() == 1,
-            "A valid VT Position-Writer Epoch must atomically commit its correction and endpoint candidate union.");
+            std::string(
+                "A valid VT Position-Writer Epoch must atomically commit its correction and endpoint candidate union. status=") +
+                std::to_string(static_cast<int>(endpoint_epoch.status)) +
+                " committed=" + (endpoint_epoch.state_committed ? "true" : "false") +
+                " diagnostic=" + endpoint_epoch.diagnostic +
+                " ccd_diagnostic=" + endpoint_epoch_ccd_diagnostic +
+                " candidates=" + std::to_string(endpoint_epoch.required_candidates) +
+                " contacts=" + std::to_string(endpoint_epoch.required_contacts));
         require(endpoint_epoch.correction_ccd_results.size() == 1 &&
             endpoint_epoch.correction_ccd_results[0].result.status ==
                 correction_ccd_status::hit,
