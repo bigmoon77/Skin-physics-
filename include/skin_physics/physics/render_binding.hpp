@@ -67,6 +67,31 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    using physics_vertex_attribute_weights = std::array<float,
+        static_cast<std::size_t>(asset::physics_attribute_channel::count)>;
+
+    struct physics_attribute_transfer_settings
+    {
+        float maximum_surface_distance = 0.25f;
+        float ambiguity_tolerance = 1.0e-4f;
+        double harmonic_relative_tolerance = 1.0e-6;
+        uint32_t harmonic_maximum_iterations = 20000u;
+    };
+
+    struct physics_attribute_transfer_result
+    {
+        std::vector<physics_vertex_attribute_weights> vertex_weights;
+        float maximum_surface_distance = 0.0f;
+        double maximum_harmonic_relative_residual = 0.0;
+        std::string diagnostic;
+        bool success = false;
+    };
+
+    physics_attribute_transfer_result transfer_physics_vertex_attribute_weights(
+        const asset::mesh& render_mesh,
+        const physics_mesh& physics_value,
+        const physics_attribute_transfer_settings& settings = {});
+
     render_binding_build_result build_render_vertex_bindings(
         const asset::mesh& render_mesh,
         const physics_mesh& physics_value,
