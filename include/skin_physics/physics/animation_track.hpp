@@ -663,6 +663,8 @@ namespace skin_physics::physics
         // Matrix nodes contain their immutable local matrix and set role bit4.
         std::vector<gpu_matrix4x4> static_node_matrices;
         std::vector<kinematic_collider_gpu_record> collider_records;
+        // CPU-only double World-Time metadata; this is never uploaded to the GPU.
+        std::vector<double> span_world_time_starts;
     };
 
     enum class animation_trajectory_packet_error : uint8_t
@@ -692,5 +694,14 @@ namespace skin_physics::physics
     animation_trajectory_packet_build_result build_animation_trajectory_packet(
         const asset::model& model,
         const animation_trajectory_packet_build_desc& desc);
+
+    // Initializes the per-World mutable cursor for a new Segment. The Packet
+    // remains immutable; only this separate Cursor record is uploaded to UAV.
+    bool initialize_animation_span_cursor(
+        const animation_trajectory_packet& packet,
+        uint32_t span_record_index,
+        double segment_world_time,
+        animation_span_cursor_gpu_record& out_cursor,
+        std::string& diagnostic);
 
 }
