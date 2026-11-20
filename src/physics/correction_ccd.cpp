@@ -41,6 +41,14 @@ namespace skin_physics::physics
             interval z;
         };
 
+        interval_vector3 interval_difference(
+            const interval_vector3& a,
+            const interval_vector3& b);
+
+        interval_vector3 interval_scale_vector(
+            const interval_vector3& value,
+            real scalar);
+
         struct segment
         {
             real lower = 0.0L;
