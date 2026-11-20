@@ -4373,6 +4373,11 @@ namespace skin_physics::runtime
                     work_budget_block_origin::gpu_dynamic_toi
                     ? world->minimum_required_integration_segments
                     : world->planned_integration_segments;
+            if (world->planned_substeps == 0u || required_segments == 0u)
+            {
+                return make_status(status_code::invalid_state,
+                    "The blocked Work Budget Status does not contain a valid retryable Substep / Segment lower bound.");
+            }
             if (budget.maximum_substeps <
                     world->execution_budget.maximum_substeps ||
                 budget.maximum_integration_segments_per_tick <
