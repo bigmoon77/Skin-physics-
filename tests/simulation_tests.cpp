@@ -1280,6 +1280,64 @@ namespace
                 skin_physics::physics::animation_channel_span_error::span_crosses_key_boundary,
             "An Animation Span crossing an interior Key must be rejected for Scheduler subdivision.");
 
+        const skin_physics::physics::animation_channel_spans_build_result split_forward =
+            skin_physics::physics::build_animation_channel_spans(
+                key_bounded_track, 0.5, 1.0);
+        require(split_forward.success && split_forward.values.size() == 2u &&
+            std::abs(split_forward.values[0u].clip_time_start - 0.5) <= 1.0e-12 &&
+            std::abs(split_forward.values[0u].clip_time_delta - 0.5) <= 1.0e-12 &&
+            std::abs(split_forward.values[1u].clip_time_start - 1.0) <= 1.0e-12 &&
+            std::abs(split_forward.values[1u].clip_time_delta - 0.5) <= 1.0e-12,
+            "Forward Channel Span Scheduler must split at each crossed Key and preserve ordered Clip-Time ranges.");
+        const animation_channel_span_sample_result split_forward_left_end =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_forward.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result split_forward_right_start =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_forward.values[1u], 0.0, 0.25);
+        require(split_forward_left_end.success && split_forward_right_start.success &&
+            std::abs(split_forward_left_end.value.value.x -
+                split_forward_right_start.value.value.x) <= 1.0e-6f,
+            "Adjacent LINEAR Span records must evaluate to the same value at their shared Key boundary.");
+
+        const skin_physics::physics::animation_channel_spans_build_result split_reverse =
+            skin_physics::physics::build_animation_channel_spans(
+                key_bounded_track, 1.5, -1.0);
+        require(split_reverse.success && split_reverse.values.size() == 2u &&
+            std::abs(split_reverse.values[0u].clip_time_start - 1.5) <= 1.0e-12 &&
+            std::abs(split_reverse.values[0u].clip_time_delta + 0.5) <= 1.0e-12 &&
+            std::abs(split_reverse.values[1u].clip_time_start - 1.0) <= 1.0e-12 &&
+            std::abs(split_reverse.values[1u].clip_time_delta + 0.5) <= 1.0e-12,
+            "Reverse Channel Span Scheduler must traverse Key boundaries in descending Clip-Time order.");
+        const animation_channel_span_sample_result split_reverse_left_end =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_reverse.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result split_reverse_right_start =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_reverse.values[1u], 0.0, 0.25);
+        require(split_reverse_left_end.success && split_reverse_right_start.success &&
+            std::abs(split_reverse_left_end.value.value.x -
+                split_reverse_right_start.value.value.x) <= 1.0e-6f,
+            "Reverse LINEAR Span records must also meet at the same Key-boundary value.");
+
+        const skin_physics::physics::animation_channel_spans_build_result paused_schedule =
+            skin_physics::physics::build_animation_channel_spans(
+                key_bounded_track, 1.0, 0.0);
+        require(paused_schedule.success && paused_schedule.values.size() == 1u &&
+            paused_schedule.values[0u].clip_time_delta == 0.0,
+            "A paused Track must produce one immutable zero-Clip-Time Span rather than an empty schedule.");
+
+        animation_track duplicate_key_track = key_bounded_track;
+        duplicate_key_track.keys[1u].time =
+            duplicate_key_track.keys[0u].time;
+        const skin_physics::physics::animation_channel_spans_build_result invalid_schedule =
+            skin_physics::physics::build_animation_channel_spans(
+                duplicate_key_track, 0.25, 0.5);
+        require(!invalid_schedule.success && invalid_schedule.values.empty() &&
+            invalid_schedule.error ==
+                skin_physics::physics::animation_channel_span_error::non_monotonic_time,
+            "The Channel Span Scheduler must fail atomically on duplicate Key times.");
+
         const animation_channel_span_build_result invalid_world_duration_span =
             skin_physics::physics::build_animation_channel_span(
                 linear_translation, 0.5, 1.0);
