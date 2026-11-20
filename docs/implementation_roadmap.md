@@ -31,9 +31,12 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Host-owned D3D11 Device / Immediate Context validation and COM lifetime.
 - Single registered Submission Thread enforcement.
 - World lifecycle, fixed-step admission, accumulator / Step Request / Tick Reservation accounting.
-- Runtime / World execution budgets and revisioned recovery.
+- Runtime / World execution budgets and revisioned recovery. Budget Retry requires the oldest uncommitted, CPU-observed Work-Budget Block, zero in-flight Submissions, monotonic Admission Limits and exact Substep / Segment lower bounds. Idle Budget changes are rejected while Whole Tick or Step demand remains.
 - GPU status buffer, Event Query ring, non-blocking poll and contiguous CPU-observed COMMITTED prefix.
 - Per-World immutable Dispatch Plan, predecessor gate, terminal status and success-only Commit Control.
+- Multiple in-flight non-Commit outcomes restore Reservations in ascending Sequence order. The earliest FAILED / REJECTED result is preserved; a predecessor-blocked Reservation is re-preflighted only after its predecessor Commit is CPU-observed.
+- CPU Preflight and GPU Dynamic TOI Budget Status must be returned by poll(world) for that World before a Budget Retry. Polling another World cannot authorize the update. A completed older Commit advances committed time while retaining a newer Head's own Budget Block.
+- advance_report distinguishes Host Render Lease Backpressure from Query / Capacity Admission stalls.
 - Per-Soft-Body-Mesh persistent position / velocity State Banks, per-Tick Scratch, gated GPU submission and reset-to-rest-state lifecycle.
 - Rollback / retry keeps the exact same CPU Reservation; immutable per-Tick Input Snapshot / Packet Version is still pending.
 - Soft Body Render Candidate Ring uses maximum in-flight + 1 Slots, GPU-side Binding / Normal / Tangent feedback, full-width Slot ID / Generation Status publication, CPU-observed-only Host Lease, and submission blocking while leased. Cloth / Collision Render Candidates remain with their solver phases.
