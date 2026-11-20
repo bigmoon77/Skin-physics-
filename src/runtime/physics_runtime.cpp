@@ -1134,6 +1134,15 @@ namespace skin_physics::runtime
                 world.diagnostic = "Runtime Dispatch ID space is exhausted.";
                 return false;
             }
+            if (world.scheduled_source_generation ==
+                std::numeric_limits<uint64_t>::max())
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::capacity_exceeded;
+                world.diagnostic =
+                    "Projected GPU State Generation cannot advance without uint64 overflow.";
+                return false;
+            }
 
             const tick_reservation reservation = world.reservations.front();
             gpu_tick_dispatch_plan plan;
@@ -1320,15 +1329,6 @@ namespace skin_physics::runtime
                 world.in_flight_ticks.size());
             world.submitted_sequence = reservation.sequence;
             world.scheduled_predecessor_sequence = reservation.sequence;
-            if (world.scheduled_source_generation ==
-                std::numeric_limits<uint64_t>::max())
-            {
-                world.state = tick_state::failed;
-                world.last_tick_status = status_code::capacity_exceeded;
-                world.diagnostic =
-                    "Projected GPU State Generation cannot advance without uint64 overflow.";
-                return false;
-            }
             ++world.scheduled_source_generation;
             world.scheduled_source_state_set = plan.destination_state_set;
             world.state = tick_state::in_flight;
@@ -2707,11 +2707,35 @@ namespace skin_physics::runtime
             const uint64_t status_state_generation =
                 gpu_status.committed_state_generation;
 
+            const bool committed_generation_valid =
+                result_world.gpu_state_generation !=
+                    std::numeric_limits<uint64_t>::max() &&
+                status_state_generation ==
+                    result_world.gpu_state_generation + 1u;
+            const uint32_t expected_active_state_set =
+                1u - result_world.active_state_set;
+            const bool committed_bank_valid =
+                gpu_status.active_state_set == expected_active_state_set;
+
+            if (gpu_status.terminal_state == 6u &&
+                (!committed_generation_valid || !committed_bank_valid))
+            {
+                completed_tick.reservation.blocked = true;
+                completed_tick.reservation.rejected = true;
+                runtime.restore_reservation_in_sequence_order(
+                    result_world, std::move(completed_tick.reservation));
+                result_world.state = tick_state::failed;
+                result_world.last_tick_status = status_code::gpu_execution_failed;
+                result_world.diagnostic =
+                    "GPU COMMITTED Status violated the one-generation / alternating-State-Bank transition contract.";
+                continue;
+            }
+
             if (gpu_status.terminal_state == 6u &&
                 gpu_status.terminal_failure == 0u &&
                 status_committed_sequence == sequence &&
-                gpu_status.active_state_set <= 1u &&
-                status_state_generation > result_world.gpu_state_generation)
+                committed_generation_valid &&
+                committed_bank_valid)
             {
                 if (sequence != result_world.gpu_committed_sequence + 1u)
                 {
