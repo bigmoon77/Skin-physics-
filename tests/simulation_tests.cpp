@@ -4278,6 +4278,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P09_ANIMATION_TARGET\n";
     test_phase09_animation_channel_span_coefficients();
     std::cout << "[PASS] P09_ANIMATION_CHANNEL_SPAN_COEFFICIENTS\n";
+    test_phase09_animation_node_hierarchy_and_skin_matrix_derivatives();
+    std::cout << "[PASS] P09_ANIMATION_NODE_HIERARCHY_SKIN_MATRIX_DERIVATIVES\n";
     test_phase10_attribute_paint_and_serialization();
     std::cout << "[PASS] P10_ATTRIBUTE_PAINT\n";
     test_phase11_performance_profile_and_invariant_collector();
