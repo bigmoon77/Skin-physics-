@@ -380,9 +380,10 @@
         "shaders/runtime/soft_body_force_gather.cs.hlsl",
         "shaders/runtime/soft_body_integrate.cs.hlsl",
         "shaders/runtime/tick_transaction_control.cs.hlsl",
-        "shaders/runtime/soft_body_render_feedback.cs.hlsl"
+        "shaders/runtime/soft_body_render_feedback.cs.hlsl",
+        "shaders/runtime/soft_body_force_distribution.cs.hlsl"
       ],
-      "status_note": "Production Soft Body GPU Runtime supports mass-weighted Wendland C2 Force / Impulse events for an exact single-Mesh target. World / Model-wide cross-Mesh normalization and Cloth event application remain blocked. The WARP regression source checks selected-Mesh response, unaffected sibling Mesh state, one-shot Impulse integration, and NO_FORCE_TARGET rejection.",
+      "status_note": "Production Soft Body GPU Runtime supports mass-weighted Wendland C2 Force / Impulse events for an exact single-Mesh target. World / Model-wide cross-Mesh normalization and Cloth event application remain blocked. The WARP regression source checks selected-Mesh response, unaffected sibling Mesh state, one-shot Impulse integration, and NO_FORCE_TARGET rejection. Exact per-vertex CPU/GPU weight readback remains an outstanding numerical parity test.",
       "warp_runtime_assertions": [
         "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",

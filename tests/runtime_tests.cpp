@@ -561,7 +561,7 @@ namespace
         force.position = { 2.0f, 3.0f, 4.0f };
         force.direction = { 0.0f, 0.0f, 0.0f };
         force.magnitude = 10.0f;
-        force.radius = 1.0f;
+        force.radius = 1.25f;
         force.duration = 0.1;
         force.start_time = 0.0;
         require(runtime.enqueue_force(world, force).code == status_code::invalid_argument,
