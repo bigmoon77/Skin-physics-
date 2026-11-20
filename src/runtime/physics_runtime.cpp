@@ -3153,8 +3153,10 @@ namespace skin_physics::runtime
             }
             if (world_has_unsupported_physics_work(world))
             {
-                world.state = tick_state::pending;
-                world.last_tick_status = status_code::unsupported_feature;
+                // Keep the CPU Reservation pending and retryable. The Input
+                // Block is diagnostic; no quality or time reduction is allowed.
+                world.state = tick_state::blocked;
+                world.last_tick_status = status_code::blocked_by_input;
                 world.budget_block_origin = work_budget_block_origin::none;
                 world.budget_resolution = work_budget_resolution::none;
                 world.work_budget_block_flags = 0u;
