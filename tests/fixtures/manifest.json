@@ -381,6 +381,7 @@
         {
           "id": "R1_WARP_SOFT_BODY_ANIMATION_TRACKING_STABILITY_PREFLIGHT",
           "checks": [
+            "High Tracking stiffness without any Playback / Blend / Root Transform trajectory input does not alter the FEM-only World Substep count",
             "Mesh Physics Parameters accept finite non-negative Kelvin-Voigt tracking stiffness / damping and reject NaN / negative coefficients",
             "For an active Animation Trajectory, per-vertex tracking frequency uses tracking_stiffness multiplied by Animation Tracking Paint and attribute multiplier, divided by density-remapped lumped mass",
             "World common Substep scheduling includes dt_tracking_limit = 0.2 / omega_max alongside the FEM CFL limit",
