@@ -715,6 +715,22 @@
             "WARP readback of the uploaded immutable Span / Track / Channel / Skin / Skin Joint records and initial Cursor matches the source CPU records byte-for-byte",
             "An invalid Cursor Version or invalid Span-local Blend reference fails without replacing the previously uploaded Packet resources"
           ]
+        },
+        {
+          "id": "P09_PHYSICS_MESH_SKINNING_CPU_REFERENCE",
+          "checks": [
+            "CPU Physics Mesh LBS maps Rest Mesh-local Physics Vertices through the ordered Skin Matrices using the transferred 8-influence weights",
+            "The analytic Skin Matrix derivative is applied to the same Rest Position and influence weights to produce Mesh-local Target Velocity",
+            "Expected Mesh Node / Skin identity, Skin Joint ranges, finite matrices and normalized influence sums are validated before publication"
+          ]
+        },
+        {
+          "id": "P09_WARP_PHYSICS_MESH_SKINNING_TARGETS",
+          "checks": [
+            "Production-style GPU LBS computes Physics Vertex Target Position and Target Velocity from Rest Positions, 8-influence Physics Skin Weights, Skin Matrices and Skin Matrix Derivatives",
+            "WARP Target Position / Velocity readback matches the CPU double-precision Physics Mesh LBS oracle for one- and two-influence vertices",
+            "An out-of-range positive-weight Joint index sets the GPU Target Status failure bit and does not publish a valid target stream"
+          ]
         }
       ],
       "automated_cases": [
