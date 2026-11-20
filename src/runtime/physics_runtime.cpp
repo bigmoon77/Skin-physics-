@@ -3361,10 +3361,12 @@ namespace skin_physics::runtime
             simulation::d3d11_compute_graph& graph,
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
                 out_segment_parameter_buffers,
+            force_distribution_global_scratch& out_force_distribution_scratch,
             std::string& diagnostic)
         {
             diagnostic.clear();
             out_segment_parameter_buffers.clear();
+            out_force_distribution_scratch = {};
             if (source_state_set > 1u || destination_state_set > 1u ||
                 source_state_set == destination_state_set ||
                 reservation.planned_substeps == 0u ||
@@ -3386,6 +3388,8 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            std::vector<soft_body_mesh_work_state> mesh_work;
+            uint64_t total_distribution_group_capacity = 0u;
             for (uint32_t model_index = 0u;
                 model_index < world.models.size(); ++model_index)
             {
@@ -3413,336 +3417,406 @@ namespace skin_physics::runtime
                     {
                         return false;
                     }
-
-                    bool source_is_scratch = false;
-                    uint32_t source_bank = source_state_set;
-                    for (uint32_t segment_index = 0u;
-                        segment_index < reservation.planned_integration_segments;
-                        ++segment_index)
+                    if (gpu_mesh.vertex_count == 0u)
                     {
-                        const integration_segment& segment =
-                            reservation.integration_segments[segment_index];
-                        const float delta_time =
-                            static_cast<float>(segment.delta_time);
-                        if (!finite_double(segment.start_time) ||
-                            !finite_double(segment.delta_time) ||
-                            segment.delta_time <= 0.0 ||
-                            !finite_float(delta_time) ||
-                            delta_time <= 0.0f)
-                        {
-                            diagnostic =
-                                "World Integration Segment time cannot be represented as a positive finite GPU float.";
-                            return false;
-                        }
-
-                        gpu_soft_body_integration_parameters integration_parameters;
-                        integration_parameters.vertex_count = gpu_mesh.vertex_count;
-                        integration_parameters.delta_time = delta_time;
-                        integration_parameters.damping_rate = damping_rate;
-                        integration_parameters.gravity[0] =
-                            input_snapshot.description.gravity.x;
-                        integration_parameters.gravity[1] =
-                            input_snapshot.description.gravity.y;
-                        integration_parameters.gravity[2] =
-                            input_snapshot.description.gravity.z;
-                        ID3D11Buffer* segment_parameters_buffer = nullptr;
-                        ID3D11ShaderResourceView* source_position_srv =
-                            source_is_scratch
-                                ? gpu_mesh.position_scratch_srv.Get()
-                                : gpu_mesh.position_bank_srvs[source_bank].Get();
-                        ID3D11ShaderResourceView* source_velocity_srv =
-                            source_is_scratch
-                                ? gpu_mesh.velocity_scratch_srv.Get()
-                                : gpu_mesh.velocity_bank_srvs[source_bank].Get();
-
-                        const bool destination_is_scratch =
-                            (segment_index & 1u) == 0u;
-                        const uint32_t destination_bank = destination_state_set;
-                        ID3D11UnorderedAccessView* destination_position_uav =
-                            destination_is_scratch
-                                ? gpu_mesh.position_scratch_uav.Get()
-                                : gpu_mesh.position_bank_uavs[destination_bank].Get();
-                        ID3D11UnorderedAccessView* destination_velocity_uav =
-                            destination_is_scratch
-                                ? gpu_mesh.velocity_scratch_uav.Get()
-                                : gpu_mesh.velocity_bank_uavs[destination_bank].Get();
-
-                        simulation::compute_pass_desc fem_pass;
-                        fem_pass.name = "soft_body_fem_m" +
-                            std::to_string(model_index) + "_mesh" +
-                            std::to_string(gpu_mesh.mesh_index) + "_segment" +
-                            std::to_string(segment_index);
-                        fem_pass.shader = soft_body_fem_shader.Get();
-                        fem_pass.shader_resources = {
-                            { 0u, source_position_srv },
-                            { 1u, gpu_mesh.tetrahedron_srv.Get() }
-                        };
-                        fem_pass.unordered_access_views = {
-                            { 0u, gpu_mesh.tetrahedron_output_uav.Get(), 0xffffffffu },
-                            { 1u, world.commit_control_uav.Get(), 0xffffffffu }
-                        };
-                        fem_pass.constant_buffers = {
-                            { 0u, gpu_mesh.fem_parameters.Get() }
-                        };
-                        fem_pass.group_count_x = std::max(
-                            1u, (gpu_mesh.tetrahedron_count + 63u) / 64u);
-                        if (!graph.add_pass(fem_pass, diagnostic))
-                        {
-                            return false;
-                        }
-
-                        simulation::compute_pass_desc gather_pass;
-                        gather_pass.name = "soft_body_force_gather_m" +
-                            std::to_string(model_index) + "_mesh" +
-                            std::to_string(gpu_mesh.mesh_index) + "_segment" +
-                            std::to_string(segment_index);
-                        gather_pass.shader = soft_body_force_gather_shader.Get();
-                        gather_pass.shader_resources = {
-                            { 0u, gpu_mesh.tetrahedron_output_srv.Get() },
-                            { 1u, gpu_mesh.tetrahedron_srv.Get() },
-                            { 2u, gpu_mesh.vertex_tetrahedron_offsets_srv.Get() },
-                            { 3u, gpu_mesh.vertex_tetrahedron_ids_srv.Get() }
-                        };
-                        gather_pass.unordered_access_views = {
-                            { 0u, gpu_mesh.vertex_force_uav.Get(), 0xffffffffu },
-                            { 1u, world.commit_control_uav.Get(), 0xffffffffu }
-                        };
-                        gather_pass.constant_buffers = {
-                            { 0u, gpu_mesh.gather_parameters.Get() }
-                        };
-                        gather_pass.group_count_x = std::max(
-                            1u, (gpu_mesh.vertex_count + 63u) / 64u);
-                        if (!graph.add_pass(gather_pass, diagnostic))
-                        {
-                            return false;
-                        }
-
-
-                        ID3D11ShaderResourceView* integrated_force_srv =
-                            gpu_mesh.vertex_force_srv.Get();
-                        ID3D11ShaderResourceView* integrated_impulse_srv =
-                            gpu_mesh.vertex_force_srv.Get();
-                        uint32_t applied_force_event_count = 0u;
-                        uint32_t applied_impulse_event_count = 0u;
-
-                        std::vector<uint32_t> active_force_indices =
-                            segment.active_force_indices;
-                        for (uint32_t event_index : active_force_indices)
-                        {
-                            if (event_index >= input_snapshot.forces.size())
-                            {
-                                diagnostic =
-                                    "Integration Segment contains an invalid Force Event index.";
-                                return false;
-                            }
-                        }
-                        std::sort(
-                            active_force_indices.begin(),
-                            active_force_indices.end(),
-                            [&input_snapshot](
-                                uint32_t left_index, uint32_t right_index)
-                            {
-                                return input_snapshot.forces[left_index].event_id <
-                                    input_snapshot.forces[right_index].event_id;
-                            });
-
-                        for (uint32_t event_index : active_force_indices)
-                        {
-                            const force_desc& force =
-                                input_snapshot.forces[event_index];
-                            if (force.target.model.index != model_index ||
-                                force.target.model.generation != model.generation ||
-                                force.target.mesh_index != gpu_mesh.mesh_index)
-                            {
-                                continue;
-                            }
-
-                            gpu_soft_body_force_distribution_parameters event_parameters;
-                            event_parameters.vertex_count = gpu_mesh.vertex_count;
-                            event_parameters.include_previous = 1u;
-                            event_parameters.action_position[0] = force.position.x;
-                            event_parameters.action_position[1] = force.position.y;
-                            event_parameters.action_position[2] = force.position.z;
-                            event_parameters.radius = force.radius;
-                            event_parameters.direction[0] = force.direction.x;
-                            event_parameters.direction[1] = force.direction.y;
-                            event_parameters.direction[2] = force.direction.z;
-                            event_parameters.magnitude = force.magnitude;
-
-                            const uint32_t accumulator_index =
-                                applied_force_event_count & 1u;
-                            ID3D11ShaderResourceView* previous_accumulator_srv =
-                                applied_force_event_count == 0u
-                                    ? gpu_mesh.vertex_force_srv.Get()
-                                    : gpu_mesh.force_accumulator_srvs[
-                                        (applied_force_event_count - 1u) & 1u].Get();
-
-                            if (!append_soft_body_force_distribution_event(
-                                    world, gpu_mesh, source_position_srv,
-                                    previous_accumulator_srv,
-                                    gpu_mesh.force_accumulator_uavs[accumulator_index].Get(),
-                                    event_parameters, model_index, segment_index,
-                                    force.event_id, false, graph,
-                                    out_segment_parameter_buffers, diagnostic))
-                            {
-                                return false;
-                            }
-                            integrated_force_srv =
-                                gpu_mesh.force_accumulator_srvs[accumulator_index].Get();
-                            ++applied_force_event_count;
-                        }
-
-                        std::vector<uint32_t> impulse_indices =
-                            segment.impulse_indices;
-                        for (uint32_t event_index : impulse_indices)
-                        {
-                            if (event_index >= input_snapshot.impulses.size())
-                            {
-                                diagnostic =
-                                    "Integration Segment contains an invalid Impulse Event index.";
-                                return false;
-                            }
-                        }
-                        std::sort(
-                            impulse_indices.begin(),
-                            impulse_indices.end(),
-                            [&input_snapshot](
-                                uint32_t left_index, uint32_t right_index)
-                            {
-                                return input_snapshot.impulses[left_index].event_id <
-                                    input_snapshot.impulses[right_index].event_id;
-                            });
-
-                        for (uint32_t event_index : impulse_indices)
-                        {
-                            const impulse_desc& impulse =
-                                input_snapshot.impulses[event_index];
-                            if (impulse.target.model.index != model_index ||
-                                impulse.target.model.generation != model.generation ||
-                                impulse.target.mesh_index != gpu_mesh.mesh_index)
-                            {
-                                continue;
-                            }
-
-                            gpu_soft_body_force_distribution_parameters event_parameters;
-                            event_parameters.vertex_count = gpu_mesh.vertex_count;
-                            event_parameters.include_previous =
-                                applied_impulse_event_count == 0u ? 0u : 1u;
-                            event_parameters.action_position[0] = impulse.position.x;
-                            event_parameters.action_position[1] = impulse.position.y;
-                            event_parameters.action_position[2] = impulse.position.z;
-                            event_parameters.radius = impulse.radius;
-                            event_parameters.direction[0] = impulse.direction.x;
-                            event_parameters.direction[1] = impulse.direction.y;
-                            event_parameters.direction[2] = impulse.direction.z;
-                            event_parameters.magnitude = impulse.impulse_magnitude;
-
-                            const uint32_t accumulator_index =
-                                applied_impulse_event_count & 1u;
-                            ID3D11ShaderResourceView* previous_accumulator_srv =
-                                applied_impulse_event_count == 0u
-                                    ? gpu_mesh.vertex_force_srv.Get()
-                                    : gpu_mesh.impulse_accumulator_srvs[
-                                        (applied_impulse_event_count - 1u) & 1u].Get();
-
-                            if (!append_soft_body_force_distribution_event(
-                                    world, gpu_mesh, source_position_srv,
-                                    previous_accumulator_srv,
-                                    gpu_mesh.impulse_accumulator_uavs[accumulator_index].Get(),
-                                    event_parameters, model_index, segment_index,
-                                    impulse.event_id, true, graph,
-                                    out_segment_parameter_buffers, diagnostic))
-                            {
-                                return false;
-                            }
-                            integrated_impulse_srv =
-                                gpu_mesh.impulse_accumulator_srvs[accumulator_index].Get();
-                            ++applied_impulse_event_count;
-                        }
-
-                        simulation::compute_pass_desc integrate_pass;
-                        integrate_pass.name = "soft_body_integrate_m" +
-                            std::to_string(model_index) + "_mesh" +
-                            std::to_string(gpu_mesh.mesh_index) + "_segment" +
-                            std::to_string(segment_index);
-                        integrate_pass.shader = soft_body_integrate_shader.Get();
-                        gpu_soft_body_integration_parameters final_integration_parameters =
-                            integration_parameters;
-                        final_integration_parameters.has_impulse_events =
-                            applied_impulse_event_count != 0u ? 1u : 0u;
-                        Microsoft::WRL::ComPtr<ID3D11Buffer> final_segment_parameters;
-                        if (!create_constant_buffer(
-                                device.Get(),
-                                static_cast<uint32_t>(
-                                    sizeof(final_integration_parameters)),
-                                &final_integration_parameters,
-                                final_segment_parameters.GetAddressOf()))
-                        {
-                            diagnostic =
-                                "Unable to allocate final per-Segment Integration Parameters with the Impulse presence flag.";
-                            return false;
-                        }
-                        out_segment_parameter_buffers.push_back(
-                            std::move(final_segment_parameters));
-                        segment_parameters_buffer =
-                            out_segment_parameter_buffers.back().Get();
-
-                        integrate_pass.shader_resources = {
-                            { 0u, source_position_srv },
-                            { 1u, source_velocity_srv },
-                            { 2u, integrated_force_srv },
-                            { 3u, gpu_mesh.inverse_mass_srv.Get() },
-                            { 4u, gpu_mesh.vertex_damping_rate_srv.Get() },
-                            { 5u, integrated_impulse_srv }
-                        };
-                        integrate_pass.unordered_access_views = {
-                            { 0u, destination_position_uav, 0xffffffffu },
-                            { 1u, destination_velocity_uav, 0xffffffffu },
-                            { 2u, world.commit_control_uav.Get(), 0xffffffffu }
-                        };
-                        integrate_pass.constant_buffers = {
-                            { 0u, segment_parameters_buffer }
-                        };
-                        integrate_pass.group_count_x = std::max(
-                            1u, (gpu_mesh.vertex_count + 63u) / 64u);
-                        if (!graph.add_pass(integrate_pass, diagnostic))
-                        {
-                            return false;
-                        }
-
-                        source_is_scratch = destination_is_scratch;
-                        if (!destination_is_scratch)
-                        {
-                            source_bank = destination_bank;
-                        }
+                        diagnostic =
+                            "Soft Body GPU Mesh has no Physics Vertices for Segment dispatch.";
+                        return false;
                     }
 
-                    if (source_is_scratch)
+                    const uint32_t group_count =
+                        (gpu_mesh.vertex_count - 1u) / 64u + 1u;
+                    if (total_distribution_group_capacity >
+                        std::numeric_limits<uint32_t>::max() - group_count)
                     {
-                        simulation::compute_pass_desc copy_pass;
-                        copy_pass.name = "soft_body_publish_working_state_m" +
-                            std::to_string(model_index) + "_mesh" +
-                            std::to_string(gpu_mesh.mesh_index);
-                        copy_pass.shader = soft_body_copy_state_shader.Get();
-                        copy_pass.shader_resources = {
-                            { 0u, gpu_mesh.position_scratch_srv.Get() },
-                            { 1u, gpu_mesh.velocity_scratch_srv.Get() }
-                        };
-                        copy_pass.unordered_access_views = {
-                            { 0u, gpu_mesh.position_bank_uavs[destination_state_set].Get(), 0xffffffffu },
-                            { 1u, gpu_mesh.velocity_bank_uavs[destination_state_set].Get(), 0xffffffffu },
-                            { 2u, world.commit_control_uav.Get(), 0xffffffffu }
-                        };
-                        copy_pass.constant_buffers = {
-                            { 0u, gpu_mesh.integration_parameters.Get() }
-                        };
-                        copy_pass.group_count_x = std::max(
-                            1u, (gpu_mesh.vertex_count + 63u) / 64u);
-                        if (!graph.add_pass(copy_pass, diagnostic))
-                        {
-                            return false;
-                        }
+                        diagnostic =
+                            "World Soft Body target-scope reduction capacity exceeds the uint32 GPU ABI.";
+                        return false;
                     }
+                    total_distribution_group_capacity += group_count;
+
+                    soft_body_mesh_work_state work;
+                    work.model_index = model_index;
+                    work.model = &model;
+                    work.gpu_mesh = &gpu_mesh;
+                    work.damping_rate = damping_rate;
+                    work.source_bank = source_state_set;
+                    mesh_work.push_back(work);
+                }
+            }
+
+            if (mesh_work.empty())
+            {
+                diagnostic =
+                    "Soft Body Tick Passes found no registered Soft Body Mesh resources.";
+                return false;
+            }
+
+            if (!input_snapshot.forces.empty() ||
+                !input_snapshot.impulses.empty())
+            {
+                if (total_distribution_group_capacity == 0u ||
+                    total_distribution_group_capacity >
+                        std::numeric_limits<uint32_t>::max())
+                {
+                    diagnostic =
+                        "World Force / Impulse target-scope reduction capacity is invalid.";
+                    return false;
+                }
+
+                const uint32_t partial_sum_capacity =
+                    static_cast<uint32_t>(total_distribution_group_capacity);
+                const std::vector<float> empty_partial_sums(
+                    partial_sum_capacity, 0.0f);
+                const std::vector<float> empty_normalized_sum = { 0.0f };
+                const UINT scratch_bind_flags =
+                    D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+                out_force_distribution_scratch.partial_sum_capacity =
+                    partial_sum_capacity;
+                if (!create_structured_buffer_from_vector(
+                        device.Get(),
+                        empty_partial_sums,
+                        scratch_bind_flags,
+                        out_force_distribution_scratch.partial_sum_buffer.GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(),
+                        out_force_distribution_scratch.partial_sum_buffer.Get(),
+                        partial_sum_capacity,
+                        out_force_distribution_scratch.partial_sum_srv.GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(),
+                        out_force_distribution_scratch.partial_sum_buffer.Get(),
+                        partial_sum_capacity,
+                        out_force_distribution_scratch.partial_sum_uav.GetAddressOf()) ||
+                    !create_structured_buffer_from_vector(
+                        device.Get(),
+                        empty_normalized_sum,
+                        scratch_bind_flags,
+                        out_force_distribution_scratch.normalized_sum_buffer.GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(),
+                        out_force_distribution_scratch.normalized_sum_buffer.Get(),
+                        1u,
+                        out_force_distribution_scratch.normalized_sum_srv.GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(),
+                        out_force_distribution_scratch.normalized_sum_buffer.Get(),
+                        1u,
+                        out_force_distribution_scratch.normalized_sum_uav.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate World-scoped Force / Impulse partial-sum and normalized-denominator resources.";
+                    return false;
+                }
+            }
+
+            for (uint32_t segment_index = 0u;
+                segment_index < reservation.planned_integration_segments;
+                ++segment_index)
+            {
+                const integration_segment& segment =
+                    reservation.integration_segments[segment_index];
+                const float delta_time =
+                    static_cast<float>(segment.delta_time);
+                if (!finite_double(segment.start_time) ||
+                    !finite_double(segment.delta_time) ||
+                    segment.delta_time <= 0.0 ||
+                    !finite_float(delta_time) ||
+                    delta_time <= 0.0f)
+                {
+                    diagnostic =
+                        "World Integration Segment time cannot be represented as a positive finite GPU float.";
+                    return false;
+                }
+
+                for (soft_body_mesh_work_state& work : mesh_work)
+                {
+                    soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
+                    work.source_position_srv =
+                        work.source_is_scratch
+                            ? gpu_mesh.position_scratch_srv.Get()
+                            : gpu_mesh.position_bank_srvs[work.source_bank].Get();
+                    work.source_velocity_srv =
+                        work.source_is_scratch
+                            ? gpu_mesh.velocity_scratch_srv.Get()
+                            : gpu_mesh.velocity_bank_srvs[work.source_bank].Get();
+
+                    work.destination_is_scratch = (segment_index & 1u) == 0u;
+                    work.destination_position_uav =
+                        work.destination_is_scratch
+                            ? gpu_mesh.position_scratch_uav.Get()
+                            : gpu_mesh.position_bank_uavs[destination_state_set].Get();
+                    work.destination_velocity_uav =
+                        work.destination_is_scratch
+                            ? gpu_mesh.velocity_scratch_uav.Get()
+                            : gpu_mesh.velocity_bank_uavs[destination_state_set].Get();
+
+                    if (work.source_position_srv == nullptr ||
+                        work.source_velocity_srv == nullptr ||
+                        work.destination_position_uav == nullptr ||
+                        work.destination_velocity_uav == nullptr)
+                    {
+                        diagnostic =
+                            "Soft Body Segment State Bank / Scratch resource resolution failed.";
+                        return false;
+                    }
+
+                    simulation::compute_pass_desc fem_pass;
+                    fem_pass.name = "soft_body_fem_m" +
+                        std::to_string(work.model_index) + "_mesh" +
+                        std::to_string(gpu_mesh.mesh_index) + "_segment" +
+                        std::to_string(segment_index);
+                    fem_pass.shader = soft_body_fem_shader.Get();
+                    fem_pass.shader_resources = {
+                        { 0u, work.source_position_srv },
+                        { 1u, gpu_mesh.tetrahedron_srv.Get() }
+                    };
+                    fem_pass.unordered_access_views = {
+                        { 0u, gpu_mesh.tetrahedron_output_uav.Get(), 0xffffffffu },
+                        { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+                    };
+                    fem_pass.constant_buffers = {
+                        { 0u, gpu_mesh.fem_parameters.Get() }
+                    };
+                    fem_pass.group_count_x = std::max(
+                        1u, (gpu_mesh.tetrahedron_count + 63u) / 64u);
+                    if (!graph.add_pass(fem_pass, diagnostic))
+                    {
+                        return false;
+                    }
+
+                    simulation::compute_pass_desc gather_pass;
+                    gather_pass.name = "soft_body_force_gather_m" +
+                        std::to_string(work.model_index) + "_mesh" +
+                        std::to_string(gpu_mesh.mesh_index) + "_segment" +
+                        std::to_string(segment_index);
+                    gather_pass.shader = soft_body_force_gather_shader.Get();
+                    gather_pass.shader_resources = {
+                        { 0u, gpu_mesh.tetrahedron_output_srv.Get() },
+                        { 1u, gpu_mesh.tetrahedron_srv.Get() },
+                        { 2u, gpu_mesh.vertex_tetrahedron_offsets_srv.Get() },
+                        { 3u, gpu_mesh.vertex_tetrahedron_ids_srv.Get() }
+                    };
+                    gather_pass.unordered_access_views = {
+                        { 0u, gpu_mesh.vertex_force_uav.Get(), 0xffffffffu },
+                        { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+                    };
+                    gather_pass.constant_buffers = {
+                        { 0u, gpu_mesh.gather_parameters.Get() }
+                    };
+                    gather_pass.group_count_x = std::max(
+                        1u, (gpu_mesh.vertex_count + 63u) / 64u);
+                    if (!graph.add_pass(gather_pass, diagnostic))
+                    {
+                        return false;
+                    }
+
+                    work.integrated_force_srv = gpu_mesh.vertex_force_srv.Get();
+                    work.integrated_impulse_srv = gpu_mesh.vertex_force_srv.Get();
+                    work.force_event_count = 0u;
+                    work.impulse_event_count = 0u;
+                }
+
+                std::vector<uint32_t> active_force_indices =
+                    segment.active_force_indices;
+                for (uint32_t event_index : active_force_indices)
+                {
+                    if (event_index >= input_snapshot.forces.size())
+                    {
+                        diagnostic =
+                            "Integration Segment contains an invalid Force Event index.";
+                        return false;
+                    }
+                }
+                std::sort(
+                    active_force_indices.begin(),
+                    active_force_indices.end(),
+                    [&input_snapshot](
+                        uint32_t left_index, uint32_t right_index)
+                    {
+                        return input_snapshot.forces[left_index].event_id <
+                            input_snapshot.forces[right_index].event_id;
+                    });
+
+                for (uint32_t event_index : active_force_indices)
+                {
+                    const force_desc& force =
+                        input_snapshot.forces[event_index];
+                    gpu_soft_body_force_distribution_parameters event_parameters;
+                    event_parameters.action_position[0] = force.position.x;
+                    event_parameters.action_position[1] = force.position.y;
+                    event_parameters.action_position[2] = force.position.z;
+                    event_parameters.radius = force.radius;
+                    event_parameters.direction[0] = force.direction.x;
+                    event_parameters.direction[1] = force.direction.y;
+                    event_parameters.direction[2] = force.direction.z;
+                    event_parameters.magnitude = force.magnitude;
+                    if (!append_soft_body_force_distribution_event(
+                            world,
+                            mesh_work,
+                            force.target,
+                            event_parameters,
+                            segment_index,
+                            force.event_id,
+                            false,
+                            out_force_distribution_scratch,
+                            graph,
+                            out_segment_parameter_buffers,
+                            diagnostic))
+                    {
+                        return false;
+                    }
+                }
+
+                std::vector<uint32_t> impulse_indices =
+                    segment.impulse_indices;
+                for (uint32_t event_index : impulse_indices)
+                {
+                    if (event_index >= input_snapshot.impulses.size())
+                    {
+                        diagnostic =
+                            "Integration Segment contains an invalid Impulse Event index.";
+                        return false;
+                    }
+                }
+                std::sort(
+                    impulse_indices.begin(),
+                    impulse_indices.end(),
+                    [&input_snapshot](
+                        uint32_t left_index, uint32_t right_index)
+                    {
+                        return input_snapshot.impulses[left_index].event_id <
+                            input_snapshot.impulses[right_index].event_id;
+                    });
+
+                for (uint32_t event_index : impulse_indices)
+                {
+                    const impulse_desc& impulse =
+                        input_snapshot.impulses[event_index];
+                    gpu_soft_body_force_distribution_parameters event_parameters;
+                    event_parameters.action_position[0] = impulse.position.x;
+                    event_parameters.action_position[1] = impulse.position.y;
+                    event_parameters.action_position[2] = impulse.position.z;
+                    event_parameters.radius = impulse.radius;
+                    event_parameters.direction[0] = impulse.direction.x;
+                    event_parameters.direction[1] = impulse.direction.y;
+                    event_parameters.direction[2] = impulse.direction.z;
+                    event_parameters.magnitude = impulse.impulse_magnitude;
+                    if (!append_soft_body_force_distribution_event(
+                            world,
+                            mesh_work,
+                            impulse.target,
+                            event_parameters,
+                            segment_index,
+                            impulse.event_id,
+                            true,
+                            out_force_distribution_scratch,
+                            graph,
+                            out_segment_parameter_buffers,
+                            diagnostic))
+                    {
+                        return false;
+                    }
+                }
+
+                for (soft_body_mesh_work_state& work : mesh_work)
+                {
+                    soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
+                    gpu_soft_body_integration_parameters integration_parameters;
+                    integration_parameters.vertex_count = gpu_mesh.vertex_count;
+                    integration_parameters.delta_time = delta_time;
+                    integration_parameters.damping_rate = work.damping_rate;
+                    integration_parameters.has_impulse_events =
+                        work.impulse_event_count != 0u ? 1u : 0u;
+                    integration_parameters.gravity[0] =
+                        input_snapshot.description.gravity.x;
+                    integration_parameters.gravity[1] =
+                        input_snapshot.description.gravity.y;
+                    integration_parameters.gravity[2] =
+                        input_snapshot.description.gravity.z;
+
+                    Microsoft::WRL::ComPtr<ID3D11Buffer> segment_parameters;
+                    if (!create_constant_buffer(
+                            device.Get(),
+                            static_cast<uint32_t>(sizeof(integration_parameters)),
+                            &integration_parameters,
+                            segment_parameters.GetAddressOf()))
+                    {
+                        diagnostic =
+                            "Unable to allocate immutable per-Segment Integration Parameters.";
+                        return false;
+                    }
+                    out_segment_parameter_buffers.push_back(
+                        std::move(segment_parameters));
+
+                    simulation::compute_pass_desc integrate_pass;
+                    integrate_pass.name = "soft_body_integrate_m" +
+                        std::to_string(work.model_index) + "_mesh" +
+                        std::to_string(gpu_mesh.mesh_index) + "_segment" +
+                        std::to_string(segment_index);
+                    integrate_pass.shader = soft_body_integrate_shader.Get();
+                    integrate_pass.shader_resources = {
+                        { 0u, work.source_position_srv },
+                        { 1u, work.source_velocity_srv },
+                        { 2u, work.integrated_force_srv },
+                        { 3u, gpu_mesh.inverse_mass_srv.Get() },
+                        { 4u, gpu_mesh.vertex_damping_rate_srv.Get() },
+                        { 5u, work.integrated_impulse_srv }
+                    };
+                    integrate_pass.unordered_access_views = {
+                        { 0u, work.destination_position_uav, 0xffffffffu },
+                        { 1u, work.destination_velocity_uav, 0xffffffffu },
+                        { 2u, world.commit_control_uav.Get(), 0xffffffffu }
+                    };
+                    integrate_pass.constant_buffers = {
+                        { 0u, out_segment_parameter_buffers.back().Get() }
+                    };
+                    integrate_pass.group_count_x = std::max(
+                        1u, (gpu_mesh.vertex_count + 63u) / 64u);
+                    if (!graph.add_pass(integrate_pass, diagnostic))
+                    {
+                        return false;
+                    }
+
+                    work.source_is_scratch = work.destination_is_scratch;
+                    if (!work.destination_is_scratch)
+                    {
+                        work.source_bank = destination_state_set;
+                    }
+                }
+            }
+
+            for (soft_body_mesh_work_state& work : mesh_work)
+            {
+                if (!work.source_is_scratch)
+                {
+                    continue;
+                }
+
+                soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
+                simulation::compute_pass_desc copy_pass;
+                copy_pass.name = "soft_body_publish_working_state_m" +
+                    std::to_string(work.model_index) + "_mesh" +
+                    std::to_string(gpu_mesh.mesh_index);
+                copy_pass.shader = soft_body_copy_state_shader.Get();
+                copy_pass.shader_resources = {
+                    { 0u, gpu_mesh.position_scratch_srv.Get() },
+                    { 1u, gpu_mesh.velocity_scratch_srv.Get() }
+                };
+                copy_pass.unordered_access_views = {
+                    { 0u, gpu_mesh.position_bank_uavs[destination_state_set].Get(), 0xffffffffu },
+                    { 1u, gpu_mesh.velocity_bank_uavs[destination_state_set].Get(), 0xffffffffu },
+                    { 2u, world.commit_control_uav.Get(), 0xffffffffu }
+                };
+                copy_pass.constant_buffers = {
+                    { 0u, gpu_mesh.integration_parameters.Get() }
+                };
+                copy_pass.group_count_x = std::max(
+                    1u, (gpu_mesh.vertex_count + 63u) / 64u);
+                if (!graph.add_pass(copy_pass, diagnostic))
+                {
+                    return false;
                 }
             }
             return true;
