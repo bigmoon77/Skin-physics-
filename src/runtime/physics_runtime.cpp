@@ -681,6 +681,9 @@ namespace skin_physics::runtime
             uint32_t in_flight_tick_count = 0u;
             uint64_t gpu_state_generation = 1u;
             uint32_t active_state_set = 0u;
+            uint64_t scheduled_predecessor_sequence = 0u;
+            uint64_t scheduled_source_generation = 1u;
+            uint32_t scheduled_source_state_set = 0u;
             Microsoft::WRL::ComPtr<ID3D11Buffer> commit_control_buffer;
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> commit_control_uav;
             bool render_lease_active = false;
@@ -813,13 +816,48 @@ namespace skin_physics::runtime
             return (static_cast<uint64_t>(generation) << 32u) | index;
         }
 
+        void restore_reservation_in_sequence_order(
+            world_slot& world,
+            tick_reservation reservation)
+        {
+            const auto insertion_point = std::find_if(
+                world.reservations.begin(),
+                world.reservations.end(),
+                [&](const tick_reservation& current)
+                {
+                    return current.sequence > reservation.sequence;
+                });
+            world.reservations.insert(
+                insertion_point, std::move(reservation));
+        }
+
+        void synchronize_scheduled_state_with_committed(world_slot& world)
+        {
+            if (world.in_flight_tick_count != 0u)
+            {
+                return;
+            }
+            world.scheduled_predecessor_sequence = world.gpu_committed_sequence;
+            world.scheduled_source_generation = world.gpu_state_generation;
+            world.scheduled_source_state_set = world.active_state_set;
+        }
+
         void update_head_reservation_preflight(world_slot& world)
         {
             if (world.reservations.empty())
             {
                 world.reserved_tick_time = 0.0;
+                for (const in_flight_tick& tick : world.in_flight_ticks)
+                {
+                    world.reserved_tick_time += tick.reservation.delta_time;
+                }
                 world.planned_substeps = 0u;
                 world.planned_integration_segments = 0u;
+                if (world.in_flight_tick_count != 0u)
+                {
+                    world.state = tick_state::in_flight;
+                    return;
+                }
                 world.state = tick_state::idle;
                 world.last_tick_status = status_code::ok;
                 world.budget_block_origin = work_budget_block_origin::none;
@@ -1031,6 +1069,9 @@ namespace skin_physics::runtime
             world.commit_control_uav = std::move(control_uav);
             world.gpu_state_generation = 1u;
             world.active_state_set = 0u;
+            world.scheduled_predecessor_sequence = 0u;
+            world.scheduled_source_generation = 1u;
+            world.scheduled_source_state_set = 0u;
             return true;
         }
 
@@ -1064,7 +1105,8 @@ namespace skin_physics::runtime
                 world.reservations.empty() ||
                 world.reservations.front().blocked ||
                 world.reservations.front().rejected ||
-                world.in_flight_tick_count != 0u)
+                world.in_flight_tick_count >=
+                    world.description.maximum_in_flight_ticks)
             {
                 return false;
             }
@@ -1095,15 +1137,15 @@ namespace skin_physics::runtime
             const tick_reservation reservation = world.reservations.front();
             gpu_tick_dispatch_plan plan;
             plan.expected_predecessor_sequence_low =
-                static_cast<uint32_t>(world.gpu_committed_sequence);
+                static_cast<uint32_t>(world.scheduled_predecessor_sequence);
             plan.expected_predecessor_sequence_high =
-                static_cast<uint32_t>(world.gpu_committed_sequence >> 32u);
+                static_cast<uint32_t>(world.scheduled_predecessor_sequence >> 32u);
             plan.expected_source_generation_low =
-                static_cast<uint32_t>(world.gpu_state_generation);
+                static_cast<uint32_t>(world.scheduled_source_generation);
             plan.expected_source_generation_high =
-                static_cast<uint32_t>(world.gpu_state_generation >> 32u);
-            plan.expected_source_state_set = world.active_state_set;
-            plan.destination_state_set = 1u - world.active_state_set;
+                static_cast<uint32_t>(world.scheduled_source_generation >> 32u);
+            plan.expected_source_state_set = world.scheduled_source_state_set;
+            plan.destination_state_set = 1u - world.scheduled_source_state_set;
             plan.tick_sequence_low = static_cast<uint32_t>(reservation.sequence);
             plan.tick_sequence_high = static_cast<uint32_t>(reservation.sequence >> 32u);
             plan.dispatch_id_low = static_cast<uint32_t>(next_dispatch_id);
@@ -1276,6 +1318,18 @@ namespace skin_physics::runtime
             world.in_flight_tick_count = static_cast<uint32_t>(
                 world.in_flight_ticks.size());
             world.submitted_sequence = reservation.sequence;
+            world.scheduled_predecessor_sequence = reservation.sequence;
+            if (world.scheduled_source_generation ==
+                std::numeric_limits<uint64_t>::max())
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::capacity_exceeded;
+                world.diagnostic =
+                    "Projected GPU State Generation cannot advance without uint64 overflow.";
+                return false;
+            }
+            ++world.scheduled_source_generation;
+            world.scheduled_source_state_set = plan.destination_state_set;
             world.state = tick_state::in_flight;
             world.diagnostic.clear();
             ++next_dispatch_id;
@@ -1593,6 +1647,9 @@ namespace skin_physics::runtime
         world.commit_control_uav.Reset();
         world.gpu_state_generation = 1u;
         world.active_state_set = 0u;
+        world.scheduled_predecessor_sequence = 0u;
+        world.scheduled_source_generation = 1u;
+        world.scheduled_source_state_set = 0u;
         world.render_lease_active = false;
         world.render_lease_generation = 0u;
         world.state = tick_state::idle;
@@ -2489,30 +2546,47 @@ namespace skin_physics::runtime
         }
 
         const uint64_t previous_submitted_sequence = world->submitted_sequence;
-        if (world->reservations.empty() &&
-            world->in_flight_tick_count == 0u)
+        uint32_t submission_attempts = 0u;
+        while (submission_attempts < world->description.maximum_steps_per_advance &&
+            world->in_flight_tick_count <
+                world->description.maximum_in_flight_ticks)
         {
-            if (world->pending_single_step_requests != 0u)
+            if (world->reservations.empty())
             {
-                runtime.reserve_next_tick(*world, true);
+                if (world->pending_single_step_requests != 0u)
+                {
+                    if (!runtime.reserve_next_tick(*world, true))
+                    {
+                        break;
+                    }
+                }
+                else if (world->playback == playback_state::playing)
+                {
+                    if (!runtime.reserve_next_tick(*world, false))
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    break;
+                }
             }
-            else if (world->playback == playback_state::playing)
-            {
-                runtime.reserve_next_tick(*world, false);
-            }
-        }
 
-        if (world->in_flight_tick_count == 0u &&
-            !world->reservations.empty() &&
-            !world->reservations.front().blocked &&
-            !world->reservations.front().rejected)
-        {
-            runtime.submit_head_reservation(*world, world_handle_value.index);
+            if (world->reservations.front().blocked ||
+                world->reservations.front().rejected)
+            {
+                break;
+            }
+            if (!runtime.submit_head_reservation(
+                    *world, world_handle_value.index))
+            {
+                break;
+            }
+            ++submission_attempts;
         }
-        if (world->submitted_sequence > previous_submitted_sequence)
-        {
-            out_report->submitted_tick_count = 1u;
-        }
+        out_report->submitted_tick_count = static_cast<uint32_t>(
+            world->submitted_sequence - previous_submitted_sequence);
 
         const uint64_t pending64 =
             static_cast<uint64_t>(count_pending_ticks(
@@ -2618,8 +2692,8 @@ namespace skin_physics::runtime
             {
                 completed_tick.reservation.rejected = true;
                 completed_tick.reservation.blocked = true;
-                result_world.reservations.push_front(
-                    std::move(completed_tick.reservation));
+                runtime.restore_reservation_in_sequence_order(
+                    result_world, std::move(completed_tick.reservation));
                 result_world.state = tick_state::failed;
                 result_world.last_tick_status = status_code::gpu_execution_failed;
                 result_world.diagnostic =
@@ -2642,8 +2716,8 @@ namespace skin_physics::runtime
                 {
                     completed_tick.reservation.rejected = true;
                     completed_tick.reservation.blocked = true;
-                    result_world.reservations.push_front(
-                        std::move(completed_tick.reservation));
+                    runtime.restore_reservation_in_sequence_order(
+                        result_world, std::move(completed_tick.reservation));
                     result_world.state = tick_state::failed;
                     result_world.last_tick_status = status_code::gpu_execution_failed;
                     result_world.diagnostic =
@@ -2730,6 +2804,15 @@ namespace skin_physics::runtime
                 }
                 result_world.diagnostic =
                     "GPU Tick ended without a COMMITTED terminal status; the active State Bank and reservation time were retained.";
+            }
+        }
+
+        for (implementation::world_slot& result_world : runtime.worlds)
+        {
+            if (result_world.occupied &&
+                result_world.in_flight_tick_count == 0u)
+            {
+                runtime.synchronize_scheduled_state_with_committed(result_world);
             }
         }
 
@@ -2910,6 +2993,9 @@ namespace skin_physics::runtime
         world->in_flight_tick_count = 0u;
         world->gpu_state_generation = 1u;
         world->active_state_set = 0u;
+        world->scheduled_predecessor_sequence = 0u;
+        world->scheduled_source_generation = 1u;
+        world->scheduled_source_state_set = 0u;
         gpu_tick_commit_control initial_control;
         initial_control.state_generation_low = 1u;
         initial_control.active_state_set = 0u;
