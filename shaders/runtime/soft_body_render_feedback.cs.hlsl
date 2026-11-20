@@ -238,10 +238,13 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         float3 edge2 = p2 - p0;
         float3 face_normal = cross(edge1, edge2);
         float face_normal_squared = dot(face_normal, face_normal);
-        if (isfinite(face_normal_squared) && face_normal_squared > 1.0e-20f)
+        if (!isfinite(face_normal_squared) || face_normal_squared <= 1.0e-20f)
         {
-            normal_sum += face_normal;
+            uint previous_failure = 0u;
+            InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
+            return;
         }
+        normal_sum += face_normal;
 
         RenderVertexInput v0 = render_vertices[i0];
         RenderVertexInput v1 = render_vertices[i1];
