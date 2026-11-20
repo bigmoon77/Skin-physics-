@@ -5168,6 +5168,8 @@ namespace skin_physics::runtime
                 completed_tick.reservation.rejected =
                     gpu_status.terminal_state == 4u ||
                     gpu_status.terminal_state == 5u;
+                completed_tick.reservation.predecessor_blocked =
+                    gpu_status.terminal_state == 3u;
                 runtime.restore_reservation_in_sequence_order(
                     result_world, std::move(completed_tick.reservation));
 
@@ -5216,11 +5218,40 @@ namespace skin_physics::runtime
 
         for (implementation::world_slot& result_world : runtime.worlds)
         {
-            if (result_world.occupied &&
-                result_world.in_flight_tick_count == 0u)
+            if (!result_world.occupied ||
+                result_world.in_flight_tick_count != 0u)
             {
-                runtime.synchronize_scheduled_state_with_committed(result_world);
+                continue;
             }
+
+            runtime.synchronize_scheduled_state_with_committed(result_world);
+            if (result_world.state != tick_state::failed &&
+                result_world.state != tick_state::rejected &&
+                !result_world.reservations.empty() &&
+                result_world.reservations.front().predecessor_blocked &&
+                result_world.gpu_committed_sequence !=
+                    std::numeric_limits<uint64_t>::max() &&
+                result_world.reservations.front().sequence ==
+                    result_world.gpu_committed_sequence + 1u)
+            {
+                // The predecessor's Query has now been observed. Rebuild the
+                // dependent Reservation's CPU Preflight against the newly committed
+                // source; it will receive a fresh immutable GPU Plan on admission.
+                runtime.update_head_reservation_preflight(result_world);
+            }
+        }
+
+        if (world->state == tick_state::blocked &&
+            world->last_tick_status == status_code::work_budget_exceeded &&
+            world->budget_block_origin ==
+                work_budget_block_origin::cpu_preflight &&
+            !world->reservations.empty() &&
+            world->reservations.front().blocked &&
+            !world->reservations.front().predecessor_blocked)
+        {
+            // A CPU-only Preflight Block is observable synchronously through this
+            // returned world_status; it does not require an Event Query.
+            world->cpu_preflight_block_status_observed = true;
         }
 
         world_status result;
