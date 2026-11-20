@@ -44,6 +44,9 @@ StructuredBuffer<RenderVertexInput> render_vertices : register(t2);
 StructuredBuffer<uint> render_indices : register(t3);
 StructuredBuffer<uint> vertex_triangle_offsets : register(t4);
 StructuredBuffer<uint> vertex_triangle_ids : register(t5);
+StructuredBuffer<float4> candidate_positions_read : register(t6);
+StructuredBuffer<float4> candidate_normals_read : register(t7);
+StructuredBuffer<float4> candidate_tangents_read : register(t8);
 
 RWStructuredBuffer<float4> candidate_positions : register(u0);
 RWStructuredBuffer<float4> candidate_normals : register(u1);
@@ -322,9 +325,9 @@ void validate_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         return;
     }
 
-    float4 position = candidate_positions[render_vertex_index];
-    float4 normal = candidate_normals[render_vertex_index];
-    float4 tangent = candidate_tangents[render_vertex_index];
+    float4 position = candidate_positions_read[render_vertex_index];
+    float4 normal = candidate_normals_read[render_vertex_index];
+    float4 tangent = candidate_tangents_read[render_vertex_index];
     RenderVertexInput vertex = render_vertices[render_vertex_index];
     bool valid_streams =
         all(isfinite(position)) &&
