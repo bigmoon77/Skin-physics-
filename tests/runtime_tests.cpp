@@ -1082,14 +1082,19 @@ namespace
 
         skin_physics::asset::skin source_skin;
         source_skin.name = "runtime_single_joint_skin";
-        source_skin.joints = { 0u };
+        source_skin.skeleton_node_index = 0u;
+        source_skin.joints = { 1u };
         source_skin.inverse_bind_matrices = {
             skin_physics::asset::mat4{}
         };
 
+        skin_physics::asset::node root_node;
+        root_node.name = "runtime_model_root";
+        root_node.children = { 1u, 2u };
+
         skin_physics::asset::node joint_node;
         joint_node.name = "runtime_joint_root";
-        joint_node.children = { 1u };
+        joint_node.parent_index = 0u;
 
         skin_physics::asset::node mesh_node;
         mesh_node.name = "runtime_skinned_mesh";
@@ -1097,24 +1102,114 @@ namespace
         mesh_node.mesh_index = 0u;
         mesh_node.skin_index = 0u;
 
+        skin_physics::asset::animation_track joint_translation_track;
+        joint_translation_track.node_index = 1u;
+        joint_translation_track.path =
+            skin_physics::asset::animation_path::translation;
+        joint_translation_track.mode =
+            skin_physics::asset::interpolation::linear;
+        joint_translation_track.component_count = 3u;
+        skin_physics::asset::animation_key joint_translation_start;
+        joint_translation_start.time = 0.0f;
+        joint_translation_start.value = { 0.0f, 0.0f, 0.0f };
+        skin_physics::asset::animation_key joint_translation_end;
+        joint_translation_end.time = 1.0f;
+        joint_translation_end.value = { 1.0f, 0.0f, 0.0f };
+        joint_translation_track.keys = {
+            joint_translation_start, joint_translation_end
+        };
+        skin_physics::asset::animation_clip animation_clip;
+        animation_clip.name = "runtime_joint_translation";
+        animation_clip.duration = 1.0f;
+        animation_clip.tracks.push_back(joint_translation_track);
+
         skin_physics::runtime::model_desc model_desc;
         model_desc.source_model.meshes.push_back(render_mesh);
         model_desc.source_model.skins.push_back(source_skin);
-        model_desc.source_model.nodes = { joint_node, mesh_node };
+        model_desc.source_model.nodes = { root_node, joint_node, mesh_node };
         model_desc.source_model.scene_roots = { 0u };
+        model_desc.source_model.animations.push_back(animation_clip);
 
         skin_physics::runtime::model_mesh_physics_asset mesh_asset;
         mesh_asset.mesh_index = 0u;
         mesh_asset.physics_mesh = built_mesh.value;
         model_desc.mesh_physics_assets.push_back(std::move(mesh_asset));
 
+        skin_physics::runtime::world_desc animation_world_desc;
+        animation_world_desc.fixed_delta_time = 0.01;
+        animation_world_desc.contact_max_substep_delta_time = 0.0;
+        animation_world_desc.minimum_substeps = 1u;
+        animation_world_desc.maximum_substeps = 32u;
+        animation_world_desc.maximum_steps_per_advance = 1u;
+        animation_world_desc.maximum_integration_segments_per_tick = 64u;
+        animation_world_desc.maximum_in_flight_ticks = 1u;
         skin_physics::runtime::world_handle world;
-        require(runtime.create_world({}, &world).success(),
-            "Skin Weight transfer World creation must succeed.");
+        require(runtime.create_world(animation_world_desc, &world).success(),
+            "Skinned Animation Runtime World creation must succeed.");
 
         skin_physics::runtime::model_handle model;
         require(runtime.add_model(world, model_desc, &model).success(),
             "Runtime must transfer boundary Render Mesh Skin Weights to Physics Vertices and upload the normalized 8-influence GPU record buffer.");
+
+        skin_physics::runtime::mesh_physics_parameters tracking_parameters;
+        tracking_parameters.young_modulus = 1.0f;
+        tracking_parameters.damping = 0.0f;
+        tracking_parameters.tracking_stiffness = 0.0f;
+        tracking_parameters.tracking_damping = 1000.0f;
+        require(runtime.set_mesh_physics_parameters(
+                world, model, 0u, tracking_parameters).success(),
+            "Skinned Runtime Mesh must accept a non-zero Kelvin-Voigt tracking damping coefficient.");
+        skin_physics::runtime::animation_playback_desc playback;
+        playback.track.clip_index = 0u;
+        playback.track.time = 0.0;
+        playback.track.speed = 1.0;
+        playback.track.loop = false;
+        require(runtime.set_animation_playback(
+                world, model, playback).success(),
+            "Runtime must accept the immutable one-joint Animation Playback input.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "Skinned Animation Runtime World must enter Playing.");
+
+        skin_physics::runtime::advance_report animation_report;
+        require(runtime.advance(world, 0.01, &animation_report).success() &&
+            animation_report.submitted_tick_count == 1u &&
+            animation_report.in_flight_tick_count == 1u &&
+            animation_report.pending_tick_count == 0u,
+            "A fully skinned Soft Body Animation Playback Tick must build Span boundaries and submit GPU LBS / Tracking passes instead of BLOCKED_BY_INPUT.");
+        skin_physics::runtime::world_status animation_status;
+        bool animation_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &animation_status).success(),
+                "Skinned Animation Status polling must remain non-blocking.");
+            if (animation_status.in_flight_tick_count == 0u)
+            {
+                animation_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(animation_observed &&
+            animation_status.state == skin_physics::runtime::tick_state::committed &&
+            animation_status.gpu_committed_sequence == 1u,
+            "Skinned Animation Runtime Tick must Commit only after GPU LBS target validation and Kelvin-Voigt integration.");
+
+        skin_physics::runtime::render_binding animated_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &animated_binding).success(),
+            "Skinned Animation Commit must publish the Physics Mesh Render Candidate.");
+        const std::vector<test_gpu_float4> animated_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), animated_binding.position_srv,
+                animated_binding.vertex_count);
+        require(!animated_positions.empty() &&
+            animated_positions[0u].x > 1.0e-5f,
+            "GPU Skinning Target Velocity and non-zero Tracking damping must move the simulated Physics Vertex toward the animated joint.");
+        require(runtime.release_render_bindings(
+                world, animated_binding.lease_generation).success(),
+            "Skinned Animation Render Candidate Host Lease must release after readback.");
 
         require(runtime.destroy_model(world, model).success(),
             "Skinned Soft Body Model must release transferred CPU and GPU Skin Weight resources.");
