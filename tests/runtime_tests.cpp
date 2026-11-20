@@ -348,6 +348,11 @@ namespace
         {
             skin_physics::asset::vertex vertex;
             vertex.position = position;
+            vertex.normal = { 0.0f, 0.0f, 1.0f };
+            vertex.tangent = { 1.0f, 0.0f, 0.0f, 1.0f };
+            vertex.attributes =
+                skin_physics::asset::attribute_normal |
+                skin_physics::asset::attribute_tangent;
             render_mesh.vertices.push_back(vertex);
         }
         for (const skin_physics::physics::boundary_triangle& boundary :
@@ -457,6 +462,8 @@ namespace
                 world, model, 0u, &render_binding).success(),
             "A CPU-observed committed Soft Body Render Candidate must be exposed through a Host Render Lease.");
         require(render_binding.position_srv != nullptr &&
+            render_binding.normal_srv != nullptr &&
+            render_binding.tangent_srv != nullptr &&
             render_binding.format == DXGI_FORMAT_R32G32B32A32_FLOAT &&
             render_binding.stride == 16u &&
             render_binding.vertex_count == render_mesh.vertices.size() &&
