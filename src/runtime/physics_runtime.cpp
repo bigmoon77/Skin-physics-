@@ -4557,6 +4557,30 @@ namespace skin_physics::runtime
                 std::numeric_limits<std::size_t>::max();
             std::size_t maximum_boundary_count =
                 static_cast<std::size_t>(substep_count) + 1u;
+            std::size_t animation_boundary_count = 0u;
+            for (const model_animation_tick_schedule& schedule :
+                reservation.animation_schedules)
+            {
+                const std::size_t span_count = schedule.has_blend
+                    ? schedule.blend_spans.size()
+                    : schedule.playback_spans.size();
+                if (span_count >
+                    (maximum_size - animation_boundary_count) / 2u)
+                {
+                    diagnostic =
+                        "Animation Span boundary count overflows size_t.";
+                    return false;
+                }
+                animation_boundary_count += span_count * 2u;
+            }
+            if (animation_boundary_count >
+                maximum_size - maximum_boundary_count)
+            {
+                diagnostic =
+                    "Combined Animation / Force / Impulse boundary count overflows size_t.";
+                return false;
+            }
+            maximum_boundary_count += animation_boundary_count;
             if (input_snapshot.forces.size() >
                 (maximum_size - maximum_boundary_count) / 2u)
             {
@@ -4604,6 +4628,61 @@ namespace skin_physics::runtime
                         return false;
                     }
                     boundaries.push_back(boundary);
+                }
+
+                for (const model_animation_tick_schedule& schedule :
+                    reservation.animation_schedules)
+                {
+                    const auto append_animation_boundaries =
+                        [&boundaries, &tick_start, &tick_end](
+                            double world_start, double world_duration) -> bool
+                    {
+                        const double world_end = world_start + world_duration;
+                        if (!finite_double(world_start) ||
+                            !finite_double(world_duration) ||
+                            world_duration <= 0.0 ||
+                            !finite_double(world_end) ||
+                            world_end <= world_start ||
+                            world_start < tick_start ||
+                            world_end > tick_end)
+                        {
+                            return false;
+                        }
+                        boundaries.push_back(world_start);
+                        boundaries.push_back(world_end);
+                        return true;
+                    };
+
+                    if (schedule.has_blend)
+                    {
+                        for (const physics::animation_blend_clip_span& span :
+                            schedule.blend_spans)
+                        {
+                            if (!append_animation_boundaries(
+                                    span.world_time_start,
+                                    span.world_time_duration))
+                            {
+                                diagnostic =
+                                    "Animation Blend Span boundary is outside its immutable Tick interval or has an invalid duration.";
+                                return false;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const physics::scheduled_animation_clip_span& span :
+                            schedule.playback_spans)
+                        {
+                            if (!append_animation_boundaries(
+                                    span.world_time_start,
+                                    span.world_time_duration))
+                            {
+                                diagnostic =
+                                    "Animation Playback Span boundary is outside its immutable Tick interval or has an invalid duration.";
+                                return false;
+                            }
+                        }
+                    }
                 }
 
                 for (const force_desc& force : input_snapshot.forces)
@@ -4879,6 +4958,33 @@ namespace skin_physics::runtime
 
             const uint32_t planned_substeps =
                 static_cast<uint32_t>(required_substeps);
+            std::vector<model_animation_tick_schedule> animation_schedules;
+            std::string animation_schedule_diagnostic;
+            if (!build_model_animation_tick_schedules(
+                    world,
+                    input_snapshot,
+                    reservation,
+                    animation_schedules,
+                    animation_schedule_diagnostic))
+            {
+                reservation.planned_substeps = 0u;
+                reservation.planned_integration_segments = 0u;
+                reservation.animation_schedules.clear();
+                reservation.integration_segments.clear();
+                reservation.blocked = false;
+                reservation.rejected = false;
+                world.planned_substeps = 0u;
+                world.planned_integration_segments = 0u;
+                world.last_tick_status = status_code::asset_invalid;
+                world.state = tick_state::failed;
+                world.diagnostic =
+                    "CPU Animation Span Preflight failed: " +
+                    animation_schedule_diagnostic;
+                return;
+            }
+            reservation.animation_schedules =
+                std::move(animation_schedules);
+
             std::vector<integration_segment> scheduled_segments;
             std::string schedule_diagnostic;
             if (!build_world_integration_segment_schedule(
@@ -6238,6 +6344,8 @@ namespace skin_physics::runtime
         model.root_samples.clear();
         model.has_animation_playback = false;
         model.has_animation_blend = false;
+        model.animation_world_time_origin =
+            world.gpu_committed_simulation_time;
         model.mesh_parameters.resize(model.source_model.meshes.size());
         model.mesh_parameters_valid.resize(model.source_model.meshes.size(), false);
         model.occupied = true;
@@ -6800,6 +6908,8 @@ namespace skin_physics::runtime
                 "Animation Playback descriptor contains an invalid Clip, Time, Speed or Event Weight.");
         }
         model->animation_playback = desc;
+        model->animation_world_time_origin =
+            world->gpu_committed_simulation_time;
         model->has_animation_playback = true;
         model->has_animation_blend = false;
         return make_status(status_code::ok, {});
@@ -6839,6 +6949,8 @@ namespace skin_physics::runtime
                 "Animation Blend descriptor is invalid or its Hermite Weight Curve leaves [0, 1].");
         }
         model->animation_blend = desc;
+        model->animation_world_time_origin =
+            world->gpu_committed_simulation_time;
         model->has_animation_blend = true;
         model->has_animation_playback = false;
         return make_status(status_code::ok, {});
