@@ -670,9 +670,24 @@ namespace skin_physics::physics
             }
         }
 
+        if (physics_value.rest_positions.size() >=
+                static_cast<std::size_t>(asset::invalid_index) ||
+            physics_value.rest_positions.size() >
+                static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+        {
+            result.diagnostic = "Physics Mesh Vertex count exceeds the attribute transfer index range.";
+            return result;
+        }
+
         const float maximum_distance_squared =
             settings.maximum_surface_distance * settings.maximum_surface_distance;
         const float mesh_diagonal = bbox_diagonal(render_mesh.vertices);
+        if (!std::isfinite(maximum_distance_squared) ||
+            !std::isfinite(mesh_diagonal))
+        {
+            result.diagnostic = "Render Mesh scale or maximum surface distance is not representable.";
+            return result;
+        }
         const float distance_tie_tolerance = std::max(
             1.0e-12f, mesh_diagonal * mesh_diagonal * 1.0e-10f);
 
