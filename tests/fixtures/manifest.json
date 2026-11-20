@@ -414,7 +414,8 @@
             "A synchronized two-Clip Playback / Blend descriptor is accepted and both Clip Tracks share the same World-Time Span boundaries with the Hermite Weight Curve",
             "The Blend Weight selects the Target Clip; CPU blended Local Pose / analytic derivative rebuilds Node Hierarchy and per-Skin Joint matrices for the selected Mesh Node",
             "The production GPU LBS and Kelvin-Voigt Tracking passes execute for the blended Target Pose, commit the second Runtime Tick, and move the Physics Vertex farther than the Source-only Playback reference",
-            "The blended Render Candidate Host Lease releases and the World Stop / Reset / Model / World destruction lifecycle succeeds after two committed animated Ticks"
+            "The blended Render Candidate Host Lease releases and the World Stop / Reset / Model / World destruction lifecycle succeeds after two committed animated Ticks",
+            "A non-constant Hermite Weight with different Source / Target starting translations contributes w_dot * (target_position - source_position) to the analytic Target Velocity consumed by GPU Tracking"
           ]
         }
       ],
