@@ -1824,7 +1824,8 @@ namespace skin_physics::runtime
                             { 0u, source_position_srv },
                             { 1u, source_velocity_srv },
                             { 2u, gpu_mesh.vertex_force_srv.Get() },
-                            { 3u, gpu_mesh.inverse_mass_srv.Get() }
+                            { 3u, gpu_mesh.inverse_mass_srv.Get() },
+                            { 4u, gpu_mesh.vertex_damping_rate_srv.Get() }
                         };
                         integrate_pass.unordered_access_views = {
                             { 0u, destination_position_uav, 0xffffffffu },
