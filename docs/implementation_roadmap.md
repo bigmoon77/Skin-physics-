@@ -25,7 +25,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Record open implementation dependencies in this roadmap; change normative design only when a real contradiction is found.
 
 ### Phase 1 — R0 Runtime boundary and asynchronous scheduler
-**Status: in progress**
+**Status: in progress — Runtime API / ownership foundation added; GPU Tick scheduler and Commit integration pending**
 
 - Public C++17 API, descriptors, status codes and generation-checked World / Model / Collider handles.
 - Host-owned D3D11 Device / Immediate Context validation and COM lifetime.
