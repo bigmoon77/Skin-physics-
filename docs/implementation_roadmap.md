@@ -69,7 +69,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Hosted Windows CI run #1415 executed the Release x64 solution build and complete CPU / WARP test suite successfully. A separate run #1414 failed in the DXGI Timestamp Query collection regression; run #1415 passed the full suite on the immediately following commit.
 - Added strict Tet rest-matrix / shape-gradient, unique-vertex and exact Vertex-to-Tet CSR validation before GPU upload; malformed asset / CSR input is rejected.
 - Runtime reports BLOCKED_BY_INPUT only for still-unconnected paths such as Cloth, Animation Playback / Blend, Root Transform Samples and Collider work. Force / Impulse targets support one exact Soft Body Mesh, all Soft Body Meshes in a Model, or all Soft Body Meshes in the World. The new WARP Runtime regression compares identical Mesh response ratios against the exact-Mesh baseline: 1/2 for a two-Mesh Model scope and 1/4 for a four-Mesh World scope; it also retains the exact-Mesh sibling-isolation and NO_FORCE_TARGET rollback checks.
-- A dedicated WARP regression compiles and dispatches the production Force distribution Weight / Reduction / Finalize / Apply shaders and compares read-back per-vertex q, normalization sum and normalized weights against the CPU double-precision oracle. Production Runtime World / Model / exact-Mesh scope behavior passed hosted Windows WARP run #1415. The ratio assertion was tightened afterward and is being re-run. Full physical-GPU numerical qualification and trajectory parity remain pending, as do Cloth event application; animation tracking stability limits and immutable trajectories; Cloth / Collision / Contact coupling; and Physics Attribute Paint cache persistence / remapping on topology rebuild.
+- A dedicated WARP regression compiles and dispatches the production Force distribution Weight / Reduction / Finalize / Apply shaders and compares read-back per-vertex q, normalization sum and normalized weights against the CPU double-precision oracle. Production Runtime World / Model / exact-Mesh scope behavior, including relative response ratios of 1/2 and 1/4 against the exact-Mesh baseline, passed hosted Windows WARP runs #1418 and #1419. The API target-scope documentation and roadmap synchronization also passed complete Release x64 / CPU / WARP runs #1420 through #1423. Full physical-GPU numerical qualification and trajectory parity remain pending, as do Cloth event application; animation tracking stability limits and immutable trajectories; Cloth / Collision / Contact coupling; and Physics Attribute Paint cache persistence / remapping on topology rebuild.
 
 ### Phase 3 — R2 Cloth GPU iteration
 **Status: pending**
@@ -128,7 +128,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 
 ## Current known validation constraint
 
-Windows CI has repeatedly reported a failed job with no reported job steps and no retrievable log artifact. Such attempts do not establish a compiler or test failure. Until a Windows runner executes the workflow, C++ compilation, HLSL compilation, WARP execution and physical-GPU behavior remain unverified.
+The current branch head `7849bf8` passed hosted Windows Release x64 build and the complete CPU / WARP test suite in runs #1422 and #1423. The stronger Model / World response-ratio regression also passed in runs #1418 and #1419. Physical-GPU driver qualification, performance profiling and cross-vendor behavior remain unverified and are still required by Phase 7 / Phase 8.
 
 ## Scope control
 
