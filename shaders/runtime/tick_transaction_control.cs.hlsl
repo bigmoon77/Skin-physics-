@@ -35,7 +35,11 @@ struct TickCommitControl
     uint reservation_token_high;
     uint last_gate_state;
     uint diagnostic;
-    uint reserved;
+    uint render_slot_id;
+    uint render_slot_generation;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
 };
 
 struct TickStatus
@@ -135,8 +139,8 @@ void publish_tick_status(
     value.work_budget_block_origin = 0u;
     value.executed_integration_segments = 0u;
     value.minimum_required_integration_segments = 0u;
-    value.reserved0 = control.reserved & 0x0000ffffu;
-    value.reserved1 = (control.reserved >> 16u) & 0x0000ffffu;
+    value.reserved0 = control.render_slot_id;
+    value.reserved1 = control.render_slot_generation;
     tick_status_buffer[0] = value;
 }
 
@@ -345,9 +349,8 @@ void tick_commit_control(uint3 dispatch_id : SV_DispatchThreadID)
     control.active_state_set = plan.destination_state_set;
     if (plan.reserved0 != 0xffffffffu)
     {
-        control.reserved =
-            ((plan.reserved1 & 0x0000ffffu) << 16u) |
-            (plan.reserved0 & 0x0000ffffu);
+        control.render_slot_id = plan.reserved0;
+        control.render_slot_generation = plan.reserved1;
     }
     control.committed_sequence_low = plan.tick_sequence_low;
     control.committed_sequence_high = plan.tick_sequence_high;
