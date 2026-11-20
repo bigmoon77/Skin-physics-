@@ -410,7 +410,11 @@
             "The production GPU Skinning shader writes Physics Vertex Animation Target Position and analytic Target Velocity using the per-Skin Joint mapping",
             "Segment-owned Animation Target Status remains alive and is read by the matching Soft Body Integration pass before Commit",
             "Kelvin-Voigt Tracking uses per-vertex animation_tracking Paint, stiffness and damping; implicit exponential damping moves the simulated Physics Vertex toward the animated target",
-            "The Runtime Tick commits and publishes Render Candidates only after Skinning validation and Soft Body Integration succeed; Host Render Lease releases after readback"
+            "The Runtime Tick commits and publishes Render Candidates only after Skinning validation and Soft Body Integration succeed; Host Render Lease releases after readback",
+            "A synchronized two-Clip Playback / Blend descriptor is accepted and both Clip Tracks share the same World-Time Span boundaries with the Hermite Weight Curve",
+            "The Blend Weight selects the Target Clip; CPU blended Local Pose / analytic derivative rebuilds Node Hierarchy and per-Skin Joint matrices for the selected Mesh Node",
+            "The production GPU LBS and Kelvin-Voigt Tracking passes execute for the blended Target Pose, commit the second Runtime Tick, and move the Physics Vertex farther than the Source-only Playback reference",
+            "The blended Render Candidate Host Lease releases and the World Stop / Reset / Model / World destruction lifecycle succeeds after two committed animated Ticks"
           ]
         }
       ],
