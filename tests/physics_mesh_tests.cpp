@@ -2,6 +2,7 @@
 #include "skin_physics/physics/msh_reader.hpp"
 #include "skin_physics/physics/ftetwild_runner.hpp"
 #include "skin_physics/physics/physics_mesh_builder.hpp"
+#include "skin_physics/physics/render_binding.hpp"
 #include "skin_physics/physics/skin_weights.hpp"
 #include "skin_physics/physics/asset_cache.hpp"
 #include "test_support.hpp"
@@ -335,6 +336,111 @@ namespace
         }
     }
 
+    void test_physics_attribute_weight_transfer_and_harmonic_extension()
+    {
+        const raw_tet_mesh raw_mesh = make_center_tetrahedral_mesh();
+        const physics_mesh_build_result built = build_physics_mesh(raw_mesh);
+        require(built.success,
+            "Center-star Physics Mesh should build for attribute transfer.");
+
+        skin_physics::asset::mesh render_mesh;
+        render_mesh.name = "attribute_transfer_center_star";
+        render_mesh.vertices.resize(4u);
+        for (uint32_t vertex_index = 0u; vertex_index < 4u; ++vertex_index)
+        {
+            render_mesh.vertices[vertex_index].position =
+                raw_mesh.positions[vertex_index];
+        }
+        for (const boundary_triangle& face : built.value.boundary_triangles)
+        {
+            render_mesh.indices.insert(
+                render_mesh.indices.end(),
+                face.vertices.begin(),
+                face.vertices.end());
+        }
+
+        const std::size_t shape_channel = static_cast<std::size_t>(
+            skin_physics::asset::physics_attribute_channel::shape_recovery);
+        const std::size_t volume_channel = static_cast<std::size_t>(
+            skin_physics::asset::physics_attribute_channel::volume);
+        const std::size_t damping_channel = static_cast<std::size_t>(
+            skin_physics::asset::physics_attribute_channel::damping);
+        const std::array<float, 4> shape_values = { 0.0f, 1.0f, 0.0f, 1.0f };
+        const std::array<float, 4> volume_values = { 1.0f, 1.0f, 0.0f, 0.0f };
+        const std::array<float, 4> damping_values = { 0.0f, 0.25f, 0.75f, 1.0f };
+        for (std::size_t vertex_index = 0u; vertex_index < 4u; ++vertex_index)
+        {
+            render_mesh.vertices[vertex_index].physics_weights[shape_channel] =
+                shape_values[vertex_index];
+            render_mesh.vertices[vertex_index].physics_weights[volume_channel] =
+                volume_values[vertex_index];
+            render_mesh.vertices[vertex_index].physics_weights[damping_channel] =
+                damping_values[vertex_index];
+        }
+
+        physics_attribute_transfer_settings settings;
+        settings.maximum_surface_distance = 1.0e-4f;
+        settings.harmonic_relative_tolerance = 1.0e-8;
+        const physics_attribute_transfer_result transferred =
+            transfer_physics_vertex_attribute_weights(
+                render_mesh, built.value, settings);
+        require(transferred.success,
+            "Render-to-Physics attribute transfer and harmonic extension should succeed.");
+        require(transferred.vertex_weights.size() ==
+                built.value.rest_positions.size(),
+            "Transferred attribute count must match the Physics Vertex count.");
+        require(transferred.maximum_surface_distance <=
+                settings.maximum_surface_distance,
+            "Boundary attribute projection must respect its distance limit.");
+        require(transferred.maximum_harmonic_relative_residual <=
+                settings.harmonic_relative_tolerance,
+            "Interior harmonic extension residual must satisfy its tolerance.");
+
+        for (uint32_t vertex_index = 0u; vertex_index < 4u; ++vertex_index)
+        {
+            const physics_vertex_attribute_weights& weights =
+                transferred.vertex_weights[vertex_index];
+            require(std::abs(weights[shape_channel] - shape_values[vertex_index]) < 1.0e-6f &&
+                std::abs(weights[volume_channel] - volume_values[vertex_index]) < 1.0e-6f &&
+                std::abs(weights[damping_channel] - damping_values[vertex_index]) < 1.0e-6f,
+                "Boundary Physics Vertices must preserve their Render Mesh paint values.");
+        }
+
+        const physics_vertex_attribute_weights& center =
+            transferred.vertex_weights[4u];
+        require(std::abs(center[shape_channel] - 0.5f) < 1.0e-5f &&
+            std::abs(center[volume_channel] - 0.5f) < 1.0e-5f &&
+            std::abs(center[damping_channel] - 0.5f) < 1.0e-5f,
+            "The center-star interior vertex must receive the analytical harmonic mean.");
+
+        skin_physics::asset::mesh ambiguous_mesh = render_mesh;
+        const std::array<uint32_t, 3> source_triangle = {
+            ambiguous_mesh.indices[0u],
+            ambiguous_mesh.indices[1u],
+            ambiguous_mesh.indices[2u]
+        };
+        std::array<uint32_t, 3> duplicate_triangle = {};
+        for (std::size_t local_index = 0u; local_index < 3u; ++local_index)
+        {
+            skin_physics::asset::vertex duplicate =
+                ambiguous_mesh.vertices[source_triangle[local_index]];
+            duplicate.physics_weights[shape_channel] = 1.0f;
+            duplicate_triangle[local_index] =
+                static_cast<uint32_t>(ambiguous_mesh.vertices.size());
+            ambiguous_mesh.vertices.push_back(duplicate);
+        }
+        ambiguous_mesh.indices.insert(
+            ambiguous_mesh.indices.end(),
+            duplicate_triangle.begin(),
+            duplicate_triangle.end());
+
+        const physics_attribute_transfer_result ambiguous =
+            transfer_physics_vertex_attribute_weights(
+                ambiguous_mesh, built.value, settings);
+        require(!ambiguous.success && !ambiguous.diagnostic.empty(),
+            "Coincident Render surfaces with conflicting paint must be rejected as ambiguous.");
+    }
+
     physics_asset_cache_identity make_test_cache_identity()
     {
         physics_asset_cache_identity identity;
@@ -560,6 +666,8 @@ int run_physics_mesh_tests()
     std::cout << "[PASS] P02_NON_MANIFOLD_REJECTION\n";
     test_skin_weight_harmonic_extension();
     std::cout << "[PASS] P02_SKIN_WEIGHT_HARMONIC\n";
+    test_physics_attribute_weight_transfer_and_harmonic_extension();
+    std::cout << "[PASS] P02_PHYSICS_ATTRIBUTE_HARMONIC\n";
     test_physics_asset_cache_round_trip_and_invalidation();
     std::cout << "[PASS] P02_ASSET_CACHE\n";
     test_ftetwild_resolution_settings_report_and_cache_identity();
