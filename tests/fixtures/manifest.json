@@ -362,7 +362,9 @@
           "checks": [
             "Production Weight, Reduction, Finalize and Apply entry points compile and dispatch on WARP",
             "GPU per-vertex unnormalized q values and normalization sum match the CPU double-precision reference",
-            "GPU per-vertex normalized weights match the CPU reference across three 64-thread groups with a 130-vertex input"
+            "GPU per-vertex normalized weights match the CPU reference across three 64-thread groups with a 130-vertex input",
+            "Three distinct CPU target Mesh arrays share one normalization denominator; flattened production-shader WARP dispatch preserves the same global per-vertex weights across Mesh partition boundaries",
+            "Each Mesh receives only its proportional share of the descriptor magnitude; weights are not normalized independently per Mesh"
           ]
         }
       ],
