@@ -141,12 +141,13 @@ void compute_jacobi_rotation(
     float app,
     float aqq,
     float apq,
+    out float tangent,
     out float cosine,
     out float sine)
 {
     float theta = (aqq - app) / (2.0f * apq);
     float sign_value = theta >= 0.0f ? 1.0f : -1.0f;
-    float tangent = sign_value /
+    tangent = sign_value /
         (abs(theta) + sqrt(1.0f + theta * theta));
     cosine = rsqrt(1.0f + tangent * tangent);
     sine = tangent * cosine;
@@ -159,12 +160,13 @@ void apply_jacobi_rotation_01(
     float app = symmetric[0][0];
     float aqq = symmetric[1][1];
     float apq = symmetric[0][1];
+    float tangent;
     float cosine;
     float sine;
-    compute_jacobi_rotation(app, aqq, apq, cosine, sine);
+    compute_jacobi_rotation(app, aqq, apq, tangent, cosine, sine);
 
-    symmetric[0][0] = app - (sine / cosine) * apq;
-    symmetric[1][1] = aqq + (sine / cosine) * apq;
+    symmetric[0][0] = app - tangent * apq;
+    symmetric[1][1] = aqq + tangent * apq;
     symmetric[0][1] = 0.0f;
     symmetric[1][0] = 0.0f;
 
@@ -198,12 +200,13 @@ void apply_jacobi_rotation_02(
     float app = symmetric[0][0];
     float aqq = symmetric[2][2];
     float apq = symmetric[0][2];
+    float tangent;
     float cosine;
     float sine;
-    compute_jacobi_rotation(app, aqq, apq, cosine, sine);
+    compute_jacobi_rotation(app, aqq, apq, tangent, cosine, sine);
 
-    symmetric[0][0] = app - (sine / cosine) * apq;
-    symmetric[2][2] = aqq + (sine / cosine) * apq;
+    symmetric[0][0] = app - tangent * apq;
+    symmetric[2][2] = aqq + tangent * apq;
     symmetric[0][2] = 0.0f;
     symmetric[2][0] = 0.0f;
 
@@ -237,12 +240,13 @@ void apply_jacobi_rotation_12(
     float app = symmetric[1][1];
     float aqq = symmetric[2][2];
     float apq = symmetric[1][2];
+    float tangent;
     float cosine;
     float sine;
-    compute_jacobi_rotation(app, aqq, apq, cosine, sine);
+    compute_jacobi_rotation(app, aqq, apq, tangent, cosine, sine);
 
-    symmetric[1][1] = app - (sine / cosine) * apq;
-    symmetric[2][2] = aqq + (sine / cosine) * apq;
+    symmetric[1][1] = app - tangent * apq;
+    symmetric[2][2] = aqq + tangent * apq;
     symmetric[1][2] = 0.0f;
     symmetric[2][1] = 0.0f;
 
