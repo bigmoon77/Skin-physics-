@@ -5424,6 +5424,7 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_empty_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_soft_body_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_animation_skinning_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_weight_shader;
