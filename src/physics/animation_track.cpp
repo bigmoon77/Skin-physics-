@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace skin_physics::physics
 {
@@ -476,6 +477,85 @@ namespace skin_physics::physics
             return true;
         }
 
+        bool interpolate_rotation_key_values(
+            const asset::animation_key& start,
+            const asset::animation_key& end,
+            double interpolation,
+            asset::vec4& out_value)
+        {
+            animation_component_array start_value = {
+                start.value[0], start.value[1], start.value[2], start.value[3]
+            };
+            animation_component_array end_value = {
+                end.value[0], end.value[1], end.value[2], end.value[3]
+            };
+            animation_component_array normalized_start = {};
+            animation_component_array normalized_end = {};
+            double start_length = 0.0;
+            double end_length = 0.0;
+            if (!normalize_quaternion_double(
+                    start_value, normalized_start, start_length) ||
+                !normalize_quaternion_double(
+                    end_value, normalized_end, end_length))
+            {
+                return false;
+            }
+
+            double cosine = dot_quaternion(normalized_start, normalized_end);
+            if (cosine < 0.0)
+            {
+                cosine = -cosine;
+                for (double& component : normalized_end)
+                {
+                    component = -component;
+                }
+            }
+            cosine = std::max(-1.0, std::min(1.0, cosine));
+            const double t = std::max(0.0, std::min(1.0, interpolation));
+            animation_component_array value = {};
+            if (cosine > 0.9995)
+            {
+                animation_component_array raw = {};
+                for (std::size_t component = 0u; component < 4u; ++component)
+                {
+                    raw[component] =
+                        normalized_start[component] * (1.0 - t) +
+                        normalized_end[component] * t;
+                }
+                double length = 0.0;
+                if (!normalize_quaternion_double(raw, value, length))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                const double angle = std::acos(cosine);
+                const double sine = std::sin(angle);
+                if (!std::isfinite(sine) || std::abs(sine) <= 1.0e-12)
+                {
+                    return false;
+                }
+                for (std::size_t component = 0u; component < 4u; ++component)
+                {
+                    const double tangent =
+                        (normalized_end[component] -
+                            normalized_start[component] * cosine) / sine;
+                    value[component] =
+                        normalized_start[component] * std::cos(angle * t) +
+                        tangent * std::sin(angle * t);
+                }
+            }
+
+            out_value = {
+                static_cast<float>(value[0]),
+                static_cast<float>(value[1]),
+                static_cast<float>(value[2]),
+                static_cast<float>(value[3])
+            };
+            return finite_asset_vec4(out_value);
+        }
+
         animation_channel_span_sample_result make_span_sample_error(
             animation_channel_span_error error,
             const std::string& message)
@@ -534,33 +614,58 @@ namespace skin_physics::physics
             }
             else
             {
-                std::size_t upper_index = 1u;
-                while (upper_index < track.keys.size() &&
-                    clip_time_start > track.keys[upper_index].time)
+                const auto exact_key = std::lower_bound(
+                    track.keys.begin(),
+                    track.keys.end(),
+                    clip_time_start,
+                    [](const asset::animation_key& key, double time)
+                    {
+                        return static_cast<double>(key.time) < time;
+                    });
+                if (exact_key != track.keys.end() &&
+                    static_cast<double>(exact_key->time) == clip_time_start)
                 {
-                    ++upper_index;
-                }
-                const asset::animation_key& start = track.keys[upper_index - 1u];
-                const asset::animation_key& end = track.keys[upper_index];
-                const double interval_duration =
-                    static_cast<double>(end.time) - start.time;
-                const double normalized =
-                    (clip_time_start - start.time) / interval_duration;
-
-                if (track.mode == asset::interpolation::step)
-                {
-                    write_constant_coefficients(candidate, start, component_count);
-                }
-                else if (track.path == asset::animation_path::rotation &&
-                    track.mode == asset::interpolation::linear)
-                {
-                    candidate.coefficients[0] = read_key_value(start, component_count);
-                    candidate.coefficients[1] = read_key_value(end, component_count);
+                    write_constant_coefficients(candidate, *exact_key, component_count);
                 }
                 else
                 {
-                    build_scalar_channel_coefficients(
-                        candidate, start, end, component_count, normalized, 0.0);
+                    std::size_t upper_index = 1u;
+                    while (upper_index < track.keys.size() &&
+                        clip_time_start > track.keys[upper_index].time)
+                    {
+                        ++upper_index;
+                    }
+                    const asset::animation_key& start = track.keys[upper_index - 1u];
+                    const asset::animation_key& end = track.keys[upper_index];
+                    const double interval_duration =
+                        static_cast<double>(end.time) - start.time;
+                    const double normalized =
+                        (clip_time_start - start.time) / interval_duration;
+
+                    if (track.mode == asset::interpolation::step)
+                    {
+                        write_constant_coefficients(candidate, start, component_count);
+                    }
+                    else if (track.path == asset::animation_path::rotation &&
+                        track.mode == asset::interpolation::linear)
+                    {
+                        asset::vec4 paused_rotation;
+                        if (!interpolate_rotation_key_values(
+                                start, end, normalized, paused_rotation))
+                        {
+                            result.error = animation_channel_span_error::invalid_quaternion;
+                            result.message =
+                                "Paused LINEAR rotation Span could not normalize its sampled quaternion.";
+                            return result;
+                        }
+                        candidate.coefficients[0] = paused_rotation;
+                        candidate.coefficients[1] = paused_rotation;
+                    }
+                    else
+                    {
+                        build_scalar_channel_coefficients(
+                            candidate, start, end, component_count, normalized, 0.0);
+                    }
                 }
             }
         }
@@ -630,8 +735,21 @@ namespace skin_physics::physics
             else if (track.path == asset::animation_path::rotation &&
                 track.mode == asset::interpolation::linear)
             {
-                candidate.coefficients[0] = read_key_value(start, component_count);
-                candidate.coefficients[1] = read_key_value(end, component_count);
+                const double normalized_end = normalized_start + normalized_delta;
+                asset::vec4 rotation_start;
+                asset::vec4 rotation_end;
+                if (!interpolate_rotation_key_values(
+                        start, end, normalized_start, rotation_start) ||
+                    !interpolate_rotation_key_values(
+                        start, end, normalized_end, rotation_end))
+                {
+                    result.error = animation_channel_span_error::invalid_quaternion;
+                    result.message =
+                        "LINEAR rotation Span could not normalize its Clip-Time endpoint quaternions.";
+                    return result;
+                }
+                candidate.coefficients[0] = rotation_start;
+                candidate.coefficients[1] = rotation_end;
             }
             else
             {
