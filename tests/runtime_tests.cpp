@@ -476,6 +476,13 @@ namespace
         model_desc.source_model.meshes.push_back(render_mesh);
         model_desc.source_model.meshes.push_back(render_mesh);
         model_desc.world_transform.translation = { 2.0f, 3.0f, 4.0f };
+        const float root_rotation_scale = 1.0002f;
+        model_desc.world_transform.rotation = {
+            0.0f,
+            0.3826834324f * root_rotation_scale,
+            0.0f,
+            0.9238795325f * root_rotation_scale
+        };
         skin_physics::runtime::model_mesh_physics_asset mesh_asset;
         mesh_asset.mesh_index = 0u;
         mesh_asset.physics_mesh = built_mesh.value;
@@ -633,7 +640,7 @@ namespace
                 std::abs(position.z - rest_position.z) <= 1.0e-3f &&
                 position.y < rest_position.y &&
                 position.y > rest_position.y - 0.01f,
-                "Render Feedback must invert the non-zero Model Root Translation and preserve the expected small gravity displacement in model-local space.");
+                "Render Feedback must invert the translated, rotated and slightly non-unit input Root Transform and preserve the expected small gravity displacement in model-local space.");
 
             const double normal_length_squared =
                 static_cast<double>(normal.x) * normal.x +
