@@ -1618,15 +1618,25 @@ namespace
         synchronized_rotation.keys = {
             rotation_start, rotation_middle, rotation_end
         };
+        animation_track synchronized_constant_channel;
+        synchronized_constant_channel.node_index = 4u;
+        synchronized_constant_channel.path = animation_path::scale;
+        synchronized_constant_channel.mode = interpolation::linear;
+        synchronized_constant_channel.component_count = 3u;
+        animation_key constant_channel_key;
+        constant_channel_key.time = 1.25f;
+        constant_channel_key.value = { 4.0f, 4.0f, 4.0f };
+        synchronized_constant_channel.keys = { constant_channel_key };
         synchronized_clip.tracks = {
             synchronized_translation,
             synchronized_scale,
-            synchronized_rotation
+            synchronized_rotation,
+            synchronized_constant_channel
         };
 
         const skin_physics::physics::animation_clip_spans_build_result clip_spans =
             skin_physics::physics::build_animation_clip_spans(
-                synchronized_clip, 4u, 0.25, 1.5);
+                synchronized_clip, 5u, 0.25, 1.5);
         require(clip_spans.success && clip_spans.values.size() == 4u,
             "An Animation Clip Span Scheduler must merge Key boundaries from all Tracks, not schedule each Node / Path independently.");
         const double expected_clip_boundaries[5] = {
