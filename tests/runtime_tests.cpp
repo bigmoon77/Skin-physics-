@@ -578,6 +578,19 @@ namespace
         force.duration = 0.0025;
         require(runtime.enqueue_force(world, force).success(),
             "Runtime must normalize and accept a finite non-unit Soft Body Force direction.");
+        skin_physics::runtime::force_desc same_time_force = force;
+        same_time_force.event_id = 104u;
+        same_time_force.start_time = force.start_time;
+        same_time_force.duration = force.duration;
+        require(runtime.enqueue_force(world, same_time_force).success(),
+            "A second Force Event may share the same World-time boundaries without duplicating Segment boundaries.");
+
+        skin_physics::runtime::force_desc end_boundary_force = force;
+        end_boundary_force.event_id = 105u;
+        end_boundary_force.start_time = 0.01;
+        end_boundary_force.duration = 0.01;
+        require(runtime.enqueue_force(world, end_boundary_force).success(),
+            "A Force starting exactly at the Tick end must be retained for the next Tick without extending this Tick.");
 
         skin_physics::runtime::impulse_desc impulse;
         impulse.event_id = 101u;
