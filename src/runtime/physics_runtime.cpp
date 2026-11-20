@@ -1384,8 +1384,8 @@ namespace skin_physics::runtime
             if (render_mesh.vertices.empty() ||
                 render_mesh.indices.empty() ||
                 (render_mesh.indices.size() % 3u) != 0u ||
-                render_mesh.vertices.size() >
-                    static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
+                render_mesh.vertices.size() >=
+                    static_cast<std::size_t>(asset::invalid_index) ||
                 render_mesh.indices.size() >
                     static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
                 mesh_asset.render_bindings.size() != render_mesh.vertices.size() ||
@@ -3037,7 +3037,7 @@ namespace skin_physics::runtime
             initial_control.active_state_set = 0u;
             initial_control.required_validation_mask = 1u;
             initial_control.render_slot_id = asset::invalid_index;
-        initial_control.render_slot_generation = 0u;
+            initial_control.render_slot_generation = 0u;
 
             Microsoft::WRL::ComPtr<ID3D11Buffer> control_buffer;
             if (!create_structured_buffer(
