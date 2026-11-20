@@ -386,8 +386,11 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
             determinant3(rotation) > 0.0f;
     }
 
-    if (!rotation_valid && isfinite(jacobian) && jacobian > 0.0f)
+    if (!rotation_valid && isfinite(jacobian))
     {
+        // Match the CPU Reference: evaluate a proper rotation for any finite
+        // Jacobian, including inversion. The inversion penalty / diagnostics
+        // are still produced, but output_finite below keeps J <= 0 non-committable.
         rotation_valid = jacobi_svd_rotation(deformation, rotation);
         used_svd_fallback = rotation_valid;
     }
