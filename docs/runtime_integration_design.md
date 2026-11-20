@@ -410,7 +410,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | asset node transform | static scale | Offline BuildでGeometry / Rest Data / Mass / BindingへBake。負・ゼロScaleは禁止 |
 | bone animation | scale channel | 正値かつ特異でないScaleのみ許可。負値・ゼロ・符号反転はImport Error |
 | model transform sample | sample_time / world_transform / is_teleport | 時刻付きRoot Transform履歴。Clip連続移動とTeleportを区別し、Tick / Substep時刻へ補間 |
-| mesh_physics_parameters | material channels / tracking_stiffness / tracking_damping | physics_modeに有効な単位付きSoft Body / Cloth Material。tracking_stiffnessはN/m、tracking_dampingはN*s/m、いずれも有限・非負。tracking_stiffness=0はTracking Force / CFL項を無効にし、正値時はanimation_tracking Paintとattribute multiplierを追従剛性へ乗じる |
+| mesh_physics_parameters | material channels / tracking_stiffness / tracking_damping | physics_modeに有効な単位付きSoft Body / Cloth Material。tracking_stiffnessはN/m、tracking_dampingはN*s/m、いずれも有限・非負。tracking_stiffness=0はバネ成分 / 周波数CFL項を無効にするが、正のtracking_dampingは減衰成分として残る。剛性へanimation_tracking Paintとattribute multiplierを乗じる |
 | attribute_edit_desc | operation / channel / brush / target / strength | Paint / Smooth / Average / Erase。Render Mesh側の編集値をCPUで更新し、Runtimeへ不変のversioned editとして反映 |
 | collider_desc | collision_mesh | Collision-only / Render Meshの三角形データ。static / kinematicで共通のTopology入力 |
 | collider_desc | initial_transform | 初期World Transform |
