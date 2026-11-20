@@ -760,14 +760,14 @@ namespace
                 boundary.vertices.end());
         }
 
-        // Add an unused, collinear triangle on a boundary edge. Its three
-        // distinct vertices still have valid Tet bindings and stay within the
-        // Render-to-Physics surface distance, but GPU Render Feedback must fail
-        // its finite-area validation for this degenerate face.
+        // Add an unused degenerate triangle whose three distinct Render
+        // Vertex IDs bind to the exact same point on a Tet boundary edge. Their
+        // GPU candidate positions are bit-identical, so finite-area validation
+        // deterministically fails without invalidating the Physics Mesh surface.
         const std::array<skin_physics::asset::vec3, 3> degenerate_positions = {
-            skin_physics::asset::vec3{ 0.125f, 0.0f, 0.0f },
             skin_physics::asset::vec3{ 0.25f, 0.0f, 0.0f },
-            skin_physics::asset::vec3{ 0.375f, 0.0f, 0.0f }
+            skin_physics::asset::vec3{ 0.25f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 0.25f, 0.0f, 0.0f }
         };
         for (const skin_physics::asset::vec3& position : degenerate_positions)
         {
