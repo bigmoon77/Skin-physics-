@@ -3835,4 +3835,855 @@ namespace skin_physics::physics
             model, blended_transforms);
     }
 
+
+    animation_trajectory_packet_build_result build_animation_trajectory_packet(
+        const asset::model& model,
+        const animation_trajectory_packet_build_desc& desc)
+    {
+        const auto fail =
+            [](animation_trajectory_packet_error error,
+                const std::string& message)
+        {
+            animation_trajectory_packet_build_result result;
+            result.error = error;
+            result.message = message;
+            return result;
+        };
+
+        if (desc.animation_input_version == 0u)
+        {
+            return fail(
+                animation_trajectory_packet_error::invalid_version,
+                "Animation Trajectory Packet requires a non-zero immutable Input Version.");
+        }
+        if (desc.maximum_span_count == 0u ||
+            desc.spans.empty() ||
+            desc.spans.size() > desc.maximum_span_count ||
+            desc.spans.size() >
+                static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+        {
+            return fail(
+                animation_trajectory_packet_error::capacity_exceeded,
+                "Animation Trajectory Packet Span count is empty or exceeds its configured / uint32 capacity.");
+        }
+
+        const std::size_t node_count = model.nodes.size();
+        if (node_count == 0u ||
+            node_count >= static_cast<std::size_t>(asset::invalid_index) ||
+            model.animations.empty() ||
+            node_count >
+                static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+        {
+            return fail(
+                animation_trajectory_packet_error::invalid_model,
+                "Animation Trajectory Packet requires a non-empty Model Node hierarchy and at least one Asset Clip.");
+        }
+
+        const auto to_gpu_vec4 = [](const asset::vec4& value)
+        {
+            gpu_float4 result;
+            result.x = value.x;
+            result.y = value.y;
+            result.z = value.z;
+            result.w = value.w;
+            return result;
+        };
+
+        const auto to_gpu_matrix = [](const asset::mat4& value)
+        {
+            gpu_matrix4x4 result;
+            result.column0 = {
+                value.value[0], value.value[1],
+                value.value[2], value.value[3]
+            };
+            result.column1 = {
+                value.value[4], value.value[5],
+                value.value[6], value.value[7]
+            };
+            result.column2 = {
+                value.value[8], value.value[9],
+                value.value[10], value.value[11]
+            };
+            result.column3 = {
+                value.value[12], value.value[13],
+                value.value[14], value.value[15]
+            };
+            return result;
+        };
+
+        const auto finite_float_from_double =
+            [](double value, float& output) -> bool
+        {
+            if (!std::isfinite(value) ||
+                std::abs(value) >
+                    static_cast<double>(std::numeric_limits<float>::max()))
+            {
+                return false;
+            }
+            output = static_cast<float>(value);
+            return std::isfinite(output);
+        };
+
+        // Validate and topologically order the complete Asset Node hierarchy.
+        std::vector<std::vector<uint32_t>> children(node_count);
+        std::vector<bool> child_seen(node_count, false);
+        for (uint32_t parent_index = 0u;
+            parent_index < node_count; ++parent_index)
+        {
+            const asset::node& parent = model.nodes[parent_index];
+            for (uint32_t child_index : parent.children)
+            {
+                if (child_index >= node_count ||
+                    child_index == parent_index ||
+                    model.nodes[child_index].parent_index != parent_index ||
+                    child_seen[child_index])
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_hierarchy,
+                        "Asset Node Children contain an invalid, duplicated or inconsistent Parent reference.");
+                }
+                child_seen[child_index] = true;
+                children[parent_index].push_back(child_index);
+            }
+        }
+
+        std::vector<uint32_t> topological_order;
+        topological_order.reserve(node_count);
+        std::vector<uint32_t> ready;
+        ready.reserve(node_count);
+        for (uint32_t node_index = 0u; node_index < node_count; ++node_index)
+        {
+            const uint32_t parent_index =
+                model.nodes[node_index].parent_index;
+            if (parent_index == asset::invalid_index)
+            {
+                ready.push_back(node_index);
+                continue;
+            }
+            if (parent_index >= node_count ||
+                parent_index == node_index ||
+                !child_seen[node_index])
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_hierarchy,
+                    "Asset Node Parent Index is invalid or disagrees with its Parent Child list.");
+            }
+        }
+
+        std::size_t ready_cursor = 0u;
+        while (ready_cursor < ready.size())
+        {
+            const uint32_t node_index = ready[ready_cursor++];
+            topological_order.push_back(node_index);
+            for (uint32_t child_index : children[node_index])
+            {
+                ready.push_back(child_index);
+            }
+        }
+        if (topological_order.size() != node_count)
+        {
+            return fail(
+                animation_trajectory_packet_error::invalid_hierarchy,
+                "Asset Node hierarchy contains a parent cycle or an unreachable Node.");
+        }
+
+        animation_trajectory_packet candidate;
+        candidate.animation_input_version = desc.animation_input_version;
+        candidate.static_node_matrices.resize(node_count);
+        std::vector<uint32_t> node_role_flags(node_count, 0u);
+        std::vector<uint32_t> inverse_bind_index_by_node(
+            node_count, asset::invalid_index);
+        std::vector<asset::mat4> inverse_bind_by_node(node_count);
+
+        // Build a dense Static Matrix Buffer indexed by Asset Node Index.
+        // TRS Nodes carry Identity; affine Matrix Nodes carry their exact
+        // immutable local transform and are identified by Role flag bit4.
+        for (uint32_t node_index = 0u;
+            node_index < node_count; ++node_index)
+        {
+            const asset::node& node = model.nodes[node_index];
+            node_role_flags[node_index] =
+                node.parent_index == asset::invalid_index
+                    ? animation_node_role_model_root
+                    : 0u;
+
+            if (node.mesh_index != asset::invalid_index)
+            {
+                if (node.mesh_index >= model.meshes.size())
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_model,
+                        "An Asset Node references a Mesh outside the Model Mesh array.");
+                }
+                node_role_flags[node_index] |= animation_node_role_mesh;
+            }
+
+            const asset::mat4 static_matrix =
+                node.uses_matrix ? node.local_matrix : asset::mat4{};
+            if (!is_affine_matrix(static_matrix))
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_model,
+                    "A Static Node Matrix is non-finite or non-affine.");
+            }
+            candidate.static_node_matrices[node_index] =
+                to_gpu_matrix(static_matrix);
+            if (node.uses_matrix)
+            {
+                node_role_flags[node_index] |=
+                    animation_node_role_static_matrix;
+            }
+            else
+            {
+                const quaternion node_rotation = normalize_quaternion({
+                    node.rotation.x,
+                    node.rotation.y,
+                    node.rotation.z,
+                    node.rotation.w
+                });
+                const double quaternion_length_squared =
+                    static_cast<double>(node.rotation.x) * node.rotation.x +
+                    static_cast<double>(node.rotation.y) * node.rotation.y +
+                    static_cast<double>(node.rotation.z) * node.rotation.z +
+                    static_cast<double>(node.rotation.w) * node.rotation.w;
+                if (!finite(node.translation) ||
+                    !finite(node.scale) ||
+                    !std::isfinite(quaternion_length_squared) ||
+                    quaternion_length_squared <= 1.0e-24 ||
+                    !finite_float(node.scale.x) ||
+                    !finite_float(node.scale.y) ||
+                    !finite_float(node.scale.z) ||
+                    node.scale.x <= 0.0f ||
+                    node.scale.y <= 0.0f ||
+                    node.scale.z <= 0.0f ||
+                    !std::isfinite(node_rotation.x) ||
+                    !std::isfinite(node_rotation.y) ||
+                    !std::isfinite(node_rotation.z) ||
+                    !std::isfinite(node_rotation.w))
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_model,
+                        "An Asset Rest TRS Node contains non-finite Translation / Rotation / Scale or a non-positive Scale.");
+                }
+            }
+        }
+
+        // A channel record has one Inverse Bind Index per Joint Node. Reuse a
+        // record when multiple Skins share the exact same Joint / IBM pair;
+        // conflicting per-Skin Inverse Binds cannot be represented by this
+        // v1 Node-indexed ABI and therefore fail closed.
+        for (const asset::skin& skin : model.skins)
+        {
+            if (skin.joints.empty() ||
+                (!skin.inverse_bind_matrices.empty() &&
+                    skin.inverse_bind_matrices.size() != skin.joints.size()))
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_skin,
+                    "Skin Joint and Inverse Bind arrays must be non-empty and have matching sizes when Inverse Binds are supplied.");
+            }
+
+            for (std::size_t joint_slot = 0u;
+                joint_slot < skin.joints.size(); ++joint_slot)
+            {
+                const uint32_t joint_node_index = skin.joints[joint_slot];
+                if (joint_node_index >= node_count)
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_skin,
+                        "A Skin Joint Node Index is outside the Asset Model.");
+                }
+
+                const asset::mat4 inverse_bind =
+                    skin.inverse_bind_matrices.empty()
+                        ? asset::mat4{}
+                        : skin.inverse_bind_matrices[joint_slot];
+                if (!is_affine_matrix(inverse_bind))
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_skin,
+                        "A Skin Inverse Bind Matrix is non-finite or non-affine.");
+                }
+
+                const uint32_t existing_index =
+                    inverse_bind_index_by_node[joint_node_index];
+                if (existing_index != asset::invalid_index)
+                {
+                    const asset::mat4& existing =
+                        inverse_bind_by_node[joint_node_index];
+                    if (existing.value != inverse_bind.value)
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::unsupported_inverse_bind_layout,
+                            "One Joint Node is referenced by multiple Skins with different Inverse Bind Matrices; the current Node-indexed Channel ABI cannot encode that mapping.");
+                    }
+                    continue;
+                }
+
+                if (candidate.inverse_bind_matrices.size() >=
+                    static_cast<std::size_t>(asset::invalid_index))
+                {
+                    return fail(
+                        animation_trajectory_packet_error::capacity_exceeded,
+                        "Inverse Bind Matrix count exceeds the uint32 record index space.");
+                }
+                inverse_bind_index_by_node[joint_node_index] =
+                    static_cast<uint32_t>(
+                        candidate.inverse_bind_matrices.size());
+                inverse_bind_by_node[joint_node_index] = inverse_bind;
+                candidate.inverse_bind_matrices.push_back(
+                    to_gpu_matrix(inverse_bind));
+                node_role_flags[joint_node_index] |=
+                    animation_node_role_joint;
+            }
+        }
+
+        // Every Skinned Mesh and Joint requires all of its Ancestors for a
+        // complete Global Matrix. The Channel range currently stores all
+        // Nodes, while these Role bits identify the minimal semantic subset.
+        for (uint32_t node_index = 0u;
+            node_index < node_count; ++node_index)
+        {
+            const asset::node& node = model.nodes[node_index];
+            if (node.skin_index != asset::invalid_index)
+            {
+                if (node.skin_index >= model.skins.size() ||
+                    node.mesh_index == asset::invalid_index)
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_skin,
+                        "A Skinned Mesh Node must reference a valid Skin and Mesh.");
+                }
+            }
+
+            const bool is_joint =
+                (node_role_flags[node_index] &
+                    animation_node_role_joint) != 0u;
+            const bool is_skinned_mesh =
+                node.skin_index != asset::invalid_index;
+            if (!is_joint && !is_skinned_mesh)
+            {
+                continue;
+            }
+
+            uint32_t ancestor_index = node.parent_index;
+            while (ancestor_index != asset::invalid_index)
+            {
+                node_role_flags[ancestor_index] |=
+                    animation_node_role_required_joint_ancestor;
+                ancestor_index =
+                    model.nodes[ancestor_index].parent_index;
+            }
+        }
+
+        const uint32_t version_low =
+            static_cast<uint32_t>(desc.animation_input_version & 0xffffffffull);
+        const uint32_t version_high =
+            static_cast<uint32_t>(desc.animation_input_version >> 32u);
+        double previous_span_end = 0.0;
+        bool has_previous_span = false;
+        std::vector<uint32_t> span_ids;
+        span_ids.reserve(desc.spans.size());
+
+        for (std::size_t span_index = 0u;
+            span_index < desc.spans.size(); ++span_index)
+        {
+            const animation_trajectory_span_input& input =
+                desc.spans[span_index];
+            const double span_end =
+                input.world_time_start + input.world_time_duration;
+            if (!std::isfinite(input.world_time_start) ||
+                !std::isfinite(input.world_time_duration) ||
+                input.world_time_duration <= 0.0 ||
+                !std::isfinite(span_end) ||
+                span_end == input.world_time_start ||
+                (has_previous_span &&
+                    input.world_time_start != previous_span_end))
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_span,
+                    "Animation Trajectory Spans must be finite, positive, contiguous and representable in double World Time.");
+            }
+            if (std::find(
+                    span_ids.begin(), span_ids.end(), input.span_id) !=
+                span_ids.end())
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_span,
+                    "Animation Trajectory Span IDs must be unique within one immutable Packet.");
+            }
+            span_ids.push_back(input.span_id);
+            previous_span_end = span_end;
+            has_previous_span = true;
+
+            const std::size_t expected_track_count =
+                input.has_blend ? 2u : 1u;
+            if (input.tracks.size() != expected_track_count)
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_span,
+                    "A v1 Animation Span requires one Track or exactly two Tracks with one Blend Record.");
+            }
+            if (input.has_blend &&
+                (input.source_track_index >= input.tracks.size() ||
+                    input.target_track_index >= input.tracks.size() ||
+                    input.source_track_index == input.target_track_index ||
+                    !valid_animation_blend_weight_curve(input.blend_curve) ||
+                    (input.blend_curve.blend_start_time > input.world_time_start &&
+                        input.blend_curve.blend_start_time < span_end) ||
+                    (input.blend_curve.blend_end_time > input.world_time_start &&
+                        input.blend_curve.blend_end_time < span_end)))
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_span,
+                    "Blend Span must reference two distinct local Tracks, use a valid Hermite Curve and remain inside one Blend Curve boundary interval.");
+            }
+            if (!input.has_blend && input.tracks.size() != 1u)
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_span,
+                    "A non-Blend Animation Span must contain exactly one Track.");
+            }
+
+            if (!finite_float(input.bounds.speed_bound) ||
+                !finite_float(input.bounds.acceleration_bound) ||
+                !finite_float(input.bounds.chord_deviation_bound) ||
+                input.bounds.speed_bound < 0.0f ||
+                input.bounds.acceleration_bound < 0.0f ||
+                input.bounds.chord_deviation_bound < 0.0f ||
+                !finite_float(input.bounds.quaternion_normalization_lower_bound) ||
+                input.bounds.quaternion_normalization_lower_bound <= 1.0e-12f)
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_bounds,
+                    "Animation Span requires finite non-negative outward-rounded Speed / Acceleration / Chord Bounds and a positive Quaternion Normalization lower bound.");
+            }
+
+            animation_span_gpu_record span_record;
+            span_record.span_id = input.span_id;
+            span_record.animation_input_version_low = version_low;
+            span_record.animation_input_version_high = version_high;
+            if (!finite_float_from_double(
+                    input.world_time_duration,
+                    span_record.span_duration_seconds) ||
+                span_record.span_duration_seconds <= 0.0f)
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_span,
+                    "Animation Span duration cannot be represented as a positive GPU float.");
+            }
+            const double inverse_span_duration =
+                1.0 / input.world_time_duration;
+            if (!finite_float_from_double(
+                    inverse_span_duration,
+                    span_record.inverse_span_duration) ||
+                span_record.inverse_span_duration <= 0.0f)
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_span,
+                    "Animation Span inverse duration cannot be represented as a positive GPU float.");
+            }
+            span_record.speed_bound = input.bounds.speed_bound;
+            span_record.acceleration_bound =
+                input.bounds.acceleration_bound;
+            span_record.chord_deviation_bound =
+                input.bounds.chord_deviation_bound;
+            span_record.quaternion_normalization_lower_bound =
+                input.bounds.quaternion_normalization_lower_bound;
+            span_record.first_track_record =
+                static_cast<uint32_t>(candidate.track_records.size());
+            span_record.first_channel_record =
+                static_cast<uint32_t>(candidate.channel_records.size());
+            span_record.first_blend_record =
+                static_cast<uint32_t>(candidate.blend_records.size());
+            span_record.first_collider_record =
+                static_cast<uint32_t>(candidate.collider_records.size());
+
+            for (const animation_trajectory_track_span_input& track_input :
+                input.tracks)
+            {
+                if (track_input.clip_index >= model.animations.size())
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_track,
+                        "Animation Track Clip Index is outside the immutable Asset Model Animation array.");
+                }
+                const asset::animation_clip& clip =
+                    model.animations[track_input.clip_index];
+                const scheduled_animation_clip_span& scheduled =
+                    track_input.scheduled;
+                if (clip.tracks.empty() ||
+                    scheduled.clip.channels.size() != clip.tracks.size() ||
+                    scheduled.world_time_start != input.world_time_start ||
+                    scheduled.world_time_duration != input.world_time_duration ||
+                    !std::isfinite(scheduled.clip.clip_time_start) ||
+                    !std::isfinite(scheduled.clip.clip_time_delta) ||
+                    scheduled.clip.clip_time_start +
+                        scheduled.clip.clip_time_delta !=
+                            scheduled.clip.clip_time_start +
+                                scheduled.clip.clip_time_delta)
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_track,
+                        "Scheduled Animation Clip Span must match the Packet World-Time interval and contain one channel record per original Asset Track.");
+                }
+
+                const double playback_speed =
+                    scheduled.clip.clip_time_delta /
+                    scheduled.world_time_duration;
+                float gpu_clip_time_start = 0.0f;
+                float gpu_clip_time_delta = 0.0f;
+                float gpu_playback_speed = 0.0f;
+                if (!finite_float_from_double(
+                        scheduled.clip.clip_time_start,
+                        gpu_clip_time_start) ||
+                    !finite_float_from_double(
+                        scheduled.clip.clip_time_delta,
+                        gpu_clip_time_delta) ||
+                    !finite_float_from_double(
+                        playback_speed,
+                        gpu_playback_speed))
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_track,
+                        "Animation Clip Time / signed Delta / Playback Speed exceed finite GPU float range.");
+                }
+                if ((scheduled.clip.clip_time_delta < 0.0 &&
+                        !track_input.reverse_playback) ||
+                    (scheduled.clip.clip_time_delta > 0.0 &&
+                        track_input.reverse_playback))
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_track,
+                        "Animation Track Reverse Playback flag disagrees with its signed Clip-Time Delta.");
+                }
+
+                const animation_hierarchy_sample_result hierarchy_validation =
+                    evaluate_animation_clip_hierarchy(
+                        model,
+                        clip,
+                        scheduled.clip,
+                        0.0,
+                        scheduled.world_time_duration);
+                if (!hierarchy_validation.success)
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_hierarchy,
+                        "Animation Clip Span failed CPU Node / Skin validation before Packet construction: " +
+                            hierarchy_validation.message);
+                }
+
+                animation_track_gpu_record track_record;
+                track_record.clip_index = track_input.clip_index;
+                track_record.first_channel_record =
+                    static_cast<uint32_t>(candidate.channel_records.size());
+                track_record.channel_record_count =
+                    static_cast<uint32_t>(node_count);
+                track_record.flags =
+                    (track_input.loop ? animation_track_flag_loop : 0u) |
+                    (track_input.reverse_playback
+                        ? animation_track_flag_reverse_playback
+                        : 0u);
+                track_record.clip_time_start = gpu_clip_time_start;
+                track_record.clip_time_delta = gpu_clip_time_delta;
+                track_record.playback_speed = gpu_playback_speed;
+
+                std::vector<uint32_t> node_channel_record_index(
+                    node_count, asset::invalid_index);
+                std::vector<std::array<bool, 3>> channel_seen(node_count);
+                for (std::array<bool, 3>& seen : channel_seen)
+                {
+                    seen = { false, false, false };
+                }
+
+                for (uint32_t node_index : topological_order)
+                {
+                    const asset::node& node = model.nodes[node_index];
+                    animation_channel_gpu_record channel_record;
+                    channel_record.node_index = node_index;
+                    channel_record.parent_index =
+                        node.parent_index == asset::invalid_index
+                            ? asset::invalid_index
+                            : node_channel_record_index[node.parent_index];
+                    channel_record.inverse_bind_record_index =
+                        inverse_bind_index_by_node[node_index];
+                    channel_record.node_role_flags =
+                        node_role_flags[node_index];
+
+                    asset::vec3 rest_translation;
+                    asset::vec4 rest_rotation = {
+                        0.0f, 0.0f, 0.0f, 1.0f
+                    };
+                    asset::vec3 rest_scale = {
+                        1.0f, 1.0f, 1.0f
+                    };
+                    if (!node.uses_matrix)
+                    {
+                        rest_translation = node.translation;
+                        rest_scale = node.scale;
+                        const quaternion normalized_rotation =
+                            normalize_quaternion({
+                                node.rotation.x,
+                                node.rotation.y,
+                                node.rotation.z,
+                                node.rotation.w
+                            });
+                        rest_rotation = {
+                            normalized_rotation.x,
+                            normalized_rotation.y,
+                            normalized_rotation.z,
+                            normalized_rotation.w
+                        };
+                    }
+
+                    channel_record.translation_c0 = {
+                        rest_translation.x,
+                        rest_translation.y,
+                        rest_translation.z,
+                        0.0f
+                    };
+                    channel_record.rotation_parameter0 = {
+                        rest_rotation.x,
+                        rest_rotation.y,
+                        rest_rotation.z,
+                        rest_rotation.w
+                    };
+                    channel_record.scale_c0 = {
+                        rest_scale.x,
+                        rest_scale.y,
+                        rest_scale.z,
+                        0.0f
+                    };
+
+                    node_channel_record_index[node_index] =
+                        static_cast<uint32_t>(
+                            candidate.channel_records.size());
+                    candidate.channel_records.push_back(channel_record);
+                }
+
+                for (std::size_t track_index = 0u;
+                    track_index < clip.tracks.size(); ++track_index)
+                {
+                    const asset::animation_track& asset_track =
+                        clip.tracks[track_index];
+                    const animation_channel_span& channel_span =
+                        scheduled.clip.channels[track_index];
+                    if (channel_span.track_index != track_index ||
+                        channel_span.node_index != asset_track.node_index ||
+                        channel_span.path != asset_track.path ||
+                        channel_span.interpolation_mode != asset_track.mode ||
+                        channel_span.clip_time_start !=
+                            scheduled.clip.clip_time_start ||
+                        channel_span.clip_time_delta !=
+                            scheduled.clip.clip_time_delta ||
+                        channel_span.node_index >= node_count)
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_channel,
+                            "Animation Channel Span does not match its original Track Index / Node / Path / Interpolation / common Clip-Time interval.");
+                    }
+                    if (model.nodes[channel_span.node_index].uses_matrix)
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_channel,
+                            "An animated TRS Channel cannot target a static Matrix Node.");
+                    }
+
+                    for (const asset::vec4& coefficient :
+                        channel_span.coefficients)
+                    {
+                        if (!finite_asset_vec4(coefficient))
+                        {
+                            return fail(
+                                animation_trajectory_packet_error::invalid_channel,
+                                "Animation Channel Span contains a non-finite GPU coefficient.");
+                        }
+                    }
+                    const animation_channel_span_sample_result start_sample =
+                        evaluate_animation_channel_span(
+                            channel_span, 0.0, scheduled.world_time_duration);
+                    const animation_channel_span_sample_result end_sample =
+                        evaluate_animation_channel_span(
+                            channel_span, 1.0, scheduled.world_time_duration);
+                    if (!start_sample.success || !end_sample.success)
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_channel,
+                            "Animation Channel Span endpoint evaluation failed: " +
+                                (!start_sample.success
+                                    ? start_sample.message
+                                    : end_sample.message));
+                    }
+
+                    std::size_t channel_slot = 0u;
+                    uint32_t channel_mask = 0u;
+                    uint32_t interpolation_shift = 0u;
+                    if (channel_span.path == asset::animation_path::translation)
+                    {
+                        channel_slot = 0u;
+                        channel_mask = animation_channel_mask_translation;
+                        interpolation_shift = 0u;
+                    }
+                    else if (channel_span.path == asset::animation_path::rotation)
+                    {
+                        channel_slot = 1u;
+                        channel_mask = animation_channel_mask_rotation;
+                        interpolation_shift = 2u;
+                    }
+                    else if (channel_span.path == asset::animation_path::scale)
+                    {
+                        channel_slot = 2u;
+                        channel_mask = animation_channel_mask_scale;
+                        interpolation_shift = 4u;
+                    }
+                    else
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_channel,
+                            "Animation Channel contains an unsupported glTF Path.");
+                    }
+
+                    const uint32_t node_record_index =
+                        node_channel_record_index[channel_span.node_index];
+                    animation_channel_gpu_record& gpu_channel =
+                        candidate.channel_records[node_record_index];
+                    if (channel_seen[channel_span.node_index][channel_slot])
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_channel,
+                            "Animation Clip contains duplicate channels for one Node / Path pair.");
+                    }
+                    channel_seen[channel_span.node_index][channel_slot] = true;
+                    gpu_channel.channel_mask |= channel_mask;
+
+                    const uint32_t interpolation_value =
+                        static_cast<uint32_t>(
+                            channel_span.interpolation_mode);
+                    if (interpolation_value >
+                        static_cast<uint32_t>(asset::interpolation::cubic_spline))
+                    {
+                        return fail(
+                            animation_trajectory_packet_error::invalid_channel,
+                            "Animation Channel Interpolation enum exceeds the fixed GPU ABI range.");
+                    }
+                    gpu_channel.interpolation_flags |=
+                        interpolation_value << interpolation_shift;
+
+                    if (channel_span.path == asset::animation_path::translation)
+                    {
+                        gpu_channel.translation_c0 =
+                            to_gpu_vec4(channel_span.coefficients[0]);
+                        gpu_channel.translation_c1 =
+                            to_gpu_vec4(channel_span.coefficients[1]);
+                        gpu_channel.translation_c2 =
+                            to_gpu_vec4(channel_span.coefficients[2]);
+                        gpu_channel.translation_c3 =
+                            to_gpu_vec4(channel_span.coefficients[3]);
+                    }
+                    else if (channel_span.path == asset::animation_path::rotation)
+                    {
+                        gpu_channel.rotation_parameter0 =
+                            to_gpu_vec4(channel_span.coefficients[0]);
+                        gpu_channel.rotation_parameter1 =
+                            to_gpu_vec4(channel_span.coefficients[1]);
+                        gpu_channel.rotation_parameter2 =
+                            to_gpu_vec4(channel_span.coefficients[2]);
+                        gpu_channel.rotation_parameter3 =
+                            to_gpu_vec4(channel_span.coefficients[3]);
+                    }
+                    else
+                    {
+                        gpu_channel.scale_c0 =
+                            to_gpu_vec4(channel_span.coefficients[0]);
+                        gpu_channel.scale_c1 =
+                            to_gpu_vec4(channel_span.coefficients[1]);
+                        gpu_channel.scale_c2 =
+                            to_gpu_vec4(channel_span.coefficients[2]);
+                        gpu_channel.scale_c3 =
+                            to_gpu_vec4(channel_span.coefficients[3]);
+                    }
+                }
+
+                candidate.track_records.push_back(track_record);
+            }
+
+            span_record.track_record_count =
+                static_cast<uint32_t>(
+                    candidate.track_records.size()) -
+                span_record.first_track_record;
+            span_record.channel_record_count =
+                static_cast<uint32_t>(
+                    candidate.channel_records.size()) -
+                span_record.first_channel_record;
+            span_record.blend_record_count =
+                static_cast<uint32_t>(
+                    candidate.blend_records.size()) -
+                span_record.first_blend_record;
+            span_record.collider_record_count = 0u;
+            if (input.has_blend)
+            {
+                const double blend_duration =
+                    input.blend_curve.blend_end_time -
+                    input.blend_curve.blend_start_time;
+                float gpu_blend_duration = 0.0f;
+                float gpu_inverse_blend_duration = 0.0f;
+                float gpu_blend_start_offset = 0.0f;
+                if (!finite_float_from_double(
+                        blend_duration, gpu_blend_duration) ||
+                    gpu_blend_duration <= 0.0f ||
+                    !finite_float_from_double(
+                        1.0 / blend_duration,
+                        gpu_inverse_blend_duration) ||
+                    gpu_inverse_blend_duration <= 0.0f ||
+                    !finite_float_from_double(
+                        input.world_time_start -
+                            input.blend_curve.blend_start_time,
+                        gpu_blend_start_offset))
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_span,
+                        "Hermite Blend duration / inverse / Span offset cannot be represented as finite GPU floats.");
+                }
+
+                const animation_component_array curve_coefficients =
+                    blend_curve_coefficients(input.blend_curve);
+                animation_blend_gpu_record blend_record;
+                blend_record.source_track_index = input.source_track_index;
+                blend_record.target_track_index = input.target_track_index;
+                blend_record.weight_curve_flags =
+                    animation_blend_flag_enabled;
+                if (!finite_float_from_double(
+                        curve_coefficients[0],
+                        blend_record.weight_coefficients.x) ||
+                    !finite_float_from_double(
+                        curve_coefficients[1],
+                        blend_record.weight_coefficients.y) ||
+                    !finite_float_from_double(
+                        curve_coefficients[2],
+                        blend_record.weight_coefficients.z) ||
+                    !finite_float_from_double(
+                        curve_coefficients[3],
+                        blend_record.weight_coefficients.w))
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_span,
+                        "Hermite Blend Weight coefficients exceed finite GPU float range.");
+                }
+                blend_record.duration_seconds = gpu_blend_duration;
+                blend_record.inverse_duration =
+                    gpu_inverse_blend_duration;
+                blend_record.blend_start_offset_seconds =
+                    gpu_blend_start_offset;
+                candidate.blend_records.push_back(blend_record);
+                span_record.flags |= animation_span_flag_has_blend;
+            }
+            candidate.span_records.push_back(span_record);
+        }
+
+        animation_trajectory_packet_build_result result;
+        result.value = std::move(candidate);
+        result.success = true;
+        return result;
+    }
+
 }
