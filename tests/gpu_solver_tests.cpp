@@ -815,7 +815,13 @@ namespace
         {
             std::vector<vec3> positions;
             bool expect_svd_fallback = false;
+            bool expect_committable = true;
         };
+
+        std::vector<vec3> inverted_positions = raw_mesh.positions;
+        std::swap(
+            inverted_positions[source_tet.vertices[1]],
+            inverted_positions[source_tet.vertices[2]]);
 
         const std::vector<test_case> cases = {
             {
@@ -825,7 +831,8 @@ namespace
                     { 0.0f, 1.0f, 0.0f },
                     { 0.0f, 0.0f, 1.0f }
                 },
-                false
+                false,
+                true
             },
             {
                 {
@@ -834,7 +841,13 @@ namespace
                     { 0.0f, 1.0f, 0.0f },
                     { 0.0f, 0.0f, 1.0f }
                 },
+                true,
                 true
+            },
+            {
+                inverted_positions,
+                true,
+                false
             }
         };
 
@@ -843,10 +856,15 @@ namespace
             const skin_physics::physics::corotational_tet_result cpu =
                 skin_physics::physics::evaluate_corotational_tetrahedron(
                     built.value, 0u, item.positions, material);
-            require(cpu.success && cpu.state_committable,
-                "Runtime FEM CPU Reference must accept each positive-Jacobian SVD parity case.");
+            require(cpu.success,
+                "Runtime FEM CPU Reference must produce finite FEM diagnostics for the parity fixture.");
+            require(cpu.state_committable == item.expect_committable &&
+                cpu.inverted == !item.expect_committable,
+                "CPU FEM must preserve its inverted-element diagnostic and non-committable state.");
             require(cpu.used_svd_fallback == item.expect_svd_fallback,
                 "CPU FEM must select the expected polar or SVD path for the parity fixture.");
+            require((cpu.jacobian > 0.0f) == item.expect_committable,
+                "FEM parity fixture Jacobian sign must match its expected Commit eligibility.");
 
             std::vector<gpu_float4> gpu_positions;
             gpu_positions.reserve(item.positions.size());
@@ -960,11 +978,12 @@ namespace
                 std::abs(gpu.metrics.z - cpu.elastic_energy) <= tolerance &&
                 gpu.metrics.w == (item.expect_svd_fallback ? 2.0f : 1.0f),
                 "Production Runtime FEM must report matching measures and the selected polar / SVD path.");
-            require(control[0].terminal_failure == 0u,
-                "A valid positive-Jacobian polar / SVD result must leave the Tick Commit Control committable.");
+            require(control[0].terminal_failure ==
+                    (item.expect_committable ? 0u : 1u),
+                "Only positive-Jacobian FEM output may remain Commit-eligible; inverted output must publish diagnostics and set terminal failure.");
         }
 
-        std::cout << "[PASS] R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_PARITY\n";
+        std::cout << "[PASS] R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_AND_INVERSION_PARITY\n";
     }
 
     struct gpu_vt_result
