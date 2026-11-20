@@ -5,6 +5,7 @@
 #include "skin_physics/runtime/physics_runtime.hpp"
 
 #include "skin_physics/asset/importer.hpp"
+#include "skin_physics/physics/animation_track.hpp"
 #include "skin_physics/simulation/d3d11_status_ring.hpp"
 #include "skin_physics/simulation/d3d11_compute_graph.hpp"
 
@@ -636,56 +637,14 @@ namespace skin_physics::runtime
 
         bool valid_blend_weight_curve(const animation_blend_desc& desc)
         {
-            const double duration = desc.blend_end_time - desc.blend_start_time;
-            const double w0 = desc.weight_start;
-            const double w1 = desc.weight_end;
-            const double m0 = static_cast<double>(desc.tangent_start) * duration;
-            const double m1 = static_cast<double>(desc.tangent_end) * duration;
-
-            // w(u) = a*u^3 + b*u^2 + c*u + d, u in [0, 1].
-            const double a = 2.0 * w0 - 2.0 * w1 + m0 + m1;
-            const double b = -3.0 * w0 + 3.0 * w1 - 2.0 * m0 - m1;
-            const double c = m0;
-            const double d = w0;
-
-            const auto inside_unit_interval = [](double value)
-            {
-                return value > 0.0 && value < 1.0;
-            };
-            const auto valid_weight = [&](double u)
-            {
-                const double value = ((a * u + b) * u + c) * u + d;
-                return std::isfinite(value) && value >= -1.0e-6 && value <= 1.0 + 1.0e-6;
-            };
-
-            if (!valid_weight(0.0) || !valid_weight(1.0))
-            {
-                return false;
-            }
-
-            const double qa = 3.0 * a;
-            const double qb = 2.0 * b;
-            const double qc = c;
-            if (std::abs(qa) <= 1.0e-14)
-            {
-                if (std::abs(qb) <= 1.0e-14)
-                {
-                    return true;
-                }
-                const double root = -qc / qb;
-                return !inside_unit_interval(root) || valid_weight(root);
-            }
-
-            const double discriminant = qb * qb - 4.0 * qa * qc;
-            if (discriminant < 0.0)
-            {
-                return true;
-            }
-            const double sqrt_discriminant = std::sqrt(discriminant);
-            const double root0 = (-qb - sqrt_discriminant) / (2.0 * qa);
-            const double root1 = (-qb + sqrt_discriminant) / (2.0 * qa);
-            return (!inside_unit_interval(root0) || valid_weight(root0)) &&
-                (!inside_unit_interval(root1) || valid_weight(root1));
+            physics::animation_blend_weight_curve_desc curve;
+            curve.blend_start_time = desc.blend_start_time;
+            curve.blend_end_time = desc.blend_end_time;
+            curve.weight_start = desc.weight_start;
+            curve.weight_end = desc.weight_end;
+            curve.tangent_start = desc.tangent_start;
+            curve.tangent_end = desc.tangent_end;
+            return physics::valid_animation_blend_weight_curve(curve);
         }
 
         bool valid_world_desc(
