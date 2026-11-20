@@ -299,6 +299,51 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    enum class animation_blend_clip_span_error : uint8_t
+    {
+        none,
+        invalid_source_clip,
+        invalid_target_clip,
+        invalid_blend_curve,
+        invalid_time,
+        capacity_exceeded
+    };
+
+    struct animation_blend_clip_span
+    {
+        uint32_t span_index = 0u;
+        double world_time_start = 0.0;
+        double world_time_duration = 0.0;
+        scheduled_animation_clip_span source;
+        scheduled_animation_clip_span target;
+        animation_blend_weight_span blend_weight;
+    };
+
+    struct animation_blend_clip_span_schedule_result
+    {
+        std::vector<animation_blend_clip_span> values;
+        animation_blend_clip_span_error error =
+            animation_blend_clip_span_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    animation_blend_clip_span_schedule_result schedule_animation_blend_clip_spans(
+        const asset::animation_clip& source_clip,
+        uint32_t source_node_count,
+        double source_clip_time_start,
+        double source_playback_speed,
+        bool source_loop,
+        const asset::animation_clip& target_clip,
+        uint32_t target_node_count,
+        double target_clip_time_start,
+        double target_playback_speed,
+        bool target_loop,
+        const animation_blend_weight_curve_desc& blend_curve,
+        double world_time_start,
+        double world_time_duration,
+        uint32_t maximum_span_count = 4096u);
+
     bool valid_animation_blend_weight_curve(
         const animation_blend_weight_curve_desc& curve);
 
