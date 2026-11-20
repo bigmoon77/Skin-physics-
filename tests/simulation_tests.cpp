@@ -1778,6 +1778,112 @@ namespace
             invalid_playback_start.values.empty(),
             "Playback scheduling must reject a Clip cursor outside the Asset Clip duration.");
 
+        skin_physics::physics::animation_blend_weight_curve_desc synchronized_blend_curve;
+        synchronized_blend_curve.blend_start_time = 10.1;
+        synchronized_blend_curve.blend_end_time = 10.4;
+        synchronized_blend_curve.weight_start = 0.0f;
+        synchronized_blend_curve.weight_end = 1.0f;
+        synchronized_blend_curve.tangent_start = 0.0f;
+        synchronized_blend_curve.tangent_end = 0.0f;
+
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            synchronized_blend_spans =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    synchronized_clip, 5u, 0.75, 1.0, false,
+                    synchronized_clip, 5u, 1.75, -1.5, false,
+                    synchronized_blend_curve, 10.0, 0.5);
+        require(synchronized_blend_spans.success &&
+            synchronized_blend_spans.values.size() == 5u,
+            "Source / Target Key boundaries and Blend Start / End boundaries must merge into one shared World-Time partition.");
+        for (std::size_t span_index = 0u;
+            span_index < synchronized_blend_spans.values.size();
+            ++span_index)
+        {
+            const skin_physics::physics::animation_blend_clip_span& span =
+                synchronized_blend_spans.values[span_index];
+            require(span.span_index == span_index &&
+                span.source.world_time_start == span.world_time_start &&
+                span.target.world_time_start == span.world_time_start &&
+                span.blend_weight.world_time_start == span.world_time_start &&
+                span.source.world_time_duration == span.world_time_duration &&
+                span.target.world_time_duration == span.world_time_duration &&
+                span.blend_weight.world_time_duration == span.world_time_duration &&
+                span.source.clip.channels.size() == synchronized_clip.tracks.size() &&
+                span.target.clip.channels.size() == synchronized_clip.tracks.size(),
+                "A synchronized Blend Span must retain one World-Time interval for Source, Target and Weight while preserving every channel.");
+            for (std::size_t channel_index = 0u;
+                channel_index < synchronized_clip.tracks.size();
+                ++channel_index)
+            {
+                const skin_physics::physics::animation_channel_span& source_channel =
+                    span.source.clip.channels[channel_index];
+                const skin_physics::physics::animation_channel_span& target_channel =
+                    span.target.clip.channels[channel_index];
+                require(source_channel.track_index == channel_index &&
+                    target_channel.track_index == channel_index &&
+                    source_channel.clip_time_start ==
+                        span.source.clip.clip_time_start &&
+                    source_channel.clip_time_delta ==
+                        span.source.clip.clip_time_delta &&
+                    target_channel.clip_time_start ==
+                        span.target.clip.clip_time_start &&
+                    target_channel.clip_time_delta ==
+                        span.target.clip.clip_time_delta,
+                    "Source / Target channels must preserve Track order and each synchronized Clip's own signed Clip-Time interval.");
+            }
+
+            const skin_physics::physics::animation_blend_weight_sample_result weight_sample =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    span.blend_weight, 0.5);
+            require(weight_sample.success &&
+                weight_sample.value.weight >= 0.0 &&
+                weight_sample.value.weight <= 1.0 &&
+                std::isfinite(weight_sample.value.world_time_derivative),
+                "Every merged Blend Weight Span must retain a finite in-range Weight and analytic World-Time derivative.");
+        }
+        require(
+            std::abs(
+                synchronized_blend_spans.values.front().source.clip.clip_time_start -
+                0.75) <= 1.0e-12 &&
+            std::abs(
+                synchronized_blend_spans.values.front().source.clip.clip_time_delta -
+                0.1) <= 1.0e-12 &&
+            std::abs(
+                synchronized_blend_spans.values.front().target.clip.clip_time_start -
+                1.75) <= 1.0e-12 &&
+            std::abs(
+                synchronized_blend_spans.values.front().target.clip.clip_time_delta +
+                0.15) <= 1.0e-12,
+            "Merged Blend intervals must preserve independent Source / Target Playback Speeds when rebuilding Clip-Time coefficients.");
+
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            blend_span_overflow =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    synchronized_clip, 5u, 0.75, 1.0, false,
+                    synchronized_clip, 5u, 1.75, -1.5, false,
+                    synchronized_blend_curve, 10.0, 0.5, 2u);
+        require(!blend_span_overflow.success &&
+            blend_span_overflow.values.empty() &&
+            blend_span_overflow.error ==
+                skin_physics::physics::animation_blend_clip_span_error::capacity_exceeded,
+            "Synchronized Blend scheduling must fail atomically when merged Source / Target / Weight boundaries exceed the Span limit.");
+
+        skin_physics::physics::animation_blend_weight_curve_desc invalid_synchronized_blend =
+            synchronized_blend_curve;
+        invalid_synchronized_blend.tangent_start = 10.0f;
+        invalid_synchronized_blend.tangent_end = 10.0f;
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            invalid_blend_schedule =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    synchronized_clip, 5u, 0.75, 1.0, false,
+                    synchronized_clip, 5u, 1.75, -1.5, false,
+                    invalid_synchronized_blend, 10.0, 0.5);
+        require(!invalid_blend_schedule.success &&
+            invalid_blend_schedule.values.empty() &&
+            invalid_blend_schedule.error ==
+                skin_physics::physics::animation_blend_clip_span_error::invalid_blend_curve,
+            "An invalid Hermite Blend Curve must reject the complete synchronized Blend schedule before publishing partial spans.");
+
         const skin_physics::physics::animation_clip_span_schedule_result
             scheduled_clip_spans =
                 skin_physics::physics::schedule_animation_clip_spans(
