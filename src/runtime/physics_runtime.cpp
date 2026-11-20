@@ -4921,6 +4921,12 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Kinematic Pose Sample has an invalid time or transform.");
         }
+        transform normalized_pose = pose;
+        if (!normalize_transform_rotation(normalized_pose))
+        {
+            return make_status(status_code::invalid_argument,
+                "Kinematic Pose Sample Quaternion could not be normalized.");
+        }
         if (!collider->pose_samples.empty() &&
             sample_time < collider->pose_samples.back().time)
         {
@@ -4930,11 +4936,11 @@ namespace skin_physics::runtime
         if (!collider->pose_samples.empty() &&
             sample_time == collider->pose_samples.back().time)
         {
-            collider->pose_samples.back() = { sample_time, pose, false };
+            collider->pose_samples.back() = { sample_time, normalized_pose, false };
         }
         else
         {
-            collider->pose_samples.push_back({ sample_time, pose, false });
+            collider->pose_samples.push_back({ sample_time, normalized_pose, false });
         }
         return make_status(status_code::ok, {});
     }
