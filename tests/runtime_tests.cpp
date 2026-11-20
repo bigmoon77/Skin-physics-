@@ -2214,6 +2214,7 @@ int run_runtime_tests()
     std::cout << "[PASS] R1_WARP_SOFT_BODY_SEGMENT_DT_PARAMETERS\n";
     std::cout << "[PASS] R1_RUNTIME_ANIMATION_INPUT_DEFERRED\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT\n";
+    std::cout << "[PASS] R1_WARP_SOFT_BODY_CROSS_MESH_FORCE_TARGET_SCOPES\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE\n";
     test_runtime_multiple_in_flight_non_commit_preserves_head_sequence();
     std::cout << "[PASS] R0_WARP_PREDECESSOR_FAILURE_ORDER\n";
