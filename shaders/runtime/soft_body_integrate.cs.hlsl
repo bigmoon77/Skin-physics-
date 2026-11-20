@@ -80,7 +80,7 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
     float damping_integral = delta_time;
     if (z >= 1.0e-3f && damping_rate > 0.0f)
     {
-        damping_integral = (1.0f - decay) / damping_rate;
+        damping_integral = (1.0f - decay) / vertex_damping_rate;
     }
     else if (z > 0.0f)
     {
