@@ -224,6 +224,34 @@ namespace skin_physics::runtime
                 finite_float(value.w);
         }
 
+        bool normalize_direction(asset::vec3& value)
+        {
+            if (!finite_vec3(value))
+            {
+                return false;
+            }
+
+            const double x = static_cast<double>(value.x);
+            const double y = static_cast<double>(value.y);
+            const double z = static_cast<double>(value.z);
+            const double length_squared = x * x + y * y + z * z;
+            if (!std::isfinite(length_squared) || length_squared <= 0.0)
+            {
+                return false;
+            }
+
+            const double inverse_length = 1.0 / std::sqrt(length_squared);
+            if (!std::isfinite(inverse_length) || inverse_length <= 0.0)
+            {
+                return false;
+            }
+
+            value.x = static_cast<float>(x * inverse_length);
+            value.y = static_cast<float>(y * inverse_length);
+            value.z = static_cast<float>(z * inverse_length);
+            return finite_vec3(value);
+        }
+
         bool valid_transform(const transform& value)
         {
             if (!finite_vec3(value.translation) || !finite_vec4(value.rotation))
@@ -4540,9 +4568,10 @@ namespace skin_physics::runtime
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         const status input_status = runtime.validate_input_mutation(*world);
         if (!input_status.success()) return input_status;
+        force_desc normalized_force = force;
         if (force.event_id == 0u ||
             !finite_vec3(force.position) ||
-            !finite_vec3(force.direction) ||
+            !normalize_direction(normalized_force.direction) ||
             !finite_float(force.magnitude) ||
             force.magnitude < 0.0f ||
             !finite_float(force.radius) ||
@@ -4566,7 +4595,7 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Force / Impulse Event ID must be unique within the World.");
         }
-        world->forces.push_back(force);
+        world->forces.push_back(std::move(normalized_force));
         return make_status(status_code::ok, {});
     }
 
@@ -4583,9 +4612,10 @@ namespace skin_physics::runtime
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         const status input_status = runtime.validate_input_mutation(*world);
         if (!input_status.success()) return input_status;
+        impulse_desc normalized_impulse = impulse;
         if (impulse.event_id == 0u ||
             !finite_vec3(impulse.position) ||
-            !finite_vec3(impulse.direction) ||
+            !normalize_direction(normalized_impulse.direction) ||
             !finite_float(impulse.impulse_magnitude) ||
             impulse.impulse_magnitude < 0.0f ||
             !finite_float(impulse.radius) ||
@@ -4607,7 +4637,7 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Force / Impulse Event ID must be unique within the World.");
         }
-        world->impulses.push_back(impulse);
+        world->impulses.push_back(std::move(normalized_impulse));
         return make_status(status_code::ok, {});
     }
 
