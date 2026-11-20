@@ -1065,10 +1065,51 @@ namespace skin_physics::runtime
             std::vector<transform_sample> pose_samples;
         };
 
+        struct physics_mesh_input_snapshot
+        {
+            uint32_t mesh_index = asset::invalid_index;
+            std::vector<physics::physics_vertex_attribute_weights> vertex_attribute_weights;
+        };
+
+        struct model_input_snapshot
+        {
+            uint32_t model_index = asset::invalid_index;
+            uint32_t generation = 0u;
+            transform root_transform;
+            std::vector<transform_sample> root_samples;
+            bool has_animation_playback = false;
+            animation_playback_desc animation_playback;
+            bool has_animation_blend = false;
+            animation_blend_desc animation_blend;
+            std::vector<mesh_physics_parameters> mesh_parameters;
+            std::vector<bool> mesh_parameters_valid;
+            std::vector<physics_mesh_input_snapshot> physics_meshes;
+        };
+
+        struct collider_input_snapshot
+        {
+            uint32_t collider_index = asset::invalid_index;
+            uint32_t generation = 0u;
+            bool kinematic = false;
+            collider_desc description;
+            std::vector<transform_sample> pose_samples;
+        };
+
+        struct tick_input_snapshot
+        {
+            uint64_t version = 0u;
+            world_desc description;
+            std::vector<force_desc> forces;
+            std::vector<impulse_desc> impulses;
+            std::vector<model_input_snapshot> models;
+            std::vector<collider_input_snapshot> colliders;
+        };
+
         struct tick_reservation
         {
             uint64_t sequence = 0u;
             double delta_time = 0.0;
+            std::shared_ptr<const tick_input_snapshot> input_snapshot;
             bool from_single_step = false;
             bool blocked = false;
             bool rejected = false;
@@ -1101,6 +1142,7 @@ namespace skin_physics::runtime
             world_desc description;
             world_execution_budget execution_budget;
             uint64_t execution_budget_revision = 1u;
+            uint64_t next_input_snapshot_version = 1u;
             bool cpu_preflight_block_status_observed = false;
             bool gpu_dynamic_toi_block_status_observed = false;
             playback_state playback = playback_state::stopped;
@@ -1246,6 +1288,135 @@ namespace skin_physics::runtime
             return &collider;
         }
 
+        const model_input_snapshot* find_model_input_snapshot(
+            const tick_input_snapshot& snapshot,
+            uint32_t model_index,
+            uint32_t generation) const
+        {
+            const auto iterator = std::find_if(
+                snapshot.models.begin(),
+                snapshot.models.end(),
+                [model_index, generation](const model_input_snapshot& value)
+                {
+                    return value.model_index == model_index &&
+                        value.generation == generation;
+                });
+            return iterator == snapshot.models.end() ? nullptr : &(*iterator);
+        }
+
+        const physics_mesh_input_snapshot* find_physics_mesh_input_snapshot(
+            const model_input_snapshot& model_snapshot,
+            uint32_t mesh_index) const
+        {
+            const auto iterator = std::find_if(
+                model_snapshot.physics_meshes.begin(),
+                model_snapshot.physics_meshes.end(),
+                [mesh_index](const physics_mesh_input_snapshot& value)
+                {
+                    return value.mesh_index == mesh_index;
+                });
+            return iterator == model_snapshot.physics_meshes.end()
+                ? nullptr
+                : &(*iterator);
+        }
+
+        bool build_tick_input_snapshot(
+            const world_slot& world,
+            uint64_t version,
+            std::shared_ptr<const tick_input_snapshot>& out_snapshot,
+            std::string& diagnostic) const
+        {
+            out_snapshot.reset();
+            diagnostic.clear();
+            if (version == 0u ||
+                world.models.size() >= static_cast<std::size_t>(asset::invalid_index) ||
+                world.colliders.size() >= static_cast<std::size_t>(asset::invalid_index))
+            {
+                diagnostic =
+                    "Tick Input Snapshot Version or Handle index range is invalid.";
+                return false;
+            }
+
+            try
+            {
+                std::shared_ptr<tick_input_snapshot> snapshot =
+                    std::make_shared<tick_input_snapshot>();
+                snapshot->version = version;
+                snapshot->description = world.description;
+                snapshot->forces = world.forces;
+                snapshot->impulses = world.impulses;
+                snapshot->models.reserve(world.models.size());
+                snapshot->colliders.reserve(world.colliders.size());
+
+                for (uint32_t model_index = 0u;
+                    model_index < world.models.size(); ++model_index)
+                {
+                    const model_slot& model = world.models[model_index];
+                    if (!model.occupied)
+                    {
+                        continue;
+                    }
+
+                    model_input_snapshot model_snapshot;
+                    model_snapshot.model_index = model_index;
+                    model_snapshot.generation = model.generation;
+                    model_snapshot.root_transform = model.root_transform;
+                    model_snapshot.root_samples = model.root_samples;
+                    model_snapshot.has_animation_playback =
+                        model.has_animation_playback;
+                    model_snapshot.animation_playback = model.animation_playback;
+                    model_snapshot.has_animation_blend = model.has_animation_blend;
+                    model_snapshot.animation_blend = model.animation_blend;
+                    model_snapshot.mesh_parameters = model.mesh_parameters;
+                    model_snapshot.mesh_parameters_valid =
+                        model.mesh_parameters_valid;
+                    model_snapshot.physics_meshes.reserve(
+                        model.mesh_physics_assets.size());
+
+                    for (const model_mesh_physics_asset& mesh_asset :
+                        model.mesh_physics_assets)
+                    {
+                        physics_mesh_input_snapshot mesh_snapshot;
+                        mesh_snapshot.mesh_index = mesh_asset.mesh_index;
+                        mesh_snapshot.vertex_attribute_weights =
+                            mesh_asset.physics_mesh.vertex_attribute_weights;
+                        model_snapshot.physics_meshes.push_back(
+                            std::move(mesh_snapshot));
+                    }
+
+                    snapshot->models.push_back(std::move(model_snapshot));
+                }
+
+                for (uint32_t collider_index = 0u;
+                    collider_index < world.colliders.size(); ++collider_index)
+                {
+                    const collider_slot& collider = world.colliders[collider_index];
+                    if (!collider.occupied)
+                    {
+                        continue;
+                    }
+
+                    collider_input_snapshot collider_snapshot;
+                    collider_snapshot.collider_index = collider_index;
+                    collider_snapshot.generation = collider.generation;
+                    collider_snapshot.kinematic = collider.kinematic;
+                    collider_snapshot.description = collider.description;
+                    collider_snapshot.pose_samples = collider.pose_samples;
+                    snapshot->colliders.push_back(std::move(collider_snapshot));
+                }
+
+                out_snapshot = std::move(snapshot);
+                return true;
+            }
+            catch (...)
+            {
+                diagnostic =
+                    "Unable to allocate or copy the immutable Tick Input Snapshot.";
+                out_snapshot.reset();
+                return false;
+            }
+        }
+
         bool has_world_submission(const world_slot& world) const
         {
             return world.in_flight_tick_count != 0u ||
@@ -1295,6 +1466,8 @@ namespace skin_physics::runtime
 
         bool build_soft_body_tet_inputs(
             const physics::physics_mesh& mesh,
+            const std::vector<physics::physics_vertex_attribute_weights>&
+                vertex_attribute_weights,
             const mesh_physics_parameters& parameters,
             std::vector<gpu_soft_body_tet_input>& out_inputs,
             float& out_damping_rate,
@@ -1307,7 +1480,7 @@ namespace skin_physics::runtime
             if (mesh.tetrahedra.empty() ||
                 mesh.tetrahedra.size() >
                     static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()) ||
-                mesh.vertex_attribute_weights.size() != mesh.rest_positions.size())
+                vertex_attribute_weights.size() != mesh.rest_positions.size())
             {
                 diagnostic =
                     "Soft Body Tet count or transferred per-vertex Physics Attribute Weight layout is invalid.";
@@ -1351,11 +1524,11 @@ namespace skin_physics::runtime
 
             out_vertex_damping_rates.resize(mesh.rest_positions.size());
             for (std::size_t vertex_index = 0u;
-                vertex_index < mesh.vertex_attribute_weights.size();
+                vertex_index < vertex_attribute_weights.size();
                 ++vertex_index)
             {
                 const float weight =
-                    mesh.vertex_attribute_weights[vertex_index][damping_channel];
+                    vertex_attribute_weights[vertex_index][damping_channel];
                 const float damping_rate = out_damping_rate * weight;
                 if (!finite_float(weight) || weight < 0.0f || weight > 1.0f ||
                     !finite_float(damping_rate) || damping_rate < 0.0f)
@@ -1378,7 +1551,7 @@ namespace skin_physics::runtime
                 for (uint32_t local_vertex = 0u; local_vertex < 4u; ++local_vertex)
                 {
                     const uint32_t vertex_index = source.vertices[local_vertex];
-                    if (vertex_index >= mesh.vertex_attribute_weights.size())
+                    if (vertex_index >= vertex_attribute_weights.size())
                     {
                         diagnostic = "Soft Body Tet references an invalid Physics Attribute Weight vertex.";
                         return false;
@@ -1392,9 +1565,9 @@ namespace skin_physics::runtime
                     destination.rest_gradients[local_vertex][2] = gradient.z;
                     destination.rest_gradients[local_vertex][3] = 0.0f;
                     average_shape_recovery +=
-                        mesh.vertex_attribute_weights[vertex_index][shape_channel] * 0.25f;
+                        vertex_attribute_weights[vertex_index][shape_channel] * 0.25f;
                     average_volume_retention +=
-                        mesh.vertex_attribute_weights[vertex_index][volume_channel] * 0.25f;
+                        vertex_attribute_weights[vertex_index][volume_channel] * 0.25f;
                 }
 
                 for (uint32_t row = 0u; row < 3u; ++row)
@@ -1944,6 +2117,7 @@ namespace skin_physics::runtime
 
         bool update_soft_body_materials(
             model_slot& model,
+            const model_input_snapshot& model_snapshot,
             soft_body_gpu_mesh& gpu_mesh,
             float& out_damping_rate,
             std::string& diagnostic)
@@ -1955,19 +2129,23 @@ namespace skin_physics::runtime
                 {
                     return value.mesh_index == gpu_mesh.mesh_index;
                 });
+            const physics_mesh_input_snapshot* mesh_snapshot =
+                find_physics_mesh_input_snapshot(
+                    model_snapshot, gpu_mesh.mesh_index);
             if (asset_iterator == model.mesh_physics_assets.end() ||
-                gpu_mesh.mesh_index >= model.mesh_parameters.size() ||
-                gpu_mesh.mesh_index >= model.mesh_parameters_valid.size())
+                mesh_snapshot == nullptr ||
+                gpu_mesh.mesh_index >= model_snapshot.mesh_parameters.size() ||
+                gpu_mesh.mesh_index >= model_snapshot.mesh_parameters_valid.size())
             {
                 diagnostic = "Soft Body GPU Mesh lost its immutable Physics Mesh Asset owner.";
                 return false;
             }
 
             mesh_physics_parameters parameters =
-                model.mesh_parameters_valid[gpu_mesh.mesh_index]
-                    ? model.mesh_parameters[gpu_mesh.mesh_index]
+                model_snapshot.mesh_parameters_valid[gpu_mesh.mesh_index]
+                    ? model_snapshot.mesh_parameters[gpu_mesh.mesh_index]
                     : mesh_physics_parameters{};
-            if (!model.mesh_parameters_valid[gpu_mesh.mesh_index])
+            if (!model_snapshot.mesh_parameters_valid[gpu_mesh.mesh_index])
             {
                 parameters.density = static_cast<float>(gpu_mesh.rest_density);
             }
@@ -1976,6 +2154,7 @@ namespace skin_physics::runtime
             std::vector<float> vertex_damping_rates;
             if (!build_soft_body_tet_inputs(
                     asset_iterator->physics_mesh,
+                    mesh_snapshot->vertex_attribute_weights,
                     parameters,
                     tet_inputs,
                     out_damping_rate,
@@ -2046,6 +2225,7 @@ namespace skin_physics::runtime
 
         bool compute_soft_body_cfl_time_limit(
             const world_slot& world,
+            const tick_input_snapshot& input_snapshot,
             double& out_dt_limit,
             std::string& diagnostic) const
         {
@@ -2053,11 +2233,23 @@ namespace skin_physics::runtime
             out_dt_limit = std::numeric_limits<double>::infinity();
             diagnostic.clear();
 
-            for (const model_slot& model : world.models)
+            for (uint32_t model_index = 0u;
+                model_index < world.models.size(); ++model_index)
             {
+                const model_slot& model = world.models[model_index];
                 if (!model.occupied)
                 {
                     continue;
+                }
+
+                const model_input_snapshot* model_snapshot =
+                    find_model_input_snapshot(
+                        input_snapshot, model_index, model.generation);
+                if (model_snapshot == nullptr)
+                {
+                    diagnostic =
+                        "Tick Input Snapshot lost an occupied Model generation.";
+                    return false;
                 }
 
                 for (const model_mesh_physics_asset& mesh_asset :
@@ -2071,7 +2263,11 @@ namespace skin_physics::runtime
                     }
 
                     const physics::physics_mesh& mesh = mesh_asset.physics_mesh;
-                    if (mesh.vertex_attribute_weights.size() !=
+                    const physics_mesh_input_snapshot* mesh_snapshot =
+                        find_physics_mesh_input_snapshot(
+                            *model_snapshot, mesh_asset.mesh_index);
+                    if (mesh_snapshot == nullptr ||
+                        mesh_snapshot->vertex_attribute_weights.size() !=
                             mesh.rest_positions.size() ||
                         mesh.mass.size() != mesh.rest_positions.size() ||
                         mesh.tetrahedra.empty())
@@ -2081,15 +2277,22 @@ namespace skin_physics::runtime
                         return false;
                     }
 
+                    if (mesh_asset.mesh_index >= model_snapshot->mesh_parameters.size() ||
+                        mesh_asset.mesh_index >= model_snapshot->mesh_parameters_valid.size())
+                    {
+                        diagnostic =
+                            "Tick Input Snapshot lost a Model Mesh Physics Parameter entry.";
+                        return false;
+                    }
+
+                    const bool parameters_valid =
+                        model_snapshot->mesh_parameters_valid[mesh_asset.mesh_index];
                     mesh_physics_parameters parameters =
-                        mesh_asset.mesh_index < model.mesh_parameters.size() &&
-                        mesh_asset.mesh_index < model.mesh_parameters_valid.size() &&
-                        model.mesh_parameters_valid[mesh_asset.mesh_index]
-                            ? model.mesh_parameters[mesh_asset.mesh_index]
+                        parameters_valid
+                            ? model_snapshot->mesh_parameters[mesh_asset.mesh_index]
                             : mesh_physics_parameters{};
 
-                    if (!(mesh_asset.mesh_index < model.mesh_parameters_valid.size() &&
-                        model.mesh_parameters_valid[mesh_asset.mesh_index]))
+                    if (!parameters_valid)
                     {
                         double total_mass = 0.0;
                         double total_volume = 0.0;
@@ -2219,7 +2422,7 @@ namespace skin_physics::runtime
                                 return false;
                             }
                             const physics::physics_vertex_attribute_weights& weights =
-                                mesh.vertex_attribute_weights[vertex_index];
+                                mesh_snapshot->vertex_attribute_weights[vertex_index];
                             const float shape_weight = weights[shape_channel];
                             const float volume_weight = weights[volume_channel];
                             if (!finite_float(shape_weight) ||
