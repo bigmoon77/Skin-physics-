@@ -899,6 +899,7 @@ namespace skin_physics::runtime
             uint32_t generation = 1u;
             bool reserved = false;
             bool committed = false;
+            bool retired = false;
             uint64_t committed_tick_sequence = 0u;
         };
 
