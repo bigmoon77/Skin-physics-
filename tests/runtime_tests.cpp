@@ -1,10 +1,12 @@
 #include "skin_physics/runtime/physics_runtime.hpp"
 
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -21,6 +23,26 @@ namespace
         {
             throw std::runtime_error(message);
         }
+    }
+
+    std::string runtime_shader_root()
+    {
+        std::vector<wchar_t> executable_path(32768u, L'\\0');
+        const DWORD length = GetModuleFileNameW(
+            nullptr,
+            executable_path.data(),
+            static_cast<DWORD>(executable_path.size()));
+        if (length == 0u || length >= executable_path.size())
+        {
+            return {};
+        }
+        executable_path.resize(length);
+
+        const std::filesystem::path executable(
+            executable_path.begin(), executable_path.end());
+        const std::filesystem::path repository_root =
+            executable.parent_path().parent_path().parent_path().parent_path();
+        return (repository_root / "shaders" / "runtime").string();
     }
 
     bool create_warp_device(
@@ -55,7 +77,12 @@ namespace
 
         physics_runtime runtime;
         skin_physics::runtime::runtime_desc runtime_desc;
-        runtime_desc.shader_package_root = "runtime-test-shaders";
+        runtime_desc.shader_package_root = runtime_shader_root();
+        require(!runtime_desc.shader_package_root.empty() &&
+            std::filesystem::is_regular_file(
+                std::filesystem::path(runtime_desc.shader_package_root) /
+                    "tick_transaction_control.cs.hlsl"),
+            "Runtime shader package root must resolve to the repository Tick Control shader.");
         runtime_desc.query_ring_capacity = 2u;
         require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
             "Runtime must accept a valid Host-owned WARP Device and Immediate Context.");
@@ -135,18 +162,21 @@ namespace
         skin_physics::runtime::advance_report report;
         require(runtime.advance(world, 0.025, &report).success(),
             "Advance must accept valid wall-clock time.");
-        require(report.pending_tick_count == 2u &&
+        require(report.pending_tick_count == 1u &&
+            report.submitted_tick_count == 1u &&
+            report.in_flight_tick_count == 1u &&
             std::abs(report.accumulator_seconds - 0.015) <= 1.0e-12,
-            "Advance must transfer one fixed interval into a Tick Reservation and preserve the unallocated remainder.");
+            "Advance must transfer one fixed interval to a GPU Tick Submission and preserve the unallocated remainder.");
 
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::paused).success(),
             "World must enter Paused.");
         require(runtime.advance(world, 0.5, &report).success(),
             "Advance while Paused must still allow polling without consuming wall-clock time.");
-        require(report.pending_tick_count == 2u &&
+        require(report.pending_tick_count == 1u &&
+            report.in_flight_tick_count == 1u &&
             std::abs(report.accumulator_seconds - 0.015) <= 1.0e-12,
-            "Paused Advance must preserve the unallocated remainder and ignore additional frame time.");
+            "Paused Advance must preserve the unallocated remainder and keep the in-flight GPU Tick unchanged.");
 
         require(runtime.set_fixed_delta_time(world, 0.02).code == status_code::busy,
             "Fixed Delta Time must not change while complete Tick requests remain in the Accumulator.");
@@ -154,10 +184,29 @@ namespace
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::stopped).success(),
             "World must enter Stopped without discarding the Accumulator.");
-        require(runtime.poll(world, &world_status).success() &&
+        bool status_observed = false;
+        for (uint32_t attempt = 0u; attempt < 1024u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &world_status).success(),
+                "Non-blocking Tick Status Poll must succeed.");
+            if (world_status.in_flight_tick_count == 0u)
+            {
+                status_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(status_observed &&
+            world_status.state == skin_physics::runtime::tick_state::committed &&
+            world_status.gpu_committed_sequence == 1u &&
+            world_status.cpu_observed_sequence == 1u &&
+            std::abs(world_status.gpu_committed_simulation_time - 0.01) <= 1.0e-12 &&
+            std::abs(world_status.cpu_observed_completed_time - 0.01) <= 1.0e-12 &&
             std::abs(world_status.requested_simulation_time - 0.025) <= 1.0e-12 &&
-            std::abs(world_status.effective_requested_time - 0.025) <= 1.0e-12,
-            "Requested and effective requested time must remain unchanged after Stop.");
+            std::abs(world_status.effective_requested_time - 0.025) <= 1.0e-12 &&
+            std::abs(world_status.reserved_tick_time) <= 1.0e-12,
+            "GPU Commit and CPU-observed completion must advance only after the Event Query and COMMITTED Status are observed.");
 
         require(runtime.reset_world(world).success(),
             "Idle World Reset must explicitly discard pending requested time.");
