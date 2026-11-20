@@ -2447,6 +2447,13 @@ namespace skin_physics::runtime
                 {
                     continue;
                 }
+                if (model.has_animation_playback ||
+                    model.has_animation_blend ||
+                    !model.root_samples.empty())
+                {
+                    return true;
+                }
+
                 for (uint32_t mesh_index = 0u;
                     mesh_index < model.source_model.meshes.size(); ++mesh_index)
                 {
@@ -3152,7 +3159,7 @@ namespace skin_physics::runtime
                 world.budget_resolution = work_budget_resolution::none;
                 world.work_budget_block_flags = 0u;
                 world.diagnostic =
-                    "GPU submission is deferred because this World contains Cloth or Collider work that is not yet connected to the Runtime scheduler.";
+                    "GPU submission is deferred because this World contains Force / Impulse, Animation / Root Transform, Cloth or Collider work that is not yet connected to the Runtime scheduler.";
                 return false;
             }
             if (world.render_lease_active)
