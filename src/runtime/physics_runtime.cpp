@@ -4470,6 +4470,48 @@ namespace skin_physics::runtime
                 for (soft_body_mesh_work_state& work : mesh_work)
                 {
                     soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
+                    work.has_animation_target = false;
+                    work.animation_target_status_srv = nullptr;
+
+                    const auto animation_schedule_iterator = std::find_if(
+                        reservation.animation_schedules.begin(),
+                        reservation.animation_schedules.end(),
+                        [&work](const model_animation_tick_schedule& value)
+                        {
+                            return value.model_index == work.model_index &&
+                                value.model_generation == work.model->generation;
+                        });
+                    if (animation_schedule_iterator !=
+                        reservation.animation_schedules.end())
+                    {
+                        const model_input_snapshot* model_snapshot =
+                            find_model_input_snapshot(
+                                input_snapshot,
+                                work.model_index,
+                                work.model->generation);
+                        if (model_snapshot == nullptr ||
+                            !append_soft_body_animation_skinning_pass(
+                                *work.model,
+                                *model_snapshot,
+                                *animation_schedule_iterator,
+                                work,
+                                segment.start_time,
+                                graph,
+                                out_segment_parameter_buffers,
+                                out_segment_shader_resource_views,
+                                out_segment_unordered_access_views,
+                                diagnostic))
+                        {
+                            if (diagnostic.empty())
+                            {
+                                diagnostic =
+                                    "Animated Soft Body Mesh lost its immutable Model Snapshot before Skinning.";
+                            }
+                            return false;
+                        }
+                        work.has_animation_target = true;
+                    }
+
                     gpu_soft_body_integration_parameters integration_parameters;
                     integration_parameters.vertex_count = gpu_mesh.vertex_count;
                     integration_parameters.delta_time = delta_time;
@@ -4482,6 +4524,14 @@ namespace skin_physics::runtime
                         input_snapshot.description.gravity.y;
                     integration_parameters.gravity[2] =
                         input_snapshot.description.gravity.z;
+                    integration_parameters.tracking_stiffness =
+                        work.tracking_stiffness;
+                    integration_parameters.tracking_damping =
+                        work.tracking_damping;
+                    integration_parameters.tracking_attribute_multiplier =
+                        work.tracking_attribute_multiplier;
+                    integration_parameters.has_animation_target =
+                        work.has_animation_target ? 1u : 0u;
 
                     Microsoft::WRL::ComPtr<ID3D11Buffer> segment_parameters;
                     if (!create_constant_buffer(
@@ -4511,6 +4561,25 @@ namespace skin_physics::runtime
                         { 4u, gpu_mesh.vertex_damping_rate_srv.Get() },
                         { 5u, work.integrated_impulse_srv }
                     };
+                    if (work.has_animation_target)
+                    {
+                        if (work.animation_target_status_srv == nullptr ||
+                            gpu_mesh.animation_target_positions_srv == nullptr ||
+                            gpu_mesh.animation_target_velocities_srv == nullptr)
+                        {
+                            diagnostic =
+                                "Animation Skinning did not publish valid Target Position / Velocity / Status SRVs for Integration.";
+                            return false;
+                        }
+                        integrate_pass.shader_resources.push_back(
+                            { 6u, gpu_mesh.animation_target_positions_srv.Get() });
+                        integrate_pass.shader_resources.push_back(
+                            { 7u, gpu_mesh.animation_target_velocities_srv.Get() });
+                        integrate_pass.shader_resources.push_back(
+                            { 8u, work.animation_target_status_srv });
+                    }
+                    integrate_pass.shader_resources.push_back(
+                        { 9u, gpu_mesh.animation_tracking_weights_srv.Get() });
                     integrate_pass.unordered_access_views = {
                         { 0u, work.destination_position_uav, 0xffffffffu },
                         { 1u, work.destination_velocity_uav, 0xffffffffu },
