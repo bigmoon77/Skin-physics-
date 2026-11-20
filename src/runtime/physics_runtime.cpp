@@ -3087,6 +3087,14 @@ namespace skin_physics::runtime
                     "GPU submission is deferred because this World contains Cloth or Collider work that is not yet connected to the Runtime scheduler.";
                 return false;
             }
+            if (world.render_lease_active)
+            {
+                world.state = tick_state::pending;
+                world.last_tick_status = status_code::render_binding_busy;
+                world.diagnostic =
+                    "GPU submission is waiting for the Host Render Lease to be released.";
+                return false;
+            }
             if (status_ring == nullptr ||
                 status_ring->pending_count() >= status_ring->capacity())
             {
@@ -5347,7 +5355,7 @@ namespace skin_physics::runtime
         out_binding->normal_srv = has_normals ? mesh_slot.normal_srv.Get() : nullptr;
         out_binding->tangent_srv = has_tangents ? mesh_slot.tangent_srv.Get() : nullptr;
         out_binding->format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-        out_binding->stride = sizeof(implementation::gpu_float4);
+        out_binding->stride = sizeof(gpu_float4);
         out_binding->vertex_count = gpu_mesh_iterator->render_vertex_count;
         out_binding->index_count = gpu_mesh_iterator->render_index_count;
         out_binding->resource_generation =
