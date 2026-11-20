@@ -2198,6 +2198,33 @@ namespace skin_physics::runtime
                     dt_limit, world.description.contact_max_substep_delta_time);
             }
 
+            double soft_body_dt_limit = std::numeric_limits<double>::infinity();
+            std::string cfl_diagnostic;
+            if (!compute_soft_body_cfl_time_limit(
+                    world, soft_body_dt_limit, cfl_diagnostic))
+            {
+                reservation.blocked = false;
+                reservation.rejected = false;
+                reservation.planned_substeps = 0u;
+                reservation.planned_integration_segments = 0u;
+                world.planned_substeps = 0u;
+                world.planned_integration_segments = 0u;
+                world.work_budget_block_flags = 0u;
+                world.budget_block_origin = work_budget_block_origin::none;
+                world.budget_resolution = work_budget_resolution::none;
+                world.last_tick_status = status_code::asset_invalid;
+                world.state = tick_state::failed;
+                world.diagnostic =
+                    "Soft Body CFL Preflight could not derive a valid Stability Time Limit: " +
+                    cfl_diagnostic;
+                return;
+            }
+            if (soft_body_dt_limit > 0.0 &&
+                std::isfinite(soft_body_dt_limit))
+            {
+                dt_limit = std::min(dt_limit, soft_body_dt_limit);
+            }
+
             double required_substeps = world.description.minimum_substeps;
             if (std::isfinite(dt_limit))
             {
