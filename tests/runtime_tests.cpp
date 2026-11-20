@@ -1216,6 +1216,7 @@ int run_runtime_tests()
     test_runtime_soft_body_gpu_tick_and_state_bank_sequence();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS\n";
     std::cout << "[PASS] R1_RUNTIME_ANIMATION_INPUT_DEFERRED\n";
+    std::cout << "[PASS] R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE\n";
     test_runtime_multiple_in_flight_non_commit_preserves_head_sequence();
     std::cout << "[PASS] R0_WARP_PREDECESSOR_FAILURE_ORDER\n";
