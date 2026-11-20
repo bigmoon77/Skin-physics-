@@ -331,7 +331,8 @@
         "P06_COROTATIONAL_FEM_GOLDEN",
         "P06_INVERSION_ROLLBACK",
         "P06_WARP_COROTATIONAL_FEM",
-        "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS"
+        "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
+        "R1_RUNTIME_SOFT_BODY_ASSET_AND_CSR_VALIDATION"
       ],
       "unimplemented": [
         "WARP numeric parity and near-singular regression for the production Runtime Jacobi SVD fallback path",
@@ -345,7 +346,7 @@
         "shaders/runtime/soft_body_integrate.cs.hlsl",
         "shaders/runtime/tick_transaction_control.cs.hlsl"
       ],
-      "status_note": "Production Runtime path now contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / damped integration and two-bank Commit plumbing. Runtime WARP execution and numerical parity remain unverified until Windows CI runs."
+      "status_note": "Production Runtime path now contains gated FEM / Jacobi SVD fallback / deterministic CSR force gather / damped integration, two-bank Commit plumbing, and strict Tet / CSR Asset validation. Runtime WARP execution and numeric parity remain unverified until Windows CI runs."
     },
     {
       "phase": 7,
@@ -833,7 +834,10 @@
       "two_persistent_soft_body_position_and_velocity_state_banks_per_mesh",
       "gated_soft_body_fem_force_csr_gather_and_damped_integration_passes",
       "odd_substep_tick_scratch_publication_to_inactive_state_bank",
-      "gpu_commit_status_requires_exact_state_generation_and_bank_transition"
+      "gpu_commit_status_requires_exact_state_generation_and_bank_transition",
+      "soft_body_asset_upload_rejects_non_finite_rest_inverse_and_shape_gradients",
+      "soft_body_asset_upload_rejects_duplicate_tetrahedron_vertices",
+      "vertex_to_tet_csr_matches_complete_ordered_topology_incidence"
     ],
     "remaining_r0": [
       "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
