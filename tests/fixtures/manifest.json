@@ -738,6 +738,22 @@
             "candidate_capacity_overflow_publishes_no_partial_set"
           ],
           "status": "source and WARP readback test added; Windows shader compilation and execution not verified"
+        },
+        {
+          "test_group": "P12_WARP_GPU_GENERATED_INDIRECT_DISPATCH",
+          "gpu_source_files": [
+            "tests/fixtures/phase12_correction/indirect_dispatch.cs.hlsl",
+            "src/simulation/d3d11_compute_graph.cpp",
+            "tests/gpu_solver_tests.cpp"
+          ],
+          "gpu_assertions": [
+            "gpu_generated_group_count_drives_dispatch_indirect",
+            "producer_uav_is_unbound_before_indirect_consumer",
+            "indirect_argument_flag_alignment_and_size_validation",
+            "indirect_argument_same_pass_resource_alias_rejection",
+            "indirect_execution_has_no_cpu_group_count_readback"
+          ],
+          "status": "executor, shader, and WARP readback test added; Windows build and execution not verified"
         }
       ]
     }
