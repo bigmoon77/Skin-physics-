@@ -746,10 +746,11 @@ namespace
         render_mesh.name = "runtime_soft_body_degenerate_render_face";
         render_mesh.mode = skin_physics::asset::physics_mode::soft_body;
         render_mesh.vertices.resize(4u);
-        render_mesh.vertices[0].position = { 0.0f, 0.0f, 0.0f };
-        render_mesh.vertices[1].position = { 0.25f, 0.0f, 0.0f };
-        render_mesh.vertices[2].position = { 0.75f, 0.0f, 0.0f };
-        render_mesh.vertices[3].position = { 0.0f, 0.0f, 0.25f };
+        for (uint32_t vertex_index = 0u; vertex_index < 4u; ++vertex_index)
+        {
+            render_mesh.vertices[vertex_index].position =
+                raw_mesh.positions[vertex_index];
+        }
         for (const skin_physics::physics::boundary_triangle& boundary :
             built_mesh.value.boundary_triangles)
         {
@@ -758,6 +759,24 @@ namespace
                 boundary.vertices.begin(),
                 boundary.vertices.end());
         }
+
+        // Add an unused, collinear triangle on a boundary edge. Its three
+        // distinct vertices still have valid Tet bindings and stay within the
+        // Render-to-Physics surface distance, but GPU Render Feedback must fail
+        // its finite-area validation for this degenerate face.
+        const std::array<skin_physics::asset::vec3, 3> degenerate_positions = {
+            skin_physics::asset::vec3{ 0.1f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 0.2f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 0.3f, 0.0f, 0.0f }
+        };
+        for (const skin_physics::asset::vec3& position : degenerate_positions)
+        {
+            skin_physics::asset::vertex vertex;
+            vertex.position = position;
+            render_mesh.vertices.push_back(vertex);
+        }
+        render_mesh.indices.insert(
+            render_mesh.indices.end(), { 4u, 5u, 6u });
 
         skin_physics::runtime::model_desc model_desc;
         model_desc.source_model.meshes.push_back(render_mesh);
