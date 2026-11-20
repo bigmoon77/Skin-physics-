@@ -2491,6 +2491,8 @@ int run_runtime_tests()
     std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY\n";
     test_runtime_cpu_preflight_count_overflow_fails_world();
     std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW\n";
+    test_runtime_soft_body_skin_weight_transfer_upload();
+    std::cout << "[PASS] R1_WARP_SOFT_BODY_SKIN_WEIGHT_TRANSFER_UPLOAD\n";
     test_runtime_soft_body_gpu_tick_and_state_bank_sequence();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_SEGMENT_DT_PARAMETERS\n";
