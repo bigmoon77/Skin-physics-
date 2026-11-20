@@ -649,38 +649,33 @@ namespace skin_physics::runtime
             world.planned_substeps = planned_substeps;
             world.planned_integration_segments = planned_segments;
 
-            const bool substep_hard_limit_exceeded =
-                planned_substeps >
-                    world.description.maximum_substeps &&
-                planned_substeps >
-                    world.description.maximum_substeps;
-            const bool runtime_substep_limit_exceeded =
-                planned_substeps >
-                    world.execution_budget.maximum_substeps &&
-                planned_substeps >
-                    world.description.maximum_substeps;
-            const bool integration_limit_exceeded =
+            const bool substep_budget_exceeded =
+                planned_substeps > world.execution_budget.maximum_substeps;
+            const bool integration_budget_exceeded =
                 planned_segments >
                     world.execution_budget.maximum_integration_segments_per_tick;
+            const bool hard_limit_exceeded =
+                planned_substeps > desc.maximum_world_substeps_hard_limit ||
+                planned_segments >
+                    desc.maximum_integration_segments_per_tick_hard_limit;
 
-            if (substep_hard_limit_exceeded || runtime_substep_limit_exceeded)
+            if (substep_budget_exceeded)
             {
                 reservation.blocked = true;
                 world.work_budget_block_flags |= 0x01u;
             }
-            if (integration_limit_exceeded)
+            if (integration_budget_exceeded)
             {
                 reservation.blocked = true;
                 world.work_budget_block_flags |= 0x02u;
             }
+            if (hard_limit_exceeded)
+            {
+                reservation.blocked = true;
+            }
 
             if (reservation.blocked)
             {
-                const bool hard_limit_exceeded =
-                    planned_substeps >
-                        world.execution_budget.maximum_substeps &&
-                    planned_substeps >
-                        world.description.maximum_substeps;
                 world.budget_block_origin = work_budget_block_origin::cpu_preflight;
                 world.budget_resolution = hard_limit_exceeded
                     ? work_budget_resolution::hard_limit_reached
@@ -701,7 +696,6 @@ namespace skin_physics::runtime
 
         bool reserve_next_tick(
             world_slot& world,
-            const runtime_desc& runtime_desc_value,
             bool from_single_step)
         {
             if (!world.reservations.empty())
@@ -752,7 +746,6 @@ namespace skin_physics::runtime
             world.reserved_tick_time += reservation.delta_time;
             world.reservations.push_back(reservation);
             update_head_reservation_preflight(world);
-            (void)runtime_desc_value;
             return true;
         }
 
@@ -1902,11 +1895,11 @@ namespace skin_physics::runtime
         {
             if (world->pending_single_step_requests != 0u)
             {
-                runtime.reserve_next_tick(*world, runtime.desc, true);
+                runtime.reserve_next_tick(*world, true);
             }
             else if (world->playback == playback_state::playing)
             {
-                runtime.reserve_next_tick(*world, runtime.desc, false);
+                runtime.reserve_next_tick(*world, false);
             }
         }
 
@@ -2047,6 +2040,8 @@ namespace skin_physics::runtime
         result.submitted_sequence = world->submitted_sequence;
         result.gpu_committed_sequence = world->gpu_committed_sequence;
         result.cpu_observed_sequence = world->cpu_observed_sequence;
+        result.head_reserved_tick_sequence = world->reservations.empty()
+            ? 0u : world->reservations.front().sequence;
         result.planned_substeps = world->planned_substeps;
         result.planned_integration_segments = world->planned_integration_segments;
         result.executed_integration_segments = world->executed_integration_segments;
