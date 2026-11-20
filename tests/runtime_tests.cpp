@@ -28,7 +28,7 @@ namespace
 
     std::string runtime_shader_root()
     {
-        std::vector<wchar_t> executable_path(32768u, L'\\0');
+        std::vector<wchar_t> executable_path(32768u, L'\0');
         const DWORD length = GetModuleFileNameW(
             nullptr,
             executable_path.data(),
