@@ -101,6 +101,7 @@
     <ClCompile Include="src\physics\correction_ccd.cpp" />
     <ClCompile Include="src\physics\animation_track.cpp" />
     <ClCompile Include="src\physics\animation_gpu_resources.cpp" />
+    <ClCompile Include="src\physics\physics_mesh_skinning.cpp" />
     <ClCompile Include="src\physics\attribute_paint.cpp" />
     <ClCompile Include="src\physics\performance_metrics.cpp" />
     <ClCompile Include="src\simulation\fixed_step.cpp" />
@@ -130,6 +131,7 @@
     <ClInclude Include="include\skin_physics\physics\correction_ccd.hpp" />
     <ClInclude Include="include\skin_physics\physics\animation_track.hpp" />
     <ClInclude Include="include\skin_physics\physics\animation_gpu_resources.hpp" />
+    <ClInclude Include="include\skin_physics\physics\physics_mesh_skinning.hpp" />
     <ClInclude Include="include\skin_physics\physics\attribute_paint.hpp" />
     <ClInclude Include="include\skin_physics\physics\performance_metrics.hpp" />
     <ClInclude Include="include\skin_physics\simulation\fixed_step.hpp" />
