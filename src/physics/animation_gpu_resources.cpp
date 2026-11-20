@@ -24,9 +24,9 @@ namespace skin_physics::physics
 
             if (sizeof(T) == 0u ||
                 sizeof(T) > static_cast<std::size_t>(
-                    std::numeric_limits<UINT>::max()) ||
+                    (std::numeric_limits<UINT>::max)()) ||
                 values.size() > static_cast<std::size_t>(
-                    std::numeric_limits<UINT>::max()) / sizeof(T))
+                    (std::numeric_limits<UINT>::max)()) / sizeof(T))
             {
                 diagnostic = std::string("Animation Packet ") + label +
                     " StructuredBuffer exceeds the D3D11 UINT ByteWidth limit.";
