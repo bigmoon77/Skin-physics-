@@ -3253,6 +3253,85 @@ namespace
     }
 
 
+    void test_phase09_warp_animation_skin_abi()
+    {
+        using skin_physics::physics::animation_skin_gpu_record;
+        using skin_physics::physics::animation_skin_joint_gpu_record;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Animation Skin ABI regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_path(
+                "phase09_animation/animation_skin_abi.cs.hlsl"),
+            "copy_animation_skin_abi");
+
+        const std::vector<animation_skin_gpu_record> skin_inputs = {
+            { 17u, 3u, 11u, 5u }
+        };
+        const std::vector<animation_skin_joint_gpu_record> joint_inputs = {
+            { 19u, 23u, 29u, 31u }
+        };
+
+        const ComPtr<ID3D11Buffer> skin_input_buffer =
+            create_structured_buffer(
+                device.Get(), skin_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> joint_input_buffer =
+            create_structured_buffer(
+                device.Get(), joint_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> skin_input_view =
+            create_structured_srv<animation_skin_gpu_record>(
+                device.Get(), skin_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> joint_input_view =
+            create_structured_srv<animation_skin_joint_gpu_record>(
+                device.Get(), joint_input_buffer.Get(), 1u);
+
+        const std::vector<animation_skin_gpu_record> empty_skins(1u);
+        const std::vector<animation_skin_joint_gpu_record> empty_joints(1u);
+        const ComPtr<ID3D11Buffer> skin_output_buffer =
+            create_structured_buffer(
+                device.Get(), empty_skins, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> joint_output_buffer =
+            create_structured_buffer(
+                device.Get(), empty_joints, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> skin_output_view =
+            create_structured_uav<animation_skin_gpu_record>(
+                device.Get(), skin_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> joint_output_view =
+            create_structured_uav<animation_skin_joint_gpu_record>(
+                device.Get(), joint_output_buffer.Get(), 1u);
+
+        dispatch_compute(
+            context.Get(),
+            shader.Get(),
+            { skin_input_view.Get(), joint_input_view.Get() },
+            { skin_output_view.Get(), joint_output_view.Get() },
+            nullptr,
+            1u);
+
+        const std::vector<animation_skin_gpu_record> skin_outputs =
+            readback_structured_buffer<animation_skin_gpu_record>(
+                device.Get(), context.Get(), skin_output_buffer.Get(), 1u);
+        const std::vector<animation_skin_joint_gpu_record> joint_outputs =
+            readback_structured_buffer<animation_skin_joint_gpu_record>(
+                device.Get(), context.Get(), joint_output_buffer.Get(), 1u);
+
+        require(std::memcmp(
+                skin_inputs.data(), skin_outputs.data(),
+                sizeof(animation_skin_gpu_record)) == 0 &&
+            std::memcmp(
+                joint_inputs.data(), joint_outputs.data(),
+                sizeof(animation_skin_joint_gpu_record)) == 0,
+            "WARP StructuredBuffer / UAV Readback must preserve every Skin / Joint mapping field byte-for-byte.");
+        std::cout << "[PASS] P09_WARP_ANIMATION_SKIN_JOINT_ABI\n";
+    }
+
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
