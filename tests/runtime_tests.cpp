@@ -1,6 +1,8 @@
 #include "skin_physics/runtime/physics_runtime.hpp"
 #include "skin_physics/physics/physics_mesh_builder.hpp"
+#include "skin_physics/runtime/detail/force_distribution.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <array>
 #include <cstring>
@@ -16,6 +18,9 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
+#include <d3dcompiler.h>
+
+#pragma comment(lib, "d3dcompiler.lib")
 
 namespace
 {
@@ -136,6 +141,459 @@ namespace
             context.GetAddressOf());
         return SUCCEEDED(result) &&
             selected_level >= D3D_FEATURE_LEVEL_11_0;
+    }
+
+
+    struct alignas(16) test_gpu_force_distribution_event_parameters
+    {
+        uint32_t vertex_count = 0u;
+        uint32_t include_previous = 0u;
+        uint32_t reserved0[2] = {};
+        float action_position[3] = {};
+        float radius = 0.0f;
+        float direction[3] = {};
+        float magnitude = 0.0f;
+    };
+
+    struct alignas(16) test_gpu_distribution_reduce_parameters
+    {
+        uint32_t vertex_count = 0u;
+        uint32_t group_count = 0u;
+        uint32_t reserved[2] = {};
+    };
+
+    struct alignas(16) test_gpu_tick_commit_control
+    {
+        uint32_t values[20] = {};
+    };
+
+    static_assert(sizeof(test_gpu_force_distribution_event_parameters) == 48,
+        "Force distribution Event Parameters must match the production HLSL ABI.");
+    static_assert(sizeof(test_gpu_distribution_reduce_parameters) == 16,
+        "Force distribution Reduction Parameters must match the production HLSL ABI.");
+    static_assert(sizeof(test_gpu_tick_commit_control) == 80,
+        "Force distribution Tick Commit Control must match the production HLSL ABI.");
+
+    template <typename T>
+    ComPtr<ID3D11Buffer> create_distribution_test_structured_buffer(
+        ID3D11Device* device,
+        const std::vector<T>& values,
+        UINT bind_flags)
+    {
+        require(device != nullptr && !values.empty() &&
+            values.size() <= static_cast<std::size_t>(
+                std::numeric_limits<UINT>::max() / sizeof(T)),
+            "Force distribution test Buffer input must fit a non-empty D3D11 allocation.");
+
+        D3D11_BUFFER_DESC description = {};
+        description.ByteWidth = static_cast<UINT>(values.size() * sizeof(T));
+        description.Usage = D3D11_USAGE_DEFAULT;
+        description.BindFlags = bind_flags;
+        description.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        description.StructureByteStride = static_cast<UINT>(sizeof(T));
+
+        D3D11_SUBRESOURCE_DATA initial_data = {};
+        initial_data.pSysMem = values.data();
+
+        ComPtr<ID3D11Buffer> buffer;
+        require(SUCCEEDED(device->CreateBuffer(
+                &description, &initial_data, buffer.GetAddressOf())),
+            "Force distribution test Structured Buffer creation must succeed.");
+        return buffer;
+    }
+
+    template <typename T>
+    ComPtr<ID3D11Buffer> create_distribution_test_constant_buffer(
+        ID3D11Device* device,
+        const T& value)
+    {
+        static_assert((sizeof(T) & 15u) == 0u,
+            "Force distribution constant buffers must be 16-byte aligned.");
+        require(device != nullptr &&
+            sizeof(T) <= D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16u,
+            "Force distribution test Constant Buffer must fit the D3D11 limit.");
+
+        D3D11_BUFFER_DESC description = {};
+        description.ByteWidth = static_cast<UINT>(sizeof(T));
+        description.Usage = D3D11_USAGE_DEFAULT;
+        description.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+
+        D3D11_SUBRESOURCE_DATA initial_data = {};
+        initial_data.pSysMem = &value;
+
+        ComPtr<ID3D11Buffer> buffer;
+        require(SUCCEEDED(device->CreateBuffer(
+                &description, &initial_data, buffer.GetAddressOf())),
+            "Force distribution test Constant Buffer creation must succeed.");
+        return buffer;
+    }
+
+    ComPtr<ID3D11ShaderResourceView> create_distribution_test_srv(
+        ID3D11Device* device,
+        ID3D11Buffer* buffer,
+        uint32_t element_count)
+    {
+        require(device != nullptr && buffer != nullptr && element_count > 0u,
+            "Force distribution test SRV requires a valid Buffer and element count.");
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC description = {};
+        description.Format = DXGI_FORMAT_UNKNOWN;
+        description.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        description.Buffer.FirstElement = 0u;
+        description.Buffer.NumElements = element_count;
+
+        ComPtr<ID3D11ShaderResourceView> view;
+        require(SUCCEEDED(device->CreateShaderResourceView(
+                buffer, &description, view.GetAddressOf())),
+            "Force distribution test SRV creation must succeed.");
+        return view;
+    }
+
+    ComPtr<ID3D11UnorderedAccessView> create_distribution_test_uav(
+        ID3D11Device* device,
+        ID3D11Buffer* buffer,
+        uint32_t element_count)
+    {
+        require(device != nullptr && buffer != nullptr && element_count > 0u,
+            "Force distribution test UAV requires a valid Buffer and element count.");
+
+        D3D11_UNORDERED_ACCESS_VIEW_DESC description = {};
+        description.Format = DXGI_FORMAT_UNKNOWN;
+        description.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        description.Buffer.FirstElement = 0u;
+        description.Buffer.NumElements = element_count;
+
+        ComPtr<ID3D11UnorderedAccessView> view;
+        require(SUCCEEDED(device->CreateUnorderedAccessView(
+                buffer, &description, view.GetAddressOf())),
+            "Force distribution test UAV creation must succeed.");
+        return view;
+    }
+
+    void test_runtime_force_distribution_gpu_cpu_parity()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Force distribution parity regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const std::filesystem::path shader_path =
+            std::filesystem::path(runtime_shader_root()) /
+            "soft_body_force_distribution.cs.hlsl";
+        require(std::filesystem::is_regular_file(shader_path),
+            "Force distribution parity regression must compile the production Runtime shader.");
+
+        auto compile_shader = [&](const char* entry_point,
+                                  ComPtr<ID3D11ComputeShader>& out_shader)
+        {
+            ComPtr<ID3DBlob> bytecode;
+            ComPtr<ID3DBlob> errors;
+            const HRESULT compile_result = D3DCompileFromFile(
+                shader_path.c_str(),
+                nullptr,
+                D3D_COMPILE_STANDARD_FILE_INCLUDE,
+                entry_point,
+                "cs_5_0",
+                D3DCOMPILE_ENABLE_STRICTNESS,
+                0u,
+                bytecode.GetAddressOf(),
+                errors.GetAddressOf());
+
+            std::string diagnostic;
+            if (errors != nullptr && errors->GetBufferSize() > 0u)
+            {
+                diagnostic.assign(
+                    static_cast<const char*>(errors->GetBufferPointer()),
+                    errors->GetBufferSize());
+            }
+            require(SUCCEEDED(compile_result),
+                std::string("Production Force distribution shader entry point must compile: ") +
+                    entry_point + " " + diagnostic);
+            require(SUCCEEDED(device->CreateComputeShader(
+                    bytecode->GetBufferPointer(),
+                    bytecode->GetBufferSize(),
+                    nullptr,
+                    out_shader.GetAddressOf())),
+                std::string("Production Force distribution compute shader creation must succeed: ") +
+                    entry_point);
+        };
+
+        ComPtr<ID3D11ComputeShader> weight_shader;
+        ComPtr<ID3D11ComputeShader> reduce_shader;
+        ComPtr<ID3D11ComputeShader> finalize_shader;
+        ComPtr<ID3D11ComputeShader> apply_shader;
+        compile_shader("soft_body_force_distribution_weight", weight_shader);
+        compile_shader("soft_body_force_distribution_reduce", reduce_shader);
+        compile_shader("soft_body_force_distribution_finalize", finalize_shader);
+        compile_shader("soft_body_force_distribution_apply", apply_shader);
+
+        constexpr uint32_t vertex_count = 130u;
+        constexpr uint32_t thread_group_size = 64u;
+        constexpr uint32_t group_count =
+            (vertex_count + thread_group_size - 1u) / thread_group_size;
+        constexpr UINT data_bind_flags =
+            D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+        std::vector<skin_physics::asset::vec3> positions;
+        std::vector<float> rest_masses;
+        std::vector<test_gpu_float4> gpu_positions;
+        positions.reserve(vertex_count);
+        rest_masses.reserve(vertex_count);
+        gpu_positions.reserve(vertex_count);
+
+        for (uint32_t index = 0u; index < vertex_count; ++index)
+        {
+            const uint32_t column = index % 13u;
+            const uint32_t row = index / 13u;
+            const int32_t depth_index =
+                static_cast<int32_t>((index * 7u) % 17u) - 8;
+            const skin_physics::asset::vec3 position = {
+                -0.9f + static_cast<float>(column) * 0.15f,
+                -0.6f + static_cast<float>(row) * 0.1f,
+                static_cast<float>(depth_index) * 0.04f
+            };
+            const float rest_mass =
+                0.2f + static_cast<float>(index % 11u) * 0.07f;
+
+            positions.push_back(position);
+            rest_masses.push_back(rest_mass);
+            gpu_positions.push_back({
+                position.x, position.y, position.z, 1.0f
+            });
+        }
+
+        const skin_physics::asset::vec3 action_position = {
+            0.04f, -0.03f, 0.02f
+        };
+        constexpr float radius = 2.4f;
+
+        skin_physics::runtime::detail::force_distribution_mesh_view mesh_view;
+        mesh_view.segment_start_positions = &positions;
+        mesh_view.rest_lumped_masses = &rest_masses;
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            mesh_views = { mesh_view };
+
+        skin_physics::runtime::detail::force_distribution_weights cpu_reference;
+        std::string reference_diagnostic;
+        require(
+            skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                action_position,
+                radius,
+                mesh_views,
+                cpu_reference,
+                reference_diagnostic),
+            "CPU double-precision Wendland C2 reference must build: " +
+                reference_diagnostic);
+        require(cpu_reference.mesh_weights.size() == 1u &&
+            cpu_reference.mesh_weights[0u].size() == vertex_count,
+            "CPU reference must contain one weight for each WARP test vertex.");
+
+        test_gpu_force_distribution_event_parameters event_parameters;
+        event_parameters.vertex_count = vertex_count;
+        event_parameters.action_position[0] = action_position.x;
+        event_parameters.action_position[1] = action_position.y;
+        event_parameters.action_position[2] = action_position.z;
+        event_parameters.radius = radius;
+        event_parameters.direction[0] = 1.0f;
+        event_parameters.magnitude = 1.0f;
+
+        test_gpu_distribution_reduce_parameters reduce_parameters;
+        reduce_parameters.vertex_count = vertex_count;
+        reduce_parameters.group_count = group_count;
+
+        test_gpu_tick_commit_control control_values;
+        control_values.values[2] = 1u;
+        control_values.values[5] = 1u;
+        control_values.values[13] = 1u;
+        control_values.values[15] = 0xffffffffu;
+
+        const std::vector<float> zero_weights(vertex_count, 0.0f);
+        const std::vector<float> zero_sum(1u, 0.0f);
+        const std::vector<test_gpu_float4> zero_accumulator(
+            vertex_count, test_gpu_float4{});
+        const std::vector<test_gpu_tick_commit_control> initial_control = {
+            control_values
+        };
+
+        ComPtr<ID3D11Buffer> position_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), gpu_positions, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11Buffer> mass_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), rest_masses, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11Buffer> raw_weight_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), zero_weights, data_bind_flags);
+        ComPtr<ID3D11Buffer> partial_sum_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(),
+                std::vector<float>(group_count, 0.0f),
+                data_bind_flags);
+        ComPtr<ID3D11Buffer> normalized_sum_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), zero_sum, data_bind_flags);
+        ComPtr<ID3D11Buffer> accumulator_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), zero_accumulator, data_bind_flags);
+        ComPtr<ID3D11Buffer> control_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), initial_control, data_bind_flags);
+        ComPtr<ID3D11Buffer> event_buffer =
+            create_distribution_test_constant_buffer(
+                device.Get(), event_parameters);
+        ComPtr<ID3D11Buffer> reduce_buffer =
+            create_distribution_test_constant_buffer(
+                device.Get(), reduce_parameters);
+
+        ComPtr<ID3D11ShaderResourceView> position_srv =
+            create_distribution_test_srv(device.Get(), position_buffer.Get(), vertex_count);
+        ComPtr<ID3D11ShaderResourceView> mass_srv =
+            create_distribution_test_srv(device.Get(), mass_buffer.Get(), vertex_count);
+        ComPtr<ID3D11ShaderResourceView> raw_weight_srv =
+            create_distribution_test_srv(device.Get(), raw_weight_buffer.Get(), vertex_count);
+        ComPtr<ID3D11ShaderResourceView> partial_sum_srv =
+            create_distribution_test_srv(device.Get(), partial_sum_buffer.Get(), group_count);
+        ComPtr<ID3D11ShaderResourceView> normalized_sum_srv =
+            create_distribution_test_srv(device.Get(), normalized_sum_buffer.Get(), 1u);
+        ComPtr<ID3D11ShaderResourceView> accumulator_srv =
+            create_distribution_test_srv(device.Get(), accumulator_buffer.Get(), vertex_count);
+        ComPtr<ID3D11ShaderResourceView> control_srv =
+            create_distribution_test_srv(device.Get(), control_buffer.Get(), 1u);
+
+        ComPtr<ID3D11UnorderedAccessView> raw_weight_uav =
+            create_distribution_test_uav(device.Get(), raw_weight_buffer.Get(), vertex_count);
+        ComPtr<ID3D11UnorderedAccessView> partial_sum_uav =
+            create_distribution_test_uav(device.Get(), partial_sum_buffer.Get(), group_count);
+        ComPtr<ID3D11UnorderedAccessView> normalized_sum_uav =
+            create_distribution_test_uav(device.Get(), normalized_sum_buffer.Get(), 1u);
+        ComPtr<ID3D11UnorderedAccessView> accumulator_uav =
+            create_distribution_test_uav(device.Get(), accumulator_buffer.Get(), vertex_count);
+        ComPtr<ID3D11UnorderedAccessView> control_uav =
+            create_distribution_test_uav(device.Get(), control_buffer.Get(), 1u);
+
+        ID3D11Buffer* constant_buffers[] = {
+            event_buffer.Get(), reduce_buffer.Get()
+        };
+        auto unbind_compute_resources = [&]()
+        {
+            ID3D11ShaderResourceView* null_srvs[6] = {};
+            ID3D11UnorderedAccessView* null_uavs[5] = {};
+            ID3D11Buffer* null_constant_buffers[2] = {};
+            context->CSSetShaderResources(0u, 6u, null_srvs);
+            context->CSSetUnorderedAccessViews(0u, 5u, null_uavs, nullptr);
+            context->CSSetConstantBuffers(0u, 2u, null_constant_buffers);
+            context->CSSetShader(nullptr, nullptr, 0u);
+        };
+
+        auto dispatch_distribution_pass = [&](
+            ID3D11ComputeShader* shader,
+            const std::array<ID3D11ShaderResourceView*, 6>& srvs,
+            const std::array<ID3D11UnorderedAccessView*, 5>& uavs,
+            uint32_t dispatch_count)
+        {
+            context->CSSetShader(shader, nullptr, 0u);
+            context->CSSetShaderResources(
+                0u, static_cast<UINT>(srvs.size()), srvs.data());
+            context->CSSetUnorderedAccessViews(
+                0u, static_cast<UINT>(uavs.size()), uavs.data(), nullptr);
+            context->CSSetConstantBuffers(0u, 2u, constant_buffers);
+            context->Dispatch(dispatch_count, 1u, 1u);
+            unbind_compute_resources();
+        };
+
+        std::array<ID3D11ShaderResourceView*, 6> srvs = {};
+        std::array<ID3D11UnorderedAccessView*, 5> uavs = {};
+
+        srvs[0] = position_srv.Get();
+        srvs[1] = mass_srv.Get();
+        uavs[0] = raw_weight_uav.Get();
+        uavs[1] = control_uav.Get();
+        dispatch_distribution_pass(weight_shader.Get(), srvs, uavs, group_count);
+
+        srvs = {};
+        uavs = {};
+        srvs[2] = raw_weight_srv.Get();
+        uavs[1] = control_uav.Get();
+        uavs[2] = partial_sum_uav.Get();
+        dispatch_distribution_pass(reduce_shader.Get(), srvs, uavs, group_count);
+
+        srvs = {};
+        uavs = {};
+        srvs[2] = partial_sum_srv.Get();
+        uavs[1] = control_uav.Get();
+        uavs[3] = normalized_sum_uav.Get();
+        dispatch_distribution_pass(finalize_shader.Get(), srvs, uavs, 1u);
+
+        srvs = {};
+        uavs = {};
+        srvs[3] = raw_weight_srv.Get();
+        srvs[4] = normalized_sum_srv.Get();
+        uavs[1] = control_uav.Get();
+        uavs[4] = accumulator_uav.Get();
+        dispatch_distribution_pass(apply_shader.Get(), srvs, uavs, group_count);
+
+        context->Flush();
+
+        const std::vector<float> gpu_raw_weights =
+            readback_render_srv<float>(
+                device.Get(), context.Get(), raw_weight_srv.Get(), vertex_count);
+        const std::vector<float> gpu_normalized_sum =
+            readback_render_srv<float>(
+                device.Get(), context.Get(), normalized_sum_srv.Get(), 1u);
+        const std::vector<test_gpu_float4> gpu_distributed_weights =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), accumulator_srv.Get(), vertex_count);
+        const std::vector<test_gpu_tick_commit_control> gpu_control =
+            readback_render_srv<test_gpu_tick_commit_control>(
+                device.Get(), context.Get(), control_srv.Get(), 1u);
+
+        require(gpu_raw_weights.size() == vertex_count &&
+            gpu_distributed_weights.size() == vertex_count &&
+            gpu_normalized_sum.size() == 1u &&
+            gpu_control.size() == 1u,
+            "GPU Force distribution readback must preserve all per-vertex outputs and the scalar normalization sum.");
+        require(gpu_control[0u].values[6] == 0u &&
+            gpu_control[0u].values[14] == 0u,
+            "GPU Force distribution Weight / Reduction / Finalize / Apply stages must complete without terminal failure.");
+
+        const double gpu_sum_error = std::abs(
+            static_cast<double>(gpu_normalized_sum[0u]) -
+            cpu_reference.unnormalized_weight_sum);
+        const double gpu_sum_tolerance = std::max(
+            2.0e-5,
+            cpu_reference.unnormalized_weight_sum * 2.0e-6);
+        require(gpu_sum_error <= gpu_sum_tolerance,
+            "GPU grouped reduction normalization sum must match the CPU double-precision reference.");
+
+        double normalized_weight_sum = 0.0;
+        for (uint32_t index = 0u; index < vertex_count; ++index)
+        {
+            const double expected_q =
+                cpu_reference.mesh_weights[0u][index] *
+                cpu_reference.unnormalized_weight_sum;
+            const double q_error = std::abs(
+                static_cast<double>(gpu_raw_weights[index]) - expected_q);
+            const double q_tolerance = std::max(
+                1.0e-6, std::abs(expected_q) * 5.0e-5);
+            require(q_error <= q_tolerance,
+                "GPU per-vertex unnormalized Wendland C2 q must match the CPU reference.");
+
+            const double expected_weight =
+                cpu_reference.mesh_weights[0u][index];
+            const double normalized_error = std::abs(
+                static_cast<double>(gpu_distributed_weights[index].x) -
+                expected_weight);
+            require(normalized_error <= 2.0e-6,
+                "GPU per-vertex normalized Force weight must match the CPU double-precision reference.");
+            require(std::abs(gpu_distributed_weights[index].y) <= 1.0e-7f &&
+                std::abs(gpu_distributed_weights[index].z) <= 1.0e-7f,
+                "The GPU distribution Apply stage must preserve the authored direction in the output accumulator.");
+
+            normalized_weight_sum += gpu_distributed_weights[index].x;
+        }
+
+        require(std::abs(normalized_weight_sum - 1.0) <= 2.0e-5,
+            "GPU normalized per-vertex Force weights must conserve unit descriptor magnitude.");
     }
 
     void test_runtime_initialization_and_world_handles()
@@ -1400,6 +1858,8 @@ namespace
 
 int run_runtime_tests()
 {
+    test_runtime_force_distribution_gpu_cpu_parity();
+    std::cout << "[PASS] R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY\n";
     test_runtime_initialization_and_world_handles();
     std::cout << "[PASS] R0_RUNTIME_INITIALIZATION_AND_HANDLES\n";
     test_runtime_time_budget_and_pause_contract();
