@@ -898,7 +898,7 @@ namespace skin_physics::runtime
 
         struct render_candidate_slot_state
         {
-            uint32_t generation = 1u;
+            uint32_t generation = 0u;
             bool reserved = false;
             bool committed = false;
             bool retired = false;
