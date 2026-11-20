@@ -5268,16 +5268,41 @@ namespace skin_physics::runtime
                     0.0,
                     result_world.reserved_tick_time -
                         completed_tick.reservation.delta_time);
-                result_world.state = tick_state::committed;
-                result_world.last_tick_status = status_code::ok;
-                result_world.budget_block_origin = work_budget_block_origin::none;
-                result_world.budget_resolution = work_budget_resolution::none;
-                result_world.work_budget_block_flags = 0u;
-                result_world.executed_integration_segments =
-                    gpu_status.executed_integration_segments;
-                result_world.minimum_required_integration_segments =
-                    gpu_status.minimum_required_integration_segments;
-                result_world.diagnostic.clear();
+
+                const bool blocked_head_owns_world_status =
+                    !result_world.reservations.empty() &&
+                    result_world.reservations.front().blocked &&
+                    !result_world.reservations.front().rejected &&
+                    !result_world.reservations.front().predecessor_blocked &&
+                    result_world.state == tick_state::blocked &&
+                    result_world.last_tick_status ==
+                        status_code::work_budget_exceeded &&
+                    result_world.budget_resolution ==
+                        work_budget_resolution::retryable &&
+                    (result_world.budget_block_origin ==
+                            work_budget_block_origin::cpu_preflight ||
+                        result_world.budget_block_origin ==
+                            work_budget_block_origin::gpu_dynamic_toi);
+
+                // An older in-flight Tick may Commit while a newer CPU Preflight
+                // Reservation is already BLOCKED. Publish the older State Bank and
+                // advance its committed time, but retain the newer Head's own
+                // Work-Budget Status until its admission limit is repaired.
+                if (!blocked_head_owns_world_status)
+                {
+                    result_world.state = tick_state::committed;
+                    result_world.last_tick_status = status_code::ok;
+                    result_world.budget_block_origin =
+                        work_budget_block_origin::none;
+                    result_world.budget_resolution =
+                        work_budget_resolution::none;
+                    result_world.work_budget_block_flags = 0u;
+                    result_world.executed_integration_segments =
+                        gpu_status.executed_integration_segments;
+                    result_world.minimum_required_integration_segments =
+                        gpu_status.minimum_required_integration_segments;
+                    result_world.diagnostic.clear();
+                }
             }
             else
             {
