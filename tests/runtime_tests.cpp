@@ -2067,9 +2067,24 @@ namespace
         parameters.young_modulus = 1.0e9f;
         parameters.poisson_ratio = 0.3f;
         parameters.damping = 0.0f;
+        skin_physics::runtime::mesh_physics_parameters invalid_tracking_parameters =
+            parameters;
+        invalid_tracking_parameters.tracking_stiffness =
+            std::numeric_limits<float>::quiet_NaN();
+        require(runtime.set_mesh_physics_parameters(
+                world, model, 0u, invalid_tracking_parameters).code ==
+                    status_code::invalid_argument,
+            "Animation Tracking stiffness must reject NaN before it can enter CPU Preflight.");
+        invalid_tracking_parameters = parameters;
+        invalid_tracking_parameters.tracking_damping = -1.0f;
+        require(runtime.set_mesh_physics_parameters(
+                world, model, 0u, invalid_tracking_parameters).code ==
+                    status_code::invalid_argument,
+            "Animation Tracking damping must reject negative values.");
+
         require(runtime.set_mesh_physics_parameters(
                 world, model, 0u, parameters).success(),
-            "High-stiffness CFL material must be accepted before Tick Reservation.");
+            "High-stiffness FEM CFL material must be accepted before Tick Reservation.");
 
         require(runtime.set_playback_state(
                 world, skin_physics::runtime::playback_state::playing).success(),
@@ -2113,13 +2128,100 @@ namespace
             "CFL budget recovery must preserve the same Substep plan, Reservation sequence and reserved time.");
 
         require(runtime.reset_world(world).success(),
-            "Reset must release the pending CFL-blocked Reservation.");
+            "Reset must release the pending FEM CFL-blocked Reservation.");
         require(runtime.destroy_model(world, model).success(),
-            "Reset CFL Model must release its GPU resources.");
+            "Reset FEM CFL Model must release its GPU resources.");
         require(runtime.destroy_world(world).success(),
-            "Reset CFL World must be destroyable.");
+            "Reset FEM CFL World must be destroyable.");
+
+        skin_physics::runtime::world_desc tracking_world_desc = world_desc;
+        tracking_world_desc.maximum_substeps = 4u;
+        skin_physics::runtime::world_handle tracking_world;
+        require(runtime.create_world(tracking_world_desc, &tracking_world).success(),
+            "Animation Tracking stability World creation must succeed.");
+        skin_physics::runtime::model_handle tracking_model;
+        require(runtime.add_model(
+                tracking_world, model_desc, &tracking_model).success(),
+            "Animation Tracking stability Model must upload its rest masses and Paint weights.");
+
+        skin_physics::runtime::mesh_physics_parameters tracking_parameters;
+        tracking_parameters.density = 1000.0f;
+        tracking_parameters.young_modulus = 1.0f;
+        tracking_parameters.poisson_ratio = 0.3f;
+        tracking_parameters.damping = 0.0f;
+        tracking_parameters.tracking_stiffness = 1.0e6f;
+        tracking_parameters.tracking_damping = 100.0f;
+        require(runtime.set_mesh_physics_parameters(
+                tracking_world, tracking_model, 0u, tracking_parameters).success(),
+            "Positive Animation Tracking stiffness / damping must be accepted.");
+
+        skin_physics::runtime::transform tracking_sample;
+        tracking_sample.translation = { 0.1f, 0.0f, 0.0f };
+        require(runtime.set_model_transform_sample(
+                tracking_world, tracking_model, 0.0,
+                tracking_sample, false).success(),
+            "An immutable Root Transform Sample must activate Animation Tracking stability preflight.");
+
+        require(runtime.set_playback_state(
+                tracking_world, skin_physics::runtime::playback_state::playing).success(),
+            "Animation Tracking stability World must enter Playing.");
+        skin_physics::runtime::advance_report tracking_report;
+        require(runtime.advance(tracking_world, 0.01, &tracking_report).success() &&
+            tracking_report.submitted_tick_count == 0u &&
+            tracking_report.in_flight_tick_count == 0u &&
+            tracking_report.cpu_preflight_blocked_tick_count == 1u &&
+            tracking_report.pending_tick_count == 1u,
+            "Animation Tracking stiffness must contribute to CPU Preflight before any GPU Submission.");
+        skin_physics::runtime::world_status tracking_blocked;
+        require(runtime.poll(tracking_world, &tracking_blocked).success() &&
+            tracking_blocked.state == skin_physics::runtime::tick_state::blocked &&
+            tracking_blocked.last_tick_status == status_code::work_budget_exceeded &&
+            tracking_blocked.budget_block_origin ==
+                skin_physics::runtime::work_budget_block_origin::cpu_preflight &&
+            tracking_blocked.planned_substeps > tracking_world_desc.maximum_substeps &&
+            tracking_blocked.head_reserved_tick_sequence == 1u &&
+            std::abs(tracking_blocked.reserved_tick_time - 0.01) <= 1.0e-12,
+            "High Animation Tracking stiffness must reduce the common World dt limit and preserve the blocked Reservation.");
+
+        require(runtime.reset_world(tracking_world).success(),
+            "Reset must release the Animation Tracking CFL Reservation and its Root Transform Sample.");
+        skin_physics::runtime::attribute_edit_desc disable_tracking_paint;
+        disable_tracking_paint.channel =
+            skin_physics::asset::physics_attribute_channel::animation_tracking;
+        disable_tracking_paint.vertex_indices = { 0u, 1u, 2u, 3u };
+        disable_tracking_paint.target = 0.0f;
+        disable_tracking_paint.strength = 1.0f;
+        require(runtime.apply_attribute_edit(
+                tracking_world, tracking_model, 0u,
+                disable_tracking_paint).success(),
+            "Animation Tracking Paint must be able to disable the stiffness contribution on every Physics Vertex.");
+        require(runtime.set_model_transform_sample(
+                tracking_world, tracking_model, 0.0,
+                tracking_sample, false).success(),
+            "Animation Tracking Sample must be re-established after the Paint edit.");
+
+        skin_physics::runtime::advance_report painted_tracking_report;
+        require(runtime.advance(
+                tracking_world, 0.01, &painted_tracking_report).success() &&
+            painted_tracking_report.submitted_tick_count == 0u &&
+            painted_tracking_report.pending_tick_count == 1u,
+            "The trajectory remains deferred while its painted-out Tracking stiffness is excluded from Preflight.");
+        skin_physics::runtime::world_status painted_tracking_status;
+        require(runtime.poll(tracking_world, &painted_tracking_status).success() &&
+            painted_tracking_status.state == skin_physics::runtime::tick_state::blocked &&
+            painted_tracking_status.last_tick_status == status_code::blocked_by_input &&
+            painted_tracking_status.planned_substeps == 1u &&
+            painted_tracking_status.head_reserved_tick_sequence == 1u,
+            "Zero Animation Tracking Paint must remove the Tracking frequency limit while preserving the explicit BLOCKED_BY_INPUT trajectory gate.");
+
+        require(runtime.reset_world(tracking_world).success(),
+            "Reset must release the deferred Animation Trajectory Reservation.");
+        require(runtime.destroy_model(tracking_world, tracking_model).success(),
+            "Reset Animation Tracking Model must release its GPU resources.");
+        require(runtime.destroy_world(tracking_world).success(),
+            "Reset Animation Tracking World must be destroyable.");
         require(runtime.shutdown() == status_code::ok,
-            "Runtime must shut down after the CFL preflight regression.");
+            "Runtime must shut down after the FEM / Animation Tracking stability preflight regressions.");
     }
 
     void test_runtime_cpu_preflight_count_overflow_fails_world()
