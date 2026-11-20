@@ -2680,10 +2680,15 @@ namespace
         require(endpoint_state_result.success,
             "Position-Writer Epoch endpoint test must initialize its Segment Candidate State.");
         auto endpoint_state = endpoint_state_result.state;
+        const auto endpoint_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            endpoint_state, 7001, endpoint_epoch_primitives,
+            endpoint_settings.contact_thickness),
+            "Endpoint-active Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
         const correction_writer_epoch_result endpoint_epoch =
             process_correction_position_writer_epoch(
-                endpoint_state, 7001, 1,
-                make_vt_position_writer_epoch_primitives(endpoint_case.at("input")),
+                endpoint_state, 7001, 1, endpoint_epoch_primitives,
                 {}, make_correction_epoch_broadphase_settings(),
                 endpoint_settings);
         require(endpoint_epoch.status == correction_writer_epoch_status::accepted &&
