@@ -348,9 +348,24 @@ namespace skin_physics::physics
         std::vector<asset::mat4> skin_matrix_derivatives;
     };
 
+    struct animation_node_local_transform
+    {
+        bool uses_matrix = false;
+        asset::mat4 matrix;
+        asset::vec3 translation;
+        asset::vec4 rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        asset::vec3 scale = { 1.0f, 1.0f, 1.0f };
+        asset::vec3 translation_velocity;
+        asset::vec4 rotation_velocity;
+        asset::vec3 scale_velocity;
+    };
+
     struct animation_hierarchy_sample
     {
         // All matrices are model-local, column-major, column-vector transforms.
+        // Local TRS and its derivatives are retained so the synchronized Source
+        // / Target Pose can be blended before hierarchy propagation.
+        std::vector<animation_node_local_transform> local_transforms;
         std::vector<asset::mat4> local_matrices;
         std::vector<asset::mat4> local_matrix_derivatives;
         std::vector<asset::mat4> global_matrices;
@@ -376,6 +391,16 @@ namespace skin_physics::physics
         const animation_clip_span& span,
         double span_local_u,
         double span_world_duration);
+
+    // Evaluates Source and Target Clip spans at the same World-Time coordinate,
+    // blends every Node's local TRS and analytic derivative, then rebuilds the
+    // complete Node hierarchy and Skin Matrices from the blended local pose.
+    animation_hierarchy_sample_result evaluate_animation_blend_clip_hierarchy(
+        const asset::model& model,
+        const asset::animation_clip& source_clip,
+        const asset::animation_clip& target_clip,
+        const animation_blend_clip_span& span,
+        double span_local_u);
 
     animation_blend_clip_span_schedule_result schedule_animation_blend_clip_spans(
         const asset::animation_clip& source_clip,
