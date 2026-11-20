@@ -65,7 +65,8 @@ cbuffer ReductionParameters : register(b1)
 {
     uint reduction_vertex_count;
     uint group_count;
-    uint2 reduction_reserved;
+    uint partial_sum_offset;
+    uint reduction_reserved;
 };
 
 static const uint TICK_GATE_READY = 1u;
@@ -184,7 +185,8 @@ void soft_body_force_distribution_reduce(
 
     if (group_thread_id.x == 0u && group_active)
     {
-        partial_sums[group_id.x] = group_weight_values[0];
+        partial_sums[partial_sum_offset + group_id.x] =
+            group_weight_values[0];
     }
 }
 
