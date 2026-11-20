@@ -2817,6 +2817,13 @@ namespace skin_physics::physics
             bool has_scale_channel = false;
         };
 
+        bool finite_vec3(const asset::vec3& value)
+        {
+            return std::isfinite(value.x) &&
+                std::isfinite(value.y) &&
+                std::isfinite(value.z);
+        }
+
         bool finite_vec4(const asset::vec4& value)
         {
             return std::isfinite(value.x) && std::isfinite(value.y) &&
