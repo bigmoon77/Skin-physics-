@@ -755,8 +755,14 @@ namespace
                     "tick_transaction_control.cs.hlsl"),
             "Runtime shader package root must resolve to the repository Tick Control shader.");
         runtime_desc.query_ring_capacity = 2u;
-        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
-            "Runtime must accept a valid Host-owned WARP Device and Immediate Context.");
+        const skin_physics::runtime::status initialize_status =
+            runtime.initialize(device.Get(), context.Get(), runtime_desc);
+        require(initialize_status.success(),
+            std::string(
+                "Runtime must accept a valid Host-owned WARP Device and Immediate Context. diagnostic=") +
+                initialize_status.diagnostic +
+                " native_code=" +
+                std::to_string(initialize_status.native_code));
         require(runtime.initialized(),
             "Runtime initialized state must be observable.");
 
