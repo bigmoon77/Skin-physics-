@@ -2773,23 +2773,26 @@ namespace
             latched_state.side_latches[0].reference_normal.z > 0.99f,
             "The first accepted Position-Writer Epoch must latch one positive Segment-side normal for its Canonical Pair.");
 
-        auto mismatched_segment_start =
+        auto latched_side_crossing =
             make_vt_position_writer_epoch_primitives(transient_case.at("input"));
-        mismatched_segment_start[0].segment_start_positions[0].z = -0.01f;
+        latched_side_crossing[0].vertex_motions[0].before =
+            { 2.0f, 0.2f, 0.01f };
+        latched_side_crossing[0].vertex_motions[0].after =
+            { 0.25f, 0.2f, -0.01f };
         const correction_writer_epoch_result latch_epoch_2 =
             process_correction_position_writer_epoch(
-                latched_state, 7010, 2, mismatched_segment_start,
+                latched_state, 7010, 2, latched_side_crossing,
                 {}, make_correction_epoch_broadphase_settings(),
                 transient_settings);
         require(latch_epoch_2.status == correction_writer_epoch_status::rejected &&
             !latch_epoch_2.state_committed &&
             latch_epoch_2.correction_ccd_results.size() == 1 &&
             latch_epoch_2.correction_ccd_results[0].result.status ==
-                correction_ccd_status::unresolved &&
+                correction_ccd_status::path_crossing &&
             latched_state.side_latches.size() == 1 &&
             latched_state.side_latches[0].allowed_side_sign == 1 &&
             latched_state.position_writer_epoch_generation == 1,
-            "A later Epoch must reuse the original Segment-side latch and reject a mismatched Segment-start side instead of relatching it.");
+            "A later Epoch must reuse the original positive Segment-side latch and reject a path crossing without relatching or committing.");
 
         auto topology_changed_state = latched_state;
         auto changed_topology_epoch =
