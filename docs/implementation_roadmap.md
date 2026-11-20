@@ -129,7 +129,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 
 ## Current known validation constraint
 
-The current code head `da19ba4` passed hosted Windows Release x64 build and the complete CPU / WARP test suite in runs #1445 and #1446. Those runs include the Animation Tracking stability / Paint-mask regression; the Model / World Force response-ratio regression passed earlier in #1418 / #1419. Physical-GPU driver qualification, performance profiling and cross-vendor behavior remain unverified and are still required by Phase 7 / Phase 8.
+The current code head `cf2041e` passed hosted Windows Release x64 build and the complete CPU / WARP test suite in run #1454, including the Animation Tracking stability / Paint-mask regression and all Model / World Force response-ratio tests. Run #1453 on the same code had a transient failure in the pre-existing DXGI Timestamp Query collection test; the immediate repeat #1454 passed. Physical-GPU driver qualification, performance profiling and cross-vendor behavior remain unverified and are still required by Phase 7 / Phase 8.
 
 ## Scope control
 
