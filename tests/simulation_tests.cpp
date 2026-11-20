@@ -1681,6 +1681,80 @@ namespace
             std::abs(reverse_clip_spans.values[3u].clip_time_start - 0.5) <= 1.0e-12,
             "Multi-Track Clip Span scheduling must merge all Key times in descending order for reverse Playback.");
 
+        const skin_physics::physics::animation_clip_span_schedule_result
+            scheduled_clip_spans =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    synchronized_clip, 5u, 0.25, 1.5, 10.0, 0.6);
+        require(scheduled_clip_spans.success &&
+            scheduled_clip_spans.values.size() == 4u,
+            "Synchronized multi-Track Clip spans must also be mapped into World-Time intervals.");
+        const double expected_clip_world_starts[4] = {
+            10.0, 10.1, 10.3, 10.5
+        };
+        const double expected_clip_world_durations[4] = {
+            0.1, 0.2, 0.2, 0.1
+        };
+        for (std::size_t index = 0u;
+            index < scheduled_clip_spans.values.size(); ++index)
+        {
+            require(std::abs(
+                    scheduled_clip_spans.values[index].world_time_start -
+                    expected_clip_world_starts[index]) <= 1.0e-12 &&
+                std::abs(
+                    scheduled_clip_spans.values[index].world_time_duration -
+                    expected_clip_world_durations[index]) <= 1.0e-12 &&
+                scheduled_clip_spans.values[index].clip.channels.size() ==
+                    synchronized_clip.tracks.size(),
+                "Forward synchronized Clip spans must partition the Logical Tick without losing channel records.");
+        }
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            scheduled_reverse_clip_spans =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    synchronized_clip, 5u, 1.75, -1.5, 20.0, 0.9);
+        require(scheduled_reverse_clip_spans.success &&
+            scheduled_reverse_clip_spans.values.size() == 4u,
+            "Reverse synchronized Clip spans must retain their World-Time schedule.");
+        const double expected_reverse_world_starts[4] = {
+            20.0, 20.15, 20.45, 20.75
+        };
+        const double expected_reverse_world_durations[4] = {
+            0.15, 0.3, 0.3, 0.15
+        };
+        for (std::size_t index = 0u;
+            index < scheduled_reverse_clip_spans.values.size(); ++index)
+        {
+            require(std::abs(
+                    scheduled_reverse_clip_spans.values[index].world_time_start -
+                    expected_reverse_world_starts[index]) <= 1.0e-12 &&
+                std::abs(
+                    scheduled_reverse_clip_spans.values[index].world_time_duration -
+                    expected_reverse_world_durations[index]) <= 1.0e-12,
+                "Reverse Clip-Time traversal must map into monotonic positive World-Time partitions.");
+        }
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            scheduled_paused_clip =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    synchronized_clip, 5u, 1.0, 0.0, 30.0, 0.4);
+        require(scheduled_paused_clip.success &&
+            scheduled_paused_clip.values.size() == 1u &&
+            scheduled_paused_clip.values[0u].clip.channels.size() ==
+                synchronized_clip.tracks.size() &&
+            scheduled_paused_clip.values[0u].clip.clip_time_delta == 0.0 &&
+            std::abs(scheduled_paused_clip.values[0u].world_time_start - 30.0) <= 1.0e-12 &&
+            std::abs(scheduled_paused_clip.values[0u].world_time_duration - 0.4) <= 1.0e-12,
+            "Paused multi-Track Clips must retain all channels across the complete Logical Tick.");
+
+        const skin_physics::physics::animation_clip_spans_build_result
+            unrepresentable_clip_time =
+                skin_physics::physics::build_animation_clip_spans(
+                    synchronized_clip, 5u, 1.0e16, 1.0);
+        require(!unrepresentable_clip_time.success &&
+            unrepresentable_clip_time.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A non-zero multi-Track Clip delta below double-precision resolution must fail closed.");
+
         const skin_physics::physics::animation_clip_spans_build_result clip_out_of_range =
             skin_physics::physics::build_animation_clip_spans(
                 synchronized_clip, 4u, 1.75, 0.5);
