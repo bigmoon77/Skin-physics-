@@ -613,7 +613,13 @@
             "Synchronized multi-Track Clip Span records map into monotonically increasing positive World-Time intervals in forward and reverse playback",
             "Every channel in a scheduled Clip Span retains the shared World-Time interval and the original Asset Track ordering",
             "A paused synchronized Clip emits one Clip Span with all channels and retains the complete Logical Tick World-Time duration",
-            "A multi-Track Clip interval that cannot advance at its requested double-precision magnitude fails before publishing any Span"
+            "A multi-Track Clip interval that cannot advance at its requested double-precision magnitude fails before publishing any Span",
+            "Forward Loop Playback emits an explicit Clip-duration boundary and resumes from Clip time zero while preserving continuous positive World-Time order",
+            "Reverse Loop Playback emits an explicit zero boundary and resumes from Clip duration with a negative Clip-Time delta and positive World-Time durations",
+            "Non-looping forward and reverse Playback hold the terminal Clip Pose for the unconsumed Logical Tick interval",
+            "Speed-zero Playback retains the complete Logical Tick as one paused zero-Clip-Time Span",
+            "A Logical Tick ending exactly at a Loop boundary does not publish an empty post-wrap Span",
+            "Playback scheduling rejects an out-of-range initial Clip cursor and fails atomically when the configured immutable Span count limit is exceeded"
           ]
         },
         {
