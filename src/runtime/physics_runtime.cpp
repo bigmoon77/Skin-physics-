@@ -2560,6 +2560,7 @@ namespace skin_physics::runtime
                 return make_status(status_code::gpu_execution_failed,
                     "Status Ring returned a buffer with an unexpected Tick Status ABI size.");
             }
+
             const uint32_t world_index =
                 static_cast<uint32_t>(readback.key.world_id & 0xffffffffull);
             const uint32_t world_generation =
@@ -2568,6 +2569,7 @@ namespace skin_physics::runtime
             {
                 continue;
             }
+
             implementation::world_slot& result_world = runtime.worlds[world_index];
             if (!result_world.occupied ||
                 result_world.generation != world_generation)
@@ -2575,62 +2577,153 @@ namespace skin_physics::runtime
                 continue;
             }
 
-            gpu_tick_status_record gpu_status;
+            gpu_tick_status_record gpu_status = {};
             std::memcpy(&gpu_status, readback.bytes.data(), sizeof(gpu_status));
             const uint64_t sequence = readback.key.tick_sequence;
-            if (sequence == 0u)
+            const uint64_t dispatch_id = readback.key.dispatch_id;
+            const auto in_flight_iterator = std::find_if(
+                result_world.in_flight_ticks.begin(),
+                result_world.in_flight_ticks.end(),
+                [&](const implementation::in_flight_tick& tick)
+                {
+                    return tick.reservation.sequence == sequence &&
+                        tick.dispatch_id == dispatch_id;
+                });
+            if (in_flight_iterator == result_world.in_flight_ticks.end())
             {
+                // A completed query with no live owner is stale bookkeeping. It
+                // must never publish a committed prefix for a recycled World.
                 continue;
             }
+
+            implementation::in_flight_tick completed_tick =
+                std::move(*in_flight_iterator);
+            result_world.in_flight_ticks.erase(in_flight_iterator);
+            result_world.in_flight_tick_count = static_cast<uint32_t>(
+                result_world.in_flight_ticks.size());
+
+            const uint64_t status_dispatch_id = gpu_status.dispatch_id;
+            const uint64_t status_reservation_token = gpu_status.reservation_token;
+            const bool matching_status_identity =
+                status_dispatch_id == dispatch_id &&
+                status_reservation_token == completed_tick.reservation_token;
+            if (!matching_status_identity)
+            {
+                completed_tick.reservation.rejected = true;
+                completed_tick.reservation.blocked = true;
+                result_world.reservations.push_front(
+                    std::move(completed_tick.reservation));
+                result_world.state = tick_state::failed;
+                result_world.last_tick_status = status_code::gpu_execution_failed;
+                result_world.diagnostic =
+                    "GPU Tick Status Dispatch ID / Reservation Token did not match its immutable Submission Record.";
+                continue;
+            }
+
+            const uint64_t status_committed_sequence =
+                gpu_status.committed_tick_sequence;
+            const uint64_t status_state_generation =
+                gpu_status.committed_state_generation;
+
             if (gpu_status.terminal_state == 6u &&
                 gpu_status.terminal_failure == 0u &&
-                gpu_status.committed_tick_sequence == sequence)
+                status_committed_sequence == sequence &&
+                gpu_status.active_state_set <= 1u &&
+                status_state_generation > result_world.gpu_state_generation)
             {
-                result_world.observed_tick_sequences.insert(sequence);
-                result_world.gpu_committed_sequence =
-                    std::max(result_world.gpu_committed_sequence, sequence);
-                result_world.gpu_committed_simulation_time =
-                    std::max(result_world.gpu_committed_simulation_time,
-                        static_cast<double>(sequence) *
-                            result_world.description.fixed_delta_time);
+                if (sequence != result_world.gpu_committed_sequence + 1u)
+                {
+                    completed_tick.reservation.rejected = true;
+                    completed_tick.reservation.blocked = true;
+                    result_world.reservations.push_front(
+                        std::move(completed_tick.reservation));
+                    result_world.state = tick_state::failed;
+                    result_world.last_tick_status = status_code::gpu_execution_failed;
+                    result_world.diagnostic =
+                        "GPU Commit Status skipped a Logical Tick Sequence.";
+                    continue;
+                }
+
+                result_world.gpu_committed_sequence = sequence;
+                result_world.gpu_state_generation = status_state_generation;
+                result_world.active_state_set = gpu_status.active_state_set;
+                result_world.gpu_committed_simulation_time +=
+                    completed_tick.reservation.delta_time;
+                result_world.observed_tick_deltas[sequence] =
+                    completed_tick.reservation.delta_time;
+
+                while (true)
+                {
+                    const uint64_t next_observed_sequence =
+                        result_world.cpu_observed_sequence + 1u;
+                    const auto observed_delta =
+                        result_world.observed_tick_deltas.find(next_observed_sequence);
+                    if (observed_delta ==
+                        result_world.observed_tick_deltas.end())
+                    {
+                        break;
+                    }
+                    result_world.cpu_observed_sequence = next_observed_sequence;
+                    result_world.cpu_observed_completed_time += observed_delta->second;
+                    result_world.observed_tick_deltas.erase(observed_delta);
+                }
+
+                result_world.reserved_tick_time = std::max(
+                    0.0,
+                    result_world.reserved_tick_time -
+                        completed_tick.reservation.delta_time);
                 result_world.state = tick_state::committed;
                 result_world.last_tick_status = status_code::ok;
                 result_world.budget_block_origin = work_budget_block_origin::none;
                 result_world.budget_resolution = work_budget_resolution::none;
                 result_world.work_budget_block_flags = 0u;
+                result_world.executed_integration_segments =
+                    gpu_status.executed_integration_segments;
+                result_world.minimum_required_integration_segments =
+                    gpu_status.minimum_required_integration_segments;
                 result_world.diagnostic.clear();
             }
-            else if (gpu_status.terminal_state == 3u)
+            else
             {
-                result_world.state = tick_state::blocked;
-                result_world.last_tick_status = status_code::blocked_by_predecessor;
-            }
-            else if (gpu_status.terminal_state == 4u)
-            {
-                result_world.state = tick_state::rejected;
-                result_world.last_tick_status = status_code::step_rejected;
-            }
-            else if (gpu_status.terminal_state == 5u)
-            {
-                result_world.state = tick_state::failed;
-                result_world.last_tick_status = status_code::gpu_execution_failed;
-            }
-            result_world.work_budget_block_flags =
-                static_cast<uint8_t>(gpu_status.work_budget_block_flags & 0xffu);
-            result_world.budget_block_origin =
-                static_cast<work_budget_block_origin>(
-                    std::min(gpu_status.work_budget_block_origin, 2u));
-            result_world.executed_integration_segments =
-                gpu_status.executed_integration_segments;
-            result_world.minimum_required_integration_segments =
-                gpu_status.minimum_required_integration_segments;
-        }
+                completed_tick.reservation.blocked = true;
+                completed_tick.reservation.rejected =
+                    gpu_status.terminal_state == 4u ||
+                    gpu_status.terminal_state == 5u;
+                result_world.reservations.push_front(
+                    std::move(completed_tick.reservation));
 
-        while (world->observed_tick_sequences.erase(
-                world->cpu_observed_sequence + 1u) != 0u)
-        {
-            ++world->cpu_observed_sequence;
-            world->cpu_observed_completed_time += world->description.fixed_delta_time;
+                result_world.work_budget_block_flags =
+                    static_cast<uint8_t>(
+                        gpu_status.work_budget_block_flags & 0xffu);
+                result_world.budget_block_origin =
+                    static_cast<work_budget_block_origin>(
+                        std::min(gpu_status.work_budget_block_origin, 2u));
+                result_world.executed_integration_segments =
+                    gpu_status.executed_integration_segments;
+                result_world.minimum_required_integration_segments =
+                    gpu_status.minimum_required_integration_segments;
+
+                if (gpu_status.terminal_state == 3u)
+                {
+                    result_world.state = tick_state::blocked;
+                    result_world.last_tick_status = status_code::blocked_by_predecessor;
+                    result_world.budget_resolution = work_budget_resolution::retryable;
+                }
+                else if (gpu_status.terminal_state == 4u)
+                {
+                    result_world.state = tick_state::rejected;
+                    result_world.last_tick_status = status_code::step_rejected;
+                    result_world.budget_resolution = work_budget_resolution::none;
+                }
+                else
+                {
+                    result_world.state = tick_state::failed;
+                    result_world.last_tick_status = status_code::gpu_execution_failed;
+                    result_world.budget_resolution = work_budget_resolution::none;
+                }
+                result_world.diagnostic =
+                    "GPU Tick ended without a COMMITTED terminal status; the active State Bank and reservation time were retained.";
+            }
         }
 
         world_status result;
