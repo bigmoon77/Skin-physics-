@@ -36,6 +36,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Per-World immutable Dispatch Plan, predecessor gate, terminal status and success-only Commit Control.
 - Multiple in-flight non-Commit outcomes restore Reservations in ascending Sequence order. The earliest FAILED / REJECTED result is preserved; a predecessor-blocked Reservation is re-preflighted only after its predecessor Commit is CPU-observed.
 - CPU Preflight and GPU Dynamic TOI Budget Status must be returned by poll(world) for that World before a Budget Retry. Polling another World cannot authorize the update. A completed older Commit advances committed time while retaining a newer Head's own Budget Block.
+- GPU terminal BLOCKED is classified by Status Origin: Dynamic TOI maps to WORK_BUDGET_EXCEEDED / retryable (or WORK_BUDGET_UNSATISFIABLE above the immutable Hard Limit), while an origin-free terminal BLOCKED maps to BLOCKED_BY_PREDECESSOR. The production Dynamic TOI Segment producer and Boundary Table scheduler remain open.
 - advance_report distinguishes Host Render Lease Backpressure from Query / Capacity Admission stalls.
 - Per-Soft-Body-Mesh persistent position / velocity State Banks, per-Tick Scratch, gated GPU submission and reset-to-rest-state lifecycle.
 - Rollback / retry keeps the exact same CPU Reservation; immutable per-Tick Input Snapshot / Packet Version is still pending.
