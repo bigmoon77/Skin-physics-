@@ -5286,15 +5286,19 @@ namespace skin_physics::runtime
                 "Soft Body Mesh has no GPU Render Candidate resources.");
         }
 
-        if (world->latest_render_slot_id == asset::invalid_index ||
-            world->latest_render_slot_id >= world->render_candidate_slots.size())
+        const uint32_t slot_id = world->render_lease_active
+            ? world->leased_render_slot_id
+            : world->latest_render_slot_id;
+        const uint32_t slot_generation = world->render_lease_active
+            ? world->leased_render_slot_generation
+            : world->latest_render_slot_generation;
+        if (slot_id == asset::invalid_index ||
+            slot_id >= world->render_candidate_slots.size())
         {
             return make_status(status_code::not_ready,
                 "No CPU-observed committed Render Candidate is available for this World.");
         }
 
-        const uint32_t slot_id = world->latest_render_slot_id;
-        const uint32_t slot_generation = world->latest_render_slot_generation;
         const implementation::render_candidate_slot_state& slot_state =
             world->render_candidate_slots[slot_id];
         if (!slot_state.committed ||
@@ -5314,16 +5318,7 @@ namespace skin_physics::runtime
                 "This Model / Mesh did not participate in the latest committed Render Candidate.");
         }
 
-        if (world->render_lease_active)
-        {
-            if (world->leased_render_slot_id != slot_id ||
-                world->leased_render_slot_generation != slot_generation)
-            {
-                return make_status(status_code::busy,
-                    "The active Host Render Lease pins a different Render Candidate Slot.");
-            }
-        }
-        else
+        if (!world->render_lease_active)
         {
             if (world->render_lease_generation ==
                 std::numeric_limits<uint64_t>::max())
