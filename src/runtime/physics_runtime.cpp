@@ -652,6 +652,10 @@ namespace skin_physics::runtime
             tick_reservation reservation;
             uint64_t dispatch_id = 0u;
             uint64_t reservation_token = 0u;
+            uint64_t expected_predecessor_sequence = 0u;
+            uint64_t expected_source_generation = 1u;
+            uint32_t expected_source_state_set = 0u;
+            uint32_t expected_destination_state_set = 1u;
             Microsoft::WRL::ComPtr<ID3D11Buffer> plan_buffer;
             Microsoft::WRL::ComPtr<ID3D11Buffer> status_buffer;
         };
@@ -1321,6 +1325,14 @@ namespace skin_physics::runtime
             in_flight.reservation = reservation;
             in_flight.dispatch_id = next_dispatch_id;
             in_flight.reservation_token = reservation_token;
+            in_flight.expected_predecessor_sequence =
+                world.scheduled_predecessor_sequence;
+            in_flight.expected_source_generation =
+                world.scheduled_source_generation;
+            in_flight.expected_source_state_set =
+                world.scheduled_source_state_set;
+            in_flight.expected_destination_state_set =
+                plan.destination_state_set;
             in_flight.plan_buffer = std::move(plan_buffer);
             in_flight.status_buffer = std::move(status_buffer);
             world.in_flight_ticks.push_back(std::move(in_flight));
@@ -2708,17 +2720,42 @@ namespace skin_physics::runtime
                 gpu_status.committed_state_generation;
 
             const bool committed_generation_valid =
-                result_world.gpu_state_generation !=
+                completed_tick.expected_source_generation !=
                     std::numeric_limits<uint64_t>::max() &&
                 status_state_generation ==
-                    result_world.gpu_state_generation + 1u;
-            const uint32_t expected_active_state_set =
-                1u - result_world.active_state_set;
+                    completed_tick.expected_source_generation + 1u;
             const bool committed_bank_valid =
-                gpu_status.active_state_set == expected_active_state_set;
+                gpu_status.active_state_set ==
+                    completed_tick.expected_destination_state_set;
+            const bool committed_sequence_valid =
+                status_committed_sequence == sequence;
+
+            const bool non_commit_state_unchanged =
+                status_committed_sequence ==
+                    completed_tick.expected_predecessor_sequence &&
+                status_state_generation ==
+                    completed_tick.expected_source_generation &&
+                gpu_status.active_state_set ==
+                    completed_tick.expected_source_state_set;
+
+            if (gpu_status.terminal_state != 6u &&
+                !non_commit_state_unchanged)
+            {
+                completed_tick.reservation.blocked = true;
+                completed_tick.reservation.rejected = true;
+                runtime.restore_reservation_in_sequence_order(
+                    result_world, std::move(completed_tick.reservation));
+                result_world.state = tick_state::failed;
+                result_world.last_tick_status = status_code::gpu_execution_failed;
+                result_world.diagnostic =
+                    "Non-COMMITTED GPU Tick Status modified the predecessor Sequence, State Generation or active State Bank.";
+                continue;
+            }
 
             if (gpu_status.terminal_state == 6u &&
-                (!committed_generation_valid || !committed_bank_valid))
+                (!committed_generation_valid ||
+                    !committed_bank_valid ||
+                    !committed_sequence_valid))
             {
                 completed_tick.reservation.blocked = true;
                 completed_tick.reservation.rejected = true;
@@ -2733,7 +2770,7 @@ namespace skin_physics::runtime
 
             if (gpu_status.terminal_state == 6u &&
                 gpu_status.terminal_failure == 0u &&
-                status_committed_sequence == sequence &&
+                committed_sequence_valid &&
                 committed_generation_valid &&
                 committed_bank_valid)
             {
