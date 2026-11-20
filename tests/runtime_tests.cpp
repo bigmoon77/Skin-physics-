@@ -2195,10 +2195,16 @@ namespace
                 tracking_world, tracking_model, 0u,
                 disable_tracking_paint).success(),
             "Animation Tracking Paint must be able to disable the stiffness contribution on every Physics Vertex.");
+        require(runtime.set_mesh_physics_parameters(
+                tracking_world, tracking_model, 0u, tracking_parameters).success(),
+            "Animation Tracking material coefficients must survive Reset and remain available after Paint updates.");
         require(runtime.set_model_transform_sample(
                 tracking_world, tracking_model, 0.0,
                 tracking_sample, false).success(),
             "Animation Tracking Sample must be re-established after the Paint edit.");
+        require(runtime.set_playback_state(
+                tracking_world, skin_physics::runtime::playback_state::playing).success(),
+            "Animation Tracking World must resume Playing after Reset.");
 
         skin_physics::runtime::advance_report painted_tracking_report;
         require(runtime.advance(
