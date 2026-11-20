@@ -312,6 +312,61 @@ namespace
             "Runtime must shut down after the CPU Preflight recovery regression.");
     }
 
+    void test_runtime_cpu_preflight_count_overflow_fails_world()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Runtime regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = runtime_shader_root();
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime initialization must succeed for the CPU Preflight overflow regression.");
+
+        skin_physics::runtime::world_desc desc;
+        desc.fixed_delta_time = 0.01;
+        desc.contact_max_substep_delta_time = 1.0e-12;
+        desc.maximum_in_flight_ticks = 1u;
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world(desc, &world).success(),
+            "Overflow regression World creation must accept finite positive temporal limits.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "Overflow regression World must enter Playing.");
+
+        skin_physics::runtime::advance_report report;
+        require(runtime.advance(world, 0.01, &report).success(),
+            "Advance must preserve the requested Tick while CPU Preflight classifies its unrepresentable work count.");
+        require(report.submitted_tick_count == 0u &&
+            report.in_flight_tick_count == 0u &&
+            report.pending_tick_count == 1u &&
+            report.cpu_preflight_blocked_tick_count == 0u,
+            "An unrepresentable work count must not submit GPU work or masquerade as a retryable CPU budget block.");
+
+        skin_physics::runtime::world_status result;
+        require(runtime.poll(world, &result).success() &&
+            result.state == skin_physics::runtime::tick_state::failed &&
+            result.last_tick_status == status_code::capacity_exceeded &&
+            result.budget_block_origin ==
+                skin_physics::runtime::work_budget_block_origin::none &&
+            result.budget_resolution ==
+                skin_physics::runtime::work_budget_resolution::none &&
+            result.work_budget_block_flags == 0u &&
+            result.head_reserved_tick_sequence == 1u &&
+            std::abs(result.reserved_tick_time - 0.01) <= 1.0e-12,
+            "A uint32 work-count overflow must enter terminal FAILED while retaining the diagnostic Reservation and its exact time.");
+
+        require(runtime.reset_world(world).success(),
+            "Reset must explicitly clear a terminal CPU Preflight count-overflow failure.");
+        require(runtime.destroy_world(world).success(),
+            "World must be destroyable after resetting the terminal overflow failure.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime must shut down after the CPU Preflight overflow regression.");
+    }
+
     void test_runtime_submission_thread_guard()
     {
         ComPtr<ID3D11Device> device;
