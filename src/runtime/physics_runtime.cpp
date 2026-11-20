@@ -3308,7 +3308,7 @@ namespace skin_physics::runtime
 
                 simulation::compute_pass_desc apply_pass;
                 apply_pass.name =
-                    "soft_body" +
+                    std::string("soft_body") +
                     (is_impulse ? "_impulse" : "_force") +
                     "_m" + std::to_string(work.model_index) +
                     "_mesh" + std::to_string(gpu_mesh.mesh_index) +
