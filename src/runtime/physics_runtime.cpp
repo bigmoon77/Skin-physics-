@@ -249,7 +249,20 @@ namespace skin_physics::runtime
             value.x = static_cast<float>(x * inverse_length);
             value.y = static_cast<float>(y * inverse_length);
             value.z = static_cast<float>(z * inverse_length);
-            return finite_vec3(value);
+            if (!finite_vec3(value))
+            {
+                return false;
+            }
+
+            const double normalized_x = static_cast<double>(value.x);
+            const double normalized_y = static_cast<double>(value.y);
+            const double normalized_z = static_cast<double>(value.z);
+            const double normalized_length_squared =
+                normalized_x * normalized_x +
+                normalized_y * normalized_y +
+                normalized_z * normalized_z;
+            return std::isfinite(normalized_length_squared) &&
+                std::abs(normalized_length_squared - 1.0) <= 1.0e-5;
         }
 
         bool valid_transform(const transform& value)
