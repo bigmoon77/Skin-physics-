@@ -189,5 +189,8 @@
     <None Include="shaders\runtime\soft_body_integrate.cs.hlsl">
       <Filter>Shader Files</Filter>
     </None>
+    <None Include="shaders\runtime\soft_body_render_feedback.cs.hlsl">
+      <Filter>Shader Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
