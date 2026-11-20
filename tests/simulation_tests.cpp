@@ -1971,11 +1971,15 @@ namespace
 
         // The pair overlaps geometrically but is explicitly excluded by the
         // topology owner's one-ring adjacency policy.
+        const skin_physics::physics::collision_aabb one_ring_exclusion_bounds = {
+            { 4.0f, 4.0f, 4.0f },
+            { 4.25f, 4.25f, 4.25f }
+        };
         correction_primitives[5].stable_id = 600;
         correction_primitives[5].mesh_id = 1;
         correction_primitives[5].primitive_id = 5;
         correction_primitives[5].role = correction_primitive_role::edge;
-        correction_primitives[5].envelope_bounds = point_bounds;
+        correction_primitives[5].envelope_bounds = one_ring_exclusion_bounds;
         correction_primitives[5].vertex_stable_ids = { 51, 52 };
         correction_primitives[5].excluded_primitive_ids = { { 700, 1, 6 } };
 
@@ -1983,7 +1987,7 @@ namespace
         correction_primitives[6].mesh_id = 1;
         correction_primitives[6].primitive_id = 6;
         correction_primitives[6].role = correction_primitive_role::edge;
-        correction_primitives[6].envelope_bounds = triangle_bounds;
+        correction_primitives[6].envelope_bounds = one_ring_exclusion_bounds;
         correction_primitives[6].vertex_stable_ids = { 61, 62 };
         skin_physics::physics::broadphase_settings correction_broadphase_settings;
         correction_broadphase_settings.cell_size = 0.25f;
