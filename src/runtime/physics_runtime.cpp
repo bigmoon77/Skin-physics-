@@ -2290,7 +2290,7 @@ namespace skin_physics::runtime
                 {
                     slot.generation = 1u;
                 }
-                else if (slot.generation >= 0x0000ffffu)
+                else if (slot.generation == std::numeric_limits<uint32_t>::max())
                 {
                     slot.retired = true;
                     continue;
@@ -4935,9 +4935,7 @@ namespace skin_physics::runtime
             // consumed in Immediate-Context order, so the current CPU-observed
             // committed prefix is the authoritative non-Commit state to preserve.
             const uint32_t expected_published_render_slot_id =
-                result_world.latest_render_slot_id == asset::invalid_index
-                    ? 0x0000ffffu
-                    : result_world.latest_render_slot_id;
+                result_world.latest_render_slot_id;
             const uint32_t expected_published_render_slot_generation =
                 result_world.latest_render_slot_id == asset::invalid_index
                     ? 0u
