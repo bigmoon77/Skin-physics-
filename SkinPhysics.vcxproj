@@ -140,6 +140,9 @@
     <ClInclude Include="include\skin_physics\serialization\json.hpp" />
     <ClInclude Include="third_party\cgltf\cgltf.h" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="shaders\runtime\tick_transaction_control.cs.hlsl" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
 </Project>
