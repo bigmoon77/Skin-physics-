@@ -430,6 +430,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | advance_report | render_binding_backpressure / capacity_blocked | Render Slot leaseまたはGPU Capacityに起因するSubmission停止理由 |
 | advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
 | world_status | submitted_sequence / gpu_committed_sequence / cpu_observed_sequence | GPU CommitとCPU確認済みprefixを別々に保持 |
+| world_status | head_reserved_tick_sequence / head_input_snapshot_version | Head ReservationのTick Sequenceと、そのReservationが所有するImmutable CPU Input Snapshotの単調増加Version。Head Reservationがない場合はVersion 0 |
 | world_status | playback_state / tick_state / terminal_error / simulation_backlog | 状態、最終エラー、遅延・未処理時間を報告 |
 
 
@@ -448,7 +449,7 @@ Animation Playback APIの状態遷移は次の通りとする。set_animation_pl
 
 `model_desc`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
 
-Model / ColliderのCreate / Destroy、Model Transform Sample、Mesh Physics Parameter変更、Attribute EditはTick Reservation作成前のWorld状態へ適用する。GPU Submission直前に入力・構造・Material Snapshotを固定し、既にReservation / Submission済みのTickは変更しない。BLOCKED_BY_INPUT / Render Backpressure中の要求はSnapshotを持たないため、Create / Destroy後の再評価で最新World構成を使う。Paint編集はRender MeshのStable Vertex IDを基準にversioned editとして保持し、既存Physics Mesh Bindingを使ってPhysics Vertexへ転送する。Topology再生成後に対応が一意でない場合は適用を保留して警告する。
+Model / ColliderのCreate / Destroy、Model Transform Sample、Mesh Physics Parameter変更、Attribute EditはTick Reservation作成前のWorld状態へ適用する。Tick Reservation作成時にWorld設定、Force / Impulse、Model Root / Animation / Material、Physics Attribute Weight、Collider Descriptor / Pose Sampleを含むImmutable CPU Input SnapshotをVersion付きで固定する。CPU Preflight、Budget Retry、GPU Submission、Query待ち、非Commit Reservation復元は同じSnapshot Ownerを保持し、別のWorld入力を再読込してはならない。GPU Submission時のDispatch PlanとRender Candidate生成もこのSnapshotを参照する。BLOCKED_BY_INPUT / Render BackpressureのReservationが入力固定後に存在する間は、World input mutationをBUSYで拒否する。Paint編集はRender MeshのStable Vertex IDを基準にversioned editとして保持し、既存Physics Mesh Bindingを使ってPhysics Vertexへ転送する。Topology再生成後に対応が一意でない場合は適用を保留して警告する。
 
 `set_fixed_delta_time`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0、queued single-step request = 0のときだけ成功する。条件を満たさなければBUSYを返す。fractional remainderは秒単位の実時間として保持し、新しいFixed Delta Timeに対してAccumulatorのwhole tick数を再計算する。旧Fixed Delta Timeのwhole tickは存在しないため、時間を黙って破棄・換算しない。変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。
 
