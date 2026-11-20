@@ -3240,6 +3240,8 @@ namespace skin_physics::runtime
             shader_root / "soft_body_force_gather.cs.hlsl";
         const std::filesystem::path soft_body_integrate_path =
             shader_root / "soft_body_integrate.cs.hlsl";
+        const std::filesystem::path soft_body_render_feedback_path =
+            shader_root / "soft_body_render_feedback.cs.hlsl";
 
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_begin_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_empty_shader;
@@ -3249,6 +3251,8 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_integrate_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_feedback_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_validate_shader;
         if (!compile_runtime_compute_shader(
                 device, tick_shader_path, "tick_begin_control",
                 tick_begin_shader.GetAddressOf(), diagnostic) ||
@@ -3272,7 +3276,13 @@ namespace skin_physics::runtime
                 soft_body_integrate_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
                 device, soft_body_integrate_path, "soft_body_copy_state",
-                soft_body_copy_state_shader.GetAddressOf(), diagnostic))
+                soft_body_copy_state_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_render_feedback_path, "prepare_render_candidate",
+                soft_body_render_feedback_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_render_feedback_path, "validate_render_candidate",
+                soft_body_render_validate_shader.GetAddressOf(), diagnostic))
         {
             return make_status(status_code::gpu_execution_failed,
                 "Runtime Tick / Soft Body shader initialization failed: " + diagnostic);
@@ -3289,6 +3299,10 @@ namespace skin_physics::runtime
         runtime.soft_body_force_gather_shader = std::move(soft_body_gather_shader);
         runtime.soft_body_integrate_shader = std::move(soft_body_integrate_shader);
         runtime.soft_body_copy_state_shader = std::move(soft_body_copy_state_shader);
+        runtime.soft_body_render_feedback_shader =
+            std::move(soft_body_render_feedback_shader);
+        runtime.soft_body_render_validate_shader =
+            std::move(soft_body_render_validate_shader);
         runtime.submission_thread = std::this_thread::get_id();
 
         if (!runtime.ensure_status_capacity(desc.query_ring_capacity, diagnostic))
