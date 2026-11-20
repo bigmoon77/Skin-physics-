@@ -1033,6 +1033,118 @@ namespace
             "Runtime must shut down after the CPU Preflight recovery regression.");
     }
 
+    void test_runtime_soft_body_skin_weight_transfer_upload()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Soft Body Skin Weight regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = runtime_shader_root();
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime must initialize before the Soft Body Skin Weight transfer regression.");
+
+        skin_physics::physics::raw_tet_mesh raw_mesh;
+        raw_mesh.positions = {
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f },
+            { 0.0f, 0.0f, 1.0f }
+        };
+        raw_mesh.tetrahedra = { { 0u, 1u, 2u, 3u } };
+        const skin_physics::physics::physics_mesh_build_result built_mesh =
+            skin_physics::physics::build_physics_mesh(raw_mesh);
+        require(built_mesh.success,
+            "Skinned Soft Body fixture must build its one-Tet Physics Mesh.");
+
+        skin_physics::asset::mesh render_mesh;
+        render_mesh.name = "runtime_skinned_soft_body_tet";
+        render_mesh.mode = skin_physics::asset::physics_mode::soft_body;
+        for (const skin_physics::asset::vec3& position : raw_mesh.positions)
+        {
+            skin_physics::asset::vertex vertex;
+            vertex.position = position;
+            vertex.attributes = skin_physics::asset::attribute_skinning;
+            vertex.joints[0u] = 0u;
+            vertex.weights[0u] = 1.0f;
+            render_mesh.vertices.push_back(vertex);
+        }
+        for (const skin_physics::physics::boundary_triangle& boundary :
+            built_mesh.value.boundary_triangles)
+        {
+            render_mesh.indices.insert(
+                render_mesh.indices.end(),
+                boundary.vertices.begin(),
+                boundary.vertices.end());
+        }
+
+        skin_physics::asset::skin source_skin;
+        source_skin.name = "runtime_single_joint_skin";
+        source_skin.joints = { 0u };
+        source_skin.inverse_bind_matrices = {
+            skin_physics::asset::mat4{}
+        };
+
+        skin_physics::asset::node joint_node;
+        joint_node.name = "runtime_joint_root";
+        joint_node.children = { 1u };
+
+        skin_physics::asset::node mesh_node;
+        mesh_node.name = "runtime_skinned_mesh";
+        mesh_node.parent_index = 0u;
+        mesh_node.mesh_index = 0u;
+        mesh_node.skin_index = 0u;
+
+        skin_physics::runtime::model_desc model_desc;
+        model_desc.source_model.meshes.push_back(render_mesh);
+        model_desc.source_model.skins.push_back(source_skin);
+        model_desc.source_model.nodes = { joint_node, mesh_node };
+        model_desc.source_model.scene_roots = { 0u };
+
+        skin_physics::runtime::model_mesh_physics_asset mesh_asset;
+        mesh_asset.mesh_index = 0u;
+        mesh_asset.physics_mesh = built_mesh.value;
+        model_desc.mesh_physics_assets.push_back(std::move(mesh_asset));
+
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world({}, &world).success(),
+            "Skin Weight transfer World creation must succeed.");
+
+        skin_physics::runtime::model_handle model;
+        require(runtime.add_model(world, model_desc, &model).success(),
+            "Runtime must transfer boundary Render Mesh Skin Weights to Physics Vertices and upload the normalized 8-influence GPU record buffer.");
+
+        require(runtime.destroy_model(world, model).success(),
+            "Skinned Soft Body Model must release transferred CPU and GPU Skin Weight resources.");
+
+        skin_physics::runtime::model_desc ambiguous_instance_desc = model_desc;
+        skin_physics::asset::node second_mesh_node = mesh_node;
+        second_mesh_node.name = "second_skinned_mesh_instance";
+        second_mesh_node.parent_index = 0u;
+        ambiguous_instance_desc.source_model.nodes[0u].children = { 1u, 2u };
+        ambiguous_instance_desc.source_model.nodes.push_back(second_mesh_node);
+        skin_physics::runtime::model_handle invalid_model;
+        require(runtime.add_model(
+                world, ambiguous_instance_desc, &invalid_model).code ==
+                    status_code::unsupported_feature,
+            "One Physics State Bank must not silently bind two Skinned Mesh Node instances that share an Asset Mesh.");
+
+        skin_physics::runtime::model_desc missing_skin_stream_desc = model_desc;
+        missing_skin_stream_desc.source_model.meshes[0u].vertices[2u].attributes &=
+            ~static_cast<uint32_t>(skin_physics::asset::attribute_skinning);
+        require(runtime.add_model(
+                world, missing_skin_stream_desc, &invalid_model).code ==
+                    status_code::asset_invalid,
+            "A Skinned Mesh Node must reject a Render Mesh whose Physics Vertex Skin Weight source stream is incomplete.");
+
+        require(runtime.destroy_world(world).success(),
+            "Skin Weight regression World must be destroyable after the successful and rejected Model registrations.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime must shut down after the Soft Body Skin Weight transfer / upload regression.");
+    }
+
     void test_runtime_soft_body_gpu_tick_and_state_bank_sequence()
     {
         ComPtr<ID3D11Device> device;
