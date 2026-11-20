@@ -7,6 +7,7 @@
 #include "skin_physics/physics/ccd.hpp"
 #include "skin_physics/physics/correction_ccd.hpp"
 #include "skin_physics/physics/animation_track.hpp"
+#include "skin_physics/physics/physics_mesh_skinning.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
 #include "skin_physics/runtime/detail/force_distribution.hpp"
 #include "skin_physics/physics/performance_metrics.hpp"
@@ -2706,6 +2707,80 @@ namespace
             "Packet Builder must reject a non-contiguous World-Time Span sequence without publishing the preceding valid Span.");
     }
 
+    void test_phase09_physics_mesh_skinning_cpu_reference()
+    {
+        using skin_physics::asset::mat4;
+        using skin_physics::physics::animation_skin_pose;
+        using skin_physics::physics::evaluate_physics_mesh_skinning;
+        using skin_physics::physics::physics_mesh;
+
+        physics_mesh mesh;
+        mesh.rest_positions = { { 1.0f, 2.0f, 3.0f }, { 0.0f, 1.0f, 0.0f } };
+        mesh.has_skin_weights = true;
+        mesh.skin_weights.resize(2u);
+        mesh.skin_weights[0u].joints[0u] = 0u;
+        mesh.skin_weights[0u].weights[0u] = 0.25f;
+        mesh.skin_weights[0u].joints[1u] = 1u;
+        mesh.skin_weights[0u].weights[1u] = 0.75f;
+        mesh.skin_weights[1u].joints[0u] = 1u;
+        mesh.skin_weights[1u].weights[0u] = 1.0f;
+
+        animation_skin_pose pose;
+        pose.mesh_node_index = 7u;
+        pose.skin_index = 3u;
+        mat4 joint0;
+        joint0.value[12u] = 2.0f;
+        mat4 joint1;
+        joint1.value[12u] = -1.0f;
+        pose.skin_matrices = { joint0, joint1 };
+        mat4 joint0_derivative;
+        joint0_derivative.value.fill(0.0f);
+        joint0_derivative.value[12u] = 2.0f;
+        mat4 joint1_derivative;
+        joint1_derivative.value.fill(0.0f);
+        joint1_derivative.value[12u] = -1.0f;
+        pose.skin_matrix_derivatives = { joint0_derivative, joint1_derivative };
+
+        const auto evaluated = evaluate_physics_mesh_skinning(mesh, 7u, 3u, pose);
+        require(evaluated.success &&
+            evaluated.target_positions.size() == 2u &&
+            evaluated.target_velocities.size() == 2u,
+            "Physics Mesh LBS reference must evaluate one Target Position / Velocity per Physics Vertex.");
+        require(std::abs(evaluated.target_positions[0u].x - 0.75f) <= 1.0e-6f &&
+            std::abs(evaluated.target_positions[0u].y - 2.0f) <= 1.0e-6f &&
+            std::abs(evaluated.target_positions[0u].z - 3.0f) <= 1.0e-6f &&
+            std::abs(evaluated.target_velocities[0u].x + 0.25f) <= 1.0e-6f,
+            "Two-influence LBS must combine Skin Matrix position and analytic matrix derivative with identical normalized weights.");
+        require(std::abs(evaluated.target_positions[1u].x + 1.0f) <= 1.0e-6f &&
+            std::abs(evaluated.target_velocities[1u].x + 1.0f) <= 1.0e-6f,
+            "A single-influence Physics Vertex must follow its ordered Skin Joint target and velocity.");
+
+        const auto rejected_node = evaluate_physics_mesh_skinning(mesh, 8u, 3u, pose);
+        require(!rejected_node.success &&
+            rejected_node.error == skin_physics::physics::physics_mesh_skinning_error::invalid_binding,
+            "Physics Mesh LBS must reject a Skin Pose from another Mesh Node.");
+        const auto rejected_skin = evaluate_physics_mesh_skinning(mesh, 7u, 4u, pose);
+        require(!rejected_skin.success &&
+            rejected_skin.error == skin_physics::physics::physics_mesh_skinning_error::invalid_binding,
+            "Physics Mesh LBS must reject a Skin Pose from another Skin index.");
+
+        physics_mesh invalid_joint_mesh = mesh;
+        invalid_joint_mesh.skin_weights[0u].joints[0u] = 2u;
+        const auto rejected_joint = evaluate_physics_mesh_skinning(
+            invalid_joint_mesh, 7u, 3u, pose);
+        require(!rejected_joint.success &&
+            rejected_joint.error == skin_physics::physics::physics_mesh_skinning_error::invalid_skin_weights,
+            "Physics Mesh LBS must reject an influence outside the Skin Pose Joint range.");
+
+        physics_mesh invalid_sum_mesh = mesh;
+        invalid_sum_mesh.skin_weights[0u].weights[0u] = 0.5f;
+        const auto rejected_sum = evaluate_physics_mesh_skinning(
+            invalid_sum_mesh, 7u, 3u, pose);
+        require(!rejected_sum.success &&
+            rejected_sum.error == skin_physics::physics::physics_mesh_skinning_error::invalid_skin_weights,
+            "Physics Mesh LBS must reject non-normalized influence sums.");
+    }
+
     void test_phase10_attribute_paint_and_serialization()
     {
         const test_json::value input = test_json::load(
@@ -4820,6 +4895,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P09_ANIMATION_NODE_HIERARCHY_SKIN_MATRIX_DERIVATIVES\n";
     test_phase09_immutable_gpu_trajectory_packet_builder();
     std::cout << "[PASS] P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER\n";
+    test_phase09_physics_mesh_skinning_cpu_reference();
+    std::cout << "[PASS] P09_PHYSICS_MESH_SKINNING_CPU_REFERENCE\n";
     test_phase10_attribute_paint_and_serialization();
     std::cout << "[PASS] P10_ATTRIBUTE_PAINT\n";
     test_phase11_performance_profile_and_invariant_collector();
