@@ -881,6 +881,8 @@ namespace skin_physics::runtime
     {
         struct render_candidate_mesh_slot
         {
+            uint32_t committed_generation = 0u;
+            uint64_t committed_tick_sequence = 0u;
             Microsoft::WRL::ComPtr<ID3D11Buffer> position_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> position_srv;
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> position_uav;
@@ -2327,6 +2329,26 @@ namespace skin_physics::runtime
             slot.reserved = false;
             slot.committed = false;
             slot.committed_tick_sequence = 0u;
+            for (model_slot& model : world.models)
+            {
+                if (!model.occupied)
+                {
+                    continue;
+                }
+                for (soft_body_gpu_mesh& gpu_mesh : model.gpu_soft_body_meshes)
+                {
+                    if (slot_id < gpu_mesh.render_candidate_slots.size())
+                    {
+                        render_candidate_mesh_slot& mesh_slot =
+                            gpu_mesh.render_candidate_slots[slot_id];
+                        if (mesh_slot.committed_generation == slot_generation)
+                        {
+                            mesh_slot.committed_generation = 0u;
+                            mesh_slot.committed_tick_sequence = 0u;
+                        }
+                    }
+                }
+            }
         }
 
         bool commit_render_candidate_slot(
@@ -2353,6 +2375,23 @@ namespace skin_physics::runtime
             slot.committed = true;
             world.latest_render_slot_id = slot_id;
             world.latest_render_slot_generation = slot_generation;
+            for (model_slot& model : world.models)
+            {
+                if (!model.occupied)
+                {
+                    continue;
+                }
+                for (soft_body_gpu_mesh& gpu_mesh : model.gpu_soft_body_meshes)
+                {
+                    if (slot_id < gpu_mesh.render_candidate_slots.size())
+                    {
+                        gpu_mesh.render_candidate_slots[slot_id].committed_generation =
+                            slot_generation;
+                        gpu_mesh.render_candidate_slots[slot_id].committed_tick_sequence =
+                            tick_sequence;
+                    }
+                }
+            }
             return true;
         }
 
