@@ -328,6 +328,55 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    enum class animation_hierarchy_error : uint8_t
+    {
+        none,
+        invalid_model,
+        invalid_clip_span,
+        invalid_channel,
+        invalid_transform,
+        invalid_hierarchy,
+        invalid_skin,
+        singular_mesh_node
+    };
+
+    struct animation_skin_pose
+    {
+        uint32_t mesh_node_index = asset::invalid_index;
+        uint32_t skin_index = asset::invalid_index;
+        std::vector<asset::mat4> skin_matrices;
+        std::vector<asset::mat4> skin_matrix_derivatives;
+    };
+
+    struct animation_hierarchy_sample
+    {
+        // All matrices are model-local, column-major, column-vector transforms.
+        std::vector<asset::mat4> local_matrices;
+        std::vector<asset::mat4> local_matrix_derivatives;
+        std::vector<asset::mat4> global_matrices;
+        std::vector<asset::mat4> global_matrix_derivatives;
+        std::vector<animation_skin_pose> skin_poses;
+    };
+
+    struct animation_hierarchy_sample_result
+    {
+        animation_hierarchy_sample value;
+        animation_hierarchy_error error =
+            animation_hierarchy_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    // Evaluates every Asset Node from its Rest TRS / static Matrix plus one
+    // synchronized Clip Span. Builds the full parent hierarchy and all Skin
+    // Matrices with analytic World-Time derivatives.
+    animation_hierarchy_sample_result evaluate_animation_clip_hierarchy(
+        const asset::model& model,
+        const asset::animation_clip& clip,
+        const animation_clip_span& span,
+        double span_local_u,
+        double span_world_duration);
+
     animation_blend_clip_span_schedule_result schedule_animation_blend_clip_spans(
         const asset::animation_clip& source_clip,
         uint32_t source_node_count,
