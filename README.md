@@ -4,7 +4,20 @@ Skin Physics is a GPU-oriented C++ library for real-time Soft Body and Cloth sim
 
 The repository is being implemented in stages. Asset import, Physics Mesh construction, CPU reference solvers and fixture-based GPU verification kernels are present. A complete production simulation runtime that connects every stage is still in progress; phase status and known gaps are tracked in `tests/fixtures/manifest.json`.
 
-The GPU Runtime / Library integration design is being revised against `docs/requirements.md` 1.1. The design revision is on branch `feature/integrated-gpu-runtime-design`; it does not claim that the production asynchronous Runtime has been implemented. The original `feature/phase1-importer` implementation remains the source baseline.
+The GPU Runtime / Library integration design was consolidated on `main` against `docs/requirements.md` 1.1. Production Runtime work is continuing separately on `feature/gpu-runtime-implementation` in Draft PR #3; it is intentionally not merged phase-by-phase.
+
+
+
+## GPU Runtime implementation status
+
+The implementation branch currently contains a partial R0 / R1 Runtime vertical slice:
+
+- Versioned immutable CPU Tick Input Snapshots are owned by Reservations and retained through Budget Retry, GPU Submission, Query observation and non-COMMITTED Reservation restoration.
+- CPU Preflight creates a World-common Integration Segment schedule from base Substeps plus Force start / end and Impulse event boundaries. Segment count participates in the World Execution Budget.
+- Soft Body GPU dispatch consumes each scheduled Segment duration using a distinct immutable Integration Parameters constant buffer retained by the In-Flight Tick until its Event Query is observed.
+- Force / Impulse GPU distribution, Animation Trajectory evaluation, Cloth, Collision / Contact coupling, full CCD / TOI scheduling and target-GPU qualification are still pending. Until an input path is integrated, accepting that input causes `BLOCKED_BY_INPUT`; the Runtime does not silently commit a Tick that ignores it.
+
+See `docs/implementation_roadmap.md` and `docs/testing_strategy.md` for phase status and executable gates. The implementation PR remains Draft until the full integration and validation sequence is complete.
 
 ## Current implementation
 
