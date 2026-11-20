@@ -4091,12 +4091,25 @@ namespace skin_physics::physics
         {
             const asset::skin& skin = model.skins[skin_index];
             if (skin.joints.empty() ||
+                skin.joints.size() >
+                    static_cast<std::size_t>(asset::invalid_index) ||
                 (!skin.inverse_bind_matrices.empty() &&
                     skin.inverse_bind_matrices.size() != skin.joints.size()))
             {
                 return fail(
                     animation_trajectory_packet_error::invalid_skin,
-                    "Skin Joint and Inverse Bind arrays must be non-empty and have matching sizes when Inverse Binds are supplied.");
+                    "Skin Joint and Inverse Bind arrays must be non-empty, uint32-addressable and have matching sizes when Inverse Binds are supplied.");
+            }
+            std::vector<uint32_t> sorted_skin_joints = skin.joints;
+            std::sort(
+                sorted_skin_joints.begin(), sorted_skin_joints.end());
+            if (std::adjacent_find(
+                    sorted_skin_joints.begin(),
+                    sorted_skin_joints.end()) != sorted_skin_joints.end())
+            {
+                return fail(
+                    animation_trajectory_packet_error::invalid_skin,
+                    "A Skin cannot reference the same Joint Node more than once.");
             }
             if (candidate.inverse_bind_matrices.size() >
                 static_cast<std::size_t>(asset::invalid_index) -
