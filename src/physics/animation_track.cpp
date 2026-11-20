@@ -822,8 +822,13 @@ namespace skin_physics::physics
             }
             if (clip_time_delta < 0.0)
             {
-                std::sort(boundaries.begin() + 1, boundaries.end(),
-                    std::greater<double>());
+                std::sort(
+                    boundaries.begin() + 1,
+                    boundaries.end(),
+                    [](double left, double right)
+                    {
+                        return left > right;
+                    });
             }
             else
             {
