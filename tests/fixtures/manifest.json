@@ -357,8 +357,8 @@
         },
         {
           "id": "R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY",
-          "input": "phase13_force_distribution/wendland_c2.input.json",
-          "expected": "phase13_force_distribution/wendland_c2.expected.json",
+          "input": "phase13_force_distribution/warp_130.input.json",
+          "expected": "phase13_force_distribution/warp_130.expected.json",
           "checks": [
             "Production Weight, Reduction, Finalize and Apply entry points compile and dispatch on WARP",
             "GPU per-vertex unnormalized q values and normalization sum match the CPU double-precision reference",
