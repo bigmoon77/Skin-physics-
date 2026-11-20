@@ -1781,7 +1781,13 @@ namespace
                 read_correction_ccd_settings(ee_crossing.at("input")));
         require(ee_result.status == correction_ccd_status::path_crossing &&
             ee_result.hit_witness_valid,
-            "Correction EE crossing must produce a hit witness and REJECTED crossing status.");
+            std::string(
+                "Correction EE crossing must produce a hit witness and REJECTED crossing status. status=") +
+                std::to_string(static_cast<int>(ee_result.status)) +
+                " witness=" + (ee_result.hit_witness_valid ? "true" : "false") +
+                " interval_evaluations=" +
+                std::to_string(ee_result.interval_evaluations) +
+                " diagnostic=" + ee_result.diagnostic);
 
         auto endpoint_clamped_ee = make_ee_correction_motion(
             ee_crossing.at("input"));
