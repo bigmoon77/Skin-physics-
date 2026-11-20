@@ -645,7 +645,12 @@
             "A skinned Mesh Node emits Skin Matrix = inverse(Mesh Node Global) * Joint Global * Inverse Bind Matrix, using identity when Inverse Bind Matrices are omitted",
             "Skin Matrix derivatives include inverse_mesh_global_dot = -inverse_mesh_global * mesh_node_global_dot * inverse_mesh_global and the Joint Global derivative",
             "Shared animated Root motion cancels in Mesh Node-relative Skin Matrices while Joint-relative motion remains in the analytic Skin Matrix derivative",
-            "Cyclic / inconsistent Node hierarchies, invalid animated channels, non-positive animated Scale, malformed Skin arrays and singular Mesh Node Global Matrices fail atomically"
+            "Cyclic / inconsistent Node hierarchies, invalid animated channels, non-positive animated Scale, malformed Skin arrays and singular Mesh Node Global Matrices fail atomically",
+            "The synchronized Source / Target / Hermite Weight span evaluates both local Poses at the same World-Time coordinate before building the blended Node hierarchy",
+            "Translation / Scale Blend derivatives include the analytic weight term w_dot * (Target - Source)",
+            "Quaternion Blend hemisphere-aligns Target value and derivative, normalizes the weighted result, and projects the analytic derivative into the quaternion tangent space",
+            "The blended local Pose is propagated through Parent * Local matrices and rebuilt Skin Matrices / derivatives, preserving Root-motion cancellation",
+            "Source / Target / Weight World-Time interval mismatch fails atomically without publishing a blended hierarchy"
           ]
         }
       ],
