@@ -1877,8 +1877,8 @@ namespace
 
         skin_physics::physics::animation_blend_weight_curve_desc invalid_synchronized_blend =
             synchronized_blend_curve;
-        invalid_synchronized_blend.tangent_start = 10.0f;
-        invalid_synchronized_blend.tangent_end = 10.0f;
+        invalid_synchronized_blend.tangent_start = 100.0f;
+        invalid_synchronized_blend.tangent_end = 100.0f;
         const skin_physics::physics::animation_blend_clip_span_schedule_result
             invalid_blend_schedule =
                 skin_physics::physics::schedule_animation_blend_clip_spans(
