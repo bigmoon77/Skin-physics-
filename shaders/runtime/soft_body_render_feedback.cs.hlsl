@@ -321,8 +321,29 @@ void validate_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     float4 position = candidate_positions[render_vertex_index];
     float4 normal = candidate_normals[render_vertex_index];
     float4 tangent = candidate_tangents[render_vertex_index];
-    if (!all(isfinite(position)) || !all(isfinite(normal)) ||
-        !all(isfinite(tangent)))
+    RenderVertexInput vertex = render_vertices[render_vertex_index];
+    bool valid_streams =
+        all(isfinite(position)) &&
+        all(isfinite(normal)) &&
+        all(isfinite(tangent)) &&
+        abs(position.w - 1.0f) <= 1.0e-4f;
+    if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u)
+    {
+        valid_streams = valid_streams &&
+            dot(normal.xyz, normal.xyz) >= 0.5f;
+    }
+    if ((vertex.metadata.x & ATTRIBUTE_TANGENT) != 0u)
+    {
+        valid_streams = valid_streams &&
+            dot(tangent.xyz, tangent.xyz) >= 0.5f &&
+            abs(abs(tangent.w) - 1.0f) <= 1.0e-4f;
+        if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u)
+        {
+            valid_streams = valid_streams &&
+                abs(dot(normal.xyz, tangent.xyz)) <= 1.0e-3f;
+        }
+    }
+    if (!valid_streams)
     {
         uint previous_failure = 0u;
         InterlockedOr(tick_commit_control_buffer[0].terminal_failure, 1u, previous_failure);
