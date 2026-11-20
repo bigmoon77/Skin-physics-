@@ -142,7 +142,6 @@ bool jacobi_svd_rotation(float3x3 deformation, out float3x3 rotation)
     float3x3 symmetric = mul(transpose(deformation), deformation);
     float3x3 eigenvectors = identity3();
 
-    [loop]
     for (uint iteration = 0u; iteration < 32u; ++iteration)
     {
         uint p = 0u;
@@ -225,26 +224,29 @@ bool jacobi_svd_rotation(float3x3 deformation, out float3x3 rotation)
     float3x3 sorted_vectors = (float3x3)0.0f;
     float singular_values[3];
     [unroll]
-    for (uint column = 0u; column < 3u; ++column)
+    for (uint singular_index = 0u; singular_index < 3u; ++singular_index)
     {
-        singular_values[column] = sqrt(max(
-            0.0f, symmetric[order[column]][order[column]]));
+        singular_values[singular_index] = sqrt(max(
+            0.0f, symmetric[order[singular_index]][order[singular_index]]));
         set_matrix_column(
-            sorted_vectors, column, matrix_column(eigenvectors, order[column]));
+            sorted_vectors,
+            singular_index,
+            matrix_column(eigenvectors, order[singular_index]));
     }
 
     float3x3 left_vectors = (float3x3)0.0f;
     [unroll]
-    for (uint column = 0u; column < 3u; ++column)
+    for (uint axis_index = 0u; axis_index < 3u; ++axis_index)
     {
-        float3 candidate = mul(deformation, matrix_column(sorted_vectors, column));
-        if (singular_values[column] > 1.0e-8f)
+        float3 candidate = mul(
+            deformation, matrix_column(sorted_vectors, axis_index));
+        if (singular_values[axis_index] > 1.0e-8f)
         {
-            candidate *= 1.0f / singular_values[column];
+            candidate *= 1.0f / singular_values[axis_index];
         }
 
         [unroll]
-        for (uint previous = 0u; previous < column; ++previous)
+        for (uint previous = 0u; previous < axis_index; ++previous)
         {
             float3 previous_axis = matrix_column(left_vectors, previous);
             candidate -= previous_axis * dot(candidate, previous_axis);
@@ -259,7 +261,7 @@ bool jacobi_svd_rotation(float3x3 deformation, out float3x3 rotation)
             float3 axis_z = float3(0.0f, 0.0f, 1.0f);
 
             [unroll]
-            for (uint previous = 0u; previous < column; ++previous)
+            for (uint previous = 0u; previous < axis_index; ++previous)
             {
                 float3 previous_axis = matrix_column(left_vectors, previous);
                 axis_x -= previous_axis * dot(axis_x, previous_axis);
@@ -292,7 +294,7 @@ bool jacobi_svd_rotation(float3x3 deformation, out float3x3 rotation)
         }
 
         candidate *= rsqrt(candidate_length_squared);
-        set_matrix_column(left_vectors, column, candidate);
+        set_matrix_column(left_vectors, axis_index, candidate);
     }
 
     float3x3 orientation = mul(left_vectors, transpose(sorted_vectors));
