@@ -4005,7 +4005,6 @@ namespace skin_physics::physics
         std::vector<uint32_t> node_role_flags(node_count, 0u);
         std::vector<uint32_t> inverse_bind_index_by_node(
             node_count, asset::invalid_index);
-        std::vector<asset::mat4> inverse_bind_by_node(node_count);
 
         // Build a dense Static Matrix Buffer indexed by Asset Node Index.
         // TRS Nodes carry Identity; affine Matrix Nodes carry their exact
@@ -4150,7 +4149,6 @@ namespace skin_physics::physics
                 {
                     inverse_bind_index_by_node[joint_node_index] =
                         inverse_bind_record_index;
-                    inverse_bind_by_node[joint_node_index] = inverse_bind;
                 }
                 candidate.inverse_bind_matrices.push_back(
                     to_gpu_matrix(inverse_bind));
