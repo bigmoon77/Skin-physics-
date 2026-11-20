@@ -1093,6 +1093,7 @@ namespace skin_physics::runtime
             animation_playback_desc animation_playback;
             bool has_animation_blend = false;
             animation_blend_desc animation_blend;
+            double animation_world_time_origin = 0.0;
             std::vector<mesh_physics_parameters> mesh_parameters;
             std::vector<bool> mesh_parameters_valid;
         };
@@ -1123,6 +1124,7 @@ namespace skin_physics::runtime
             animation_playback_desc animation_playback;
             bool has_animation_blend = false;
             animation_blend_desc animation_blend;
+            double animation_world_time_origin = 0.0;
             std::vector<mesh_physics_parameters> mesh_parameters;
             std::vector<bool> mesh_parameters_valid;
             std::vector<physics_mesh_input_snapshot> physics_meshes;
@@ -1155,12 +1157,22 @@ namespace skin_physics::runtime
             std::vector<uint32_t> impulse_indices;
         };
 
+        struct model_animation_tick_schedule
+        {
+            uint32_t model_index = asset::invalid_index;
+            uint32_t model_generation = 0u;
+            bool has_blend = false;
+            std::vector<physics::scheduled_animation_clip_span> playback_spans;
+            std::vector<physics::animation_blend_clip_span> blend_spans;
+        };
+
         struct tick_reservation
         {
             uint64_t sequence = 0u;
             double start_time = 0.0;
             double delta_time = 0.0;
             std::vector<integration_segment> integration_segments;
+            std::vector<model_animation_tick_schedule> animation_schedules;
             std::shared_ptr<const tick_input_snapshot> input_snapshot;
             bool from_single_step = false;
             bool blocked = false;
@@ -1458,6 +1470,8 @@ namespace skin_physics::runtime
                     model_snapshot.animation_playback = model.animation_playback;
                     model_snapshot.has_animation_blend = model.has_animation_blend;
                     model_snapshot.animation_blend = model.animation_blend;
+                    model_snapshot.animation_world_time_origin =
+                        model.animation_world_time_origin;
                     model_snapshot.mesh_parameters = model.mesh_parameters;
                     model_snapshot.mesh_parameters_valid =
                         model.mesh_parameters_valid;
