@@ -833,9 +833,6 @@
       "tests/environment_tests.cpp",
       "include/skin_physics/physics/physics_mesh.hpp",
       "include/skin_physics/physics/render_binding.hpp",
-      "src/physics/render_binding.cpp",
-      "include/skin_physics/physics/physics_mesh.hpp",
-      "include/skin_physics/physics/render_binding.hpp",
       "src/physics/render_binding.cpp"
     ],
     "automated_test_groups": [
