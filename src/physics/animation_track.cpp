@@ -994,18 +994,22 @@ namespace skin_physics::physics
         double clip_time_delta)
     {
         animation_clip_spans_build_result result;
-        if (node_count == 0u || clip.tracks.empty())
+        if (node_count == 0u || clip.tracks.empty() ||
+            clip.tracks.size() >
+                static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
         {
             result.error = animation_channel_span_error::invalid_track;
             result.message =
-                "Animation Clip Span scheduling requires at least one Node and one Track.";
+                "Animation Clip Span scheduling requires at least one Node and Track count representable by the GPU ABI.";
             return result;
         }
         if (!std::isfinite(static_cast<double>(clip.duration)) ||
             clip.duration < 0.0f ||
             !std::isfinite(clip_time_start) ||
             !std::isfinite(clip_time_delta) ||
-            !std::isfinite(clip_time_start + clip_time_delta))
+            !std::isfinite(clip_time_start + clip_time_delta) ||
+            (clip_time_delta != 0.0 &&
+                clip_time_start + clip_time_delta == clip_time_start))
         {
             result.error = animation_channel_span_error::invalid_time;
             result.message =
@@ -1063,8 +1067,22 @@ namespace skin_physics::physics
             std::min(clip_time_start, clip_time_end);
         const double maximum_time =
             std::max(clip_time_start, clip_time_end);
+        std::size_t boundary_capacity = 2u;
+        for (const asset::animation_track& track : clip.tracks)
+        {
+            if (track.keys.size() >
+                static_cast<std::size_t>(
+                    std::numeric_limits<uint32_t>::max()) - boundary_capacity)
+            {
+                result.error = animation_channel_span_error::invalid_track;
+                result.message =
+                    "Animation Clip contains more Key boundaries than the uint32 Span Index ABI can represent.";
+                return result;
+            }
+            boundary_capacity += track.keys.size();
+        }
         std::vector<double> boundaries;
-        boundaries.reserve(clip.tracks.size() * 2u + 2u);
+        boundaries.reserve(boundary_capacity);
         boundaries.push_back(clip_time_start);
         if (clip_time_delta != 0.0)
         {
@@ -1105,6 +1123,15 @@ namespace skin_physics::physics
                 boundaries.end());
         }
         boundaries.push_back(clip_time_end);
+        if (boundaries.size() <= 1u ||
+            boundaries.size() - 1u >
+                static_cast<std::size_t>(std::numeric_limits<uint32_t>::max()))
+        {
+            result.error = animation_channel_span_error::invalid_track;
+            result.message =
+                "Animation Clip Span count cannot be represented by the uint32 Span Index ABI.";
+            return result;
+        }
 
         result.values.reserve(boundaries.size() - 1u);
         for (std::size_t span_index = 0u;
@@ -1142,6 +1169,106 @@ namespace skin_physics::physics
         }
 
         result.success = true;
+        return result;
+    }
+
+    animation_clip_span_schedule_result schedule_animation_clip_spans(
+        const asset::animation_clip& clip,
+        uint32_t node_count,
+        double clip_time_start,
+        double clip_time_delta,
+        double world_time_start,
+        double world_time_duration)
+    {
+        animation_clip_span_schedule_result result;
+        const double world_time_end =
+            world_time_start + world_time_duration;
+        if (!std::isfinite(world_time_start) ||
+            !std::isfinite(world_time_duration) ||
+            world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_end) ||
+            world_time_end == world_time_start)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Clip scheduling requires a finite positive representable Logical Tick interval.";
+            return result;
+        }
+
+        animation_clip_spans_build_result clip_spans =
+            build_animation_clip_spans(
+                clip, node_count, clip_time_start, clip_time_delta);
+        if (!clip_spans.success)
+        {
+            result.error = clip_spans.error;
+            result.message = clip_spans.message;
+            return result;
+        }
+
+        result.values.reserve(clip_spans.values.size());
+        for (const animation_clip_span& clip_span : clip_spans.values)
+        {
+            double world_start_fraction = 0.0;
+            double world_duration_fraction = 1.0;
+            if (clip_time_delta != 0.0)
+            {
+                world_start_fraction =
+                    (clip_span.clip_time_start - clip_time_start) /
+                    clip_time_delta;
+                world_duration_fraction =
+                    clip_span.clip_time_delta / clip_time_delta;
+            }
+
+            constexpr double fraction_tolerance =
+                std::numeric_limits<double>::epsilon() * 32.0;
+            if (!std::isfinite(world_start_fraction) ||
+                !std::isfinite(world_duration_fraction) ||
+                world_start_fraction < -fraction_tolerance ||
+                world_start_fraction > 1.0 + fraction_tolerance ||
+                world_duration_fraction <= 0.0 ||
+                world_duration_fraction > 1.0 + fraction_tolerance)
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Synchronized Clip Span partition could not be mapped into monotonic World-Time intervals.";
+                return result;
+            }
+
+            world_start_fraction =
+                std::max(0.0, std::min(1.0, world_start_fraction));
+            world_duration_fraction =
+                std::max(0.0, std::min(1.0, world_duration_fraction));
+            scheduled_animation_clip_span scheduled;
+            scheduled.clip = clip_span;
+            scheduled.world_time_start =
+                world_time_start +
+                world_start_fraction * world_time_duration;
+            scheduled.world_time_duration =
+                world_duration_fraction * world_time_duration;
+            if (!std::isfinite(scheduled.world_time_start) ||
+                !std::isfinite(scheduled.world_time_duration) ||
+                scheduled.world_time_duration <= 0.0 ||
+                !std::isfinite(
+                    scheduled.world_time_start +
+                    scheduled.world_time_duration))
+            {
+                result.values.clear();
+                result.error = animation_channel_span_error::invalid_time;
+                result.message =
+                    "Synchronized Clip Span World-Time partition is not representable as positive finite intervals.";
+                return result;
+            }
+            result.values.push_back(std::move(scheduled));
+        }
+
+        result.success = !result.values.empty();
+        if (!result.success)
+        {
+            result.error = animation_channel_span_error::invalid_time;
+            result.message =
+                "Animation Clip Scheduler produced an empty World-Time partition.";
+        }
         return result;
     }
 
