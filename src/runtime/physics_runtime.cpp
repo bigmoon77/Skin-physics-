@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <set>
@@ -425,6 +426,17 @@ namespace skin_physics::runtime
             std::vector<transform_sample> pose_samples;
         };
 
+        struct tick_reservation
+        {
+            uint64_t sequence = 0u;
+            double delta_time = 0.0;
+            bool from_single_step = false;
+            bool blocked = false;
+            uint64_t budget_revision = 0u;
+            uint32_t planned_substeps = 0u;
+            uint32_t planned_integration_segments = 0u;
+        };
+
         struct world_slot
         {
             uint32_t generation = 1u;
@@ -445,6 +457,7 @@ namespace skin_physics::runtime
             uint64_t cpu_observed_sequence = 0u;
             uint64_t next_tick_sequence = 1u;
             uint32_t pending_single_step_requests = 0u;
+            std::deque<tick_reservation> reservations;
             uint32_t in_flight_tick_count = 0u;
             bool render_lease_active = false;
             uint64_t render_lease_generation = 0u;
@@ -559,6 +572,188 @@ namespace skin_physics::runtime
         uint64_t world_identity(uint32_t index, uint32_t generation) const
         {
             return (static_cast<uint64_t>(generation) << 32u) | index;
+        }
+
+        void update_head_reservation_preflight(world_slot& world)
+        {
+            if (world.reservations.empty())
+            {
+                world.reserved_tick_time = 0.0;
+                world.planned_substeps = 0u;
+                world.planned_integration_segments = 0u;
+                world.state = tick_state::idle;
+                world.last_tick_status = status_code::ok;
+                world.budget_block_origin = work_budget_block_origin::none;
+                world.budget_resolution = work_budget_resolution::none;
+                world.work_budget_block_flags = 0u;
+                world.diagnostic.clear();
+                return;
+            }
+
+            tick_reservation& reservation = world.reservations.front();
+            double dt_limit = std::numeric_limits<double>::infinity();
+            if (world.description.world_max_substep_delta_time > 0.0)
+            {
+                dt_limit = std::min(
+                    dt_limit, world.description.world_max_substep_delta_time);
+            }
+            if (world.description.contact_max_substep_delta_time > 0.0)
+            {
+                dt_limit = std::min(
+                    dt_limit, world.description.contact_max_substep_delta_time);
+            }
+
+            double required_substeps = world.description.minimum_substeps;
+            if (std::isfinite(dt_limit))
+            {
+                required_substeps = std::max(
+                    required_substeps,
+                    std::ceil(reservation.delta_time / dt_limit));
+            }
+
+            world.work_budget_block_flags = 0u;
+            world.budget_block_origin = work_budget_block_origin::none;
+            world.budget_resolution = work_budget_resolution::none;
+            world.last_tick_status = status_code::ok;
+            world.diagnostic.clear();
+
+            if (!std::isfinite(required_substeps) ||
+                required_substeps < 1.0 ||
+                required_substeps >
+                    static_cast<double>(std::numeric_limits<uint32_t>::max()))
+            {
+                reservation.planned_substeps = 0u;
+                reservation.planned_integration_segments = 0u;
+                reservation.blocked = true;
+                world.planned_substeps = 0u;
+                world.planned_integration_segments = 0u;
+                world.work_budget_block_flags = 0x03u;
+                world.budget_block_origin = work_budget_block_origin::cpu_preflight;
+                world.budget_resolution = work_budget_resolution::hard_limit_reached;
+                world.last_tick_status = status_code::work_budget_unsatisfiable;
+                world.state = tick_state::blocked;
+                world.diagnostic =
+                    "CPU Preflight could not represent the required World Substep count.";
+                return;
+            }
+
+            const uint32_t planned_substeps =
+                static_cast<uint32_t>(required_substeps);
+            // Until R1-R5 are connected, the base integration-segment lower bound
+            // is the World Substep count. Animation / Force / Impulse / TOI boundaries
+            // are added by the later scheduler integration phases.
+            const uint32_t planned_segments = planned_substeps;
+            reservation.planned_substeps = planned_substeps;
+            reservation.planned_integration_segments = planned_segments;
+            reservation.budget_revision = world.execution_budget_revision;
+            world.planned_substeps = planned_substeps;
+            world.planned_integration_segments = planned_segments;
+
+            const bool substep_hard_limit_exceeded =
+                planned_substeps >
+                    world.description.maximum_substeps &&
+                planned_substeps >
+                    world.description.maximum_substeps;
+            const bool runtime_substep_limit_exceeded =
+                planned_substeps >
+                    world.execution_budget.maximum_substeps &&
+                planned_substeps >
+                    world.description.maximum_substeps;
+            const bool integration_limit_exceeded =
+                planned_segments >
+                    world.execution_budget.maximum_integration_segments_per_tick;
+
+            if (substep_hard_limit_exceeded || runtime_substep_limit_exceeded)
+            {
+                reservation.blocked = true;
+                world.work_budget_block_flags |= 0x01u;
+            }
+            if (integration_limit_exceeded)
+            {
+                reservation.blocked = true;
+                world.work_budget_block_flags |= 0x02u;
+            }
+
+            if (reservation.blocked)
+            {
+                const bool hard_limit_exceeded =
+                    planned_substeps >
+                        world.execution_budget.maximum_substeps &&
+                    planned_substeps >
+                        world.description.maximum_substeps;
+                world.budget_block_origin = work_budget_block_origin::cpu_preflight;
+                world.budget_resolution = hard_limit_exceeded
+                    ? work_budget_resolution::hard_limit_reached
+                    : work_budget_resolution::retryable;
+                world.last_tick_status = hard_limit_exceeded
+                    ? status_code::work_budget_unsatisfiable
+                    : status_code::work_budget_exceeded;
+                world.state = tick_state::blocked;
+                world.diagnostic = hard_limit_exceeded
+                    ? "Required CPU Preflight work exceeds the immutable Runtime Hard Limit."
+                    : "Required CPU Preflight work exceeds the current World Execution Budget.";
+                return;
+            }
+
+            reservation.blocked = false;
+            world.state = tick_state::pending;
+        }
+
+        bool reserve_next_tick(
+            world_slot& world,
+            const runtime_desc& runtime_desc_value,
+            bool from_single_step)
+        {
+            if (!world.reservations.empty())
+            {
+                return false;
+            }
+            if (from_single_step)
+            {
+                if (world.pending_single_step_requests == 0u)
+                {
+                    return false;
+                }
+            }
+            else if (world.accumulator_seconds + time_epsilon <
+                world.description.fixed_delta_time)
+            {
+                return false;
+            }
+
+            if (world.next_tick_sequence == 0u ||
+                !finite_double(world.reserved_tick_time +
+                    world.description.fixed_delta_time))
+            {
+                world.state = tick_state::failed;
+                world.last_tick_status = status_code::gpu_execution_failed;
+                world.diagnostic = "Tick Reservation Sequence or reserved time cannot advance without overflow.";
+                return false;
+            }
+
+            tick_reservation reservation;
+            reservation.sequence = world.next_tick_sequence;
+            reservation.delta_time = world.description.fixed_delta_time;
+            reservation.from_single_step = from_single_step;
+            reservation.budget_revision = world.execution_budget_revision;
+
+            ++world.next_tick_sequence;
+            if (from_single_step)
+            {
+                --world.pending_single_step_requests;
+            }
+            else
+            {
+                world.accumulator_seconds = std::max(
+                    0.0, world.accumulator_seconds -
+                        world.description.fixed_delta_time);
+            }
+
+            world.reserved_tick_time += reservation.delta_time;
+            world.reservations.push_back(reservation);
+            update_head_reservation_preflight(world);
+            (void)runtime_desc_value;
+            return true;
         }
 
         bool ensure_status_capacity(uint32_t required_capacity, std::string& diagnostic)
@@ -836,6 +1031,7 @@ namespace skin_physics::runtime
         world.cpu_observed_sequence = 0u;
         world.next_tick_sequence = 1u;
         world.pending_single_step_requests = 0u;
+        world.reservations.clear();
         world.in_flight_tick_count = 0u;
         world.render_lease_active = false;
         world.render_lease_generation = 0u;
@@ -1274,9 +1470,9 @@ namespace skin_physics::runtime
         world->description.maximum_integration_segments_per_tick =
             budget.maximum_integration_segments_per_tick;
         ++world->execution_budget_revision;
-        if (world->budget_block_origin != work_budget_block_origin::none)
+        if (!world->reservations.empty())
         {
-            world->budget_resolution = work_budget_resolution::retryable;
+            runtime.update_head_reservation_preflight(*world);
         }
         return make_status(status_code::ok, {});
     }
@@ -1702,15 +1898,33 @@ namespace skin_physics::runtime
             world->accumulator_seconds += requested_delta;
         }
 
-        const uint32_t accumulator_ticks = count_pending_ticks(
-            world->accumulator_seconds, world->description.fixed_delta_time);
+        if (world->reservations.empty())
+        {
+            if (world->pending_single_step_requests != 0u)
+            {
+                runtime.reserve_next_tick(*world, runtime.desc, true);
+            }
+            else if (world->playback == playback_state::playing)
+            {
+                runtime.reserve_next_tick(*world, runtime.desc, false);
+            }
+        }
+
         const uint64_t pending64 =
-            static_cast<uint64_t>(accumulator_ticks) +
-            world->pending_single_step_requests;
+            static_cast<uint64_t>(count_pending_ticks(
+                world->accumulator_seconds, world->description.fixed_delta_time)) +
+            world->pending_single_step_requests +
+            world->reservations.size();
         out_report->pending_tick_count = static_cast<uint32_t>(
             std::min<uint64_t>(pending64, std::numeric_limits<uint32_t>::max()));
         out_report->in_flight_tick_count = world->in_flight_tick_count;
         out_report->accumulator_seconds = world->accumulator_seconds;
+        if (!world->reservations.empty() && world->reservations.front().blocked)
+        {
+            out_report->cpu_preflight_blocked_tick_count = 1u;
+            out_report->first_cpu_preflight_blocked_tick_sequence =
+                world->reservations.front().sequence;
+        }
         return make_status(status_code::ok, {});
     }
 
@@ -1849,7 +2063,8 @@ namespace skin_physics::runtime
         const uint64_t pending_tick_count =
             static_cast<uint64_t>(count_pending_ticks(
                 world->accumulator_seconds, world->description.fixed_delta_time)) +
-            world->pending_single_step_requests;
+            world->pending_single_step_requests +
+            world->reservations.size();
         result.pending_tick_count = static_cast<uint32_t>(
             std::min<uint64_t>(pending_tick_count,
                 std::numeric_limits<uint32_t>::max()));
@@ -1904,10 +2119,14 @@ namespace skin_physics::runtime
         }
         world->requested_simulation_time = new_requested_time;
         ++world->pending_single_step_requests;
-        out_report->pending_tick_count =
-            count_pending_ticks(world->accumulator_seconds,
-                world->description.fixed_delta_time) +
-            world->pending_single_step_requests;
+        const uint64_t pending_tick_count =
+            static_cast<uint64_t>(count_pending_ticks(
+                world->accumulator_seconds, world->description.fixed_delta_time)) +
+            world->pending_single_step_requests +
+            world->reservations.size();
+        out_report->pending_tick_count = static_cast<uint32_t>(
+            std::min<uint64_t>(pending_tick_count,
+                std::numeric_limits<uint32_t>::max()));
         out_report->in_flight_tick_count = world->in_flight_tick_count;
         out_report->accumulator_seconds = world->accumulator_seconds;
         return make_status(status_code::ok, {});
@@ -1968,7 +2187,6 @@ namespace skin_physics::runtime
         implementation::world_slot* world = runtime.find_world(world_handle_value);
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
         if (world->in_flight_tick_count != 0u ||
-            world->reserved_tick_time > time_epsilon ||
             world->render_lease_active ||
             runtime.status_ring->pending_count() != 0u)
         {
@@ -1988,6 +2206,7 @@ namespace skin_physics::runtime
         world->cpu_observed_sequence = 0u;
         world->next_tick_sequence = 1u;
         world->pending_single_step_requests = 0u;
+        world->reservations.clear();
         world->in_flight_tick_count = 0u;
         world->state = tick_state::idle;
         world->last_tick_status = status_code::ok;
@@ -2031,6 +2250,7 @@ namespace skin_physics::runtime
             world->in_flight_tick_count != 0u ||
             world->reserved_tick_time > time_epsilon ||
             world->pending_single_step_requests != 0u ||
+            !world->reservations.empty() ||
             has_pending_whole_tick ||
             world->accumulator_seconds > time_epsilon ||
             world->render_lease_active)
@@ -2114,6 +2334,7 @@ namespace skin_physics::runtime
                     world.reserved_tick_time > time_epsilon ||
                     world.render_lease_active ||
                     world.pending_single_step_requests != 0u ||
+                    !world.reservations.empty() ||
                     world.accumulator_seconds > time_epsilon))
             {
                 return status_code::busy;
