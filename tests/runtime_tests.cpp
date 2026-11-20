@@ -2340,6 +2340,7 @@ int run_runtime_tests()
     std::cout << "[PASS] R0_WARP_PREDECESSOR_FAILURE_ORDER\n";
     test_runtime_soft_body_cfl_preflight_and_budget_recovery();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_CFL_PREFLIGHT\n";
+    std::cout << "[PASS] R1_WARP_SOFT_BODY_ANIMATION_TRACKING_STABILITY_PREFLIGHT\n";
     std::cout << "RuntimeTests passed.\n";
     return 0;
 }
