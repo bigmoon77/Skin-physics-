@@ -2207,11 +2207,23 @@ namespace
             "Animation Tracking World must resume Playing after Reset.");
 
         skin_physics::runtime::advance_report painted_tracking_report;
-        require(runtime.advance(
-                tracking_world, 0.01, &painted_tracking_report).success() &&
+        const skin_physics::runtime::status painted_tracking_advance_status =
+            runtime.advance(tracking_world, 0.01, &painted_tracking_report);
+        require(painted_tracking_advance_status.success() &&
             painted_tracking_report.submitted_tick_count == 0u &&
             painted_tracking_report.pending_tick_count == 1u,
-            "The trajectory remains deferred while its painted-out Tracking stiffness is excluded from Preflight.");
+            std::string(
+                "The trajectory remains deferred while its painted-out Tracking stiffness is excluded from Preflight. code=") +
+                std::to_string(static_cast<int>(painted_tracking_advance_status.code)) +
+                " diagnostic=" + painted_tracking_advance_status.diagnostic +
+                " submitted=" +
+                std::to_string(painted_tracking_report.submitted_tick_count) +
+                " in_flight=" +
+                std::to_string(painted_tracking_report.in_flight_tick_count) +
+                " pending=" +
+                std::to_string(painted_tracking_report.pending_tick_count) +
+                " preflight_blocked=" +
+                std::to_string(painted_tracking_report.cpu_preflight_blocked_tick_count));
         skin_physics::runtime::world_status painted_tracking_status;
         require(runtime.poll(tracking_world, &painted_tracking_status).success() &&
             painted_tracking_status.state == skin_physics::runtime::tick_state::blocked &&
