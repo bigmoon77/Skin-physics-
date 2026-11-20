@@ -749,7 +749,9 @@ namespace skin_physics::runtime
                 std::array<uint32_t, 4> sorted_vertices =
                     tetrahedron.vertices;
                 std::sort(sorted_vertices.begin(), sorted_vertices.end());
-                if (sorted_vertices.front() == sorted_vertices.back())
+                if (std::adjacent_find(
+                        sorted_vertices.begin(), sorted_vertices.end()) !=
+                    sorted_vertices.end())
                 {
                     return false;
                 }
