@@ -1930,11 +1930,11 @@ namespace skin_physics::runtime
             {
                 return false;
             }
-            if (world_has_physics_work(world))
+            if (world_has_unsupported_physics_work(world))
             {
                 world.state = tick_state::pending;
                 world.diagnostic =
-                    "GPU submission is deferred until the active Soft Body / Cloth solver phases are integrated.";
+                    "GPU submission is deferred because this World contains Cloth or Collider work that is not yet connected to the Runtime scheduler.";
                 return false;
             }
             if (status_ring == nullptr ||
@@ -1980,7 +1980,7 @@ namespace skin_physics::runtime
             plan.dispatch_id_low = static_cast<uint32_t>(next_dispatch_id);
             plan.dispatch_id_high = static_cast<uint32_t>(next_dispatch_id >> 32u);
             plan.required_validation_mask = 1u;
-            plan.flags = 1u; // An empty World has no solver buffers to mutate or validate.
+            plan.flags = world_has_soft_body_work(world) ? 0u : 1u;
 
             const uint64_t world_id = world_identity(world_index, world.generation);
             uint64_t reservation_token =
@@ -2071,22 +2071,60 @@ namespace skin_physics::runtime
                 return false;
             }
 
-            simulation::compute_pass_desc validate_pass;
-            validate_pass.name = "tick_validate_empty_world";
-            validate_pass.shader = tick_validate_empty_world_shader.Get();
-            validate_pass.shader_resources = {
-                { 0u, plan_srv.Get() }
-            };
-            validate_pass.unordered_access_views = {
-                { 1u, world.commit_control_uav.Get(), 0xffffffffu },
-                { 2u, status_uav.Get(), 0xffffffffu }
-            };
-            if (!graph.add_pass(validate_pass, diagnostic))
+            if (world_has_soft_body_work(world))
             {
-                world.state = tick_state::failed;
-                world.last_tick_status = status_code::gpu_execution_failed;
-                world.diagnostic = diagnostic;
-                return false;
+                if (!append_soft_body_tick_passes(
+                        world,
+                        plan.expected_source_state_set,
+                        plan.destination_state_set,
+                        reservation,
+                        graph,
+                        diagnostic))
+                {
+                    world.state = tick_state::failed;
+                    world.last_tick_status = status_code::gpu_execution_failed;
+                    world.diagnostic =
+                        "Unable to construct the gated Soft Body Tick Passes: " + diagnostic;
+                    return false;
+                }
+
+                simulation::compute_pass_desc validate_pass;
+                validate_pass.name = "tick_validate_soft_body";
+                validate_pass.shader = tick_validate_soft_body_shader.Get();
+                validate_pass.shader_resources = {
+                    { 0u, plan_srv.Get() }
+                };
+                validate_pass.unordered_access_views = {
+                    { 1u, world.commit_control_uav.Get(), 0xffffffffu },
+                    { 2u, status_uav.Get(), 0xffffffffu }
+                };
+                if (!graph.add_pass(validate_pass, diagnostic))
+                {
+                    world.state = tick_state::failed;
+                    world.last_tick_status = status_code::gpu_execution_failed;
+                    world.diagnostic = diagnostic;
+                    return false;
+                }
+            }
+            else
+            {
+                simulation::compute_pass_desc validate_pass;
+                validate_pass.name = "tick_validate_empty_world";
+                validate_pass.shader = tick_validate_empty_world_shader.Get();
+                validate_pass.shader_resources = {
+                    { 0u, plan_srv.Get() }
+                };
+                validate_pass.unordered_access_views = {
+                    { 1u, world.commit_control_uav.Get(), 0xffffffffu },
+                    { 2u, status_uav.Get(), 0xffffffffu }
+                };
+                if (!graph.add_pass(validate_pass, diagnostic))
+                {
+                    world.state = tick_state::failed;
+                    world.last_tick_status = status_code::gpu_execution_failed;
+                    world.diagnostic = diagnostic;
+                    return false;
+                }
             }
 
             simulation::compute_pass_desc commit_pass;
