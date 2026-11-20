@@ -630,7 +630,11 @@
             "Outside the blend interval, endpoint weights are held constant with zero derivative",
             "Inside the blend interval, Span-local cubic coefficients preserve the original Hermite Weight and analytic World-Time derivative",
             "A Span crossing either Blend Curve boundary is rejected until the World Scheduler splits it",
-            "A Hermite curve with an interior overshoot outside [0, 1] is rejected before Span construction"
+            "A Hermite curve with an interior overshoot outside [0, 1] is rejected before Span construction",
+            "Source and Target Clip Playback schedules and the Hermite Blend Weight schedule merge their Key, Loop Wrap and Blend Start / End boundaries into one monotonic World-Time partition",
+            "Every merged Blend Span rebuilds Source / Target Channel coefficients over the same World-Time start and duration while preserving each Clip's independent signed Clip-Time delta and original Track ordering",
+            "The Blend Weight cubic coefficients are reparameterized to the same merged interval and return finite in-range Weight with analytic World-Time derivative",
+            "Invalid Source / Target Clip schedules, invalid Blend Weight curves, unrepresentable boundary intervals and merged Span-count overflow fail atomically without partial Source / Target / Weight records"
           ]
         }
       ],
