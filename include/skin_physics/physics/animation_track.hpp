@@ -145,6 +145,30 @@ namespace skin_physics::physics
         double clip_time_start,
         double clip_time_delta);
 
+    struct scheduled_animation_channel_span
+    {
+        animation_channel_span channel;
+        double world_time_start = 0.0;
+        double world_time_duration = 0.0;
+    };
+
+    struct animation_channel_span_schedule_result
+    {
+        std::vector<scheduled_animation_channel_span> values;
+        animation_channel_span_error error = animation_channel_span_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    // Maps key-bounded Clip-Time spans to ordered positive-duration World-Time
+    // intervals inside one Logical Tick. A paused Track spans the full Tick.
+    animation_channel_span_schedule_result schedule_animation_channel_spans(
+        const asset::animation_track& track,
+        double clip_time_start,
+        double clip_time_delta,
+        double world_time_start,
+        double world_time_duration);
+
     // Evaluates the immutable Span coefficients and analytic derivatives.
     // span_duration_seconds is the corresponding positive World-Time duration.
     animation_channel_span_sample_result evaluate_animation_channel_span(
