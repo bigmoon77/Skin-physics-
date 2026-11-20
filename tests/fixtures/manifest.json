@@ -338,7 +338,8 @@
         "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_AND_INVERSION_PARITY",
         "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
         "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE",
-        "R1_RUNTIME_ANIMATION_INPUT_DEFERRED"
+        "R1_RUNTIME_ANIMATION_INPUT_DEFERRED",
+        "R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED"
       ],
       "unimplemented": [
         "Physical / WARP numerical parity and SVD near-singular stress regression for the production Runtime path",
@@ -386,7 +387,8 @@
         "inverted_FEM_output_is_diagnostic_only_and_forces_terminal_failure_before_tick_commit",
         "production_fem_warp_test_control_buffer_stride_matches_80_byte_runtime_shader_abi",
         "FEM_nonfinite_gate_covers_all_stress_energy_and_nodal_force_outputs_before_publication",
-        "unintegrated_model_root_transform_samples_defer_gpu_submission_and_preserve_reservation"
+        "unintegrated_model_root_transform_samples_defer_gpu_submission_and_preserve_reservation",
+        "force_and_impulse_events_are_blocked_by_input_until_segment_scheduler_is_connected"
       ]
     },
     {
@@ -868,7 +870,8 @@
       "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
       "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE",
       "R0_WARP_PREDECESSOR_FAILURE_ORDER",
-      "R1_RUNTIME_ANIMATION_INPUT_DEFERRED"
+      "R1_RUNTIME_ANIMATION_INPUT_DEFERRED",
+      "R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED"
     ],
     "covered_contracts": [
       "host_device_immediate_context_feature_level_and_device_identity_validation",
@@ -949,7 +952,9 @@
       "root_transform_samples_are_not_silently_ignored_before_trajectory_packet_integration",
       "unsupported_animation_root_inputs_preserve_the_cpu_tick_reservation_until_reset",
       "unintegrated_animation_root_transform_cloth_collider_or_force_inputs_report_blocked_by_input_without_gpu_submission",
-      "all_model_root_and_kinematic_collider_transform_samples_are_normalized_before_storage"
+      "all_model_root_and_kinematic_collider_transform_samples_are_normalized_before_storage",
+      "unintegrated_force_and_impulse_events_report_blocked_by_input_without_gpu_submission",
+      "reset_explicitly_clears_unsupported_force_impulse_events_and_their_reservation"
     ],
     "remaining_r0": [
       "Cloth / Collider solver integration into the World Runtime scheduler",
