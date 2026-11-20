@@ -2623,4 +2623,790 @@ namespace skin_physics::physics
         return result;
     }
 
+
+    namespace
+    {
+        asset::mat4 zero_matrix()
+        {
+            asset::mat4 result;
+            result.value.fill(0.0f);
+            return result;
+        }
+
+        bool finite_matrix(const asset::mat4& matrix)
+        {
+            return std::all_of(
+                matrix.value.begin(), matrix.value.end(),
+                [](float value) { return std::isfinite(value); });
+        }
+
+        bool multiply_matrix(
+            const asset::mat4& left,
+            const asset::mat4& right,
+            asset::mat4& output)
+        {
+            output = zero_matrix();
+            for (std::size_t column = 0u; column < 4u; ++column)
+            {
+                for (std::size_t row = 0u; row < 4u; ++row)
+                {
+                    double value = 0.0;
+                    for (std::size_t k = 0u; k < 4u; ++k)
+                    {
+                        value +=
+                            static_cast<double>(left.value[k * 4u + row]) *
+                            static_cast<double>(right.value[column * 4u + k]);
+                    }
+                    if (!std::isfinite(value) ||
+                        std::abs(value) >
+                            static_cast<double>(std::numeric_limits<float>::max()))
+                    {
+                        return false;
+                    }
+                    output.value[column * 4u + row] =
+                        static_cast<float>(value);
+                }
+            }
+            return finite_matrix(output);
+        }
+
+        bool add_matrix(
+            const asset::mat4& left,
+            const asset::mat4& right,
+            asset::mat4& output)
+        {
+            output = zero_matrix();
+            for (std::size_t index = 0u; index < 16u; ++index)
+            {
+                const double value =
+                    static_cast<double>(left.value[index]) +
+                    static_cast<double>(right.value[index]);
+                if (!std::isfinite(value) ||
+                    std::abs(value) >
+                        static_cast<double>(std::numeric_limits<float>::max()))
+                {
+                    return false;
+                }
+                output.value[index] = static_cast<float>(value);
+            }
+            return true;
+        }
+
+        bool is_affine_matrix(const asset::mat4& matrix)
+        {
+            constexpr float affine_tolerance = 1.0e-5f;
+            return finite_matrix(matrix) &&
+                std::abs(matrix.value[3]) <= affine_tolerance &&
+                std::abs(matrix.value[7]) <= affine_tolerance &&
+                std::abs(matrix.value[11]) <= affine_tolerance &&
+                std::abs(matrix.value[15] - 1.0f) <= affine_tolerance;
+        }
+
+        bool invert_affine_matrix(
+            const asset::mat4& input,
+            asset::mat4& output)
+        {
+            if (!is_affine_matrix(input))
+            {
+                return false;
+            }
+
+            const double a = input.value[0];
+            const double b = input.value[4];
+            const double c = input.value[8];
+            const double d = input.value[1];
+            const double e = input.value[5];
+            const double f = input.value[9];
+            const double g = input.value[2];
+            const double h = input.value[6];
+            const double i = input.value[10];
+            const double determinant =
+                a * (e * i - f * h) -
+                b * (d * i - f * g) +
+                c * (d * h - e * g);
+            const double scale = std::max({
+                std::abs(a), std::abs(b), std::abs(c),
+                std::abs(d), std::abs(e), std::abs(f),
+                std::abs(g), std::abs(h), std::abs(i)
+            });
+            const double determinant_tolerance =
+                std::numeric_limits<double>::epsilon() *
+                std::max(1.0, scale * scale * scale) * 128.0;
+            if (!std::isfinite(determinant) ||
+                !std::isfinite(scale) ||
+                scale <= 0.0 ||
+                std::abs(determinant) <= determinant_tolerance)
+            {
+                return false;
+            }
+
+            const double inverse_determinant = 1.0 / determinant;
+            const double inverse_rows[3][3] = {
+                {
+                    (e * i - f * h) * inverse_determinant,
+                    (c * h - b * i) * inverse_determinant,
+                    (b * f - c * e) * inverse_determinant
+                },
+                {
+                    (f * g - d * i) * inverse_determinant,
+                    (a * i - c * g) * inverse_determinant,
+                    (c * d - a * f) * inverse_determinant
+                },
+                {
+                    (d * h - e * g) * inverse_determinant,
+                    (b * g - a * h) * inverse_determinant,
+                    (a * e - b * d) * inverse_determinant
+                }
+            };
+
+            output = asset::mat4{};
+            for (std::size_t row = 0u; row < 3u; ++row)
+            {
+                for (std::size_t column = 0u; column < 3u; ++column)
+                {
+                    const double value = inverse_rows[row][column];
+                    if (!std::isfinite(value) ||
+                        std::abs(value) >
+                            static_cast<double>(std::numeric_limits<float>::max()))
+                    {
+                        return false;
+                    }
+                    output.value[column * 4u + row] =
+                        static_cast<float>(value);
+                }
+            }
+
+            for (std::size_t row = 0u; row < 3u; ++row)
+            {
+                const double inverse_translation =
+                    -(inverse_rows[row][0] * input.value[12] +
+                        inverse_rows[row][1] * input.value[13] +
+                        inverse_rows[row][2] * input.value[14]);
+                if (!std::isfinite(inverse_translation) ||
+                    std::abs(inverse_translation) >
+                        static_cast<double>(std::numeric_limits<float>::max()))
+                {
+                    return false;
+                }
+                output.value[12u + row] =
+                    static_cast<float>(inverse_translation);
+            }
+            return finite_matrix(output);
+        }
+
+        animation_hierarchy_sample_result make_hierarchy_error(
+            animation_hierarchy_error error,
+            const std::string& message)
+        {
+            animation_hierarchy_sample_result result;
+            result.error = error;
+            result.message = message;
+            return result;
+        }
+
+        struct hierarchy_node_trs
+        {
+            asset::vec3 translation;
+            asset::vec3 scale = { 1.0f, 1.0f, 1.0f };
+            asset::vec4 rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+            asset::vec3 translation_velocity;
+            asset::vec3 scale_velocity;
+            asset::vec4 rotation_velocity;
+            bool has_translation_channel = false;
+            bool has_rotation_channel = false;
+            bool has_scale_channel = false;
+        };
+
+        bool finite_vec4(const asset::vec4& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) &&
+                std::isfinite(value.z) && std::isfinite(value.w);
+        }
+
+        bool build_trs_matrix_pair(
+            const hierarchy_node_trs& trs,
+            asset::mat4& out_local,
+            asset::mat4& out_local_derivative)
+        {
+            if (!finite_vec3(trs.translation) ||
+                !finite_vec3(trs.translation_velocity) ||
+                !finite_vec3(trs.scale) ||
+                !finite_vec3(trs.scale_velocity) ||
+                !finite_vec4(trs.rotation) ||
+                !finite_vec4(trs.rotation_velocity) ||
+                trs.scale.x <= 0.0f ||
+                trs.scale.y <= 0.0f ||
+                trs.scale.z <= 0.0f)
+            {
+                return false;
+            }
+
+            animation_component_array raw_rotation = {
+                trs.rotation.x, trs.rotation.y,
+                trs.rotation.z, trs.rotation.w
+            };
+            animation_component_array normalized_rotation = {};
+            double rotation_length = 0.0;
+            if (!normalize_quaternion_double(
+                    raw_rotation, normalized_rotation, rotation_length))
+            {
+                return false;
+            }
+
+            animation_component_array raw_rotation_derivative = {
+                trs.rotation_velocity.x,
+                trs.rotation_velocity.y,
+                trs.rotation_velocity.z,
+                trs.rotation_velocity.w
+            };
+            const double derivative_projection =
+                dot_quaternion(
+                    normalized_rotation, raw_rotation_derivative);
+            animation_component_array normalized_rotation_derivative = {};
+            for (std::size_t component = 0u; component < 4u; ++component)
+            {
+                normalized_rotation_derivative[component] =
+                    (raw_rotation_derivative[component] -
+                        normalized_rotation[component] *
+                            derivative_projection) / rotation_length;
+                if (!std::isfinite(normalized_rotation_derivative[component]))
+                {
+                    return false;
+                }
+            }
+
+            const double x = normalized_rotation[0];
+            const double y = normalized_rotation[1];
+            const double z = normalized_rotation[2];
+            const double w = normalized_rotation[3];
+            const double xd = normalized_rotation_derivative[0];
+            const double yd = normalized_rotation_derivative[1];
+            const double zd = normalized_rotation_derivative[2];
+            const double wd = normalized_rotation_derivative[3];
+
+            const double rotation[3][3] = {
+                {
+                    1.0 - 2.0 * (y * y + z * z),
+                    2.0 * (x * y - z * w),
+                    2.0 * (x * z + y * w)
+                },
+                {
+                    2.0 * (x * y + z * w),
+                    1.0 - 2.0 * (x * x + z * z),
+                    2.0 * (y * z - x * w)
+                },
+                {
+                    2.0 * (x * z - y * w),
+                    2.0 * (y * z + x * w),
+                    1.0 - 2.0 * (x * x + y * y)
+                }
+            };
+            const double rotation_derivative[3][3] = {
+                {
+                    -4.0 * (y * yd + z * zd),
+                    2.0 * (xd * y + x * yd - zd * w - z * wd),
+                    2.0 * (xd * z + x * zd + yd * w + y * wd)
+                },
+                {
+                    2.0 * (xd * y + x * yd + zd * w + z * wd),
+                    -4.0 * (x * xd + z * zd),
+                    2.0 * (yd * z + y * zd - xd * w - x * wd)
+                },
+                {
+                    2.0 * (xd * z + x * zd - yd * w - y * wd),
+                    2.0 * (yd * z + y * zd + xd * w + x * wd),
+                    -4.0 * (x * xd + y * yd)
+                }
+            };
+
+            const double scales[3] = {
+                trs.scale.x, trs.scale.y, trs.scale.z
+            };
+            const double scale_derivatives[3] = {
+                trs.scale_velocity.x,
+                trs.scale_velocity.y,
+                trs.scale_velocity.z
+            };
+            const double translations[3] = {
+                trs.translation.x,
+                trs.translation.y,
+                trs.translation.z
+            };
+            const double translation_derivatives[3] = {
+                trs.translation_velocity.x,
+                trs.translation_velocity.y,
+                trs.translation_velocity.z
+            };
+
+            out_local = zero_matrix();
+            out_local_derivative = zero_matrix();
+            for (std::size_t row = 0u; row < 3u; ++row)
+            {
+                for (std::size_t column = 0u; column < 3u; ++column)
+                {
+                    const double value =
+                        rotation[row][column] * scales[column];
+                    const double derivative =
+                        rotation_derivative[row][column] * scales[column] +
+                        rotation[row][column] *
+                            scale_derivatives[column];
+                    if (!std::isfinite(value) ||
+                        !std::isfinite(derivative) ||
+                        std::abs(value) >
+                            static_cast<double>(std::numeric_limits<float>::max()) ||
+                        std::abs(derivative) >
+                            static_cast<double>(std::numeric_limits<float>::max()))
+                    {
+                        return false;
+                    }
+                    const std::size_t matrix_index = column * 4u + row;
+                    out_local.value[matrix_index] = static_cast<float>(value);
+                    out_local_derivative.value[matrix_index] =
+                        static_cast<float>(derivative);
+                }
+                if (!std::isfinite(translations[row]) ||
+                    !std::isfinite(translation_derivatives[row]) ||
+                    std::abs(translations[row]) >
+                        static_cast<double>(std::numeric_limits<float>::max()) ||
+                    std::abs(translation_derivatives[row]) >
+                        static_cast<double>(std::numeric_limits<float>::max()))
+                {
+                    return false;
+                }
+                out_local.value[12u + row] =
+                    static_cast<float>(translations[row]);
+                out_local_derivative.value[12u + row] =
+                    static_cast<float>(translation_derivatives[row]);
+            }
+            out_local.value[15] = 1.0f;
+            return finite_matrix(out_local) &&
+                finite_matrix(out_local_derivative);
+        }
+    }
+
+    animation_hierarchy_sample_result evaluate_animation_clip_hierarchy(
+        const asset::model& model,
+        const asset::animation_clip& clip,
+        const animation_clip_span& span,
+        double span_local_u,
+        double span_world_duration)
+    {
+        const std::size_t node_count = model.nodes.size();
+        if (node_count == 0u ||
+            node_count >= static_cast<std::size_t>(asset::invalid_index) ||
+            clip.tracks.empty() ||
+            clip.tracks.size() != span.channels.size())
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_model,
+                "Animation Hierarchy evaluation requires a non-empty Model and a complete Span channel for every Asset Track.");
+        }
+        if (!std::isfinite(span_local_u) ||
+            span_local_u < 0.0 || span_local_u > 1.0 ||
+            !std::isfinite(span_world_duration) ||
+            span_world_duration <= 0.0)
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_clip_span,
+                "Animation Hierarchy evaluation requires a Span-local coordinate in [0, 1] and a finite positive World-Time duration.");
+        }
+
+        std::vector<hierarchy_node_trs> node_trs(node_count);
+        std::vector<std::array<bool, 3>> channel_seen(node_count, { false, false, false });
+        for (std::size_t node_index = 0u; node_index < node_count; ++node_index)
+        {
+            const asset::node& node = model.nodes[node_index];
+            hierarchy_node_trs& trs = node_trs[node_index];
+            trs.translation = node.translation;
+            trs.scale = node.scale;
+            trs.rotation = node.rotation;
+            if (node.uses_matrix && !is_affine_matrix(node.local_matrix))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_transform,
+                    "A static Asset Node Matrix is non-finite or non-affine.");
+            }
+        }
+
+        for (std::size_t channel_index = 0u;
+            channel_index < span.channels.size(); ++channel_index)
+        {
+            const animation_channel_span& channel =
+                span.channels[channel_index];
+            const asset::animation_track& track = clip.tracks[channel_index];
+            if (channel.track_index != channel_index ||
+                channel.node_index >= node_count ||
+                channel.node_index != track.node_index ||
+                channel.path != track.path ||
+                model.nodes[channel.node_index].uses_matrix ||
+                channel.clip_time_start != span.clip_time_start ||
+                channel.clip_time_delta != span.clip_time_delta)
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Span channel ordering, Node / Path mapping, common Clip-Time interval or static Matrix animation binding is invalid.");
+            }
+
+            std::size_t channel_slot = 0u;
+            hierarchy_node_trs& trs = node_trs[channel.node_index];
+            if (channel.path == asset::animation_path::translation)
+            {
+                channel_slot = 0u;
+                trs.has_translation_channel = true;
+            }
+            else if (channel.path == asset::animation_path::rotation)
+            {
+                channel_slot = 1u;
+                trs.has_rotation_channel = true;
+            }
+            else if (channel.path == asset::animation_path::scale)
+            {
+                channel_slot = 2u;
+                trs.has_scale_channel = true;
+            }
+            else
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Span contains an unsupported Node Path.");
+            }
+            if (channel_seen[channel.node_index][channel_slot])
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Span contains duplicate channels for one Node / Path pair.");
+            }
+            channel_seen[channel.node_index][channel_slot] = true;
+
+            const animation_channel_span_sample_result sample =
+                evaluate_animation_channel_span(
+                    channel, span_local_u, span_world_duration);
+            if (!sample.success)
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_channel,
+                    "Animation Channel evaluation failed: " + sample.message);
+            }
+
+            if (channel.path == asset::animation_path::translation)
+            {
+                trs.translation = {
+                    sample.value.value.x,
+                    sample.value.value.y,
+                    sample.value.value.z
+                };
+                trs.translation_velocity = {
+                    sample.value.world_time_derivative.x,
+                    sample.value.world_time_derivative.y,
+                    sample.value.world_time_derivative.z
+                };
+            }
+            else if (channel.path == asset::animation_path::scale)
+            {
+                trs.scale = {
+                    sample.value.value.x,
+                    sample.value.value.y,
+                    sample.value.value.z
+                };
+                trs.scale_velocity = {
+                    sample.value.world_time_derivative.x,
+                    sample.value.world_time_derivative.y,
+                    sample.value.world_time_derivative.z
+                };
+            }
+            else
+            {
+                trs.rotation = sample.value.value;
+                trs.rotation_velocity =
+                    sample.value.world_time_derivative;
+            }
+        }
+
+        std::vector<std::vector<uint32_t>> children(node_count);
+        std::vector<uint32_t> indegree(node_count, 0u);
+        std::vector<bool> child_seen(node_count, false);
+        for (uint32_t parent_index = 0u;
+            parent_index < node_count; ++parent_index)
+        {
+            const asset::node& parent = model.nodes[parent_index];
+            for (uint32_t child_index : parent.children)
+            {
+                if (child_index >= node_count ||
+                    child_index == parent_index ||
+                    model.nodes[child_index].parent_index != parent_index ||
+                    child_seen[child_index])
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_hierarchy,
+                        "Asset Node Children contain an invalid, duplicated or inconsistent parent reference.");
+                }
+                child_seen[child_index] = true;
+                children[parent_index].push_back(child_index);
+            }
+        }
+
+        std::vector<uint32_t> topological_order;
+        topological_order.reserve(node_count);
+        std::vector<uint32_t> ready;
+        ready.reserve(node_count);
+        for (uint32_t node_index = 0u; node_index < node_count; ++node_index)
+        {
+            const uint32_t parent_index =
+                model.nodes[node_index].parent_index;
+            if (parent_index == asset::invalid_index)
+            {
+                ready.push_back(node_index);
+                continue;
+            }
+            if (parent_index >= node_count ||
+                parent_index == node_index ||
+                !child_seen[node_index])
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_hierarchy,
+                    "Asset Node Parent Index is invalid or does not agree with its parent's Child list.");
+            }
+            indegree[node_index] = 1u;
+        }
+
+        std::size_t ready_cursor = 0u;
+        while (ready_cursor < ready.size())
+        {
+            const uint32_t node_index = ready[ready_cursor++];
+            topological_order.push_back(node_index);
+            for (uint32_t child_index : children[node_index])
+            {
+                if (indegree[child_index] != 1u)
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_hierarchy,
+                        "Asset Node hierarchy contains an invalid indegree transition.");
+                }
+                indegree[child_index] = 0u;
+                ready.push_back(child_index);
+            }
+        }
+        if (topological_order.size() != node_count)
+        {
+            return make_hierarchy_error(
+                animation_hierarchy_error::invalid_hierarchy,
+                "Asset Node hierarchy contains a parent cycle or an unreachable Node.");
+        }
+
+        animation_hierarchy_sample result_value;
+        result_value.local_matrices.resize(node_count);
+        result_value.local_matrix_derivatives.resize(node_count);
+        result_value.global_matrices.resize(node_count);
+        result_value.global_matrix_derivatives.resize(node_count);
+
+        for (uint32_t node_index : topological_order)
+        {
+            const asset::node& node = model.nodes[node_index];
+            asset::mat4 local_matrix;
+            asset::mat4 local_derivative = zero_matrix();
+            if (node.uses_matrix)
+            {
+                if (node_trs[node_index].has_translation_channel ||
+                    node_trs[node_index].has_rotation_channel ||
+                    node_trs[node_index].has_scale_channel)
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_transform,
+                        "Animated TRS Channels cannot target an Asset Node stored as a static Matrix.");
+                }
+                local_matrix = node.local_matrix;
+            }
+            else if (!build_trs_matrix_pair(
+                    node_trs[node_index],
+                    local_matrix,
+                    local_derivative))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_transform,
+                    "Asset Node Rest / Animated TRS produced a non-finite transform or non-positive Scale.");
+            }
+
+            result_value.local_matrices[node_index] = local_matrix;
+            result_value.local_matrix_derivatives[node_index] =
+                local_derivative;
+
+            if (node.parent_index == asset::invalid_index)
+            {
+                result_value.global_matrices[node_index] = local_matrix;
+                result_value.global_matrix_derivatives[node_index] =
+                    local_derivative;
+            }
+            else
+            {
+                const asset::mat4& parent_global =
+                    result_value.global_matrices[node.parent_index];
+                const asset::mat4& parent_derivative =
+                    result_value.global_matrix_derivatives[node.parent_index];
+                asset::mat4 parent_times_local;
+                asset::mat4 derivative_parent_times_local;
+                asset::mat4 parent_times_local_derivative;
+                asset::mat4 global_derivative;
+                if (!multiply_matrix(
+                        parent_global, local_matrix, parent_times_local) ||
+                    !multiply_matrix(
+                        parent_derivative, local_matrix,
+                        derivative_parent_times_local) ||
+                    !multiply_matrix(
+                        parent_global, local_derivative,
+                        parent_times_local_derivative) ||
+                    !add_matrix(
+                        derivative_parent_times_local,
+                        parent_times_local_derivative,
+                        global_derivative))
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_transform,
+                        "Parent / Local Node Matrix multiplication or analytic hierarchy derivative overflowed.");
+                }
+                result_value.global_matrices[node_index] =
+                    parent_times_local;
+                result_value.global_matrix_derivatives[node_index] =
+                    global_derivative;
+            }
+        }
+
+        for (uint32_t mesh_node_index = 0u;
+            mesh_node_index < node_count; ++mesh_node_index)
+        {
+            const asset::node& mesh_node = model.nodes[mesh_node_index];
+            if (mesh_node.skin_index == asset::invalid_index)
+            {
+                continue;
+            }
+            if (mesh_node.mesh_index >= model.meshes.size() ||
+                mesh_node.skin_index >= model.skins.size())
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_skin,
+                    "A Node with a Skin Index must reference valid Mesh and Skin Asset records.");
+            }
+
+            const asset::skin& skin = model.skins[mesh_node.skin_index];
+            if (skin.joints.empty() ||
+                (!skin.inverse_bind_matrices.empty() &&
+                    skin.inverse_bind_matrices.size() != skin.joints.size()))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_skin,
+                    "Skin Joint and Inverse Bind Matrix arrays must be non-empty and either both match or omit the optional Inverse Bind array.");
+            }
+
+            asset::mat4 inverse_mesh_global;
+            if (!invert_affine_matrix(
+                    result_value.global_matrices[mesh_node_index],
+                    inverse_mesh_global))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::singular_mesh_node,
+                    "Mesh Node Global Matrix is singular and cannot define Skin Matrix space.");
+            }
+
+            asset::mat4 inverse_mesh_derivative_left;
+            asset::mat4 inverse_mesh_derivative_right;
+            asset::mat4 inverse_mesh_derivative;
+            asset::mat4 negative_inverse_mesh_derivative = zero_matrix();
+            if (!multiply_matrix(
+                    inverse_mesh_global,
+                    result_value.global_matrix_derivatives[mesh_node_index],
+                    inverse_mesh_derivative_left) ||
+                !multiply_matrix(
+                    inverse_mesh_derivative_left,
+                    inverse_mesh_global,
+                    inverse_mesh_derivative_right))
+            {
+                return make_hierarchy_error(
+                    animation_hierarchy_error::invalid_skin,
+                    "Mesh Node inverse Matrix derivative multiplication overflowed.");
+            }
+            for (std::size_t matrix_index = 0u; matrix_index < 16u; ++matrix_index)
+            {
+                negative_inverse_mesh_derivative.value[matrix_index] =
+                    -inverse_mesh_derivative_right.value[matrix_index];
+            }
+            inverse_mesh_derivative =
+                negative_inverse_mesh_derivative;
+
+            animation_skin_pose skin_pose;
+            skin_pose.mesh_node_index = mesh_node_index;
+            skin_pose.skin_index = mesh_node.skin_index;
+            skin_pose.skin_matrices.reserve(skin.joints.size());
+            skin_pose.skin_matrix_derivatives.reserve(skin.joints.size());
+            for (std::size_t joint_slot = 0u;
+                joint_slot < skin.joints.size(); ++joint_slot)
+            {
+                const uint32_t joint_node_index = skin.joints[joint_slot];
+                if (joint_node_index >= node_count)
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_skin,
+                        "Skin references a Joint Node outside the Asset Model.");
+                }
+
+                const asset::mat4 inverse_bind =
+                    skin.inverse_bind_matrices.empty()
+                        ? asset::mat4{}
+                        : skin.inverse_bind_matrices[joint_slot];
+                if (!is_affine_matrix(inverse_bind))
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_skin,
+                        "Skin Inverse Bind Matrix is non-finite or non-affine.");
+                }
+
+                asset::mat4 inverse_mesh_times_joint;
+                asset::mat4 skin_matrix;
+                asset::mat4 inverse_mesh_derivative_times_joint;
+                asset::mat4 inverse_mesh_times_joint_derivative;
+                asset::mat4 skin_matrix_derivative_pre_bind;
+                asset::mat4 skin_matrix_derivative;
+                asset::mat4 skin_matrix_derivative_left;
+                if (!multiply_matrix(
+                        inverse_mesh_global,
+                        result_value.global_matrices[joint_node_index],
+                        inverse_mesh_times_joint) ||
+                    !multiply_matrix(
+                        inverse_mesh_times_joint,
+                        inverse_bind,
+                        skin_matrix) ||
+                    !multiply_matrix(
+                        inverse_mesh_derivative,
+                        result_value.global_matrices[joint_node_index],
+                        inverse_mesh_derivative_times_joint) ||
+                    !multiply_matrix(
+                        inverse_mesh_global,
+                        result_value.global_matrix_derivatives[joint_node_index],
+                        inverse_mesh_times_joint_derivative) ||
+                    !add_matrix(
+                        inverse_mesh_derivative_times_joint,
+                        inverse_mesh_times_joint_derivative,
+                        skin_matrix_derivative_pre_bind) ||
+                    !multiply_matrix(
+                        skin_matrix_derivative_pre_bind,
+                        inverse_bind,
+                        skin_matrix_derivative))
+                {
+                    return make_hierarchy_error(
+                        animation_hierarchy_error::invalid_skin,
+                        "Skin Matrix or analytic Skin Matrix derivative calculation overflowed.");
+                }
+
+                skin_pose.skin_matrices.push_back(skin_matrix);
+                skin_pose.skin_matrix_derivatives.push_back(
+                    skin_matrix_derivative);
+            }
+            result_value.skin_poses.push_back(std::move(skin_pose));
+        }
+
+        animation_hierarchy_sample_result result;
+        result.value = std::move(result_value);
+        result.success = true;
+        return result;
+    }
+
+
 }
