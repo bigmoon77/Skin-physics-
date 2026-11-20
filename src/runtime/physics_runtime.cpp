@@ -335,7 +335,7 @@ namespace skin_physics::runtime
                 return root.lexically_normal();
             }
 
-            std::vector<wchar_t> module_path(32768u, L'\\0');
+            std::vector<wchar_t> module_path(32768u, L'\0');
             const DWORD length = GetModuleFileNameW(
                 nullptr,
                 module_path.data(),
