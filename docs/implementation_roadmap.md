@@ -25,7 +25,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Record open implementation dependencies in this roadmap; change normative design only when a real contradiction is found.
 
 ### Phase 1 — R0 Runtime boundary and asynchronous scheduler
-**Status: in progress — asynchronous Tick submission / Query observation and a first gated Soft Body path are implemented; immutable Segment Snapshots and Render leases remain pending**
+**Status: in progress — asynchronous Tick submission / Query observation and Soft Body Render Candidate / Host Lease are implemented; immutable Segment Snapshots remain pending**
 
 - Public C++17 API, descriptors, status codes and generation-checked World / Model / Collider handles.
 - Host-owned D3D11 Device / Immediate Context validation and COM lifetime.
@@ -36,7 +36,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Per-World immutable Dispatch Plan, predecessor gate, terminal status and success-only Commit Control.
 - Per-Soft-Body-Mesh persistent position / velocity State Banks, per-Tick Scratch, gated GPU submission and reset-to-rest-state lifecycle.
 - Rollback / retry keeps the exact same CPU Reservation; immutable per-Tick Input Snapshot / Packet Version is still pending.
-- Render Candidate / Host Render Lease publication remains pending; Query / in-flight lease admission and safe destroy / drain / shutdown guards are present.
+- Soft Body Render Candidate Ring uses maximum in-flight + 1 Slots, GPU-side Binding / Normal / Tangent feedback, full-width Slot ID / Generation Status publication, CPU-observed-only Host Lease, and submission blocking while leased. Cloth / Collision Render Candidates remain with their solver phases.
 
 **Exit criteria**
 - Public headers match the Runtime Design field widths and semantics.
@@ -55,7 +55,7 @@ A phase is not called complete merely because headers, shaders or test sources e
 - Tet Shape Recovery / Volume use four-vertex mean Paint values; Damping uses each Physics Vertex's Paint value. Density remaps inverse masses while preserving Rest Density calibration.
 - World Preflight aggregates the FEM CFL limit with World / Contact limits. Budget overflow blocks the same Reservation; increasing the admission budget retries the same derived Substep plan.
 - Odd-substep Scratch publication, GPU failure validation, success-only Tick Commit, and Reset to rest pose are wired into the Runtime.
-- Added WARP source coverage for two in-flight Ticks, three Substeps, alternating State Banks, Query observation, CFL budget recovery, and Reset; the sources remain unexecuted because CI has not reported a build step.
+- Added WARP source coverage for two in-flight Ticks, three Substeps, alternating State Banks, Query observation, CFL budget recovery, Reset, and Render Candidate / Host Lease lifecycle; the sources remain unexecuted because CI has not reported a build step.
 - Added strict Tet rest-matrix / shape-gradient, unique-vertex and exact Vertex-to-Tet CSR validation before GPU upload; malformed asset / CSR input is rejected.
 - Remaining: CPU-oracle parity and physical/WARP numerical qualification; animation tracking stability limit and trajectories; Force / Impulse Segment boundaries; Cloth / Collision / Contact coupling; and Physics Attribute Paint cache persistence / remapping on topology rebuild.
 
@@ -89,13 +89,13 @@ A phase is not called complete merely because headers, shaders or test sources e
 - No Commit on unresolved geometry, crossing, incomplete candidate coverage or capacity failure.
 
 ### Phase 6 — R5 Animation and Render integration
-**Status: pending**
+**Status: pending — foundational Soft Body Render Candidate / Host Lease path was brought forward into R0; animation-dependent rendering remains pending**
 
 - Immutable Animation / Kinematic Trajectory Packets and GPU-local time cursor.
 - Clip / blend / derivative evaluation, teleport policy and versioned input snapshots.
 - GPU Skinning and animation target / velocity generation.
-- Render Feedback Candidate generation, validation and atomic publication with Physics State.
-- Render Candidate Ring, CPU-observed committed prefix and Host Render Lease lifecycle.
+- Extend the existing gated Soft Body Render Feedback Candidate to animation-skinned targets, full Render / Contact validation, and all supported solver modes.
+- Expand Render Candidate publication / Host Lease integration to Cloth / Collision resources and validate renderer hazards on the target GPU.
 
 ### Phase 7 — R6 target-GPU qualification
 **Status: pending**
