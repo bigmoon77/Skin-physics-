@@ -349,29 +349,37 @@ void validate_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
     float4 normal = candidate_normals_read[render_vertex_index];
     float4 tangent = candidate_tangents_read[render_vertex_index];
     RenderVertexInput vertex = render_vertices[render_vertex_index];
-    bool valid_streams =
-        all(isfinite(position)) &&
-        all(isfinite(normal)) &&
-        all(isfinite(tangent)) &&
-        abs(position.w - 1.0f) <= 1.0e-4f;
-    if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u)
+    if (!all(isfinite(position)) ||
+        !all(isfinite(normal)) ||
+        !all(isfinite(tangent)))
     {
-        valid_streams = valid_streams &&
-            dot(normal.xyz, normal.xyz) >= 0.5f;
+        mark_tick_failure(410u);
+        return;
+    }
+    if (abs(position.w - 1.0f) > 1.0e-4f)
+    {
+        mark_tick_failure(411u);
+        return;
+    }
+    if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u &&
+        dot(normal.xyz, normal.xyz) < 0.5f)
+    {
+        mark_tick_failure(412u);
+        return;
     }
     if ((vertex.metadata.x & ATTRIBUTE_TANGENT) != 0u)
     {
-        valid_streams = valid_streams &&
-            dot(tangent.xyz, tangent.xyz) >= 0.5f &&
-            abs(abs(tangent.w) - 1.0f) <= 1.0e-4f;
-        if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u)
+        if (dot(tangent.xyz, tangent.xyz) < 0.5f ||
+            abs(abs(tangent.w) - 1.0f) > 1.0e-4f)
         {
-            valid_streams = valid_streams &&
-                abs(dot(normal.xyz, tangent.xyz)) <= 1.0e-3f;
+            mark_tick_failure(413u);
+            return;
+        }
+        if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u &&
+            abs(dot(normal.xyz, tangent.xyz)) > 1.0e-3f)
+        {
+            mark_tick_failure(414u);
+            return;
         }
     }
-    if (!valid_streams)
-    {
-        mark_tick_failure(409u);
-        }
 }
