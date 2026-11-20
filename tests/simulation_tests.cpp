@@ -2317,12 +2317,12 @@ namespace
         using skin_physics::physics::animation_trajectory_track_span_input;
 
         model source_model;
-        source_model.meshes.resize(1u);
-        source_model.nodes.resize(3u);
+        source_model.meshes.resize(2u);
+        source_model.nodes.resize(5u);
 
         node& root_node = source_model.nodes[0u];
         root_node.name = "packet_root";
-        root_node.children = { 1u, 2u };
+        root_node.children = { 1u, 2u, 3u, 4u };
 
         node& joint_node = source_model.nodes[1u];
         joint_node.name = "packet_joint";
@@ -2338,6 +2338,20 @@ namespace
         mesh_node.local_matrix = mat4{};
         mesh_node.local_matrix.value[14u] = 2.0f;
 
+        node& second_joint_node = source_model.nodes[3u];
+        second_joint_node.name = "packet_second_joint";
+        second_joint_node.parent_index = 0u;
+        second_joint_node.translation = { 0.0f, 2.0f, 0.0f };
+
+        node& second_mesh_node = source_model.nodes[4u];
+        second_mesh_node.name = "packet_second_mesh";
+        second_mesh_node.parent_index = 0u;
+        second_mesh_node.mesh_index = 1u;
+        second_mesh_node.skin_index = 1u;
+        second_mesh_node.uses_matrix = true;
+        second_mesh_node.local_matrix = mat4{};
+        second_mesh_node.local_matrix.value[12u] = 3.0f;
+
         skin source_skin;
         source_skin.name = "packet_skin";
         source_skin.skeleton_node_index = 1u;
@@ -2346,6 +2360,19 @@ namespace
         inverse_bind.value[13u] = -1.0f;
         source_skin.inverse_bind_matrices = { inverse_bind };
         source_model.skins.push_back(source_skin);
+
+        skin second_skin;
+        second_skin.name = "packet_second_skin";
+        second_skin.skeleton_node_index = 1u;
+        second_skin.joints = { 1u, 3u };
+        mat4 shared_joint_inverse_bind;
+        shared_joint_inverse_bind.value[12u] = -3.0f;
+        mat4 second_joint_inverse_bind;
+        second_joint_inverse_bind.value[13u] = -2.0f;
+        second_skin.inverse_bind_matrices = {
+            shared_joint_inverse_bind, second_joint_inverse_bind
+        };
+        source_model.skins.push_back(second_skin);
 
         skin_physics::asset::animation_clip clip;
         clip.name = "packet_clip";
@@ -2385,7 +2412,7 @@ namespace
 
         const skin_physics::physics::animation_clip_span_schedule_result scheduled =
             skin_physics::physics::schedule_animation_clip_spans(
-                source_model.animations[0u], 3u,
+                source_model.animations[0u], 5u,
                 0.0, 1.0, 10.0, 0.5);
         require(scheduled.success && scheduled.values.size() == 1u &&
             scheduled.values[0u].world_time_start == 10.0 &&
@@ -2418,9 +2445,11 @@ namespace
                 build_desc.animation_input_version &&
             built.value.span_records.size() == 1u &&
             built.value.track_records.size() == 1u &&
-            built.value.channel_records.size() == 3u &&
-            built.value.inverse_bind_matrices.size() == 1u &&
-            built.value.static_node_matrices.size() == 3u &&
+            built.value.channel_records.size() == 5u &&
+            built.value.inverse_bind_matrices.size() == 3u &&
+            built.value.static_node_matrices.size() == 5u &&
+            built.value.skin_records.size() == 2u &&
+            built.value.skin_joint_records.size() == 3u &&
             built.value.collider_records.empty() &&
             built.value.span_world_time_starts ==
                 std::vector<double>({ 10.0 }),
@@ -2436,7 +2465,7 @@ namespace
             span_record.first_track_record == 0u &&
             span_record.track_record_count == 1u &&
             span_record.first_channel_record == 0u &&
-            span_record.channel_record_count == 3u &&
+            span_record.channel_record_count == 5u &&
             span_record.first_blend_record == 0u &&
             span_record.blend_record_count == 0u &&
             span_record.span_duration_seconds == 0.5f &&
@@ -2448,7 +2477,7 @@ namespace
             "Span Record must preserve its immutable Input Version, contiguous Buffer Ranges, World-Time duration and certified Bounds.");
         require(track_record.clip_index == 0u &&
             track_record.first_channel_record == 0u &&
-            track_record.channel_record_count == 3u &&
+            track_record.channel_record_count == 5u &&
             track_record.clip_time_start == 0.0f &&
             track_record.clip_time_delta == 1.0f &&
             track_record.playback_speed == 2.0f &&
@@ -2473,11 +2502,16 @@ namespace
         const auto* root_channel = find_channel(0u);
         const auto* joint_channel = find_channel(1u);
         const auto* mesh_channel = find_channel(2u);
+        const auto* second_joint_channel = find_channel(3u);
+        const auto* second_mesh_channel = find_channel(4u);
         require(root_channel != nullptr && joint_channel != nullptr &&
-            mesh_channel != nullptr &&
+            mesh_channel != nullptr && second_joint_channel != nullptr &&
+            second_mesh_channel != nullptr &&
             root_channel->parent_index == skin_physics::asset::invalid_index &&
             joint_channel->parent_index == 0u &&
-            mesh_channel->parent_index == 0u,
+            mesh_channel->parent_index == 0u &&
+            second_joint_channel->parent_index == 0u &&
+            second_mesh_channel->parent_index == 0u,
             "Channel Records must be emitted in Parent-before-Child order with Span-local Parent Record Indices.");
         require((root_channel->node_role_flags &
                     skin_physics::physics::animation_node_role_model_root) != 0u &&
@@ -2489,8 +2523,13 @@ namespace
                     skin_physics::physics::animation_node_role_mesh) != 0u &&
             (mesh_channel->node_role_flags &
                     skin_physics::physics::animation_node_role_static_matrix) != 0u &&
+            (second_joint_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_joint) != 0u &&
+            (second_mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_mesh) != 0u &&
             root_channel->inverse_bind_record_index == skin_physics::asset::invalid_index &&
-            joint_channel->inverse_bind_record_index == 0u,
+            joint_channel->inverse_bind_record_index == 0u &&
+            second_joint_channel->inverse_bind_record_index == 2u,
             "Node Role flags must preserve Model Root / Joint / Mesh / Ancestor / Static Matrix semantics and non-Joint UINT32_MAX IBM references.");
         require(root_channel->channel_mask ==
                 skin_physics::physics::animation_channel_mask_translation &&
@@ -2511,8 +2550,39 @@ namespace
         require(std::abs(
                 built.value.inverse_bind_matrices[0u].column3.y + 1.0f) <= 1.0e-6f &&
             std::abs(
-                built.value.static_node_matrices[2u].column3.z - 2.0f) <= 1.0e-6f,
-            "Immutable Inverse Bind and dense Static Node Matrix payloads must retain the Asset Column-Major Matrix convention.");
+                built.value.inverse_bind_matrices[1u].column3.x + 3.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.inverse_bind_matrices[2u].column3.y + 2.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.static_node_matrices[2u].column3.z - 2.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.static_node_matrices[4u].column3.x - 3.0f) <= 1.0e-6f,
+            "Per-Skin Inverse Bind and dense Static Node Matrix payloads must retain their independent Asset Column-Major values.");
+
+        const auto& first_skin_record = built.value.skin_records[0u];
+        const auto& second_skin_record = built.value.skin_records[1u];
+        require(first_skin_record.mesh_node_channel_offset == 2u &&
+            first_skin_record.skin_index == 0u &&
+            first_skin_record.first_joint_record == 0u &&
+            first_skin_record.joint_count == 1u &&
+            second_skin_record.mesh_node_channel_offset == 4u &&
+            second_skin_record.skin_index == 1u &&
+            second_skin_record.first_joint_record == 1u &&
+            second_skin_record.joint_count == 2u,
+            "Each Skinned Mesh Node must retain its own Skin Index and ordered Joint range, even when the Skin shares Joint Nodes with another Mesh.");
+        const auto& first_skin_joint = built.value.skin_joint_records[0u];
+        const auto& second_skin_shared_joint = built.value.skin_joint_records[1u];
+        const auto& second_skin_extra_joint = built.value.skin_joint_records[2u];
+        require(first_skin_joint.joint_channel_offset == 1u &&
+            first_skin_joint.inverse_bind_record_index == 0u &&
+            first_skin_joint.joint_node_index == 1u &&
+            second_skin_shared_joint.joint_channel_offset == 1u &&
+            second_skin_shared_joint.inverse_bind_record_index == 1u &&
+            second_skin_shared_joint.joint_node_index == 1u &&
+            second_skin_extra_joint.joint_channel_offset == 3u &&
+            second_skin_extra_joint.inverse_bind_record_index == 2u &&
+            second_skin_extra_joint.joint_node_index == 3u,
+            "Skin Joint records must preserve each Skin's ordered Joint set and Skin-specific Inverse Bind index; a shared Joint may use different IBM records in different Skins.");
 
         skin_physics::physics::animation_span_cursor_gpu_record cursor;
         std::string diagnostic;
