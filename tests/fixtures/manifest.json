@@ -892,7 +892,10 @@
       "host_render_binding_exposes_only_cpu_observed_committed_candidate",
       "multiple_mesh_bindings_share_one_world_render_lease_generation",
       "host_render_lease_blocks_candidate_slot_reuse_and_new_gpu_submission",
-      "render_candidate_slot_is_released_only_by_terminal_non_commit_or_cpu_observed_commit"
+      "render_candidate_slot_is_released_only_by_terminal_non_commit_or_cpu_observed_commit",
+      "active_host_render_lease_keeps_its_original_slot_when_a_later_in_flight_tick_commits",
+      "after_host_lease_release_the_newer_cpu_observed_candidate_becomes_latest",
+      "render_slot_id_and_generation_are_published_and_compared_as_full_32_bit_values"
     ],
     "remaining_r0": [
       "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
