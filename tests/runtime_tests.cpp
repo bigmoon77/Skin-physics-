@@ -656,8 +656,10 @@ namespace
         require(runtime.advance(world, 0.01, &while_leased_report).success() &&
             while_leased_report.submitted_tick_count == 0u &&
             while_leased_report.in_flight_tick_count == 0u &&
-            while_leased_report.pending_tick_count == 1u,
-            "A Host Render Lease must block reuse of its pinned Ring Slot and keep new Tick time pending.");
+            while_leased_report.pending_tick_count == 1u &&
+            while_leased_report.render_binding_backpressure &&
+            !while_leased_report.capacity_blocked,
+            "A Host Render Lease must report Render Backpressure, block reuse of its pinned Ring Slot and keep new Tick time pending.");
 
         require(runtime.release_render_bindings(
                 world, render_binding.lease_generation).success(),
