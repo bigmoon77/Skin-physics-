@@ -2665,6 +2665,19 @@ int run_gpu_solver_tests()
         const ComPtr<ID3D11ComputeShader> correction_candidate_deduplicate_shader =
             compile_compute_shader(device.Get(), correction_candidate_shader_path,
                 "correction_candidate_deduplicate");
+        const std::filesystem::path indirect_dispatch_shader_path =
+            test_support::fixture_path(
+                "phase12_correction/indirect_dispatch.cs.hlsl");
+        const ComPtr<ID3D11ComputeShader> build_dispatch_arguments_shader =
+            compile_compute_shader(device.Get(), indirect_dispatch_shader_path,
+                "build_dispatch_arguments");
+        const ComPtr<ID3D11ComputeShader> consume_dispatch_arguments_shader =
+            compile_compute_shader(device.Get(), indirect_dispatch_shader_path,
+                "consume_dispatch_arguments");
+        test_phase12_warp_gpu_generated_indirect_dispatch(
+            device.Get(), context.Get(),
+            build_dispatch_arguments_shader.Get(),
+            consume_dispatch_arguments_shader.Get());
         test_phase07_warp_vertex_triangle_contact(device.Get(), context.Get(), vt_shader.Get());
         test_phase07_warp_edge_edge_contact(device.Get(), context.Get(), ee_shader.Get());
         test_phase07_warp_hierarchical_broadphase(device.Get(), context.Get(), broadphase_shader.Get());
