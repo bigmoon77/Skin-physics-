@@ -3043,111 +3043,231 @@ namespace skin_physics::runtime
 
         bool append_soft_body_force_distribution_event(
             world_slot& world,
-            const soft_body_gpu_mesh& gpu_mesh,
-            ID3D11ShaderResourceView* source_position_srv,
-            ID3D11ShaderResourceView* previous_accumulator_srv,
-            ID3D11UnorderedAccessView* next_accumulator_uav,
-            const gpu_soft_body_force_distribution_parameters& parameters,
-            uint32_t model_index,
+            std::vector<soft_body_mesh_work_state>& mesh_work,
+            const target_filter& target,
+            const gpu_soft_body_force_distribution_parameters& base_parameters,
             uint32_t segment_index,
             uint64_t event_id,
             bool is_impulse,
+            force_distribution_global_scratch& scratch,
             simulation::d3d11_compute_graph& graph,
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
                 out_segment_parameter_buffers,
             std::string& diagnostic)
         {
-            if (source_position_srv == nullptr ||
-                previous_accumulator_srv == nullptr ||
-                next_accumulator_uav == nullptr ||
+            if (scratch.partial_sum_capacity == 0u ||
+                scratch.partial_sum_srv == nullptr ||
+                scratch.partial_sum_uav == nullptr ||
+                scratch.normalized_sum_srv == nullptr ||
+                scratch.normalized_sum_uav == nullptr ||
                 soft_body_force_weight_shader == nullptr ||
                 soft_body_force_reduce_shader == nullptr ||
                 soft_body_force_finalize_shader == nullptr ||
                 soft_body_force_apply_shader == nullptr)
             {
                 diagnostic =
-                    "Soft Body Force / Impulse distribution Pass is missing a required shader or resource.";
+                    "Soft Body Force / Impulse scope reduction is missing a required shader or shared target resource.";
                 return false;
             }
 
-            Microsoft::WRL::ComPtr<ID3D11Buffer> event_parameters;
-            if (!create_constant_buffer(
-                    device.Get(),
-                    static_cast<uint32_t>(sizeof(parameters)),
-                    &parameters,
-                    event_parameters.GetAddressOf()))
+            struct target_mesh_binding
+            {
+                soft_body_mesh_work_state* work = nullptr;
+                ID3D11Buffer* event_parameters = nullptr;
+                uint32_t partial_sum_offset = 0u;
+                uint32_t group_count = 0u;
+            };
+
+            std::vector<target_mesh_binding> target_meshes;
+            target_meshes.reserve(mesh_work.size());
+            uint64_t total_group_count = 0u;
+            const std::string event_kind = is_impulse ? "impulse" : "force";
+            const std::string scope_suffix =
+                "_" + event_kind + "_scope_segment" +
+                std::to_string(segment_index) + "_event" +
+                std::to_string(event_id);
+
+            for (soft_body_mesh_work_state& work : mesh_work)
+            {
+                if (work.model == nullptr || work.gpu_mesh == nullptr ||
+                    !force_target_matches_mesh(
+                        target, work.model_index, *work.model,
+                        work.gpu_mesh->mesh_index))
+                {
+                    continue;
+                }
+
+                soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
+                if (gpu_mesh.vertex_count == 0u ||
+                    gpu_mesh.rest_lumped_mass_srv == nullptr ||
+                    gpu_mesh.distribution_weight_srv == nullptr ||
+                    gpu_mesh.distribution_weight_uav == nullptr ||
+                    work.source_position_srv == nullptr ||
+                    gpu_mesh.force_accumulator_srvs[0] == nullptr ||
+                    gpu_mesh.force_accumulator_srvs[1] == nullptr ||
+                    gpu_mesh.force_accumulator_uavs[0] == nullptr ||
+                    gpu_mesh.force_accumulator_uavs[1] == nullptr ||
+                    gpu_mesh.impulse_accumulator_srvs[0] == nullptr ||
+                    gpu_mesh.impulse_accumulator_srvs[1] == nullptr ||
+                    gpu_mesh.impulse_accumulator_uavs[0] == nullptr ||
+                    gpu_mesh.impulse_accumulator_uavs[1] == nullptr)
+                {
+                    diagnostic =
+                        "A Force / Impulse target Mesh is missing a required GPU distribution or accumulator resource.";
+                    return false;
+                }
+
+                const uint32_t group_count =
+                    (gpu_mesh.vertex_count - 1u) / 64u + 1u;
+                if (total_group_count >
+                        std::numeric_limits<uint32_t>::max() - group_count ||
+                    total_group_count + group_count >
+                        scratch.partial_sum_capacity)
+                {
+                    diagnostic =
+                        "World Force / Impulse target-scope partial-sum count exceeds its checked GPU scratch capacity.";
+                    return false;
+                }
+
+                gpu_soft_body_force_distribution_parameters event_parameters =
+                    base_parameters;
+                event_parameters.vertex_count = gpu_mesh.vertex_count;
+                event_parameters.include_previous =
+                    is_impulse && work.impulse_event_count == 0u ? 0u : 1u;
+
+                Microsoft::WRL::ComPtr<ID3D11Buffer> event_parameter_buffer;
+                if (!create_constant_buffer(
+                        device.Get(),
+                        static_cast<uint32_t>(sizeof(event_parameters)),
+                        &event_parameters,
+                        event_parameter_buffer.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate an immutable per-Mesh Force / Impulse Event Parameter Buffer.";
+                    return false;
+                }
+                out_segment_parameter_buffers.push_back(
+                    std::move(event_parameter_buffer));
+                ID3D11Buffer* event_parameter_buffer_raw =
+                    out_segment_parameter_buffers.back().Get();
+
+                gpu_soft_body_distribution_reduce_parameters reduce_parameters;
+                reduce_parameters.vertex_count = gpu_mesh.vertex_count;
+                reduce_parameters.group_count = group_count;
+                reduce_parameters.partial_sum_offset =
+                    static_cast<uint32_t>(total_group_count);
+                Microsoft::WRL::ComPtr<ID3D11Buffer> reduce_parameter_buffer;
+                if (!create_constant_buffer(
+                        device.Get(),
+                        static_cast<uint32_t>(sizeof(reduce_parameters)),
+                        &reduce_parameters,
+                        reduce_parameter_buffer.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate an immutable per-Mesh target-scope Reduction Parameter Buffer.";
+                    return false;
+                }
+                out_segment_parameter_buffers.push_back(
+                    std::move(reduce_parameter_buffer));
+                ID3D11Buffer* reduce_parameter_buffer_raw =
+                    out_segment_parameter_buffers.back().Get();
+
+                const std::string mesh_suffix =
+                    "_m" + std::to_string(work.model_index) +
+                    "_mesh" + std::to_string(gpu_mesh.mesh_index) +
+                    scope_suffix;
+
+                simulation::compute_pass_desc weight_pass;
+                weight_pass.name = "soft_body" + mesh_suffix + "_weight";
+                weight_pass.shader = soft_body_force_weight_shader.Get();
+                weight_pass.shader_resources = {
+                    { 0u, work.source_position_srv },
+                    { 1u, gpu_mesh.rest_lumped_mass_srv.Get() }
+                };
+                weight_pass.unordered_access_views = {
+                    { 0u, gpu_mesh.distribution_weight_uav.Get(), 0xffffffffu },
+                    { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+                };
+                weight_pass.constant_buffers = {
+                    { 0u, event_parameter_buffer_raw }
+                };
+                weight_pass.group_count_x = group_count;
+                if (!graph.add_pass(weight_pass, diagnostic))
+                {
+                    return false;
+                }
+
+                simulation::compute_pass_desc reduce_pass;
+                reduce_pass.name = "soft_body" + mesh_suffix + "_reduce";
+                reduce_pass.shader = soft_body_force_reduce_shader.Get();
+                reduce_pass.shader_resources = {
+                    { 2u, gpu_mesh.distribution_weight_srv.Get() }
+                };
+                reduce_pass.unordered_access_views = {
+                    { 2u, scratch.partial_sum_uav.Get(), 0xffffffffu },
+                    { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+                };
+                reduce_pass.constant_buffers = {
+                    { 1u, reduce_parameter_buffer_raw }
+                };
+                reduce_pass.group_count_x = group_count;
+                if (!graph.add_pass(reduce_pass, diagnostic))
+                {
+                    return false;
+                }
+
+                target_mesh_binding binding;
+                binding.work = &work;
+                binding.event_parameters = event_parameter_buffer_raw;
+                binding.partial_sum_offset =
+                    static_cast<uint32_t>(total_group_count);
+                binding.group_count = group_count;
+                target_meshes.push_back(binding);
+                total_group_count += group_count;
+            }
+
+            if (target_meshes.empty() || total_group_count == 0u ||
+                total_group_count > std::numeric_limits<uint32_t>::max())
             {
                 diagnostic =
-                    "Unable to allocate an immutable Force / Impulse Event Parameter Buffer.";
+                    "Force / Impulse target scope contains no registered Soft Body Mesh support.";
                 return false;
             }
-            out_segment_parameter_buffers.push_back(std::move(event_parameters));
-            ID3D11Buffer* event_parameter_buffer =
+
+            gpu_soft_body_distribution_reduce_parameters finalize_parameters;
+            finalize_parameters.vertex_count = 0u;
+            finalize_parameters.group_count =
+                static_cast<uint32_t>(total_group_count);
+            finalize_parameters.partial_sum_offset = 0u;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> finalize_parameter_buffer;
+            if (!create_constant_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(finalize_parameters)),
+                    &finalize_parameters,
+                    finalize_parameter_buffer.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate the immutable target-scope Force / Impulse Finalize Parameters.";
+                return false;
+            }
+            out_segment_parameter_buffers.push_back(
+                std::move(finalize_parameter_buffer));
+            ID3D11Buffer* finalize_parameter_buffer_raw =
                 out_segment_parameter_buffers.back().Get();
-
-            const uint32_t dispatch_group_count =
-                (gpu_mesh.vertex_count - 1u) / 64u + 1u;
-            const std::string event_kind = is_impulse ? "impulse" : "force";
-            const std::string pass_suffix =
-                "_m" + std::to_string(model_index) +
-                "_mesh" + std::to_string(gpu_mesh.mesh_index) +
-                "_segment" + std::to_string(segment_index) +
-                "_event" + std::to_string(event_id);
-
-            simulation::compute_pass_desc weight_pass;
-            weight_pass.name =
-                "soft_body_" + event_kind + "_weight" + pass_suffix;
-            weight_pass.shader = soft_body_force_weight_shader.Get();
-            weight_pass.shader_resources = {
-                { 0u, source_position_srv },
-                { 1u, gpu_mesh.rest_lumped_mass_srv.Get() }
-            };
-            weight_pass.unordered_access_views = {
-                { 0u, gpu_mesh.distribution_weight_uav.Get(), 0xffffffffu },
-                { 1u, world.commit_control_uav.Get(), 0xffffffffu }
-            };
-            weight_pass.constant_buffers = {
-                { 0u, event_parameter_buffer }
-            };
-            weight_pass.group_count_x = dispatch_group_count;
-            if (!graph.add_pass(weight_pass, diagnostic))
-            {
-                return false;
-            }
-
-            simulation::compute_pass_desc reduce_pass;
-            reduce_pass.name =
-                "soft_body_" + event_kind + "_reduce" + pass_suffix;
-            reduce_pass.shader = soft_body_force_reduce_shader.Get();
-            reduce_pass.shader_resources = {
-                { 2u, gpu_mesh.distribution_weight_srv.Get() }
-            };
-            reduce_pass.unordered_access_views = {
-                { 2u, gpu_mesh.distribution_partial_sum_uav.Get(), 0xffffffffu },
-                { 1u, world.commit_control_uav.Get(), 0xffffffffu }
-            };
-            reduce_pass.constant_buffers = {
-                { 1u, gpu_mesh.distribution_reduce_parameters.Get() }
-            };
-            reduce_pass.group_count_x = dispatch_group_count;
-            if (!graph.add_pass(reduce_pass, diagnostic))
-            {
-                return false;
-            }
 
             simulation::compute_pass_desc finalize_pass;
             finalize_pass.name =
-                "soft_body_" + event_kind + "_finalize" + pass_suffix;
+                "soft_body" + scope_suffix + "_finalize_global_denominator";
             finalize_pass.shader = soft_body_force_finalize_shader.Get();
             finalize_pass.shader_resources = {
-                { 2u, gpu_mesh.distribution_partial_sum_srv.Get() }
+                { 2u, scratch.partial_sum_srv.Get() }
             };
             finalize_pass.unordered_access_views = {
-                { 3u, gpu_mesh.distribution_sum_uav.Get(), 0xffffffffu },
+                { 3u, scratch.normalized_sum_uav.Get(), 0xffffffffu },
                 { 1u, world.commit_control_uav.Get(), 0xffffffffu }
             };
             finalize_pass.constant_buffers = {
-                { 1u, gpu_mesh.distribution_reduce_parameters.Get() }
+                { 1u, finalize_parameter_buffer_raw }
             };
             finalize_pass.group_count_x = 1u;
             if (!graph.add_pass(finalize_pass, diagnostic))
@@ -3155,24 +3275,81 @@ namespace skin_physics::runtime
                 return false;
             }
 
-            simulation::compute_pass_desc apply_pass;
-            apply_pass.name =
-                "soft_body_" + event_kind + "_apply" + pass_suffix;
-            apply_pass.shader = soft_body_force_apply_shader.Get();
-            apply_pass.shader_resources = {
-                { 3u, gpu_mesh.distribution_weight_srv.Get() },
-                { 4u, gpu_mesh.distribution_sum_srv.Get() },
-                { 5u, previous_accumulator_srv }
-            };
-            apply_pass.unordered_access_views = {
-                { 4u, next_accumulator_uav, 0xffffffffu },
-                { 1u, world.commit_control_uav.Get(), 0xffffffffu }
-            };
-            apply_pass.constant_buffers = {
-                { 0u, event_parameter_buffer }
-            };
-            apply_pass.group_count_x = dispatch_group_count;
-            return graph.add_pass(apply_pass, diagnostic);
+            for (const target_mesh_binding& binding : target_meshes)
+            {
+                soft_body_mesh_work_state& work = *binding.work;
+                soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
+
+                ID3D11ShaderResourceView* previous_accumulator_srv = nullptr;
+                ID3D11UnorderedAccessView* next_accumulator_uav = nullptr;
+                uint32_t accumulator_index = 0u;
+                if (is_impulse)
+                {
+                    accumulator_index = work.impulse_event_count & 1u;
+                    previous_accumulator_srv =
+                        work.impulse_event_count == 0u
+                            ? gpu_mesh.vertex_force_srv.Get()
+                            : gpu_mesh.impulse_accumulator_srvs[
+                                (work.impulse_event_count - 1u) & 1u].Get();
+                    next_accumulator_uav =
+                        gpu_mesh.impulse_accumulator_uavs[accumulator_index].Get();
+                }
+                else
+                {
+                    accumulator_index = work.force_event_count & 1u;
+                    previous_accumulator_srv =
+                        work.force_event_count == 0u
+                            ? gpu_mesh.vertex_force_srv.Get()
+                            : gpu_mesh.force_accumulator_srvs[
+                                (work.force_event_count - 1u) & 1u].Get();
+                    next_accumulator_uav =
+                        gpu_mesh.force_accumulator_uavs[accumulator_index].Get();
+                }
+
+                simulation::compute_pass_desc apply_pass;
+                apply_pass.name =
+                    "soft_body" +
+                    (is_impulse ? "_impulse" : "_force") +
+                    "_m" + std::to_string(work.model_index) +
+                    "_mesh" + std::to_string(gpu_mesh.mesh_index) +
+                    scope_suffix + "_apply";
+                apply_pass.shader = soft_body_force_apply_shader.Get();
+                apply_pass.shader_resources = {
+                    { 3u, gpu_mesh.distribution_weight_srv.Get() },
+                    { 4u, scratch.normalized_sum_srv.Get() },
+                    { 5u, previous_accumulator_srv }
+                };
+                apply_pass.unordered_access_views = {
+                    { 4u, next_accumulator_uav, 0xffffffffu },
+                    { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+                };
+                apply_pass.constant_buffers = {
+                    { 0u, binding.event_parameters }
+                };
+                apply_pass.group_count_x =
+                    (gpu_mesh.vertex_count - 1u) / 64u + 1u;
+                if (!graph.add_pass(apply_pass, diagnostic))
+                {
+                    return false;
+                }
+
+                ID3D11ShaderResourceView* applied_accumulator_srv =
+                    is_impulse
+                        ? gpu_mesh.impulse_accumulator_srvs[accumulator_index].Get()
+                        : gpu_mesh.force_accumulator_srvs[accumulator_index].Get();
+                if (is_impulse)
+                {
+                    work.integrated_impulse_srv = applied_accumulator_srv;
+                    ++work.impulse_event_count;
+                }
+                else
+                {
+                    work.integrated_force_srv = applied_accumulator_srv;
+                    ++work.force_event_count;
+                }
+            }
+
+            return true;
         }
 
         bool append_soft_body_tick_passes(
