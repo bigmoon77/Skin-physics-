@@ -538,6 +538,32 @@ namespace
                 world, latest_binding.lease_generation).success(),
             "The newest Render Candidate Lease must also be releasable.");
 
+        skin_physics::runtime::advance_report resumed_report;
+        require(runtime.advance(world, 0.0, &resumed_report).success() &&
+            resumed_report.submitted_tick_count == 1u &&
+            resumed_report.in_flight_tick_count == 1u &&
+            resumed_report.pending_tick_count == 0u,
+            "Releasing the Render Lease must allow the exact pending Reservation to resume without adding new frame time.");
+
+        bool resumed_query_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &result).success(),
+                "Resumed Render Lease-blocked Tick must be observable through the non-blocking Query Ring.");
+            if (result.in_flight_tick_count == 0u)
+            {
+                resumed_query_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(resumed_query_observed &&
+            result.cpu_observed_sequence == 4u &&
+            result.gpu_committed_sequence == 4u &&
+            std::abs(result.cpu_observed_completed_time - 0.04) <= 1.0e-12,
+            "The pending Reservation must commit as Tick 4 with its original requested simulation time after Lease release.");
+
         require(runtime.reset_world(world).success(),
             "Reset must restore both persistent Soft Body State Banks to the model's initial world-space pose and discard the CPU-only Tick held by the Render Lease.");
 
