@@ -716,6 +716,131 @@ namespace
             "Runtime must shut down after the Soft Body GPU state-bank regression.");
     }
 
+    void test_runtime_multiple_in_flight_non_commit_preserves_head_sequence()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Predecessor failure regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = runtime_shader_root();
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Runtime must compile Tick, FEM and Render Feedback shaders for the predecessor failure regression.");
+
+        skin_physics::physics::raw_tet_mesh raw_mesh;
+        raw_mesh.positions = {
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f },
+            { 0.0f, 0.0f, 1.0f }
+        };
+        raw_mesh.tetrahedra = { { 0u, 1u, 2u, 3u } };
+        const skin_physics::physics::physics_mesh_build_result built_mesh =
+            skin_physics::physics::build_physics_mesh(raw_mesh);
+        require(built_mesh.success,
+            "Predecessor failure fixture must build a valid one-Tet Physics Mesh.");
+
+        skin_physics::asset::mesh render_mesh;
+        render_mesh.name = "runtime_soft_body_degenerate_render_face";
+        render_mesh.mode = skin_physics::asset::physics_mode::soft_body;
+        render_mesh.vertices.resize(4u);
+        render_mesh.vertices[0].position = { 0.0f, 0.0f, 0.0f };
+        render_mesh.vertices[1].position = { 0.25f, 0.0f, 0.0f };
+        render_mesh.vertices[2].position = { 0.75f, 0.0f, 0.0f };
+        render_mesh.vertices[3].position = { 0.0f, 0.0f, 0.25f };
+        for (const skin_physics::physics::boundary_triangle& boundary :
+            built_mesh.value.boundary_triangles)
+        {
+            render_mesh.indices.insert(
+                render_mesh.indices.end(),
+                boundary.vertices.begin(),
+                boundary.vertices.end());
+        }
+
+        skin_physics::runtime::model_desc model_desc;
+        model_desc.source_model.meshes.push_back(render_mesh);
+        skin_physics::runtime::model_mesh_physics_asset mesh_asset;
+        mesh_asset.mesh_index = 0u;
+        mesh_asset.physics_mesh = built_mesh.value;
+        model_desc.mesh_physics_assets.push_back(std::move(mesh_asset));
+
+        skin_physics::runtime::world_desc world_desc;
+        world_desc.fixed_delta_time = 0.01;
+        world_desc.contact_max_substep_delta_time = 0.004;
+        world_desc.maximum_in_flight_ticks = 2u;
+        world_desc.maximum_steps_per_advance = 2u;
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world(world_desc, &world).success(),
+            "Predecessor failure World creation must succeed.");
+
+        skin_physics::runtime::model_handle model;
+        require(runtime.add_model(world, model_desc, &model).success(),
+            "Collinear Render face is valid Render topology and must bind to the Tet Physics Mesh.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "Predecessor failure World must enter Playing.");
+
+        skin_physics::runtime::advance_report advance;
+        require(runtime.advance(world, 0.02, &advance).success() &&
+            advance.submitted_tick_count == 2u &&
+            advance.in_flight_tick_count == 2u &&
+            advance.pending_tick_count == 0u,
+            "The failing head Tick and its dependent successor must both be submitted before asynchronous Status observation.");
+
+        skin_physics::runtime::world_status result;
+        bool all_queries_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &result).success(),
+                "Predecessor failure Status polling must remain non-blocking and successful.");
+            if (result.in_flight_tick_count == 0u)
+            {
+                all_queries_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+
+        require(all_queries_observed,
+            "Both the head Tick failure and the successor predecessor gate must be observed.");
+        require(result.state == skin_physics::runtime::tick_state::failed &&
+            result.last_tick_status == status_code::gpu_execution_failed,
+            "A Render Candidate numerical failure in the head Tick must remain the World terminal result after the successor reports BLOCKED_BY_PREDECESSOR.");
+        require(result.gpu_committed_sequence == 0u &&
+            result.cpu_observed_sequence == 0u &&
+            result.in_flight_tick_count == 0u &&
+            result.head_reserved_tick_sequence == 1u &&
+            result.pending_tick_count == 2u &&
+            std::abs(result.reserved_tick_time - 0.02) <= 1.0e-12,
+            "Both non-committed Reservations must be retained in ascending Sequence order with full reserved time and no published State Bank.");
+
+        skin_physics::runtime::world_status repeated;
+        require(runtime.poll(world, &repeated).success() &&
+            repeated.state == skin_physics::runtime::tick_state::failed &&
+            repeated.last_tick_status == status_code::gpu_execution_failed &&
+            repeated.head_reserved_tick_sequence == 1u &&
+            repeated.pending_tick_count == 2u,
+            "A subsequent Poll must preserve the original FAILED result and the ordered diagnostic Reservations.");
+
+        skin_physics::runtime::advance_report rejected_advance;
+        require(runtime.advance(world, 0.0, &rejected_advance).code ==
+                status_code::invalid_state,
+            "A terminal FAILED World must not re-submit either retained Reservation.");
+
+        require(runtime.reset_world(world).success(),
+            "Reset must explicitly discard both retained non-committed Reservations.");
+        require(runtime.destroy_model(world, model).success(),
+            "Reset predecessor failure Model must release State and Candidate Ring resources.");
+        require(runtime.destroy_world(world).success(),
+            "Reset predecessor failure World must be destroyable.");
+        require(runtime.shutdown() == status_code::ok,
+            "Runtime must shut down after the predecessor failure regression.");
+    }
+
     void test_runtime_soft_body_cfl_preflight_and_budget_recovery()
     {
         ComPtr<ID3D11Device> device;
@@ -950,6 +1075,8 @@ int run_runtime_tests()
     test_runtime_soft_body_gpu_tick_and_state_bank_sequence();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE\n";
+    test_runtime_multiple_in_flight_non_commit_preserves_head_sequence();
+    std::cout << "[PASS] R0_WARP_PREDECESSOR_FAILURE_ORDER\n";
     test_runtime_soft_body_cfl_preflight_and_budget_recovery();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_CFL_PREFLIGHT\n";
     std::cout << "RuntimeTests passed.\n";
