@@ -2954,6 +2954,305 @@ namespace
     }
 
 
+    void test_phase09_warp_animation_trajectory_packet_abi()
+    {
+        using skin_physics::physics::animation_blend_gpu_record;
+        using skin_physics::physics::animation_channel_gpu_record;
+        using skin_physics::physics::animation_span_gpu_record;
+        using skin_physics::physics::animation_span_cursor_gpu_record;
+        using skin_physics::physics::animation_track_gpu_record;
+        using skin_physics::physics::gpu_float4;
+        using skin_physics::physics::gpu_matrix4x4;
+        using skin_physics::physics::kinematic_collider_gpu_record;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Animation Trajectory ABI regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_path(
+                "phase09_animation/animation_trajectory_abi.cs.hlsl"),
+            "copy_animation_trajectory_abi");
+
+        animation_span_gpu_record span;
+        span.span_id = 0x10203040u;
+        span.animation_input_version_low = 0x55667788u;
+        span.animation_input_version_high = 0x11223344u;
+        span.first_track_record = 3u;
+        span.track_record_count = 2u;
+        span.first_channel_record = 5u;
+        span.channel_record_count = 8u;
+        span.first_blend_record = 7u;
+        span.blend_record_count = 1u;
+        span.first_collider_record = 9u;
+        span.collider_record_count = 4u;
+        span.flags = 0x1234u;
+        span.span_duration_seconds = 0.125f;
+        span.inverse_span_duration = 8.0f;
+        span.speed_bound = 12.5f;
+        span.acceleration_bound = 31.25f;
+        span.chord_deviation_bound = 0.03125f;
+        span.quaternion_normalization_lower_bound = 0.125f;
+        span.reserved0 = 0.5f;
+        span.reserved1 = 0.75f;
+
+        animation_span_cursor_gpu_record cursor;
+        cursor.span_record_index = 11u;
+        cursor.animation_input_version_low = span.animation_input_version_low;
+        cursor.animation_input_version_high = span.animation_input_version_high;
+        cursor.u_segment_start = 0.625f;
+
+        animation_track_gpu_record track;
+        track.clip_index = 13u;
+        track.first_channel_record = 17u;
+        track.channel_record_count = 19u;
+        track.flags = 3u;
+        track.clip_time_start = 0.25f;
+        track.clip_time_delta = -0.125f;
+        track.playback_speed = -0.5f;
+        track.reserved0 = 0.875f;
+
+        animation_channel_gpu_record channel;
+        channel.node_index = 2u;
+        channel.parent_index = 1u;
+        channel.inverse_bind_record_index = 4u;
+        channel.interpolation_flags = 0x21u;
+        channel.channel_mask = 7u;
+        channel.node_role_flags = 0x1fu;
+        channel.reserved0 = 0x12345678u;
+        channel.reserved1 = 0x87654321u;
+        channel.translation_c0 = { 1.0f, 2.0f, 3.0f, 4.0f };
+        channel.translation_c1 = { 5.0f, 6.0f, 7.0f, 8.0f };
+        channel.translation_c2 = { 9.0f, 10.0f, 11.0f, 12.0f };
+        channel.translation_c3 = { 13.0f, 14.0f, 15.0f, 16.0f };
+        channel.rotation_parameter0 = { 17.0f, 18.0f, 19.0f, 20.0f };
+        channel.rotation_parameter1 = { 21.0f, 22.0f, 23.0f, 24.0f };
+        channel.rotation_parameter2 = { 25.0f, 26.0f, 27.0f, 28.0f };
+        channel.rotation_parameter3 = { 29.0f, 30.0f, 31.0f, 32.0f };
+        channel.scale_c0 = { 33.0f, 34.0f, 35.0f, 36.0f };
+        channel.scale_c1 = { 37.0f, 38.0f, 39.0f, 40.0f };
+        channel.scale_c2 = { 41.0f, 42.0f, 43.0f, 44.0f };
+        channel.scale_c3 = { 45.0f, 46.0f, 47.0f, 48.0f };
+
+        animation_blend_gpu_record blend;
+        blend.source_track_index = 0u;
+        blend.target_track_index = 1u;
+        blend.weight_curve_flags = 1u;
+        blend.reserved0 = 0xaabbccddu;
+        blend.weight_coefficients = { 0.125f, 0.25f, 0.5f, 0.75f };
+        blend.duration_seconds = 2.0f;
+        blend.inverse_duration = 0.5f;
+        blend.blend_start_offset_seconds = 0.375f;
+        blend.reserved2 = 0.875f;
+
+        gpu_matrix4x4 inverse_bind;
+        inverse_bind.column0 = { 1.0f, 2.0f, 3.0f, 4.0f };
+        inverse_bind.column1 = { 5.0f, 6.0f, 7.0f, 8.0f };
+        inverse_bind.column2 = { 9.0f, 10.0f, 11.0f, 12.0f };
+        inverse_bind.column3 = { 13.0f, 14.0f, 15.0f, 16.0f };
+
+        gpu_matrix4x4 static_node;
+        static_node.column0 = { 16.0f, 15.0f, 14.0f, 13.0f };
+        static_node.column1 = { 12.0f, 11.0f, 10.0f, 9.0f };
+        static_node.column2 = { 8.0f, 7.0f, 6.0f, 5.0f };
+        static_node.column3 = { 4.0f, 3.0f, 2.0f, 1.0f };
+
+        kinematic_collider_gpu_record collider;
+        collider.stable_collider_id_low = 0x10293847u;
+        collider.stable_collider_id_high = 0x56473829u;
+        collider.span_sample_pair_id = 0xabcdef01u;
+        collider.flags = 3u;
+        collider.translation_start = { 1.0f, 2.0f, 3.0f, 4.0f };
+        collider.translation_end = { 5.0f, 6.0f, 7.0f, 8.0f };
+        collider.rotation_start = { 9.0f, 10.0f, 11.0f, 12.0f };
+        collider.rotation_end = { 13.0f, 14.0f, 15.0f, 16.0f };
+        collider.angular_axis_and_angle = { 17.0f, 18.0f, 19.0f, 20.0f };
+        collider.duration_seconds = 0.25f;
+        collider.inverse_duration = 4.0f;
+        collider.linear_speed_bound = 21.0f;
+        collider.angular_speed_bound = 22.0f;
+        collider.maximum_local_radius = 23.0f;
+        collider.sagitta_bound = 24.0f;
+        collider.reserved0 = 25.0f;
+        collider.reserved1 = 26.0f;
+
+        const std::vector<animation_span_gpu_record> span_inputs = { span };
+        const std::vector<animation_span_cursor_gpu_record> cursor_inputs = { cursor };
+        const std::vector<animation_track_gpu_record> track_inputs = { track };
+        const std::vector<animation_channel_gpu_record> channel_inputs = { channel };
+        const std::vector<animation_blend_gpu_record> blend_inputs = { blend };
+        const std::vector<gpu_matrix4x4> inverse_bind_inputs = { inverse_bind };
+        const std::vector<gpu_matrix4x4> static_node_inputs = { static_node };
+        const std::vector<kinematic_collider_gpu_record> collider_inputs = { collider };
+
+        const ComPtr<ID3D11Buffer> span_input_buffer =
+            create_structured_buffer(device.Get(), span_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> cursor_input_buffer =
+            create_structured_buffer(device.Get(), cursor_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> track_input_buffer =
+            create_structured_buffer(device.Get(), track_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> channel_input_buffer =
+            create_structured_buffer(device.Get(), channel_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> blend_input_buffer =
+            create_structured_buffer(device.Get(), blend_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> inverse_bind_input_buffer =
+            create_structured_buffer(device.Get(), inverse_bind_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> static_node_input_buffer =
+            create_structured_buffer(device.Get(), static_node_inputs, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> collider_input_buffer =
+            create_structured_buffer(device.Get(), collider_inputs, D3D11_BIND_SHADER_RESOURCE);
+
+        const ComPtr<ID3D11ShaderResourceView> span_input_view =
+            create_structured_srv<animation_span_gpu_record>(
+                device.Get(), span_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> cursor_input_view =
+            create_structured_srv<animation_span_cursor_gpu_record>(
+                device.Get(), cursor_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> track_input_view =
+            create_structured_srv<animation_track_gpu_record>(
+                device.Get(), track_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> channel_input_view =
+            create_structured_srv<animation_channel_gpu_record>(
+                device.Get(), channel_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> blend_input_view =
+            create_structured_srv<animation_blend_gpu_record>(
+                device.Get(), blend_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> inverse_bind_input_view =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), inverse_bind_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> static_node_input_view =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), static_node_input_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> collider_input_view =
+            create_structured_srv<kinematic_collider_gpu_record>(
+                device.Get(), collider_input_buffer.Get(), 1u);
+
+        const std::vector<animation_span_gpu_record> empty_spans(1u);
+        const std::vector<animation_span_cursor_gpu_record> empty_cursors(1u);
+        const std::vector<animation_track_gpu_record> empty_tracks(1u);
+        const std::vector<animation_channel_gpu_record> empty_channels(1u);
+        const std::vector<animation_blend_gpu_record> empty_blends(1u);
+        const std::vector<gpu_matrix4x4> empty_inverse_binds(1u);
+        const std::vector<gpu_matrix4x4> empty_static_nodes(1u);
+        const std::vector<kinematic_collider_gpu_record> empty_colliders(1u);
+        const ComPtr<ID3D11Buffer> span_output_buffer =
+            create_structured_buffer(device.Get(), empty_spans, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> cursor_output_buffer =
+            create_structured_buffer(device.Get(), empty_cursors, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> track_output_buffer =
+            create_structured_buffer(device.Get(), empty_tracks, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> channel_output_buffer =
+            create_structured_buffer(device.Get(), empty_channels, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> blend_output_buffer =
+            create_structured_buffer(device.Get(), empty_blends, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> inverse_bind_output_buffer =
+            create_structured_buffer(device.Get(), empty_inverse_binds, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> static_node_output_buffer =
+            create_structured_buffer(device.Get(), empty_static_nodes, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> collider_output_buffer =
+            create_structured_buffer(device.Get(), empty_colliders, D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11UnorderedAccessView> span_output_view =
+            create_structured_uav<animation_span_gpu_record>(
+                device.Get(), span_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> cursor_output_view =
+            create_structured_uav<animation_span_cursor_gpu_record>(
+                device.Get(), cursor_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> track_output_view =
+            create_structured_uav<animation_track_gpu_record>(
+                device.Get(), track_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> channel_output_view =
+            create_structured_uav<animation_channel_gpu_record>(
+                device.Get(), channel_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> blend_output_view =
+            create_structured_uav<animation_blend_gpu_record>(
+                device.Get(), blend_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> inverse_bind_output_view =
+            create_structured_uav<gpu_matrix4x4>(
+                device.Get(), inverse_bind_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> static_node_output_view =
+            create_structured_uav<gpu_matrix4x4>(
+                device.Get(), static_node_output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> collider_output_view =
+            create_structured_uav<kinematic_collider_gpu_record>(
+                device.Get(), collider_output_buffer.Get(), 1u);
+
+        dispatch_compute(
+            context.Get(),
+            shader.Get(),
+            {
+                span_input_view.Get(),
+                cursor_input_view.Get(),
+                track_input_view.Get(),
+                channel_input_view.Get(),
+                blend_input_view.Get(),
+                inverse_bind_input_view.Get(),
+                static_node_input_view.Get(),
+                collider_input_view.Get()
+            },
+            {
+                span_output_view.Get(),
+                cursor_output_view.Get(),
+                track_output_view.Get(),
+                channel_output_view.Get(),
+                blend_output_view.Get(),
+                inverse_bind_output_view.Get(),
+                static_node_output_view.Get(),
+                collider_output_view.Get()
+            },
+            nullptr,
+            1u);
+
+        const std::vector<animation_span_gpu_record> span_output =
+            readback_structured_buffer<animation_span_gpu_record>(
+                device.Get(), context.Get(), span_output_buffer.Get(), 1u);
+        const std::vector<animation_span_cursor_gpu_record> cursor_output =
+            readback_structured_buffer<animation_span_cursor_gpu_record>(
+                device.Get(), context.Get(), cursor_output_buffer.Get(), 1u);
+        const std::vector<animation_track_gpu_record> track_output =
+            readback_structured_buffer<animation_track_gpu_record>(
+                device.Get(), context.Get(), track_output_buffer.Get(), 1u);
+        const std::vector<animation_channel_gpu_record> channel_output =
+            readback_structured_buffer<animation_channel_gpu_record>(
+                device.Get(), context.Get(), channel_output_buffer.Get(), 1u);
+        const std::vector<animation_blend_gpu_record> blend_output =
+            readback_structured_buffer<animation_blend_gpu_record>(
+                device.Get(), context.Get(), blend_output_buffer.Get(), 1u);
+        const std::vector<gpu_matrix4x4> inverse_bind_output =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), inverse_bind_output_buffer.Get(), 1u);
+        const std::vector<gpu_matrix4x4> static_node_output =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), static_node_output_buffer.Get(), 1u);
+        const std::vector<kinematic_collider_gpu_record> collider_output =
+            readback_structured_buffer<kinematic_collider_gpu_record>(
+                device.Get(), context.Get(), collider_output_buffer.Get(), 1u);
+
+        require(std::memcmp(span_inputs.data(), span_output.data(),
+                sizeof(animation_span_gpu_record)) == 0 &&
+            std::memcmp(cursor_inputs.data(), cursor_output.data(),
+                sizeof(animation_span_cursor_gpu_record)) == 0 &&
+            std::memcmp(track_inputs.data(), track_output.data(),
+                sizeof(animation_track_gpu_record)) == 0 &&
+            std::memcmp(channel_inputs.data(), channel_output.data(),
+                sizeof(animation_channel_gpu_record)) == 0 &&
+            std::memcmp(blend_inputs.data(), blend_output.data(),
+                sizeof(animation_blend_gpu_record)) == 0 &&
+            std::memcmp(inverse_bind_inputs.data(), inverse_bind_output.data(),
+                sizeof(gpu_matrix4x4)) == 0 &&
+            std::memcmp(static_node_inputs.data(), static_node_output.data(),
+                sizeof(gpu_matrix4x4)) == 0 &&
+            std::memcmp(collider_inputs.data(), collider_output.data(),
+                sizeof(kinematic_collider_gpu_record)) == 0,
+            "D3D11 WARP StructuredBuffer / UAV Readback must preserve every fixed Animation Trajectory ABI field byte-for-byte.");
+        std::cout << "[PASS] P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI\n";
+    }
+
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
