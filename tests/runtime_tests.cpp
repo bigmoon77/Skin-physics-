@@ -340,8 +340,16 @@ namespace
             std::abs(report.accumulator_seconds) <= 1.0e-12,
             "CPU Preflight must create one blocked head Reservation and move its time out of the Accumulator.");
 
+        skin_physics::runtime::world_execution_budget unobserved_budget;
+        unobserved_budget.maximum_substeps = 4u;
+        unobserved_budget.maximum_integration_segments_per_tick = 512u;
+        require(runtime.set_world_execution_budget(
+                world, unobserved_budget).code == status_code::busy,
+            "CPU Preflight Budget Retry must wait until poll() has returned the synchronous block Status.");
+
         skin_physics::runtime::world_status before_retry;
         require(runtime.poll(world, &before_retry).success() &&
+            before_retry.execution_budget_revision == 1u &&
             before_retry.state == skin_physics::runtime::tick_state::blocked &&
             before_retry.last_tick_status == status_code::work_budget_exceeded &&
             before_retry.budget_block_origin ==
