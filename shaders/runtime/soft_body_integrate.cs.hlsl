@@ -102,25 +102,14 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
         return;
     }
 
-    float z = vertex_damping_rate * delta_time;
-    float decay = exp(-z);
-    float damping_integral = delta_time;
-    if (z >= 1.0e-3f && vertex_damping_rate > 0.0f)
-    {
-        damping_integral = (1.0f - decay) / vertex_damping_rate;
-    }
-    else if (z > 0.0f)
-    {
-        damping_integral = delta_time *
-            (1.0f - 0.5f * z + (z * z) / 6.0f - (z * z * z) / 24.0f);
-    }
-
     float3 impulse = has_impulse_events != 0u
         ? vertex_impulses[index].xyz
         : 0.0f;
     float3 velocity_after_impulse =
         velocity_value.xyz + inverse_mass * impulse;
-    float3 acceleration = inverse_mass * vertex_forces[index].xyz + gravity;
+    float3 acceleration =
+        inverse_mass * vertex_forces[index].xyz + gravity;
+    float effective_damping_rate = vertex_damping_rate;
 
     if (has_animation_target != 0u)
     {
@@ -148,17 +137,41 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
 
         float effective_weight =
             tracking_weight * tracking_attribute_multiplier;
-        float3 tracking_force =
-            tracking_stiffness * effective_weight *
-                (target_position_value.xyz - position_value.xyz) +
-            tracking_damping * effective_weight *
-                (target_velocity_value.xyz - velocity_value.xyz);
-        if (!all(isfinite(tracking_force)))
+        float effective_stiffness =
+            tracking_stiffness * effective_weight;
+        float effective_tracking_damping =
+            tracking_damping * effective_weight;
+        float3 tracking_spring_force =
+            effective_stiffness *
+            (target_position_value.xyz - position_value.xyz);
+        float3 tracking_target_velocity_force =
+            effective_tracking_damping * target_velocity_value.xyz;
+        effective_damping_rate +=
+            inverse_mass * effective_tracking_damping;
+        acceleration += inverse_mass *
+            (tracking_spring_force + tracking_target_velocity_force);
+        if (!isfinite(effective_damping_rate) ||
+            effective_damping_rate < 0.0f ||
+            !all(isfinite(acceleration)))
         {
             mark_tick_failure(205u);
             return;
         }
-        acceleration += inverse_mass * tracking_force;
+    }
+
+    // Treat the Kelvin-Voigt velocity term as an additional linear damping
+    // coefficient. The exponential update remains stable for large c / m.
+    float z = effective_damping_rate * delta_time;
+    float decay = exp(-z);
+    float damping_integral = delta_time;
+    if (z >= 1.0e-3f && effective_damping_rate > 0.0f)
+    {
+        damping_integral = (1.0f - decay) / effective_damping_rate;
+    }
+    else if (z > 0.0f)
+    {
+        damping_integral = delta_time *
+            (1.0f - 0.5f * z + (z * z) / 6.0f - (z * z * z) / 24.0f);
     }
 
     float3 next_velocity =
