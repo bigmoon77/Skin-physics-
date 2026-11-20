@@ -1900,28 +1900,6 @@ namespace skin_physics::runtime
             return true;
         }
 
-        bool world_has_physics_work(const world_slot& world) const
-        {
-            for (const model_slot& model : world.models)
-            {
-                if (!model.occupied)
-                {
-                    continue;
-                }
-                if (std::any_of(
-                        model.source_model.meshes.begin(),
-                        model.source_model.meshes.end(),
-                        [](const asset::mesh& mesh)
-                        {
-                            return mesh.mode != asset::physics_mode::none;
-                        }))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         bool submit_head_reservation(
             world_slot& world,
             uint32_t world_index)
