@@ -372,7 +372,10 @@
         "gpu_render_feedback_recomputes_normal_and_tangent_streams_before_commit",
         "per_world_render_candidate_ring_has_one_spare_slot_beyond_maximum_in_flight_ticks",
         "gpu_status_publishes_full_width_slot_identity_and_cpu_observation_publishes_candidate",
-        "host_render_lease_pins_cpu_observed_slot_and_blocks_ring_reuse"
+        "host_render_lease_pins_cpu_observed_slot_and_blocks_ring_reuse",
+        "host_render_lease_release_resubmits_the_same_pending_tick_reservation_without_new_frame_time",
+        "latest_render_candidate_resource_generation_is_monotonic_per_world_slot_lifetime",
+        "degenerate_deformed_render_triangles_fail_the_candidate_and_prevent_tick_commit"
       ]
     },
     {
@@ -895,13 +898,15 @@
       "render_candidate_slot_is_released_only_by_terminal_non_commit_or_cpu_observed_commit",
       "active_host_render_lease_keeps_its_original_slot_when_a_later_in_flight_tick_commits",
       "after_host_lease_release_the_newer_cpu_observed_candidate_becomes_latest",
-      "render_slot_id_and_generation_are_published_and_compared_as_full_32_bit_values"
+      "render_slot_id_and_generation_are_published_and_compared_as_full_32_bit_values",
+      "host_render_lease_release_resubmits_the_same_pending_tick_reservation_without_new_frame_time",
+      "latest_render_candidate_resource_generation_is_monotonic_per_world_slot_lifetime",
+      "degenerate_deformed_render_triangles_fail_the_candidate_and_prevent_tick_commit"
     ],
     "remaining_r0": [
       "per-Tick immutable Input Snapshot / Packet Version ownership and Segment Snapshot lifecycle",
       "Cloth / Collider solver integration into the World Runtime scheduler",
       "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation",
-      "CFL-based Soft Body stability limit now participates in World preflight; animation tracking stiffness limit and full Segment boundary table remain open",
       "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
       "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
     ],
