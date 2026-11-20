@@ -2862,6 +2862,7 @@ namespace skin_physics::runtime
                     world.budget_resolution = work_budget_resolution::retryable;
                     world.work_budget_block_flags = 0u;
                     world.cpu_preflight_block_status_observed = false;
+                    world.gpu_dynamic_toi_block_status_observed = false;
                     world.diagnostic =
                         "Head Reservation remains blocked until its predecessor Commit is CPU-observed.";
                     return;
@@ -3464,6 +3465,8 @@ namespace skin_physics::runtime
             world.scheduled_source_state_set = plan.destination_state_set;
             world.state = tick_state::in_flight;
             world.last_tick_status = status_code::ok;
+            world.cpu_preflight_block_status_observed = false;
+            world.gpu_dynamic_toi_block_status_observed = false;
             world.budget_block_origin = work_budget_block_origin::none;
             world.budget_resolution = work_budget_resolution::none;
             world.work_budget_block_flags = 0u;
@@ -4322,8 +4325,14 @@ namespace skin_physics::runtime
         }
 
         const bool has_head_reservation = !world->reservations.empty();
-        const bool has_observed_retryable_budget_block =
+        const bool head_is_oldest_uncommitted_sequence =
             has_head_reservation &&
+            world->gpu_committed_sequence !=
+                std::numeric_limits<uint64_t>::max() &&
+            world->reservations.front().sequence ==
+                world->gpu_committed_sequence + 1u;
+        const bool has_observed_retryable_budget_block =
+            head_is_oldest_uncommitted_sequence &&
             world->reservations.front().blocked &&
             !world->reservations.front().rejected &&
             !world->reservations.front().predecessor_blocked &&
