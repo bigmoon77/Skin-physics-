@@ -1340,8 +1340,178 @@ namespace
                 world, force_mesh_binding.lease_generation).success(),
             "Force / Impulse Render Candidate SRVs must release their shared Host Lease after readback.");
 
+        const float exact_mesh_event_delta =
+            force_mesh_positions[0u].y - untouched_mesh_positions[0u].y;
+        require(exact_mesh_event_delta < -2.0e-5f,
+            "The exact-Mesh reference must produce a measurable event response before target-scope comparisons.");
+
         require(runtime.reset_world(world).success(),
-            "Reset must clear committed Force / Impulse Events before the NO_FORCE_TARGET regression.");
+            "Reset must restore both Meshes before the Model-scope denominator regression.");
+        skin_physics::runtime::force_desc model_scope_force = force;
+        model_scope_force.event_id = 301u;
+        model_scope_force.target.mesh_index = skin_physics::asset::invalid_index;
+        skin_physics::runtime::force_desc model_scope_same_time_force =
+            same_time_force;
+        model_scope_same_time_force.event_id = 302u;
+        model_scope_same_time_force.target.mesh_index =
+            skin_physics::asset::invalid_index;
+        skin_physics::runtime::impulse_desc model_scope_impulse = impulse;
+        model_scope_impulse.event_id = 303u;
+        model_scope_impulse.target.mesh_index =
+            skin_physics::asset::invalid_index;
+        require(runtime.enqueue_force(world, model_scope_force).success() &&
+            runtime.enqueue_force(world, model_scope_same_time_force).success() &&
+            runtime.enqueue_impulse(world, model_scope_impulse).success(),
+            "Model-scope Force / Impulse Events must accept a Model Handle with an invalid Mesh Index.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "The Model-scope target World must enter Playing.");
+        skin_physics::runtime::advance_report model_scope_report;
+        require(runtime.advance(world, 0.01, &model_scope_report).success() &&
+            model_scope_report.submitted_tick_count == 1u &&
+            model_scope_report.in_flight_tick_count == 1u,
+            "A Model-scope Force / Impulse Tick must submit all Meshes through one target-scope denominator.");
+        skin_physics::runtime::world_status model_scope_status;
+        bool model_scope_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &model_scope_status).success(),
+                "Model-scope Force / Impulse Status polling must remain non-blocking.");
+            if (model_scope_status.in_flight_tick_count == 0u)
+            {
+                model_scope_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(model_scope_observed &&
+            model_scope_status.state == skin_physics::runtime::tick_state::committed &&
+            model_scope_status.gpu_committed_sequence == 1u,
+            "Model-scope Force / Impulse work must Commit after its shared Mesh reduction and Render validation.");
+
+        skin_physics::runtime::render_binding model_scope_mesh0_binding;
+        skin_physics::runtime::render_binding model_scope_mesh1_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &model_scope_mesh0_binding).success() &&
+            runtime.get_render_binding(
+                world, model, 1u, &model_scope_mesh1_binding).success(),
+            "Model-scope Render Candidates must publish both target Meshes under one Host Lease.");
+        const std::vector<test_gpu_float4> model_scope_mesh0_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), model_scope_mesh0_binding.position_srv,
+                model_scope_mesh0_binding.vertex_count);
+        const std::vector<test_gpu_float4> model_scope_mesh1_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), model_scope_mesh1_binding.position_srv,
+                model_scope_mesh1_binding.vertex_count);
+        const float model_scope_expected_delta = exact_mesh_event_delta * 0.5f;
+        const float model_scope_mesh0_delta =
+            model_scope_mesh0_positions[0u].y - untouched_mesh_positions[0u].y;
+        const float model_scope_mesh1_delta =
+            model_scope_mesh1_positions[0u].y - untouched_mesh_positions[0u].y;
+        require(std::abs(model_scope_mesh0_delta - model_scope_expected_delta) <= 3.0e-4f &&
+            std::abs(model_scope_mesh1_delta - model_scope_expected_delta) <= 3.0e-4f,
+            "A Model-scope event must divide one descriptor magnitude across both Meshes; each identical Mesh receives half the exact-Mesh response.");
+        require(runtime.release_render_bindings(
+                world, model_scope_mesh0_binding.lease_generation).success(),
+            "Model-scope Render Candidate SRVs must release their shared Host Lease.");
+
+        require(runtime.reset_world(world).success(),
+            "Reset must restore the original Model before the World-scope denominator regression.");
+        skin_physics::runtime::model_handle second_model;
+        require(runtime.add_model(world, model_desc, &second_model).success(),
+            "A second two-Mesh Soft Body Model must be registerable before a World-scope event.");
+        skin_physics::runtime::force_desc world_scope_force = force;
+        world_scope_force.event_id = 401u;
+        world_scope_force.target = {};
+        skin_physics::runtime::force_desc world_scope_same_time_force =
+            same_time_force;
+        world_scope_same_time_force.event_id = 402u;
+        world_scope_same_time_force.target = {};
+        skin_physics::runtime::impulse_desc world_scope_impulse = impulse;
+        world_scope_impulse.event_id = 403u;
+        world_scope_impulse.target = {};
+        require(runtime.enqueue_force(world, world_scope_force).success() &&
+            runtime.enqueue_force(world, world_scope_same_time_force).success() &&
+            runtime.enqueue_impulse(world, world_scope_impulse).success(),
+            "World-scope Force / Impulse Events must accept the default invalid Model / Mesh target.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "The World-scope target World must enter Playing.");
+        skin_physics::runtime::advance_report world_scope_report;
+        require(runtime.advance(world, 0.01, &world_scope_report).success() &&
+            world_scope_report.submitted_tick_count == 1u &&
+            world_scope_report.in_flight_tick_count == 1u,
+            "A World-scope Force / Impulse Tick must submit all registered Models and Meshes through one denominator.");
+        skin_physics::runtime::world_status world_scope_status;
+        bool world_scope_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &world_scope_status).success(),
+                "World-scope Force / Impulse Status polling must remain non-blocking.");
+            if (world_scope_status.in_flight_tick_count == 0u)
+            {
+                world_scope_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(world_scope_observed &&
+            world_scope_status.state == skin_physics::runtime::tick_state::committed &&
+            world_scope_status.gpu_committed_sequence == 1u,
+            "World-scope Force / Impulse work must Commit only after the shared four-Mesh denominator is applied.");
+
+        skin_physics::runtime::render_binding world_scope_mesh0_binding;
+        skin_physics::runtime::render_binding world_scope_mesh1_binding;
+        skin_physics::runtime::render_binding second_model_mesh0_binding;
+        skin_physics::runtime::render_binding second_model_mesh1_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &world_scope_mesh0_binding).success() &&
+            runtime.get_render_binding(
+                world, model, 1u, &world_scope_mesh1_binding).success() &&
+            runtime.get_render_binding(
+                world, second_model, 0u, &second_model_mesh0_binding).success() &&
+            runtime.get_render_binding(
+                world, second_model, 1u, &second_model_mesh1_binding).success(),
+            "World-scope Render Candidate publication must expose all four target Meshes.");
+        const std::vector<test_gpu_float4> world_scope_mesh0_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), world_scope_mesh0_binding.position_srv,
+                world_scope_mesh0_binding.vertex_count);
+        const std::vector<test_gpu_float4> world_scope_mesh1_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), world_scope_mesh1_binding.position_srv,
+                world_scope_mesh1_binding.vertex_count);
+        const std::vector<test_gpu_float4> second_model_mesh0_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), second_model_mesh0_binding.position_srv,
+                second_model_mesh0_binding.vertex_count);
+        const std::vector<test_gpu_float4> second_model_mesh1_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), second_model_mesh1_binding.position_srv,
+                second_model_mesh1_binding.vertex_count);
+        const float world_scope_expected_delta = exact_mesh_event_delta * 0.25f;
+        const std::vector<float> world_scope_deltas = {
+            world_scope_mesh0_positions[0u].y - untouched_mesh_positions[0u].y,
+            world_scope_mesh1_positions[0u].y - untouched_mesh_positions[0u].y,
+            second_model_mesh0_positions[0u].y - untouched_mesh_positions[0u].y,
+            second_model_mesh1_positions[0u].y - untouched_mesh_positions[0u].y
+        };
+        require(std::all_of(
+                world_scope_deltas.begin(), world_scope_deltas.end(),
+                [world_scope_expected_delta](float value)
+                {
+                    return std::abs(value - world_scope_expected_delta) <= 3.0e-4f;
+                }),
+            "A World-scope event must divide one descriptor magnitude across all four Meshes; each identical Mesh receives one quarter the exact-Mesh response.");
+        require(runtime.release_render_bindings(
+                world, world_scope_mesh0_binding.lease_generation).success(),
+            "World-scope Render Candidate SRVs must release their shared Host Lease.");
+
+        require(runtime.reset_world(world).success(),
+            "Reset must clear committed scoped Force / Impulse Events before the NO_FORCE_TARGET regression.");
         skin_physics::runtime::force_desc no_support_force = force;
         no_support_force.event_id = 201u;
         no_support_force.position = { 100.0f, 100.0f, 100.0f };
