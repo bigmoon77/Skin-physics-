@@ -439,9 +439,23 @@ void soft_body_fem(uint3 dispatch_id : SV_DispatchThreadID)
     float3 force3 = -rest_volume * mul(total_stress, input.rest_gradient3.xyz);
 
     bool output_finite =
+        all(isfinite(deformation[0])) &&
+        all(isfinite(deformation[1])) &&
+        all(isfinite(deformation[2])) &&
+        all(isfinite(rotation[0])) &&
+        all(isfinite(rotation[1])) &&
+        all(isfinite(rotation[2])) &&
+        all(isfinite(first_piola[0])) &&
+        all(isfinite(first_piola[1])) &&
+        all(isfinite(first_piola[2])) &&
+        all(isfinite(inversion_stress[0])) &&
+        all(isfinite(inversion_stress[1])) &&
+        all(isfinite(inversion_stress[2])) &&
         all(isfinite(force0)) && all(isfinite(force1)) &&
         all(isfinite(force2)) && all(isfinite(force3)) &&
         isfinite(jacobian) && isfinite(current_volume) &&
+        isfinite(strain_energy_density) &&
+        isfinite(inversion_energy_density) &&
         isfinite(elastic_energy);
     if (!output_finite)
     {
