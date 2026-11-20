@@ -186,6 +186,9 @@ namespace skin_physics::runtime
 
     struct target_filter
     {
+        // Invalid Model + invalid Mesh selects every supported Soft Body Mesh
+        // in the World. A valid Model + invalid Mesh selects every supported
+        // Soft Body Mesh in that Model. A valid Model + Mesh selects one Mesh.
         model_handle model;
         uint32_t mesh_index = asset::invalid_index;
     };
