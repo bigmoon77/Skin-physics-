@@ -180,5 +180,14 @@
     <None Include="shaders\runtime\tick_transaction_control.cs.hlsl">
       <Filter>Shader Files</Filter>
     </None>
+    <None Include="shaders\runtime\soft_body_fem.cs.hlsl">
+      <Filter>Shader Files</Filter>
+    </None>
+    <None Include="shaders\runtime\soft_body_force_gather.cs.hlsl">
+      <Filter>Shader Files</Filter>
+    </None>
+    <None Include="shaders\runtime\soft_body_integrate.cs.hlsl">
+      <Filter>Shader Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
