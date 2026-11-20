@@ -146,6 +146,36 @@ namespace skin_physics::runtime
             float reserved1 = 0.0f;
         };
 
+        struct alignas(16) gpu_soft_body_render_binding_input
+        {
+            uint32_t physics_vertices[4] = {};
+            float barycentric[4] = {};
+            float rest_offset_local[4] = {};
+            uint32_t metadata[4] = {};
+        };
+
+        struct alignas(16) gpu_soft_body_render_vertex_input
+        {
+            float texcoord[4] = {};
+            float fallback_normal[4] = {};
+            float fallback_tangent[4] = {};
+            uint32_t metadata[4] = {};
+        };
+
+        struct alignas(16) gpu_soft_body_render_parameters
+        {
+            uint32_t render_vertex_count = 0u;
+            uint32_t render_index_count = 0u;
+            uint32_t reserved[2] = {};
+        };
+
+        static_assert(sizeof(gpu_soft_body_render_binding_input) == 64,
+            "Soft Body Render Binding ABI must remain 64 bytes.");
+        static_assert(sizeof(gpu_soft_body_render_vertex_input) == 64,
+            "Soft Body Render Vertex ABI must remain 64 bytes.");
+        static_assert(sizeof(gpu_soft_body_render_parameters) == 16,
+            "Soft Body Render Parameters ABI must remain 16 bytes.");
+
         static_assert(sizeof(gpu_soft_body_tet_input) == 160,
             "Soft Body Tet Input ABI must remain 160 bytes.");
         static_assert(sizeof(gpu_soft_body_tet_output) == 224,
@@ -846,6 +876,27 @@ namespace skin_physics::runtime
 
     struct physics_runtime::implementation
     {
+        struct render_candidate_mesh_slot
+        {
+            Microsoft::WRL::ComPtr<ID3D11Buffer> position_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> position_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> position_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> normal_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> normal_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> normal_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> tangent_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> tangent_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> tangent_uav;
+        };
+
+        struct render_candidate_slot_state
+        {
+            uint32_t generation = 1u;
+            bool reserved = false;
+            bool committed = false;
+            uint64_t committed_tick_sequence = 0u;
+        };
+
         struct soft_body_gpu_mesh
         {
             uint32_t mesh_index = asset::invalid_index;
@@ -890,6 +941,21 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11Buffer> fem_parameters;
             Microsoft::WRL::ComPtr<ID3D11Buffer> gather_parameters;
             Microsoft::WRL::ComPtr<ID3D11Buffer> integration_parameters;
+
+            uint32_t render_vertex_count = 0u;
+            uint32_t render_index_count = 0u;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> render_binding_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> render_binding_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> render_vertex_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> render_vertex_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> render_index_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> render_index_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> render_vertex_triangle_offsets_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> render_vertex_triangle_offsets_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> render_vertex_triangle_ids_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> render_vertex_triangle_ids_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> render_parameters;
+            std::vector<render_candidate_mesh_slot> render_candidate_slots;
 
             double rest_density = 0.0;
             std::vector<float> initial_inverse_masses;
@@ -946,6 +1012,8 @@ namespace skin_physics::runtime
             uint64_t expected_source_generation = 1u;
             uint32_t expected_source_state_set = 0u;
             uint32_t expected_destination_state_set = 1u;
+            uint32_t render_candidate_slot_id = asset::invalid_index;
+            uint32_t render_candidate_slot_generation = 0u;
             Microsoft::WRL::ComPtr<ID3D11Buffer> plan_buffer;
             Microsoft::WRL::ComPtr<ID3D11Buffer> status_buffer;
         };
@@ -982,6 +1050,11 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> commit_control_uav;
             bool render_lease_active = false;
             uint64_t render_lease_generation = 0u;
+            uint32_t leased_render_slot_id = asset::invalid_index;
+            uint32_t leased_render_slot_generation = 0u;
+            std::vector<render_candidate_slot_state> render_candidate_slots;
+            uint32_t latest_render_slot_id = asset::invalid_index;
+            uint32_t latest_render_slot_generation = 0u;
             tick_state state = tick_state::idle;
             status_code last_tick_status = status_code::ok;
             work_budget_block_origin budget_block_origin =
@@ -1015,6 +1088,8 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_integrate_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_feedback_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_validate_shader;
         std::vector<world_slot> worlds;
         std::thread::id submission_thread;
         uint64_t device_generation = 1u;
