@@ -4318,10 +4318,9 @@ namespace skin_physics::physics
                     scheduled.world_time_duration != input.world_time_duration ||
                     !std::isfinite(scheduled.clip.clip_time_start) ||
                     !std::isfinite(scheduled.clip.clip_time_delta) ||
-                    scheduled.clip.clip_time_start +
-                        scheduled.clip.clip_time_delta !=
-                            scheduled.clip.clip_time_start +
-                                scheduled.clip.clip_time_delta)
+                    !std::isfinite(
+                        scheduled.clip.clip_time_start +
+                        scheduled.clip.clip_time_delta))
                 {
                     return fail(
                         animation_trajectory_packet_error::invalid_track,
@@ -4677,6 +4676,8 @@ namespace skin_physics::physics
                 candidate.blend_records.push_back(blend_record);
                 span_record.flags |= animation_span_flag_has_blend;
             }
+            candidate.span_world_time_starts.push_back(
+                input.world_time_start);
             candidate.span_records.push_back(span_record);
         }
 
@@ -4684,6 +4685,79 @@ namespace skin_physics::physics
         result.value = std::move(candidate);
         result.success = true;
         return result;
+    }
+
+
+    bool initialize_animation_span_cursor(
+        const animation_trajectory_packet& packet,
+        uint32_t span_record_index,
+        double segment_world_time,
+        animation_span_cursor_gpu_record& out_cursor,
+        std::string& diagnostic)
+    {
+        diagnostic.clear();
+        if (packet.animation_input_version == 0u ||
+            !std::isfinite(segment_world_time) ||
+            span_record_index >= packet.span_records.size() ||
+            packet.span_world_time_starts.size() !=
+                packet.span_records.size())
+        {
+            diagnostic =
+                "Animation Span Cursor initialization requires a valid immutable Packet, Span Index and finite World Time.";
+            return false;
+        }
+
+        const animation_span_gpu_record& span =
+            packet.span_records[span_record_index];
+        const double world_start =
+            packet.span_world_time_starts[span_record_index];
+        const double world_duration =
+            static_cast<double>(span.span_duration_seconds);
+        const double world_end = world_start + world_duration;
+        if (!std::isfinite(world_start) ||
+            !std::isfinite(world_duration) ||
+            world_duration <= 0.0 ||
+            !std::isfinite(world_end) ||
+            world_end <= world_start ||
+            segment_world_time < world_start ||
+            segment_world_time > world_end)
+        {
+            diagnostic =
+                "Animation Segment World Time is outside the selected positive Span interval.";
+            return false;
+        }
+
+        const double normalized_cursor =
+            (segment_world_time - world_start) / world_duration;
+        if (!std::isfinite(normalized_cursor) ||
+            normalized_cursor < 0.0 ||
+            normalized_cursor > 1.0)
+        {
+            diagnostic =
+                "Animation Segment Start cannot be mapped to a normalized Span Cursor.";
+            return false;
+        }
+
+        const float gpu_cursor =
+            static_cast<float>(normalized_cursor);
+        if (!std::isfinite(gpu_cursor) ||
+            gpu_cursor < 0.0f ||
+            gpu_cursor > 1.0f)
+        {
+            diagnostic =
+                "Animation Segment Start Cursor cannot be represented as a normalized GPU float.";
+            return false;
+        }
+
+        animation_span_cursor_gpu_record candidate;
+        candidate.span_record_index = span_record_index;
+        candidate.animation_input_version_low =
+            span.animation_input_version_low;
+        candidate.animation_input_version_high =
+            span.animation_input_version_high;
+        candidate.u_segment_start = gpu_cursor;
+        out_cursor = candidate;
+        return true;
     }
 
 }
