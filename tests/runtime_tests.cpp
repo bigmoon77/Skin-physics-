@@ -2155,6 +2155,38 @@ namespace
                 tracking_world, tracking_model, 0u, tracking_parameters).success(),
             "Positive Animation Tracking stiffness / damping must be accepted.");
 
+        require(runtime.set_playback_state(
+                tracking_world, skin_physics::runtime::playback_state::playing).success(),
+            "Tracking material without an Animation Trajectory must remain a valid Playing World.");
+        skin_physics::runtime::advance_report no_trajectory_report;
+        require(runtime.advance(
+                tracking_world, 0.01, &no_trajectory_report).success() &&
+            no_trajectory_report.submitted_tick_count == 1u &&
+            no_trajectory_report.in_flight_tick_count == 1u,
+            "Tracking coefficients alone must not activate the Tracking stability limit without an Animation Trajectory.");
+        skin_physics::runtime::world_status no_trajectory_status;
+        bool no_trajectory_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(tracking_world, &no_trajectory_status).success(),
+                "No-trajectory Status polling must remain non-blocking.");
+            if (no_trajectory_status.in_flight_tick_count == 0u)
+            {
+                no_trajectory_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(no_trajectory_observed &&
+            no_trajectory_status.state == skin_physics::runtime::tick_state::committed &&
+            no_trajectory_status.planned_substeps == 1u &&
+            no_trajectory_status.gpu_committed_sequence == 1u,
+            "A high Tracking stiffness must not increase the World Substep count when no Animation Trajectory is active.");
+
+        require(runtime.reset_world(tracking_world).success(),
+            "Reset must clear the no-trajectory control Tick before the active Tracking test.");
+
         skin_physics::runtime::transform tracking_sample;
         tracking_sample.translation = { 0.1f, 0.0f, 0.0f };
         require(runtime.set_model_transform_sample(
