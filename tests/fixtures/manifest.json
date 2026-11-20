@@ -906,7 +906,10 @@
       "host_readback_confirms_committed_position_normal_and_tangent_srvs_contain_valid_model_local_geometry",
       "render_feedback_inverse_root_translation_restores_model_local_position_space",
       "mismatched_future_render_lease_generation_is_rejected_without_releasing_active_lease",
-      "render_candidate_readback_validates_normalization_tangent_orthogonality_and_handedness"
+      "render_candidate_readback_validates_normalization_tangent_orthogonality_and_handedness",
+      "advance_report_sets_render_binding_backpressure_while_a_host_lease_blocks_submission",
+      "advance_report_sets_capacity_blocked_when_query_ring_admission_is_full",
+      "successful_submission_clears_previous_render_or_capacity_backpressure_status"
     ],
     "remaining_r0": [
       "Cloth / Collider solver integration into the World Runtime scheduler",
@@ -914,6 +917,6 @@
       "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
       "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
     ],
-    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project. Runtime Render Candidate SRV readback, model-local transform, normal/tangent validation, and Lease generation regressions are authored but not yet executed. Recent Windows CI jobs fail before reporting any build steps, so C++ / HLSL compilation and WARP execution remain unverified."
+    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project. Render SRV readback, model-local output, normal/tangent validation, CPU-observation gating, Lease generation, and advance_report backpressure regressions are authored but not yet executed. Recent Windows CI jobs fail before reporting any build steps; C++ / HLSL compilation and WARP execution remain unverified."
   }
 }
