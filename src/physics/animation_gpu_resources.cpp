@@ -267,6 +267,24 @@ namespace skin_physics::physics
                         "Animation Trajectory Packet contains an invalid Span Version, ID, Bound or absolute Buffer Range.";
                     return false;
                 }
+
+                for (uint32_t local_blend_index = 0u;
+                    local_blend_index < span.blend_record_count;
+                    ++local_blend_index)
+                {
+                    const animation_blend_gpu_record& blend =
+                        packet.blend_records[
+                            static_cast<std::size_t>(span.first_blend_record) +
+                            local_blend_index];
+                    if (blend.source_track_index >= span.track_record_count ||
+                        blend.target_track_index >= span.track_record_count ||
+                        blend.source_track_index == blend.target_track_index)
+                    {
+                        diagnostic =
+                            "Animation Trajectory Packet Blend Record references a Track outside its owning Span.";
+                        return false;
+                    }
+                }
             }
 
             for (const animation_track_gpu_record& track : packet.track_records)
@@ -570,24 +588,6 @@ namespace skin_physics::physics
             return false;
         }
 
-        animation_trajectory_gpu_resources candidate;
-        candidate._animation_input_version = packet.animation_input_version;
-        assign_buffer_count(packet.span_records, candidate._counts.spans);
-        assign_buffer_count(packet.track_records, candidate._counts.tracks);
-        assign_buffer_count(packet.channel_records, candidate._counts.channels);
-        assign_buffer_count(packet.blend_records, candidate._counts.blends);
-        assign_buffer_count(
-            packet.inverse_bind_matrices,
-            candidate._counts.inverse_bind_matrices);
-        assign_buffer_count(
-            packet.static_node_matrices,
-            candidate._counts.static_node_matrices);
-        assign_buffer_count(packet.skin_records, candidate._counts.skins);
-        assign_buffer_count(
-            packet.skin_joint_records,
-            candidate._counts.skin_joints);
-        assign_buffer_count(packet.collider_records, candidate._counts.colliders);
-
         if (!valid_structured_buffer_size(
                 packet.span_records, "Span", diagnostic) ||
             !valid_structured_buffer_size(
@@ -609,6 +609,24 @@ namespace skin_physics::physics
         {
             return false;
         }
+
+        animation_trajectory_gpu_resources candidate;
+        candidate._animation_input_version = packet.animation_input_version;
+        assign_buffer_count(packet.span_records, candidate._counts.spans);
+        assign_buffer_count(packet.track_records, candidate._counts.tracks);
+        assign_buffer_count(packet.channel_records, candidate._counts.channels);
+        assign_buffer_count(packet.blend_records, candidate._counts.blends);
+        assign_buffer_count(
+            packet.inverse_bind_matrices,
+            candidate._counts.inverse_bind_matrices);
+        assign_buffer_count(
+            packet.static_node_matrices,
+            candidate._counts.static_node_matrices);
+        assign_buffer_count(packet.skin_records, candidate._counts.skins);
+        assign_buffer_count(
+            packet.skin_joint_records,
+            candidate._counts.skin_joints);
+        assign_buffer_count(packet.collider_records, candidate._counts.colliders);
 
         if (!create_immutable_structured_buffer(
                 device, packet.span_records, "Span",
