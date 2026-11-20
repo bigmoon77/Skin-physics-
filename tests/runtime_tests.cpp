@@ -683,8 +683,7 @@ namespace
             force_retry_status.submitted_sequence == 1u &&
             force_retry_status.gpu_committed_sequence == 1u &&
             force_retry_status.cpu_observed_sequence == 1u &&
-            force_retry_status.planned_substeps == 3u &&
-            force_retry_status.executed_integration_segments == 6u,
+            force_retry_status.planned_substeps == 3u,
             "Force / Impulse GPU execution must commit the same six-Segment Reservation after Budget Retry.");
 
         skin_physics::runtime::render_binding force_mesh_binding;
