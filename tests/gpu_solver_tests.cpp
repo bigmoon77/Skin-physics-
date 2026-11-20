@@ -19,6 +19,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <d3d11.h>
@@ -2806,8 +2807,8 @@ namespace
         const gpu_tick_dispatch_plan successful_plan =
             make_plan(4u, 9u, 0u, 1u, 5u, 1u, 101u);
         const auto successful = run_case(successful_plan, validate_shader);
-        require(successful.first.dispatch_id_low == successful_plan.dispatch_id_low &&
-            successful.first.reservation_token_low == successful_plan.reservation_token_low &&
+        require(std::memcmp(&successful.first, &successful_plan,
+                sizeof(gpu_tick_dispatch_plan)) == 0 &&
             successful.second.last_gate_state == 1u &&
             successful.second.terminal_state == 6u &&
             successful.second.committed_sequence_low == 5u &&
