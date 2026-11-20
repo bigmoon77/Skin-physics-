@@ -1289,6 +1289,7 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_empty_world_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_soft_body_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_animation_skinning_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_weight_shader;
@@ -5406,6 +5407,8 @@ namespace skin_physics::runtime
         }
         const std::filesystem::path tick_shader_path =
             shader_root / "tick_transaction_control.cs.hlsl";
+        const std::filesystem::path soft_body_animation_skinning_path =
+            shader_root / "soft_body_animation_skinning.cs.hlsl";
         const std::filesystem::path soft_body_fem_path =
             shader_root / "soft_body_fem.cs.hlsl";
         const std::filesystem::path soft_body_gather_path =
@@ -5443,6 +5446,9 @@ namespace skin_physics::runtime
             !compile_runtime_compute_shader(
                 device, tick_shader_path, "tick_commit_control",
                 tick_commit_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_animation_skinning_path, "main",
+                soft_body_animation_skinning_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
                 device, soft_body_fem_path, "soft_body_fem",
                 soft_body_fem_shader.GetAddressOf(), diagnostic) ||
@@ -5489,6 +5495,8 @@ namespace skin_physics::runtime
         runtime.tick_validate_empty_world_shader = std::move(tick_validate_empty_shader);
         runtime.tick_validate_soft_body_shader = std::move(tick_validate_soft_body_shader);
         runtime.tick_commit_shader = std::move(tick_commit_shader);
+        runtime.soft_body_animation_skinning_shader =
+            std::move(soft_body_animation_skinning_shader);
         runtime.soft_body_fem_shader = std::move(soft_body_fem_shader);
         runtime.soft_body_force_gather_shader = std::move(soft_body_gather_shader);
         runtime.soft_body_force_weight_shader = std::move(soft_body_force_weight_shader);
