@@ -4050,9 +4050,9 @@ namespace skin_physics::physics
                     !finite(node.scale) ||
                     !std::isfinite(quaternion_length_squared) ||
                     quaternion_length_squared <= 1.0e-24 ||
-                    !finite_float(node.scale.x) ||
-                    !finite_float(node.scale.y) ||
-                    !finite_float(node.scale.z) ||
+                    !std::isfinite(node.scale.x) ||
+                    !std::isfinite(node.scale.y) ||
+                    !std::isfinite(node.scale.z) ||
                     node.scale.x <= 0.0f ||
                     node.scale.y <= 0.0f ||
                     node.scale.z <= 0.0f ||
@@ -4245,13 +4245,13 @@ namespace skin_physics::physics
                     "A non-Blend Animation Span must contain exactly one Track.");
             }
 
-            if (!finite_float(input.bounds.speed_bound) ||
-                !finite_float(input.bounds.acceleration_bound) ||
-                !finite_float(input.bounds.chord_deviation_bound) ||
+            if (!std::isfinite(input.bounds.speed_bound) ||
+                !std::isfinite(input.bounds.acceleration_bound) ||
+                !std::isfinite(input.bounds.chord_deviation_bound) ||
                 input.bounds.speed_bound < 0.0f ||
                 input.bounds.acceleration_bound < 0.0f ||
                 input.bounds.chord_deviation_bound < 0.0f ||
-                !finite_float(input.bounds.quaternion_normalization_lower_bound) ||
+                !std::isfinite(input.bounds.quaternion_normalization_lower_bound) ||
                 input.bounds.quaternion_normalization_lower_bound <= 1.0e-12f)
             {
                 return fail(
