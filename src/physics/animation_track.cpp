@@ -4098,12 +4098,13 @@ namespace skin_physics::physics
                     animation_trajectory_packet_error::invalid_skin,
                     "Skin Joint and Inverse Bind arrays must be non-empty and have matching sizes when Inverse Binds are supplied.");
             }
-            if (candidate.inverse_bind_matrices.size() >=
-                static_cast<std::size_t>(asset::invalid_index))
+            if (candidate.inverse_bind_matrices.size() >
+                static_cast<std::size_t>(asset::invalid_index) -
+                    skin.joints.size())
             {
                 return fail(
                     animation_trajectory_packet_error::capacity_exceeded,
-                    "Per-Skin Inverse Bind Matrix count exceeds the uint32 record index space.");
+                    "Per-Skin Inverse Bind Matrix range exceeds the uint32 record index space.");
             }
             skin_inverse_bind_base_by_index[skin_index] =
                 static_cast<uint32_t>(candidate.inverse_bind_matrices.size());
