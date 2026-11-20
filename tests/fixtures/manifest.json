@@ -914,7 +914,17 @@
       "multiple_in_flight_non_commit_reservations_are_restored_in_ascending_sequence_order",
       "earliest_failed_or_rejected_tick_result_is_not_overwritten_by_later_predecessor_blocks",
       "later_in_flight_slots_are_released_without_overwriting_terminal_world_status",
-      "terminal_failed_world_retains_all_uncommitted_reservations_until_explicit_reset"
+      "terminal_failed_world_retains_all_uncommitted_reservations_until_explicit_reset",
+      "cpu_preflight_budget_retry_requires_target_world_poll_observation",
+      "polling_another_world_does_not_authorize_target_world_budget_retry",
+      "gpu_dynamic_toi_budget_retry_requires_target_world_query_observation_and_zero_in_flight",
+      "idle_budget_change_is_rejected_while_whole_tick_or_step_request_is_pending",
+      "blocked_budget_cannot_decrease_either_admission_limit",
+      "blocked_budget_must_meet_exact_substep_and_segment_lower_bounds",
+      "rejected_budget_update_preserves_revision_reservation_sequence_and_time",
+      "predecessor_blocked_reservation_is_repreflighted_only_after_predecessor_commit_is_observed",
+      "older_committed_tick_does_not_clear_newer_cpu_preflight_budget_block_status",
+      "budget_retry_preserves_gpu_dynamic_toi_minimum_required_segment_lower_bound"
     ],
     "remaining_r0": [
       "Cloth / Collider solver integration into the World Runtime scheduler",
@@ -922,6 +932,6 @@
       "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
       "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
     ],
-    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project. Render SRV readback, model-local output, normal/tangent validation, CPU-observation gating, Lease generation, backpressure reporting, and multi-in-flight predecessor failure ordering regressions are authored but not yet executed. Recent Windows CI jobs fail before reporting any build steps; C++ / HLSL compilation and WARP execution remain unverified."
+    "validation": "WARP runtime and CPU physics regression sources are registered in the Windows test project. Render SRV readback, model-local output, normal/tangent validation, CPU-observation gating, Lease generation, backpressure reporting, multiple in-flight failure ordering, target-World budget observation, pending-Step exclusion, and monotonic / lower-bound Budget Retry regressions are authored but not yet executed. Recent Windows CI jobs fail before reporting any build steps; C++ / HLSL compilation and WARP execution remain unverified."
   }
 }
