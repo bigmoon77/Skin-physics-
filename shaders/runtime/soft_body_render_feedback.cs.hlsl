@@ -255,11 +255,12 @@ void prepare_render_candidate(uint3 dispatch_id : SV_DispatchThreadID)
         }
     }
 
+    float3 fallback_world_normal = safe_normalize(
+        rotate_by_quaternion(vertex.fallback_normal.xyz, root_rotation),
+        float3(0.0f, 1.0f, 0.0f));
     float3 world_normal = (vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u
-        ? safe_normalize(normal_sum, vertex.fallback_normal.xyz)
-        : safe_normalize(
-            rotate_by_quaternion(vertex.fallback_normal.xyz, root_rotation),
-            float3(0.0f, 1.0f, 0.0f));
+        ? safe_normalize(normal_sum, fallback_world_normal)
+        : fallback_world_normal;
     if ((vertex.metadata.x & ATTRIBUTE_NORMAL) != 0u)
     {
         normal = rotate_by_quaternion(world_normal, inverse_root_rotation);
