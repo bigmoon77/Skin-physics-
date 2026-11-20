@@ -1,3 +1,7 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "skin_physics/runtime/physics_runtime.hpp"
 
 #include "skin_physics/asset/importer.hpp"
@@ -1752,8 +1756,9 @@ namespace skin_physics::runtime
             float damping_rate = 0.0f;
             std::vector<float> initial_vertex_damping_rates;
             if (!build_soft_body_tet_inputs(
-                    mesh, default_parameters, tet_inputs, damping_rate,
-                    initial_vertex_damping_rates, diagnostic))
+                    mesh, mesh.vertex_attribute_weights, default_parameters,
+                    tet_inputs, damping_rate, initial_vertex_damping_rates,
+                    diagnostic))
             {
                 return false;
             }
