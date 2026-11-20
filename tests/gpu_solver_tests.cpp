@@ -3,6 +3,7 @@
 #include "skin_physics/physics/soft_body_fem.hpp"
 #include "skin_physics/physics/collision.hpp"
 #include "skin_physics/physics/animation_track.hpp"
+#include "skin_physics/physics/physics_mesh_skinning.hpp"
 #include "skin_physics/physics/animation_gpu_resources.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
 #include "skin_physics/physics/ccd.hpp"
@@ -3595,6 +3596,254 @@ namespace
     }
 
 
+    struct gpu_skin_weight_record
+    {
+        uint32_t joints0[4] = {};
+        uint32_t joints1[4] = {};
+        float weights0[4] = {};
+        float weights1[4] = {};
+    };
+
+    static_assert(sizeof(gpu_skin_weight_record) == 64u,
+        "GPU Skin Weight WARP fixture must match the Runtime 64-byte Physics Vertex record.");
+
+    struct alignas(16) gpu_skinning_parameters
+    {
+        uint32_t vertex_count = 0u;
+        uint32_t joint_count = 0u;
+        uint32_t reserved[2] = {};
+    };
+
+    static_assert(sizeof(gpu_skinning_parameters) == 16u);
+
+    void test_phase09_warp_physics_mesh_skinning_targets()
+    {
+        using skin_physics::asset::mat4;
+        using skin_physics::physics::animation_skin_pose;
+        using skin_physics::physics::evaluate_physics_mesh_skinning;
+        using skin_physics::physics::gpu_matrix4x4;
+        using skin_physics::physics::physics_mesh;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Physics Mesh LBS WARP regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        animation_skin_pose pose;
+        pose.mesh_node_index = 7u;
+        pose.skin_index = 3u;
+        mat4 joint0;
+        joint0.value[12u] = 2.0f;
+        mat4 joint1;
+        joint1.value[12u] = -1.0f;
+        pose.skin_matrices = { joint0, joint1 };
+        mat4 joint0_derivative;
+        joint0_derivative.value.fill(0.0f);
+        joint0_derivative.value[12u] = 2.0f;
+        mat4 joint1_derivative;
+        joint1_derivative.value.fill(0.0f);
+        joint1_derivative.value[12u] = -1.0f;
+        pose.skin_matrix_derivatives = { joint0_derivative, joint1_derivative };
+
+        physics_mesh cpu_mesh;
+        cpu_mesh.rest_positions = {
+            { 1.0f, 2.0f, 3.0f },
+            { 0.0f, 1.0f, 0.0f }
+        };
+        cpu_mesh.has_skin_weights = true;
+        cpu_mesh.skin_weights.resize(2u);
+        cpu_mesh.skin_weights[0u].joints[0u] = 0u;
+        cpu_mesh.skin_weights[0u].weights[0u] = 0.25f;
+        cpu_mesh.skin_weights[0u].joints[1u] = 1u;
+        cpu_mesh.skin_weights[0u].weights[1u] = 0.75f;
+        cpu_mesh.skin_weights[1u].joints[0u] = 1u;
+        cpu_mesh.skin_weights[1u].weights[0u] = 1.0f;
+        const auto cpu_result = evaluate_physics_mesh_skinning(
+            cpu_mesh, 7u, 3u, pose);
+        require(cpu_result.success,
+            "Physics Mesh CPU LBS reference must evaluate before GPU parity comparison.");
+
+        const std::vector<gpu_float4> rest_positions = {
+            { 1.0f, 2.0f, 3.0f, 1.0f },
+            { 0.0f, 1.0f, 0.0f, 1.0f }
+        };
+        std::vector<gpu_skin_weight_record> skin_weights(2u);
+        skin_weights[0u].joints0[0u] = 0u;
+        skin_weights[0u].weights0[0u] = 0.25f;
+        skin_weights[0u].joints0[1u] = 1u;
+        skin_weights[0u].weights0[1u] = 0.75f;
+        skin_weights[1u].joints0[0u] = 1u;
+        skin_weights[1u].weights0[0u] = 1.0f;
+
+        const auto to_gpu_matrix = [](const mat4& source)
+        {
+            gpu_matrix4x4 result;
+            result.column0 = {
+                source.value[0u], source.value[1u],
+                source.value[2u], source.value[3u]
+            };
+            result.column1 = {
+                source.value[4u], source.value[5u],
+                source.value[6u], source.value[7u]
+            };
+            result.column2 = {
+                source.value[8u], source.value[9u],
+                source.value[10u], source.value[11u]
+            };
+            result.column3 = {
+                source.value[12u], source.value[13u],
+                source.value[14u], source.value[15u]
+            };
+            return result;
+        };
+
+        std::vector<gpu_matrix4x4> skin_matrices = {
+            to_gpu_matrix(joint0), to_gpu_matrix(joint1)
+        };
+        std::vector<gpu_matrix4x4> skin_matrix_derivatives = {
+            to_gpu_matrix(joint0_derivative),
+            to_gpu_matrix(joint1_derivative)
+        };
+        const std::vector<gpu_float4> zero_targets(2u);
+        const std::vector<uint32_t> zero_status(1u, 0u);
+
+        const ComPtr<ID3D11Buffer> rest_buffer =
+            create_structured_buffer(
+                device.Get(), rest_positions, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> weights_buffer =
+            create_structured_buffer(
+                device.Get(), skin_weights, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> skin_matrices_buffer =
+            create_structured_buffer(
+                device.Get(), skin_matrices, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> skin_derivatives_buffer =
+            create_structured_buffer(
+                device.Get(), skin_matrix_derivatives, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> target_positions_buffer =
+            create_structured_buffer(
+                device.Get(), zero_targets, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> target_velocities_buffer =
+            create_structured_buffer(
+                device.Get(), zero_targets, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> target_status_buffer =
+            create_structured_buffer(
+                device.Get(), zero_status, D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11ShaderResourceView> rest_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), rest_buffer.Get(), 2u);
+        const ComPtr<ID3D11ShaderResourceView> weights_srv =
+            create_structured_srv<gpu_skin_weight_record>(
+                device.Get(), weights_buffer.Get(), 2u);
+        const ComPtr<ID3D11ShaderResourceView> matrices_srv =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), skin_matrices_buffer.Get(), 2u);
+        const ComPtr<ID3D11ShaderResourceView> derivatives_srv =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), skin_derivatives_buffer.Get(), 2u);
+        const ComPtr<ID3D11UnorderedAccessView> target_positions_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), target_positions_buffer.Get(), 2u);
+        const ComPtr<ID3D11UnorderedAccessView> target_velocities_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), target_velocities_buffer.Get(), 2u);
+        const ComPtr<ID3D11UnorderedAccessView> target_status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), target_status_buffer.Get(), 1u);
+
+        gpu_skinning_parameters parameters;
+        parameters.vertex_count = 2u;
+        parameters.joint_count = 2u;
+        const ComPtr<ID3D11Buffer> constants =
+            create_constant_buffer(device.Get(), &parameters, sizeof(parameters));
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_path(
+                "phase09_animation/physics_mesh_skinning.cs.hlsl"),
+            "main");
+
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            {
+                rest_srv.Get(), weights_srv.Get(),
+                matrices_srv.Get(), derivatives_srv.Get()
+            },
+            {
+                target_positions_uav.Get(),
+                target_velocities_uav.Get(),
+                target_status_uav.Get()
+            },
+            constants.Get(),
+            1u);
+
+        const std::vector<gpu_float4> gpu_positions =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), target_positions_buffer.Get(), 2u);
+        const std::vector<gpu_float4> gpu_velocities =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), target_velocities_buffer.Get(), 2u);
+        const std::vector<uint32_t> gpu_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), target_status_buffer.Get(), 1u);
+        require(gpu_status[0u] == 0u,
+            "Valid Physics Vertex Skin Weights / Skin Matrix inputs must not set the GPU Target status failure bit.");
+
+        for (std::size_t vertex_index = 0u; vertex_index < 2u; ++vertex_index)
+        {
+            const skin_physics::asset::vec3& expected_position =
+                cpu_result.target_positions[vertex_index];
+            const skin_physics::asset::vec3& expected_velocity =
+                cpu_result.target_velocities[vertex_index];
+            require(std::abs(gpu_positions[vertex_index].x - expected_position.x) <= 1.0e-6f &&
+                std::abs(gpu_positions[vertex_index].y - expected_position.y) <= 1.0e-6f &&
+                std::abs(gpu_positions[vertex_index].z - expected_position.z) <= 1.0e-6f &&
+                std::abs(gpu_positions[vertex_index].w - 1.0f) <= 1.0e-6f,
+                "WARP LBS Target Position must match the CPU double-precision oracle.");
+            require(std::abs(gpu_velocities[vertex_index].x - expected_velocity.x) <= 1.0e-6f &&
+                std::abs(gpu_velocities[vertex_index].y - expected_velocity.y) <= 1.0e-6f &&
+                std::abs(gpu_velocities[vertex_index].z - expected_velocity.z) <= 1.0e-6f &&
+                std::abs(gpu_velocities[vertex_index].w) <= 1.0e-6f,
+                "WARP LBS Target Velocity must match the analytic Skin Matrix derivative oracle.");
+        }
+
+        std::vector<gpu_skin_weight_record> invalid_weights = skin_weights;
+        invalid_weights[0u].joints0[0u] = 2u;
+        const ComPtr<ID3D11Buffer> invalid_weights_buffer =
+            create_structured_buffer(
+                device.Get(), invalid_weights, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> invalid_weights_srv =
+            create_structured_srv<gpu_skin_weight_record>(
+                device.Get(), invalid_weights_buffer.Get(), 2u);
+        const ComPtr<ID3D11Buffer> invalid_status_buffer =
+            create_structured_buffer(
+                device.Get(), zero_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> invalid_status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), invalid_status_buffer.Get(), 1u);
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            {
+                rest_srv.Get(), invalid_weights_srv.Get(),
+                matrices_srv.Get(), derivatives_srv.Get()
+            },
+            {
+                target_positions_uav.Get(),
+                target_velocities_uav.Get(),
+                invalid_status_uav.Get()
+            },
+            constants.Get(),
+            1u);
+        const std::vector<uint32_t> invalid_gpu_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
+        require(invalid_gpu_status[0u] == 1u,
+            "An influence outside the ordered Skin Joint range must set the GPU target failure bit and reject the generated target stream.");
+
+        std::cout << "[PASS] P09_WARP_PHYSICS_MESH_SKINNING_TARGETS\n";
+    }
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
@@ -3816,6 +4065,7 @@ int run_gpu_solver_tests()
     test_phase09_warp_animation_trajectory_packet_abi();
     test_phase09_warp_animation_skin_abi();
     test_phase09_warp_animation_trajectory_packet_upload();
+    test_phase09_warp_physics_mesh_skinning_targets();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
