@@ -233,6 +233,7 @@
       "automated_cases": [
         "P04_FIXED_STEP",
         "P04_FIXED_STEP_OVERLOAD",
+        "P04_STOP_PRESERVES_ACCUMULATOR",
         "P04_SCENARIO_JSON_ROUND_TRIP",
         "P04_RUN_RESULT_JSON",
         "SIM_PIPELINE_ORDER_AND_COMMIT",
