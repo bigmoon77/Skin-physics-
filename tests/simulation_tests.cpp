@@ -1682,6 +1682,103 @@ namespace
             "Multi-Track Clip Span scheduling must merge all Key times in descending order for reverse Playback.");
 
         const skin_physics::physics::animation_clip_span_schedule_result
+            forward_loop_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, true, 30.0, 0.5);
+        require(forward_loop_spans.success &&
+            forward_loop_spans.values.size() == 2u &&
+            forward_loop_spans.values[0u].clip.span_index == 0u &&
+            forward_loop_spans.values[1u].clip.span_index == 1u &&
+            std::abs(forward_loop_spans.values[0u].clip.clip_time_start - 1.75) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[0u].clip.clip_time_delta - 0.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[0u].world_time_start - 30.0) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[0u].world_time_duration - 0.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].clip.clip_time_start) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].clip.clip_time_delta - 0.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].world_time_start - 30.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].world_time_duration - 0.25) <= 1.0e-12,
+            "Forward Loop Playback must split at Clip duration and resume at zero in the next World-Time Span.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            reverse_loop_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 0.25, -1.0, true, 40.0, 0.5);
+        require(reverse_loop_spans.success &&
+            reverse_loop_spans.values.size() == 2u &&
+            std::abs(reverse_loop_spans.values[0u].clip.clip_time_start - 0.25) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[0u].clip.clip_time_delta + 0.25) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[1u].clip.clip_time_start - 2.0) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[1u].clip.clip_time_delta + 0.25) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[1u].world_time_start - 40.25) <= 1.0e-12,
+            "Reverse Loop Playback must split at zero and resume from Clip duration without reversing World-Time order.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            non_loop_clamp_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, false, 50.0, 0.5);
+        require(non_loop_clamp_spans.success &&
+            non_loop_clamp_spans.values.size() == 2u &&
+            std::abs(non_loop_clamp_spans.values[0u].clip.clip_time_delta - 0.25) <= 1.0e-12 &&
+            std::abs(non_loop_clamp_spans.values[0u].world_time_duration - 0.25) <= 1.0e-12 &&
+            std::abs(non_loop_clamp_spans.values[1u].clip.clip_time_start - 2.0) <= 1.0e-12 &&
+            non_loop_clamp_spans.values[1u].clip.clip_time_delta == 0.0 &&
+            std::abs(non_loop_clamp_spans.values[1u].world_time_start - 50.25) <= 1.0e-12 &&
+            std::abs(non_loop_clamp_spans.values[1u].world_time_duration - 0.25) <= 1.0e-12,
+            "Non-looping Playback must hold the terminal Clip Pose for the unconsumed World-Time interval.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            reverse_non_loop_clamp_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 0.25, -1.0, false, 60.0, 0.5);
+        require(reverse_non_loop_clamp_spans.success &&
+            reverse_non_loop_clamp_spans.values.size() == 2u &&
+            std::abs(reverse_non_loop_clamp_spans.values[0u].clip.clip_time_delta + 0.25) <= 1.0e-12 &&
+            reverse_non_loop_clamp_spans.values[1u].clip.clip_time_start == 0.0 &&
+            reverse_non_loop_clamp_spans.values[1u].clip.clip_time_delta == 0.0 &&
+            std::abs(reverse_non_loop_clamp_spans.values[1u].world_time_start - 60.25) <= 1.0e-12,
+            "Reverse non-looping Playback must hold the first Clip Pose after reaching zero.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            paused_playback_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 0.75, 0.0, true, 70.0, 0.4);
+        require(paused_playback_spans.success &&
+            paused_playback_spans.values.size() == 1u &&
+            std::abs(paused_playback_spans.values[0u].clip.clip_time_start - 0.75) <= 1.0e-12 &&
+            paused_playback_spans.values[0u].clip.clip_time_delta == 0.0 &&
+            std::abs(paused_playback_spans.values[0u].world_time_duration - 0.4) <= 1.0e-12,
+            "Paused Playback must preserve one zero-Clip-Time Span across the entire Logical Tick.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            exact_forward_wrap_boundary =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, true, 80.0, 0.25);
+        require(exact_forward_wrap_boundary.success &&
+            exact_forward_wrap_boundary.values.size() == 1u &&
+            exact_forward_wrap_boundary.values[0u].clip.clip_time_delta == 0.25,
+            "A Tick ending exactly on a Loop boundary must not emit an empty post-wrap Span.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            playback_span_overflow =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, true, 90.0, 5.0, 2u);
+        require(!playback_span_overflow.success &&
+            playback_span_overflow.values.empty() &&
+            playback_span_overflow.error ==
+                skin_physics::physics::animation_channel_span_error::capacity_exceeded,
+            "Pathological Loop Playback must fail atomically when the immutable Span count exceeds its configured limit.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            invalid_playback_start =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 2.1, 1.0, false, 100.0, 0.5);
+        require(!invalid_playback_start.success &&
+            invalid_playback_start.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time &&
+            invalid_playback_start.values.empty(),
+            "Playback scheduling must reject a Clip cursor outside the Asset Clip duration.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
             scheduled_clip_spans =
                 skin_physics::physics::schedule_animation_clip_spans(
                     synchronized_clip, 5u, 0.25, 1.5, 10.0, 0.6);
