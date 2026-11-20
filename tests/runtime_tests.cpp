@@ -1,6 +1,8 @@
 #include "skin_physics/runtime/physics_runtime.hpp"
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 #include "skin_physics/runtime/detail/force_distribution.hpp"
+#include "json_test_support.hpp"
+#include "test_support.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -334,6 +336,20 @@ namespace
         constexpr UINT data_bind_flags =
             D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
+        const test_json::value input = test_json::load(
+            test_support::fixture_path(
+                "phase13_force_distribution/warp_130.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path(
+                "phase13_force_distribution/warp_130.expected.json"));
+        const test_json::value::array& position_inputs =
+            input.at("positions").as_array();
+        const test_json::value::array& mass_inputs =
+            input.at("rest_lumped_masses").as_array();
+        require(position_inputs.size() == vertex_count &&
+            mass_inputs.size() == vertex_count,
+            "WARP fixture must contain exactly 130 Positions and Rest Lumped Mass values.");
+
         std::vector<skin_physics::asset::vec3> positions;
         std::vector<float> rest_masses;
         std::vector<test_gpu_float4> gpu_positions;
@@ -343,17 +359,18 @@ namespace
 
         for (uint32_t index = 0u; index < vertex_count; ++index)
         {
-            const uint32_t column = index % 13u;
-            const uint32_t row = index / 13u;
-            const int32_t depth_index =
-                static_cast<int32_t>((index * 7u) % 17u) - 8;
+            const test_json::value::array& position_values =
+                position_inputs[index].as_array();
+            require(position_values.size() == 3u,
+                "Each WARP fixture Position must contain three coordinates.");
+
             const skin_physics::asset::vec3 position = {
-                -0.9f + static_cast<float>(column) * 0.15f,
-                -0.6f + static_cast<float>(row) * 0.1f,
-                static_cast<float>(depth_index) * 0.04f
+                static_cast<float>(position_values[0u].as_number()),
+                static_cast<float>(position_values[1u].as_number()),
+                static_cast<float>(position_values[2u].as_number())
             };
             const float rest_mass =
-                0.2f + static_cast<float>(index % 11u) * 0.07f;
+                static_cast<float>(mass_inputs[index].as_number());
 
             positions.push_back(position);
             rest_masses.push_back(rest_mass);
@@ -362,10 +379,17 @@ namespace
             });
         }
 
+        const test_json::value::array& action_values =
+            input.at("action_position").as_array();
+        require(action_values.size() == 3u,
+            "WARP fixture Action Position must contain three coordinates.");
         const skin_physics::asset::vec3 action_position = {
-            0.04f, -0.03f, 0.02f
+            static_cast<float>(action_values[0u].as_number()),
+            static_cast<float>(action_values[1u].as_number()),
+            static_cast<float>(action_values[2u].as_number())
         };
-        constexpr float radius = 2.4f;
+        const float radius = static_cast<float>(
+            input.at("radius").as_number());
 
         skin_physics::runtime::detail::force_distribution_mesh_view mesh_view;
         mesh_view.segment_start_positions = &positions;
@@ -387,6 +411,21 @@ namespace
         require(cpu_reference.mesh_weights.size() == 1u &&
             cpu_reference.mesh_weights[0u].size() == vertex_count,
             "CPU reference must contain one weight for each WARP test vertex.");
+
+        const double expected_weight_sum =
+            expected.at("unnormalized_weight_sum").as_number();
+        const test_json::value::array& expected_weights =
+            expected.at("weights").as_array();
+        require(expected_weights.size() == vertex_count &&
+            std::abs(cpu_reference.unnormalized_weight_sum -
+                expected_weight_sum) <= 1.0e-10,
+            "CPU double-precision Force distribution must match the persistent 130-vertex golden.");
+        for (uint32_t index = 0u; index < vertex_count; ++index)
+        {
+            require(std::abs(cpu_reference.mesh_weights[0u][index] -
+                    expected_weights[index].as_number()) <= 1.0e-12,
+                "CPU double-precision per-vertex Force weights must match the persistent golden.");
+        }
 
         test_gpu_force_distribution_event_parameters event_parameters;
         event_parameters.vertex_count = vertex_count;
