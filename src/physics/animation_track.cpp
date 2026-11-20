@@ -2362,6 +2362,7 @@ namespace skin_physics::physics
                 const scheduled_animation_clip_span*& out_span) -> bool
         {
             out_span = nullptr;
+            uint32_t match_count = 0u;
             for (const scheduled_animation_clip_span& candidate : schedule.values)
             {
                 const double candidate_end =
@@ -2370,10 +2371,10 @@ namespace skin_physics::physics
                     candidate_end >= interval_end)
                 {
                     out_span = &candidate;
-                    return true;
+                    ++match_count;
                 }
             }
-            return false;
+            return match_count == 1u;
         };
 
         const auto find_covering_weight_span =
@@ -2383,6 +2384,7 @@ namespace skin_physics::physics
                 const animation_blend_weight_span*& out_span) -> bool
         {
             out_span = nullptr;
+            uint32_t match_count = 0u;
             for (const animation_blend_weight_span& candidate :
                 weight_schedule.values)
             {
@@ -2392,10 +2394,10 @@ namespace skin_physics::physics
                     candidate_end >= interval_end)
                 {
                     out_span = &candidate;
-                    return true;
+                    ++match_count;
                 }
             }
-            return false;
+            return match_count == 1u;
         };
 
         result.values.reserve(boundaries.size() - 1u);
@@ -2525,6 +2527,8 @@ namespace skin_physics::physics
                     diagnostic;
                 return result;
             }
+            scheduled.source.clip.span_index = scheduled.span_index;
+            scheduled.target.clip.span_index = scheduled.span_index;
 
             const double weight_source_duration =
                 weight_span->world_time_duration;
