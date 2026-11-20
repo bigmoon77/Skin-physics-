@@ -4295,6 +4295,12 @@ namespace skin_physics::runtime
         if (!thread.success()) return thread;
         implementation::world_slot* world = runtime.find_world(world_handle_value);
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
+        if (world->state == tick_state::failed ||
+            world->state == tick_state::rejected)
+        {
+            return make_status(status_code::invalid_state,
+                "A terminal World cannot change its Execution Budget; reset_world is required.");
+        }
         if (budget.maximum_substeps < world->description.minimum_substeps ||
             budget.maximum_substeps > runtime.desc.maximum_world_substeps_hard_limit ||
             budget.maximum_integration_segments_per_tick == 0u ||
@@ -4309,14 +4315,115 @@ namespace skin_physics::runtime
             return make_status(status_code::capacity_exceeded,
                 "World Execution Budget Revision cannot advance without uint64 overflow.");
         }
+
+        const bool has_head_reservation = !world->reservations.empty();
+        const bool has_observed_retryable_budget_block =
+            has_head_reservation &&
+            world->reservations.front().blocked &&
+            !world->reservations.front().rejected &&
+            !world->reservations.front().predecessor_blocked &&
+            world->state == tick_state::blocked &&
+            world->last_tick_status == status_code::work_budget_exceeded &&
+            world->budget_resolution == work_budget_resolution::retryable &&
+            (world->budget_block_origin ==
+                    work_budget_block_origin::cpu_preflight ||
+                world->budget_block_origin ==
+                    work_budget_block_origin::gpu_dynamic_toi);
+
+        if (has_head_reservation)
+        {
+            // No plan may be rebuilt while any earlier/later Submission or
+            // Event Query from this World is still unobserved.
+            if (!has_observed_retryable_budget_block ||
+                world->in_flight_tick_count != 0u ||
+                !world->in_flight_ticks.empty())
+            {
+                return make_status(status_code::busy,
+                    "Budget Retry requires the oldest CPU-observed retryable Work Budget Reservation and zero in-flight Ticks.");
+            }
+            if (world->budget_resolution == work_budget_resolution::hard_limit_reached)
+            {
+                return make_status(status_code::invalid_state,
+                    "The blocked Reservation exceeds an immutable Runtime Hard Limit; reset_world is required.");
+            }
+            if (world->budget_block_origin ==
+                    work_budget_block_origin::cpu_preflight &&
+                !world->cpu_preflight_block_status_observed)
+            {
+                return make_status(status_code::busy,
+                    "CPU Preflight Status must be returned by poll() before changing the World Execution Budget.");
+            }
+
+            const uint32_t required_segments =
+                world->budget_block_origin ==
+                    work_budget_block_origin::gpu_dynamic_toi
+                    ? world->minimum_required_integration_segments
+                    : world->planned_integration_segments;
+            if (budget.maximum_substeps <
+                    world->execution_budget.maximum_substeps ||
+                budget.maximum_integration_segments_per_tick <
+                    world->execution_budget.maximum_integration_segments_per_tick)
+            {
+                return make_status(status_code::invalid_argument,
+                    "A blocked Reservation may only increase or preserve each Admission Limit.");
+            }
+            if (budget.maximum_substeps < world->planned_substeps ||
+                budget.maximum_integration_segments_per_tick < required_segments)
+            {
+                return make_status(status_code::invalid_argument,
+                    "The new Admission Limits must satisfy the blocked Reservation's exact Substep and Segment lower bounds.");
+            }
+        }
+        else
+        {
+            const uint32_t pending_whole_ticks = count_pending_ticks(
+                world->accumulator_seconds,
+                world->description.fixed_delta_time);
+            if (world->in_flight_tick_count != 0u ||
+                !world->in_flight_ticks.empty() ||
+                world->reserved_tick_time > time_epsilon ||
+                world->pending_single_step_requests != 0u ||
+                pending_whole_ticks != 0u)
+            {
+                return make_status(status_code::busy,
+                    "An unblocked World may change its Execution Budget only without pending whole Ticks, Step Requests, Reservations or in-flight Submissions.");
+            }
+        }
+
+        // Commit the two Admission Limits and Revision only after every
+        // observation, lifecycle, monotonicity and required-work check succeeds.
         world->execution_budget = budget;
         world->description.maximum_substeps = budget.maximum_substeps;
         world->description.maximum_integration_segments_per_tick =
             budget.maximum_integration_segments_per_tick;
         ++world->execution_budget_revision;
-        if (!world->reservations.empty())
+
+        if (has_head_reservation)
         {
-            runtime.update_head_reservation_preflight(*world);
+            tick_reservation& reservation = world->reservations.front();
+            reservation.budget_revision = world->execution_budget_revision;
+            if (world->budget_block_origin ==
+                work_budget_block_origin::gpu_dynamic_toi)
+            {
+                // CPU Preflight was already satisfied by this fixed Reservation.
+                // GPU TOI's discovered Segment lower bound is the additional
+                // admission requirement; do not replace it with the base plan.
+                reservation.blocked = false;
+                reservation.predecessor_blocked = false;
+                world->state = tick_state::pending;
+                world->last_tick_status = status_code::ok;
+                world->budget_block_origin = work_budget_block_origin::none;
+                world->budget_resolution = work_budget_resolution::none;
+                world->work_budget_block_flags = 0u;
+                world->executed_integration_segments = 0u;
+                world->minimum_required_integration_segments = 0u;
+                world->diagnostic.clear();
+            }
+            else
+            {
+                world->cpu_preflight_block_status_observed = false;
+                runtime.update_head_reservation_preflight(*world);
+            }
         }
         return make_status(status_code::ok, {});
     }
