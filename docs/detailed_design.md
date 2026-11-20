@@ -638,7 +638,7 @@ Impact後に次Segmentが存在する場合、Impact後の位置・速度を次S
             tracking_stiffness * (animation_target - position)
           + tracking_damping * (animation_velocity - velocity))
 
-tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1。材料のmu/Kと独立して調整できる。過大な値は時間刻み安定条件に影響するため、後述の安定性推定に含める。
+tracking_stiffnessはN/m、tracking_dampingはN*s/m。tracking_weightは0～1で、Physics Attribute Paintのanimation_tracking channelとMeshのattribute multiplierから得る。材料のmu/Kと独立して調整できる。tracking_stiffness = 0は追従ForceとTracking固有の安定時間刻み制限を無効にする。過大な値は時間刻み安定条件に影響するため、後述の安定性推定に含める。
 
 ### 6.7.1 アニメーション不連続イベント
 
@@ -662,7 +662,15 @@ Segment開始時に評価した陽的内部力と半陰的Eulerによる位置�
 
     h_t = 3 * V0 / max_face_area
 
-として、初期サブステップ上限の推定値を次とする。Animation Tracking stiffnessがある場合は、頂点質量m_iと追従剛性k_iからomega_i=sqrt(k_i/m_i)を求め、delta_t_tracking_limit=c_tracking/omega_maxも評価する。c_trackingは初期値0.2として実測検証する。最終上限はFEMとTrackingの小さい方を採用する。
+として、初期サブステップ上限の推定値を次とする。Animation Tracking stiffnessがある場合は、頂点のRest Lumped Massを現在のMesh DensityへRemapした実効質量m_iとPaint適用後の追従剛性k_iから、
+
+    k_i = tracking_stiffness
+          * animation_tracking_attribute_multiplier
+          * animation_tracking_paint_i
+    omega_i = sqrt(k_i / m_i)
+    delta_t_tracking_limit = c_tracking / max_i(omega_i)
+
+を求める。inverse_mass_i = 0、m_i = 0、またはanimation_tracking_paint_i = 0の頂点はTracking周波数の対象外とする。Worldに有効なAnimation Trajectory入力がなく、Tracking力を評価しないTickではTracking時間刻み制限を適用しない。c_trackingは初期値0.2として実測検証する。最終上限はFEMとTrackingの小さい方を採用する。
 
     delta_t_limit = cfl_factor * min_t(h_t / c_p_t)
     cfl_factor = 0.2  // 初期評価値。実測で検証する
