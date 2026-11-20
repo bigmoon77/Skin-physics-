@@ -2260,13 +2260,18 @@ namespace
             blended_pose.value.global_matrices[1u];
         const mat4& blended_root_global_derivative =
             blended_pose.value.global_matrix_derivatives[0u];
+        const float expected_blended_joint_global_x =
+            6.0f * blended_root.rotation.z * blended_root.rotation.w;
+        const float expected_blended_joint_global_y =
+            3.0f * (1.0f -
+                2.0f * blended_root.rotation.z * blended_root.rotation.z);
         require(std::abs(blended_root_global.value[12u] - 2.0f) <= 1.0e-5f &&
-            std::abs(blended_joint_global.value[13u] - 3.0f) <= 1.0e-5f &&
+            std::abs(blended_joint_global.value[12u] -
+                expected_blended_joint_global_x) <= 1.0e-5f &&
+            std::abs(blended_joint_global.value[13u] -
+                expected_blended_joint_global_y) <= 1.0e-5f &&
             std::abs(blended_root_global_derivative.value[12u] - 2.5f) <= 1.0e-5f,
-            std::string("Blended Local Pose must be propagated through Parent * Local hierarchy matrices and analytic derivatives. root_x=") +
-                std::to_string(blended_root_global.value[12u]) +
-                " joint_y=" + std::to_string(blended_joint_global.value[13u]) +
-                " root_vx=" + std::to_string(blended_root_global_derivative.value[12u]));
+            "Blended Local Pose must be propagated through Parent Rotation, Parent * Local hierarchy matrices and analytic derivatives.");
 
         const mat4& blended_skin_matrix =
             blended_pose.value.skin_poses[0u].skin_matrices[0u];
