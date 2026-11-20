@@ -647,20 +647,123 @@ namespace
                 world, recovered_event_budget).success(),
             "Budget recovery must admit the exact event-derived Segment count.");
         skin_physics::runtime::advance_report force_retry_report;
+        skin_physics::runtime::world_status force_retry_pre_submit_status;
+        require(runtime.poll(world, &force_retry_pre_submit_status).success() &&
+            force_retry_pre_submit_status.state == skin_physics::runtime::tick_state::pending &&
+            force_retry_pre_submit_status.head_reserved_tick_sequence == 1u &&
+            force_retry_pre_submit_status.head_input_snapshot_version ==
+                force_snapshot_version &&
+            force_retry_pre_submit_status.planned_substeps == 3u &&
+            force_retry_pre_submit_status.planned_integration_segments == 6u,
+            "Budget Retry must preserve the exact Input Snapshot Version and event-derived Segment plan before GPU submission.");
+
         require(runtime.advance(world, 0.0, &force_retry_report).success() &&
-            force_retry_report.submitted_tick_count == 0u &&
-            force_retry_report.in_flight_tick_count == 0u &&
-            force_retry_report.pending_tick_count == 1u,
-            "The admitted Force / Impulse Reservation must retry without adding time or allocating another Tick.");
+            force_retry_report.submitted_tick_count == 1u &&
+            force_retry_report.in_flight_tick_count == 1u &&
+            force_retry_report.pending_tick_count == 0u,
+            "The admitted exact-Mesh Force / Impulse Reservation must submit without adding time or allocating another Tick.");
         skin_physics::runtime::world_status force_retry_status;
-        require(runtime.poll(world, &force_retry_status).success() &&
-            force_retry_status.state == skin_physics::runtime::tick_state::blocked &&
-            force_retry_status.last_tick_status == status_code::blocked_by_input &&
-            force_retry_status.head_reserved_tick_sequence == 1u &&
-            force_retry_status.head_input_snapshot_version == force_snapshot_version &&
+        bool force_tick_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &force_retry_status).success(),
+                "Force / Impulse GPU Tick observation must remain non-blocking.");
+            if (force_retry_status.in_flight_tick_count == 0u)
+            {
+                force_tick_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(force_tick_observed &&
+            force_retry_status.state == skin_physics::runtime::tick_state::committed &&
+            force_retry_status.last_tick_status == status_code::ok &&
+            force_retry_status.head_input_snapshot_version == 0u &&
+            force_retry_status.submitted_sequence == 1u &&
+            force_retry_status.gpu_committed_sequence == 1u &&
+            force_retry_status.cpu_observed_sequence == 1u &&
             force_retry_status.planned_substeps == 3u &&
-            force_retry_status.planned_integration_segments == 6u,
-            "Budget Retry must preserve the same Input Snapshot Version and exact Force / Impulse Segment schedule before the unimplemented GPU event pass blocks submission.");
+            force_retry_status.executed_integration_segments == 6u,
+            "Force / Impulse GPU execution must commit the same six-Segment Reservation after Budget Retry.");
+
+        skin_physics::runtime::render_binding force_mesh_binding;
+        skin_physics::runtime::render_binding untouched_mesh_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &force_mesh_binding).success() &&
+            runtime.get_render_binding(
+                world, model, 1u, &untouched_mesh_binding).success() &&
+            force_mesh_binding.committed_tick_sequence == 1u &&
+            untouched_mesh_binding.committed_tick_sequence == 1u,
+            "A completed Force / Impulse Tick must publish both Soft Body Mesh Render Candidates under one Host Lease.");
+        const std::vector<test_gpu_float4> force_mesh_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), force_mesh_binding.position_srv,
+                force_mesh_binding.vertex_count);
+        const std::vector<test_gpu_float4> untouched_mesh_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), untouched_mesh_binding.position_srv,
+                untouched_mesh_binding.vertex_count);
+        require(force_mesh_positions.size() == untouched_mesh_positions.size() &&
+            !force_mesh_positions.empty(),
+            "Force / Impulse Render Feedback must preserve selected and sibling Mesh vertex counts.");
+        require(force_mesh_positions[0u].y <
+                untouched_mesh_positions[0u].y - 2.0e-5f,
+            "The selected Mesh must receive its mass-weighted Force / Impulse while the sibling Mesh remains gravity-only.");
+        require(runtime.release_render_bindings(
+                world, force_mesh_binding.lease_generation).success(),
+            "Force / Impulse Render Candidate SRVs must release their shared Host Lease after readback.");
+
+        require(runtime.reset_world(world).success(),
+            "Reset must clear committed Force / Impulse Events before the NO_FORCE_TARGET regression.");
+        skin_physics::runtime::force_desc no_support_force = force;
+        no_support_force.event_id = 201u;
+        no_support_force.position = { 100.0f, 100.0f, 100.0f };
+        no_support_force.radius = 0.25f;
+        no_support_force.start_time = 0.0;
+        no_support_force.duration = 0.01;
+        require(runtime.enqueue_force(world, no_support_force).success(),
+            "A valid exact-Mesh Force descriptor with empty spatial support must be accepted for GPU classification.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "The no-support Force regression World must enter Playing.");
+        skin_physics::runtime::advance_report no_support_report;
+        require(runtime.advance(world, 0.01, &no_support_report).success() &&
+            no_support_report.submitted_tick_count == 1u &&
+            no_support_report.in_flight_tick_count == 1u,
+            "A no-support Force must reach the GPU reduction before diagnosis.");
+        skin_physics::runtime::world_status no_support_status;
+        bool no_support_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &no_support_status).success(),
+                "NO_FORCE_TARGET status observation must remain non-blocking.");
+            if (no_support_status.in_flight_tick_count == 0u)
+            {
+                no_support_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(no_support_observed &&
+            no_support_status.state == skin_physics::runtime::tick_state::rejected &&
+            no_support_status.last_tick_status == status_code::no_force_target &&
+            no_support_status.gpu_committed_sequence == 0u &&
+            std::abs(no_support_status.reserved_tick_time - 0.01) <= 1.0e-12 &&
+            no_support_status.diagnostic.find("NO_FORCE_TARGET") != std::string::npos,
+            "An empty Wendland C2 support must reject the Tick without committing time or losing its diagnostic Reservation.");
+        require(runtime.reset_world(world).success(),
+            "Reset must release the rejected no-support Reservation and Event.");
+
+        require(runtime.enqueue_force(world, force).success(),
+            "Reset must release the Event ID namespace so a new Tick can reuse the Event ID.");
+        require(runtime.reset_world(world).success(),
+            "A second Reset must clear the event before the Root Transform regression.");
+        skin_physics::runtime::world_status reset_status;
+        require(runtime.poll(world, &reset_status).success() &&
+            reset_status.head_input_snapshot_version == 0u,
+            "Reset must release the previous Tick Input Snapshot when its Reservation is cancelled.");
         require(runtime.reset_world(world).success(),
             "Reset must explicitly clear the unsupported Force / Impulse Events and retained Reservation.");
         require(runtime.enqueue_force(world, force).success(),
@@ -1312,7 +1415,7 @@ int run_runtime_tests()
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_SEGMENT_DT_PARAMETERS\n";
     std::cout << "[PASS] R1_RUNTIME_ANIMATION_INPUT_DEFERRED\n";
-    std::cout << "[PASS] R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED\n";
+    std::cout << "[PASS] R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE\n";
     test_runtime_multiple_in_flight_non_commit_preserves_head_sequence();
     std::cout << "[PASS] R0_WARP_PREDECESSOR_FAILURE_ORDER\n";

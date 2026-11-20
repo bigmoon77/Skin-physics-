@@ -27,6 +27,7 @@ StructuredBuffer<float4> source_velocities : register(t1);
 StructuredBuffer<float4> vertex_forces : register(t2);
 StructuredBuffer<float> inverse_masses : register(t3);
 StructuredBuffer<float> vertex_damping_rates : register(t4);
+StructuredBuffer<float4> vertex_impulses : register(t5);
 RWStructuredBuffer<float4> destination_positions : register(u0);
 RWStructuredBuffer<float4> destination_velocities : register(u1);
 RWStructuredBuffer<TickCommitControl> tick_commit_control_buffer : register(u2);
@@ -36,7 +37,7 @@ cbuffer IntegrationParameters : register(b0)
     uint vertex_count;
     float delta_time;
     float damping_rate;
-    float reserved0;
+    uint has_impulse_events;
     float3 gravity;
     float reserved1;
 };
@@ -92,9 +93,14 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
             (1.0f - 0.5f * z + (z * z) / 6.0f - (z * z * z) / 24.0f);
     }
 
+    float3 impulse = has_impulse_events != 0u
+        ? vertex_impulses[index].xyz
+        : 0.0f;
+    float3 velocity_after_impulse =
+        velocity_value.xyz + inverse_mass * impulse;
     float3 acceleration = inverse_mass * vertex_forces[index].xyz + gravity;
     float3 next_velocity =
-        decay * velocity_value.xyz + damping_integral * acceleration;
+        decay * velocity_after_impulse + damping_integral * acceleration;
     float3 next_position = position_value.xyz + delta_time * next_velocity;
 
     if (!all(isfinite(next_velocity)) || !all(isfinite(next_position)))

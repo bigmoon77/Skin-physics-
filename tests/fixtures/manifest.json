@@ -341,6 +341,18 @@
             "Segment-start Position changes refresh the spatial weight",
             "Zero support reports NO_FORCE_TARGET without partial output mutation"
           ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT",
+          "input": "phase13_force_distribution/wendland_c2.input.json",
+          "expected": "phase13_force_distribution/wendland_c2.expected.json",
+          "checks": [
+            "Exact selected Soft Body Mesh GPU reduction matches the CPU Wendland C2 reference",
+            "Force contribution is composed with FEM force before Segment integration",
+            "Impulse is applied once at Segment start before exponential damping",
+            "Sibling Mesh is unaffected by an exact-Mesh target",
+            "Zero-support Event rejects the Tick with NO_FORCE_TARGET and no Commit"
+          ]
         }
       ],
       "automated_cases": [
@@ -353,15 +365,15 @@
         "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
         "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE",
         "R1_RUNTIME_ANIMATION_INPUT_DEFERRED",
-        "R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED",
-        "R1_FORCE_WENDLAND_C2_CPU_REFERENCE"
+        "R1_FORCE_WENDLAND_C2_CPU_REFERENCE",
+        "R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT"
       ],
       "unimplemented": [
         "Physical / WARP numerical parity and SVD near-singular stress regression for the production Runtime path",
         "Animation Tracking stiffness / damping CFL limit and immutable animation trajectory packets",
         "Full World collision, Cloth constraint and Contact solver integration",
         "Physics Attribute Paint cache serialization and topology-change remapping",
-        "Production GPU Force / Impulse target-wide Wendland C2 reduction, application and one-shot Event consumption"
+        "Production GPU cross-Mesh World / Model target reduction and Cloth Force / Impulse support"
       ],
       "runtime_gpu_source_files": [
         "shaders/runtime/soft_body_fem.cs.hlsl",
@@ -370,7 +382,7 @@
         "shaders/runtime/tick_transaction_control.cs.hlsl",
         "shaders/runtime/soft_body_render_feedback.cs.hlsl"
       ],
-      "status_note": "The CPU double-precision Force / Impulse reference now implements pooled Rest Lumped Mass Wendland C2 weights and has a persistent golden regression. Production GPU reduction/application remains blocked pending the World-wide target-scope reduction and Event consumption path.",
+      "status_note": "Production Soft Body GPU Runtime supports mass-weighted Wendland C2 Force / Impulse events for an exact single-Mesh target. World / Model-wide cross-Mesh normalization and Cloth event application remain blocked. The WARP regression source checks selected-Mesh response, unaffected sibling Mesh state, one-shot Impulse integration, and NO_FORCE_TARGET rejection.",
       "warp_runtime_assertions": [
         "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",

@@ -143,10 +143,33 @@ namespace skin_physics::runtime
             uint32_t vertex_count = 0u;
             float delta_time = 0.0f;
             float damping_rate = 0.0f;
-            float reserved0 = 0.0f;
+            uint32_t has_impulse_events = 0u;
             float gravity[3] = {};
             float reserved1 = 0.0f;
         };
+
+        struct alignas(16) gpu_soft_body_distribution_reduce_parameters
+        {
+            uint32_t vertex_count = 0u;
+            uint32_t group_count = 0u;
+            uint32_t reserved[2] = {};
+        };
+
+        struct alignas(16) gpu_soft_body_force_distribution_parameters
+        {
+            uint32_t vertex_count = 0u;
+            uint32_t include_previous = 0u;
+            uint32_t reserved[2] = {};
+            float action_position[3] = {};
+            float radius = 0.0f;
+            float direction[3] = {};
+            float magnitude = 0.0f;
+        };
+
+        static_assert(sizeof(gpu_soft_body_distribution_reduce_parameters) == 16,
+            "Soft Body distribution reduction parameters must remain 16 bytes.");
+        static_assert(sizeof(gpu_soft_body_force_distribution_parameters) == 48,
+            "Soft Body Force / Impulse parameters must remain 48 bytes.");
 
         struct alignas(16) gpu_soft_body_render_binding_input
         {
@@ -1012,6 +1035,29 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_force_srv;
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> vertex_force_uav;
 
+            Microsoft::WRL::ComPtr<ID3D11Buffer> rest_lumped_mass_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> rest_lumped_mass_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> distribution_weight_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> distribution_weight_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> distribution_weight_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> distribution_partial_sum_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> distribution_partial_sum_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> distribution_partial_sum_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> distribution_sum_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> distribution_sum_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> distribution_sum_uav;
+            std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> force_accumulator_buffers;
+            std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
+                force_accumulator_srvs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, 2>
+                force_accumulator_uavs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> impulse_accumulator_buffers;
+            std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
+                impulse_accumulator_srvs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, 2>
+                impulse_accumulator_uavs;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> distribution_reduce_parameters;
+
             Microsoft::WRL::ComPtr<ID3D11Buffer> fem_parameters;
             Microsoft::WRL::ComPtr<ID3D11Buffer> gather_parameters;
             Microsoft::WRL::ComPtr<ID3D11Buffer> integration_parameters;
@@ -1218,6 +1264,10 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_gather_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_weight_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_reduce_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_finalize_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_apply_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_integrate_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_feedback_shader;
@@ -1851,6 +1901,134 @@ namespace skin_physics::runtime
                     candidate.vertex_force_uav.GetAddressOf()))
             {
                 diagnostic = "Unable to allocate Soft Body CSR / Mass / Force resources.";
+                return false;
+            }
+
+
+            if (mesh.mass.size() != candidate.vertex_count ||
+                candidate.vertex_count >
+                    std::numeric_limits<uint32_t>::max() / sizeof(float))
+            {
+                diagnostic =
+                    "Soft Body Force / Impulse distribution requires one Rest Lumped Mass per Physics Vertex.";
+                return false;
+            }
+
+            const uint32_t distribution_group_count =
+                (candidate.vertex_count - 1u) / 64u + 1u;
+            if (distribution_group_count >
+                D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
+            {
+                diagnostic =
+                    "Soft Body Force / Impulse distribution exceeds the D3D11 one-dimensional Dispatch group limit.";
+                return false;
+            }
+            const uint32_t distribution_weight_byte_width =
+                candidate.vertex_count * static_cast<uint32_t>(sizeof(float));
+            const UINT distribution_bind_flags =
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+            std::vector<float> zero_distribution_partials(
+                distribution_group_count, 0.0f);
+            std::vector<float> zero_distribution_sum(1u, 0.0f);
+            std::vector<gpu_float4> zero_accumulator(
+                candidate.vertex_count, gpu_float4{});
+
+            if (!create_structured_buffer_from_vector(
+                    device.Get(), mesh.mass, D3D11_BIND_SHADER_RESOURCE,
+                    candidate.rest_lumped_mass_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.rest_lumped_mass_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.rest_lumped_mass_srv.GetAddressOf()) ||
+                !create_structured_buffer(
+                    device.Get(), distribution_weight_byte_width,
+                    static_cast<uint32_t>(sizeof(float)),
+                    distribution_bind_flags, nullptr,
+                    candidate.distribution_weight_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.distribution_weight_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.distribution_weight_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), candidate.distribution_weight_buffer.Get(),
+                    candidate.vertex_count,
+                    candidate.distribution_weight_uav.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), zero_distribution_partials,
+                    distribution_bind_flags,
+                    candidate.distribution_partial_sum_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.distribution_partial_sum_buffer.Get(),
+                    distribution_group_count,
+                    candidate.distribution_partial_sum_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), candidate.distribution_partial_sum_buffer.Get(),
+                    distribution_group_count,
+                    candidate.distribution_partial_sum_uav.GetAddressOf()) ||
+                !create_structured_buffer_from_vector(
+                    device.Get(), zero_distribution_sum,
+                    distribution_bind_flags,
+                    candidate.distribution_sum_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.distribution_sum_buffer.Get(),
+                    1u, candidate.distribution_sum_srv.GetAddressOf()) ||
+                !create_structured_uav(
+                    device.Get(), candidate.distribution_sum_buffer.Get(),
+                    1u, candidate.distribution_sum_uav.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate Soft Body Force / Impulse distribution Weight and Reduction resources.";
+                return false;
+            }
+
+            for (uint32_t accumulator_index = 0u;
+                accumulator_index < 2u; ++accumulator_index)
+            {
+                if (!create_structured_buffer_from_vector(
+                        device.Get(), zero_accumulator,
+                        distribution_bind_flags,
+                        candidate.force_accumulator_buffers[accumulator_index].GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(),
+                        candidate.force_accumulator_buffers[accumulator_index].Get(),
+                        candidate.vertex_count,
+                        candidate.force_accumulator_srvs[accumulator_index].GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(),
+                        candidate.force_accumulator_buffers[accumulator_index].Get(),
+                        candidate.vertex_count,
+                        candidate.force_accumulator_uavs[accumulator_index].GetAddressOf()) ||
+                    !create_structured_buffer_from_vector(
+                        device.Get(), zero_accumulator,
+                        distribution_bind_flags,
+                        candidate.impulse_accumulator_buffers[accumulator_index].GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(),
+                        candidate.impulse_accumulator_buffers[accumulator_index].Get(),
+                        candidate.vertex_count,
+                        candidate.impulse_accumulator_srvs[accumulator_index].GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(),
+                        candidate.impulse_accumulator_buffers[accumulator_index].Get(),
+                        candidate.vertex_count,
+                        candidate.impulse_accumulator_uavs[accumulator_index].GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate Soft Body Force / Impulse accumulation buffers.";
+                    return false;
+                }
+            }
+
+            gpu_soft_body_distribution_reduce_parameters distribution_reduce_parameters;
+            distribution_reduce_parameters.vertex_count = candidate.vertex_count;
+            distribution_reduce_parameters.group_count = distribution_group_count;
+            if (!create_constant_buffer(
+                    device.Get(), sizeof(distribution_reduce_parameters),
+                    &distribution_reduce_parameters,
+                    candidate.distribution_reduce_parameters.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate Soft Body Force / Impulse reduction parameters.";
                 return false;
             }
 
@@ -2683,13 +2861,55 @@ namespace skin_physics::runtime
             return true;
         }
 
+
+        bool supports_single_mesh_soft_body_target(
+            const world_slot& world,
+            const target_filter& target) const
+        {
+            if (target.model.index == asset::invalid_index ||
+                target.mesh_index == asset::invalid_index ||
+                target.model.index >= world.models.size())
+            {
+                return false;
+            }
+
+            const model_slot& model = world.models[target.model.index];
+            if (!model.occupied ||
+                model.generation != target.model.generation ||
+                target.mesh_index >= model.source_model.meshes.size() ||
+                model.source_model.meshes[target.mesh_index].mode !=
+                    asset::physics_mode::soft_body)
+            {
+                return false;
+            }
+
+            return std::any_of(
+                model.gpu_soft_body_meshes.begin(),
+                model.gpu_soft_body_meshes.end(),
+                [&target](const soft_body_gpu_mesh& value)
+                {
+                    return value.mesh_index == target.mesh_index;
+                });
+        }
+
         bool world_has_unsupported_physics_work(
             const world_slot& world,
             const tick_input_snapshot& input_snapshot) const
         {
-            if (!input_snapshot.forces.empty() || !input_snapshot.impulses.empty())
+            for (const force_desc& force : input_snapshot.forces)
             {
-                return true;
+                if (!supports_single_mesh_soft_body_target(world, force.target))
+                {
+                    return true;
+                }
+            }
+
+            for (const impulse_desc& impulse : input_snapshot.impulses)
+            {
+                if (!supports_single_mesh_soft_body_target(world, impulse.target))
+                {
+                    return true;
+                }
             }
 
             if (!input_snapshot.colliders.empty())
@@ -2742,6 +2962,141 @@ namespace skin_physics::runtime
                 }
             }
             return false;
+        }
+
+
+        bool append_soft_body_force_distribution_event(
+            world_slot& world,
+            const soft_body_gpu_mesh& gpu_mesh,
+            ID3D11ShaderResourceView* source_position_srv,
+            ID3D11ShaderResourceView* previous_accumulator_srv,
+            ID3D11UnorderedAccessView* next_accumulator_uav,
+            const gpu_soft_body_force_distribution_parameters& parameters,
+            uint32_t model_index,
+            uint32_t segment_index,
+            uint64_t event_id,
+            bool is_impulse,
+            simulation::d3d11_compute_graph& graph,
+            std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
+                out_segment_parameter_buffers,
+            std::string& diagnostic)
+        {
+            if (source_position_srv == nullptr ||
+                previous_accumulator_srv == nullptr ||
+                next_accumulator_uav == nullptr ||
+                soft_body_force_weight_shader == nullptr ||
+                soft_body_force_reduce_shader == nullptr ||
+                soft_body_force_finalize_shader == nullptr ||
+                soft_body_force_apply_shader == nullptr)
+            {
+                diagnostic =
+                    "Soft Body Force / Impulse distribution Pass is missing a required shader or resource.";
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> event_parameters;
+            if (!create_constant_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(parameters)),
+                    &parameters,
+                    event_parameters.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate an immutable Force / Impulse Event Parameter Buffer.";
+                return false;
+            }
+            out_segment_parameter_buffers.push_back(std::move(event_parameters));
+            ID3D11Buffer* event_parameter_buffer =
+                out_segment_parameter_buffers.back().Get();
+
+            const uint32_t dispatch_group_count =
+                (gpu_mesh.vertex_count - 1u) / 64u + 1u;
+            const std::string event_kind = is_impulse ? "impulse" : "force";
+            const std::string pass_suffix =
+                "_m" + std::to_string(model_index) +
+                "_mesh" + std::to_string(gpu_mesh.mesh_index) +
+                "_segment" + std::to_string(segment_index) +
+                "_event" + std::to_string(event_id);
+
+            simulation::compute_pass_desc weight_pass;
+            weight_pass.name =
+                "soft_body_" + event_kind + "_weight" + pass_suffix;
+            weight_pass.shader = soft_body_force_weight_shader.Get();
+            weight_pass.shader_resources = {
+                { 0u, source_position_srv },
+                { 1u, gpu_mesh.rest_lumped_mass_srv.Get() }
+            };
+            weight_pass.unordered_access_views = {
+                { 0u, gpu_mesh.distribution_weight_uav.Get(), 0xffffffffu },
+                { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+            };
+            weight_pass.constant_buffers = {
+                { 0u, event_parameter_buffer }
+            };
+            weight_pass.group_count_x = dispatch_group_count;
+            if (!graph.add_pass(weight_pass, diagnostic))
+            {
+                return false;
+            }
+
+            simulation::compute_pass_desc reduce_pass;
+            reduce_pass.name =
+                "soft_body_" + event_kind + "_reduce" + pass_suffix;
+            reduce_pass.shader = soft_body_force_reduce_shader.Get();
+            reduce_pass.shader_resources = {
+                { 2u, gpu_mesh.distribution_weight_srv.Get() }
+            };
+            reduce_pass.unordered_access_views = {
+                { 2u, gpu_mesh.distribution_partial_sum_uav.Get(), 0xffffffffu },
+                { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+            };
+            reduce_pass.constant_buffers = {
+                { 1u, gpu_mesh.distribution_reduce_parameters.Get() }
+            };
+            reduce_pass.group_count_x = dispatch_group_count;
+            if (!graph.add_pass(reduce_pass, diagnostic))
+            {
+                return false;
+            }
+
+            simulation::compute_pass_desc finalize_pass;
+            finalize_pass.name =
+                "soft_body_" + event_kind + "_finalize" + pass_suffix;
+            finalize_pass.shader = soft_body_force_finalize_shader.Get();
+            finalize_pass.shader_resources = {
+                { 2u, gpu_mesh.distribution_partial_sum_srv.Get() }
+            };
+            finalize_pass.unordered_access_views = {
+                { 3u, gpu_mesh.distribution_sum_uav.Get(), 0xffffffffu },
+                { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+            };
+            finalize_pass.constant_buffers = {
+                { 1u, gpu_mesh.distribution_reduce_parameters.Get() }
+            };
+            finalize_pass.group_count_x = 1u;
+            if (!graph.add_pass(finalize_pass, diagnostic))
+            {
+                return false;
+            }
+
+            simulation::compute_pass_desc apply_pass;
+            apply_pass.name =
+                "soft_body_" + event_kind + "_apply" + pass_suffix;
+            apply_pass.shader = soft_body_force_apply_shader.Get();
+            apply_pass.shader_resources = {
+                { 3u, gpu_mesh.distribution_weight_srv.Get() },
+                { 4u, gpu_mesh.distribution_sum_srv.Get() },
+                { 5u, previous_accumulator_srv }
+            };
+            apply_pass.unordered_access_views = {
+                { 4u, next_accumulator_uav, 0xffffffffu },
+                { 1u, world.commit_control_uav.Get(), 0xffffffffu }
+            };
+            apply_pass.constant_buffers = {
+                { 0u, event_parameter_buffer }
+            };
+            apply_pass.group_count_x = dispatch_group_count;
+            return graph.add_pass(apply_pass, diagnostic);
         }
 
         bool append_soft_body_tick_passes(
@@ -2924,18 +3279,183 @@ namespace skin_physics::runtime
                             return false;
                         }
 
+
+                        ID3D11ShaderResourceView* integrated_force_srv =
+                            gpu_mesh.vertex_force_srv.Get();
+                        ID3D11ShaderResourceView* integrated_impulse_srv =
+                            gpu_mesh.vertex_force_srv.Get();
+                        uint32_t applied_force_event_count = 0u;
+                        uint32_t applied_impulse_event_count = 0u;
+
+                        std::vector<uint32_t> active_force_indices =
+                            segment.active_force_indices;
+                        for (uint32_t event_index : active_force_indices)
+                        {
+                            if (event_index >= input_snapshot.forces.size())
+                            {
+                                diagnostic =
+                                    "Integration Segment contains an invalid Force Event index.";
+                                return false;
+                            }
+                        }
+                        std::sort(
+                            active_force_indices.begin(),
+                            active_force_indices.end(),
+                            [&input_snapshot](
+                                uint32_t left_index, uint32_t right_index)
+                            {
+                                return input_snapshot.forces[left_index].event_id <
+                                    input_snapshot.forces[right_index].event_id;
+                            });
+
+                        for (uint32_t event_index : active_force_indices)
+                        {
+                            const force_desc& force =
+                                input_snapshot.forces[event_index];
+                            if (force.target.model.index != model_index ||
+                                force.target.model.generation != model.generation ||
+                                force.target.mesh_index != gpu_mesh.mesh_index)
+                            {
+                                continue;
+                            }
+
+                            gpu_soft_body_force_distribution_parameters event_parameters;
+                            event_parameters.vertex_count = gpu_mesh.vertex_count;
+                            event_parameters.include_previous = 1u;
+                            event_parameters.action_position[0] = force.position.x;
+                            event_parameters.action_position[1] = force.position.y;
+                            event_parameters.action_position[2] = force.position.z;
+                            event_parameters.radius = force.radius;
+                            event_parameters.direction[0] = force.direction.x;
+                            event_parameters.direction[1] = force.direction.y;
+                            event_parameters.direction[2] = force.direction.z;
+                            event_parameters.magnitude = force.magnitude;
+
+                            const uint32_t accumulator_index =
+                                applied_force_event_count & 1u;
+                            ID3D11ShaderResourceView* previous_accumulator_srv =
+                                applied_force_event_count == 0u
+                                    ? gpu_mesh.vertex_force_srv.Get()
+                                    : gpu_mesh.force_accumulator_srvs[
+                                        (applied_force_event_count - 1u) & 1u].Get();
+
+                            if (!append_soft_body_force_distribution_event(
+                                    world, gpu_mesh, source_position_srv,
+                                    previous_accumulator_srv,
+                                    gpu_mesh.force_accumulator_uavs[accumulator_index].Get(),
+                                    event_parameters, model_index, segment_index,
+                                    force.event_id, false, graph,
+                                    out_segment_parameter_buffers, diagnostic))
+                            {
+                                return false;
+                            }
+                            integrated_force_srv =
+                                gpu_mesh.force_accumulator_srvs[accumulator_index].Get();
+                            ++applied_force_event_count;
+                        }
+
+                        std::vector<uint32_t> impulse_indices =
+                            segment.impulse_indices;
+                        for (uint32_t event_index : impulse_indices)
+                        {
+                            if (event_index >= input_snapshot.impulses.size())
+                            {
+                                diagnostic =
+                                    "Integration Segment contains an invalid Impulse Event index.";
+                                return false;
+                            }
+                        }
+                        std::sort(
+                            impulse_indices.begin(),
+                            impulse_indices.end(),
+                            [&input_snapshot](
+                                uint32_t left_index, uint32_t right_index)
+                            {
+                                return input_snapshot.impulses[left_index].event_id <
+                                    input_snapshot.impulses[right_index].event_id;
+                            });
+
+                        for (uint32_t event_index : impulse_indices)
+                        {
+                            const impulse_desc& impulse =
+                                input_snapshot.impulses[event_index];
+                            if (impulse.target.model.index != model_index ||
+                                impulse.target.model.generation != model.generation ||
+                                impulse.target.mesh_index != gpu_mesh.mesh_index)
+                            {
+                                continue;
+                            }
+
+                            gpu_soft_body_force_distribution_parameters event_parameters;
+                            event_parameters.vertex_count = gpu_mesh.vertex_count;
+                            event_parameters.include_previous =
+                                applied_impulse_event_count == 0u ? 0u : 1u;
+                            event_parameters.action_position[0] = impulse.position.x;
+                            event_parameters.action_position[1] = impulse.position.y;
+                            event_parameters.action_position[2] = impulse.position.z;
+                            event_parameters.radius = impulse.radius;
+                            event_parameters.direction[0] = impulse.direction.x;
+                            event_parameters.direction[1] = impulse.direction.y;
+                            event_parameters.direction[2] = impulse.direction.z;
+                            event_parameters.magnitude = impulse.impulse_magnitude;
+
+                            const uint32_t accumulator_index =
+                                applied_impulse_event_count & 1u;
+                            ID3D11ShaderResourceView* previous_accumulator_srv =
+                                applied_impulse_event_count == 0u
+                                    ? gpu_mesh.vertex_force_srv.Get()
+                                    : gpu_mesh.impulse_accumulator_srvs[
+                                        (applied_impulse_event_count - 1u) & 1u].Get();
+
+                            if (!append_soft_body_force_distribution_event(
+                                    world, gpu_mesh, source_position_srv,
+                                    previous_accumulator_srv,
+                                    gpu_mesh.impulse_accumulator_uavs[accumulator_index].Get(),
+                                    event_parameters, model_index, segment_index,
+                                    impulse.event_id, true, graph,
+                                    out_segment_parameter_buffers, diagnostic))
+                            {
+                                return false;
+                            }
+                            integrated_impulse_srv =
+                                gpu_mesh.impulse_accumulator_srvs[accumulator_index].Get();
+                            ++applied_impulse_event_count;
+                        }
+
                         simulation::compute_pass_desc integrate_pass;
                         integrate_pass.name = "soft_body_integrate_m" +
                             std::to_string(model_index) + "_mesh" +
                             std::to_string(gpu_mesh.mesh_index) + "_segment" +
                             std::to_string(segment_index);
                         integrate_pass.shader = soft_body_integrate_shader.Get();
+                        gpu_soft_body_integration_parameters final_integration_parameters =
+                            integration_parameters;
+                        final_integration_parameters.has_impulse_events =
+                            applied_impulse_event_count != 0u ? 1u : 0u;
+                        Microsoft::WRL::ComPtr<ID3D11Buffer> final_segment_parameters;
+                        if (!create_constant_buffer(
+                                device.Get(),
+                                static_cast<uint32_t>(
+                                    sizeof(final_integration_parameters)),
+                                &final_integration_parameters,
+                                final_segment_parameters.GetAddressOf()))
+                        {
+                            diagnostic =
+                                "Unable to allocate final per-Segment Integration Parameters with the Impulse presence flag.";
+                            return false;
+                        }
+                        out_segment_parameter_buffers.push_back(
+                            std::move(final_segment_parameters));
+                        segment_parameters_buffer =
+                            out_segment_parameter_buffers.back().Get();
+
                         integrate_pass.shader_resources = {
                             { 0u, source_position_srv },
                             { 1u, source_velocity_srv },
-                            { 2u, gpu_mesh.vertex_force_srv.Get() },
+                            { 2u, integrated_force_srv },
                             { 3u, gpu_mesh.inverse_mass_srv.Get() },
-                            { 4u, gpu_mesh.vertex_damping_rate_srv.Get() }
+                            { 4u, gpu_mesh.vertex_damping_rate_srv.Get() },
+                            { 5u, integrated_impulse_srv }
                         };
                         integrate_pass.unordered_access_views = {
                             { 0u, destination_position_uav, 0xffffffffu },
@@ -3763,7 +4283,7 @@ namespace skin_physics::runtime
                 world.budget_resolution = work_budget_resolution::none;
                 world.work_budget_block_flags = 0u;
                 world.diagnostic =
-                    "GPU submission is deferred because this World contains Force / Impulse, Animation / Root Transform, Cloth or Collider work that is not yet connected to the Runtime scheduler.";
+                    "GPU submission is deferred because this World contains a broad Force / Impulse target, Animation / Root Transform, Cloth or Collider input without a connected solver path. Force / Impulse currently require one exact Soft Body Model Mesh target.";
                 return false;
             }
             if (world.render_lease_active)
@@ -4328,6 +4848,8 @@ namespace skin_physics::runtime
             shader_root / "soft_body_force_gather.cs.hlsl";
         const std::filesystem::path soft_body_integrate_path =
             shader_root / "soft_body_integrate.cs.hlsl";
+        const std::filesystem::path soft_body_force_distribution_path =
+            shader_root / "soft_body_force_distribution.cs.hlsl";
         const std::filesystem::path soft_body_render_feedback_path =
             shader_root / "soft_body_render_feedback.cs.hlsl";
 
@@ -4337,6 +4859,10 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_gather_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_weight_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_reduce_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_finalize_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_apply_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_integrate_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_feedback_shader;
@@ -4359,6 +4885,22 @@ namespace skin_physics::runtime
             !compile_runtime_compute_shader(
                 device, soft_body_gather_path, "soft_body_force_gather",
                 soft_body_gather_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_force_distribution_path,
+                "soft_body_force_distribution_weight",
+                soft_body_force_weight_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_force_distribution_path,
+                "soft_body_force_distribution_reduce",
+                soft_body_force_reduce_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_force_distribution_path,
+                "soft_body_force_distribution_finalize",
+                soft_body_force_finalize_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, soft_body_force_distribution_path,
+                "soft_body_force_distribution_apply",
+                soft_body_force_apply_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
                 device, soft_body_integrate_path, "soft_body_integrate",
                 soft_body_integrate_shader.GetAddressOf(), diagnostic) ||
@@ -4385,6 +4927,10 @@ namespace skin_physics::runtime
         runtime.tick_commit_shader = std::move(tick_commit_shader);
         runtime.soft_body_fem_shader = std::move(soft_body_fem_shader);
         runtime.soft_body_force_gather_shader = std::move(soft_body_gather_shader);
+        runtime.soft_body_force_weight_shader = std::move(soft_body_force_weight_shader);
+        runtime.soft_body_force_reduce_shader = std::move(soft_body_force_reduce_shader);
+        runtime.soft_body_force_finalize_shader = std::move(soft_body_force_finalize_shader);
+        runtime.soft_body_force_apply_shader = std::move(soft_body_force_apply_shader);
         runtime.soft_body_integrate_shader = std::move(soft_body_integrate_shader);
         runtime.soft_body_copy_state_shader = std::move(soft_body_copy_state_shader);
         runtime.soft_body_render_feedback_shader =
@@ -6081,20 +6627,31 @@ namespace skin_physics::runtime
                         result_world.gpu_dynamic_toi_block_status_observed = false;
                         result_world.cpu_preflight_block_status_observed = false;
                     }
+                    else if (gpu_status.terminal_state == 4u &&
+                        gpu_status.diagnostic_code == 7u)
+                    {
+                        result_world.state = tick_state::rejected;
+                        result_world.last_tick_status = status_code::no_force_target;
+                        result_world.budget_resolution = work_budget_resolution::none;
+                        result_world.diagnostic =
+                            "NO_FORCE_TARGET: the selected Soft Body Mesh has no positive mass-weighted Wendland C2 support for this Segment-start action position.";
+                    }
                     else if (gpu_status.terminal_state == 4u)
                     {
                         result_world.state = tick_state::rejected;
                         result_world.last_tick_status = status_code::step_rejected;
                         result_world.budget_resolution = work_budget_resolution::none;
+                        result_world.diagnostic =
+                            "GPU Tick was rejected by a solver or input contract gate.";
                     }
                     else
                     {
                         result_world.state = tick_state::failed;
                         result_world.last_tick_status = status_code::gpu_execution_failed;
                         result_world.budget_resolution = work_budget_resolution::none;
+                        result_world.diagnostic =
+                            "GPU Tick failed before Commit; the active State Bank and reservation time were retained.";
                     }
-                    result_world.diagnostic =
-                        "GPU Tick ended without a COMMITTED terminal status; the active State Bank and reservation time were retained.";
                 }
             }
         }

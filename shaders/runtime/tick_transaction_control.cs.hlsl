@@ -255,10 +255,16 @@ void tick_validate_soft_body(uint3 dispatch_id : SV_DispatchThreadID)
     {
         // A solver-side numerical / non-finite failure is terminal for the World.
         // REJECTED is reserved for an invalid or incomplete Tick contract.
-        control.terminal_state = TICK_TERMINAL_FAILED;
+        control.terminal_state =
+            control.diagnostic == 7u
+                ? TICK_TERMINAL_REJECTED
+                : TICK_TERMINAL_FAILED;
         control.terminal_failure = 1u;
         control.validation_mask = 0u;
-        control.diagnostic = 5u;
+        if (control.diagnostic == 0u)
+        {
+            control.diagnostic = 5u;
+        }
     }
     else
     {

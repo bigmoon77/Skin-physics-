@@ -187,6 +187,7 @@
       <Filter>Shader Files</Filter>
     </None>
     <None Include="shaders\runtime\soft_body_force_gather.cs.hlsl">
+    <None Include="shaders\runtime\soft_body_force_distribution.cs.hlsl">
       <Filter>Shader Files</Filter>
     </None>
     <None Include="shaders\runtime\soft_body_integrate.cs.hlsl">
