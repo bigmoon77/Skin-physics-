@@ -367,6 +367,16 @@
             "Each Mesh receives only its proportional share of the descriptor magnitude; weights are not normalized independently per Mesh",
             "A later NO_FORCE_TARGET call over an empty Mesh preserves the previously valid multi-Mesh output and publishes no partial weights"
           ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_CROSS_MESH_FORCE_TARGET_SCOPES",
+          "checks": [
+            "A Model-scope Force / Impulse target selects every Soft Body Mesh in the Model and shares one normalization denominator across the selected Meshes",
+            "A World-scope Force / Impulse target selects every registered Soft Body Mesh across all Models and shares one normalization denominator across the World",
+            "Identical Meshes receive 1/N of the exact-Mesh response when N selected Meshes share one event magnitude",
+            "Force and Impulse event-ID accumulation order, per-Segment start-position sampling, FEM composition, one-shot Impulse timing and atomic Tick Commit remain unchanged",
+            "A sibling Mesh receives no event response for an exact-Mesh target"
+          ]
         }
       ],
       "automated_cases": [
