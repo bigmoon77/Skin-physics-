@@ -1403,6 +1403,104 @@ namespace
             paused_schedule.values[0u].clip_time_delta == 0.0,
             "A paused Track must produce one immutable zero-Clip-Time Span rather than an empty schedule.");
 
+        animation_track step_bounded_track = key_bounded_track;
+        step_bounded_track.mode = interpolation::step;
+        const skin_physics::physics::animation_channel_spans_build_result
+            forward_step_schedule =
+                skin_physics::physics::build_animation_channel_spans(
+                    step_bounded_track, 0.5, 1.0);
+        require(forward_step_schedule.success &&
+            forward_step_schedule.values.size() == 2u,
+            "Forward STEP playback must produce one Span on each side of a discontinuous Key.");
+        const animation_channel_span_sample_result
+            forward_step_before_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    forward_step_schedule.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result
+            forward_step_after_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    forward_step_schedule.values[1u], 0.0, 0.25);
+        require(forward_step_before_boundary.success &&
+            forward_step_after_boundary.success &&
+            forward_step_before_boundary.value.value.x == 0.0f &&
+            forward_step_after_boundary.value.value.x == 2.0f,
+            "Forward STEP spans must preserve the pre-Key and post-Key one-sided values across a discontinuity.");
+
+        const skin_physics::physics::animation_channel_spans_build_result
+            reverse_step_schedule =
+                skin_physics::physics::build_animation_channel_spans(
+                    step_bounded_track, 1.5, -1.0);
+        require(reverse_step_schedule.success &&
+            reverse_step_schedule.values.size() == 2u,
+            "Reverse STEP playback must produce one Span on each side of a discontinuous Key.");
+        const animation_channel_span_sample_result
+            reverse_step_before_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    reverse_step_schedule.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result
+            reverse_step_after_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    reverse_step_schedule.values[1u], 0.0, 0.25);
+        require(reverse_step_before_boundary.success &&
+            reverse_step_after_boundary.success &&
+            reverse_step_before_boundary.value.value.x == 2.0f &&
+            reverse_step_after_boundary.value.value.x == 0.0f,
+            "Reverse STEP spans must preserve descending-time one-sided values across a discontinuity.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            forward_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 0.5, 1.0, 10.0, 0.4);
+        require(forward_world_schedule.success &&
+            forward_world_schedule.values.size() == 2u &&
+            std::abs(forward_world_schedule.values[0u].world_time_start - 10.0) <= 1.0e-12 &&
+            std::abs(forward_world_schedule.values[0u].world_time_duration - 0.2) <= 1.0e-12 &&
+            std::abs(forward_world_schedule.values[1u].world_time_start - 10.2) <= 1.0e-12 &&
+            std::abs(forward_world_schedule.values[1u].world_time_duration - 0.2) <= 1.0e-12,
+            "Forward Clip-Time spans must map onto positive ordered World-Time partitions within the Logical Tick.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            reverse_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 1.5, -1.0, 3.0, 0.8);
+        require(reverse_world_schedule.success &&
+            reverse_world_schedule.values.size() == 2u &&
+            std::abs(reverse_world_schedule.values[0u].world_time_start - 3.0) <= 1.0e-12 &&
+            std::abs(reverse_world_schedule.values[0u].world_time_duration - 0.4) <= 1.0e-12 &&
+            std::abs(reverse_world_schedule.values[1u].world_time_start - 3.4) <= 1.0e-12 &&
+            std::abs(reverse_world_schedule.values[1u].world_time_duration - 0.4) <= 1.0e-12,
+            "Reverse Clip-Time spans must retain forward-monotonic World-Time ordering and positive interval durations.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            paused_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 1.0, 0.0, 7.0, 0.5);
+        require(paused_world_schedule.success &&
+            paused_world_schedule.values.size() == 1u &&
+            std::abs(paused_world_schedule.values[0u].world_time_start - 7.0) <= 1.0e-12 &&
+            std::abs(paused_world_schedule.values[0u].world_time_duration - 0.5) <= 1.0e-12,
+            "A paused Track must retain the full Logical Tick World-Time interval.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            unrepresentable_clip_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 1.0e16, 1.0, 0.0, 0.1);
+        require(!unrepresentable_clip_schedule.success &&
+            unrepresentable_clip_schedule.values.empty() &&
+            unrepresentable_clip_schedule.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A non-zero Clip-Time delta smaller than the double-precision ULP at its start must fail closed.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            invalid_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 0.5, 1.0, 1.0e16, 0.1);
+        require(!invalid_world_schedule.success &&
+            invalid_world_schedule.values.empty() &&
+            invalid_world_schedule.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A World-Time Tick interval that cannot advance at its absolute start must fail closed.");
+
         animation_track duplicate_key_track = key_bounded_track;
         duplicate_key_track.keys[1u].time =
             duplicate_key_track.keys[0u].time;
