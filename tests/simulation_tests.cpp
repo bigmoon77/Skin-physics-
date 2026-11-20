@@ -1503,6 +1503,65 @@ namespace
             "A rejected physics step must not commit time or consume the accumulator.");
     }
 
+    void test_phase04_pause_stop_and_reconfigure_preserve_accumulator()
+    {
+        skin_physics::simulation::fixed_step_settings settings;
+        settings.fixed_delta_time = 0.01;
+        settings.time_scale = 1.0;
+        settings.maximum_steps_per_advance = 1;
+        fixed_step_controller controller(settings);
+
+        uint32_t callback_count = 0;
+        const skin_physics::simulation::fixed_step_callback callback =
+            [&callback_count](double delta_time)
+            {
+                ++callback_count;
+                return std::isfinite(delta_time) && delta_time > 0.0;
+            };
+
+        controller.play();
+        const auto first = controller.advance(0.025, callback);
+        require(first.completed_steps == 1 &&
+            std::abs(first.accumulator - 0.015) <= 1.0e-9,
+            "Step admission must retain the unconsumed fixed-step time.");
+
+        controller.pause();
+        const auto paused = controller.advance(0.5, callback);
+        require(paused.completed_steps == 0 &&
+            std::abs(paused.accumulator - 0.015) <= 1.0e-9,
+            "Pause must stop wall-clock ingestion and preserve the accumulator.");
+
+        controller.stop();
+        require(controller.state() == skin_physics::simulation::playback_state::stopped &&
+            std::abs(controller.accumulator() - 0.015) <= 1.0e-9,
+            "Stop must preserve unassigned accumulator time; only Reset discards it.");
+
+        require(controller.set_fixed_delta_time(0.005) &&
+            std::abs(controller.accumulator() - 0.015) <= 1.0e-9,
+            "Changing the fixed interval must preserve already requested simulation time.");
+
+        settings = controller.settings();
+        settings.maximum_steps_per_advance = 1;
+        require(controller.configure(settings) &&
+            std::abs(controller.accumulator() - 0.015) <= 1.0e-9,
+            "Reconfiguration must preserve unassigned time instead of silently dropping it.");
+
+        controller.play();
+        const auto resumed = controller.advance(0.0, callback);
+        require(resumed.completed_steps == 1 &&
+            std::abs(resumed.simulation_time - 0.015) <= 1.0e-9 &&
+            std::abs(resumed.accumulator - 0.010) <= 1.0e-9,
+            "Resuming must process preserved backlog using the current fixed interval.");
+
+        controller.reset();
+        require(controller.state() == skin_physics::simulation::playback_state::stopped &&
+            controller.simulation_time() == 0.0 &&
+            controller.accumulator() == 0.0,
+            "Reset must explicitly discard the accumulator and restore time zero.");
+        require(callback_count == 2,
+            "Paused ingestion must not invoke the solver callback.");
+    }
+
     const test_json::value& find_correction_fixture_case(
         const test_json::value& fixture,
         const std::string& case_id)
@@ -2807,6 +2866,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P03_WARP_RENDER_FEEDBACK\n";
     test_phase04_overload_and_callback_failure();
     std::cout << "[PASS] P04_FIXED_STEP_OVERLOAD\n";
+    test_phase04_pause_stop_and_reconfigure_preserve_accumulator();
+    std::cout << "[PASS] P04_STOP_PRESERVES_ACCUMULATOR\\n";
     test_phase05_cloth_fixture_and_bend_gradient();
     std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
     test_phase05_cloth_compliance_monotonicity();
