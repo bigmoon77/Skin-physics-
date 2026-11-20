@@ -566,14 +566,18 @@ namespace
             "Runtime must normalize and accept a finite non-unit Soft Body Force direction.");
 
         skin_physics::runtime::impulse_desc impulse;
-        impulse.event_id = 102u;
+        impulse.event_id = 101u;
         impulse.target.model = model;
         impulse.target.mesh_index = 0u;
         impulse.position = { 2.0f, 3.0f, 4.0f };
-        impulse.direction = { 0.0f, 0.0f, 0.0f };
+        impulse.direction = { 0.0f, -3.0f, 0.0f };
         impulse.impulse_magnitude = 2.0f;
         impulse.radius = 1.0f;
         impulse.event_time = 0.0;
+        require(runtime.enqueue_impulse(world, impulse).code == status_code::invalid_argument,
+            "Force and Impulse descriptors must share one World-wide unique Event ID namespace.");
+        impulse.event_id = 102u;
+        impulse.direction = { 0.0f, 0.0f, 0.0f };
         require(runtime.enqueue_impulse(world, impulse).code == status_code::invalid_argument,
             "Runtime must reject a zero-length Impulse direction before reserving its Event ID.");
         impulse.direction = { 0.0f, -3.0f, 0.0f };
@@ -589,6 +593,10 @@ namespace
             force_report.in_flight_tick_count == 0u &&
             force_report.pending_tick_count == 1u,
             "Unintegrated Force / Impulse Events must preserve the Tick Reservation without GPU submission.");
+        skin_physics::runtime::force_desc late_force = force;
+        late_force.event_id = 103u;
+        require(runtime.enqueue_force(world, late_force).code == status_code::busy,
+            "A Tick Reservation must freeze World input mutation until Commit or Reset.");
         skin_physics::runtime::world_status force_status;
         require(runtime.poll(world, &force_status).success() &&
             force_status.state == skin_physics::runtime::tick_state::blocked &&
@@ -598,6 +606,10 @@ namespace
             "Runtime must explicitly report BLOCKED_BY_INPUT while Force / Impulse Segment scheduling is unimplemented.");
         require(runtime.reset_world(world).success(),
             "Reset must explicitly clear the unsupported Force / Impulse Events and retained Reservation.");
+        require(runtime.enqueue_force(world, force).success(),
+            "Reset must release the Event ID namespace so a new Tick can register the same Event ID.");
+        require(runtime.reset_world(world).success(),
+            "A second Reset must clear the re-registered event before the Root Transform regression.");
 
         skin_physics::runtime::transform sampled_root =
             model_desc.world_transform;
