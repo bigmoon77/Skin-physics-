@@ -1794,7 +1794,12 @@ namespace
                     synchronized_blend_curve, 10.0, 0.5);
         require(synchronized_blend_spans.success &&
             synchronized_blend_spans.values.size() == 5u,
-            "Source / Target Key boundaries and Blend Start / End boundaries must merge into one shared World-Time partition.");
+            std::string(
+                "Source / Target Key boundaries and Blend Start / End boundaries must merge into one shared World-Time partition. error=") +
+                std::to_string(static_cast<int>(synchronized_blend_spans.error)) +
+                " count=" +
+                std::to_string(synchronized_blend_spans.values.size()) +
+                " diagnostic=" + synchronized_blend_spans.message);
         for (std::size_t span_index = 0u;
             span_index < synchronized_blend_spans.values.size();
             ++span_index)
