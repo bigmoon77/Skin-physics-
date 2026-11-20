@@ -3573,10 +3573,39 @@ namespace skin_physics::runtime
             updated[vertex_index] = std::clamp(
                 current + (target - current) * edit.strength, 0.0f, 1.0f);
         }
+        asset::mesh updated_mesh = mesh;
         for (uint32_t vertex_index : edit.vertex_indices)
         {
-            mesh.vertices[vertex_index].physics_weights[channel] = updated[vertex_index];
+            updated_mesh.vertices[vertex_index].physics_weights[channel] =
+                updated[vertex_index];
         }
+
+        const auto physics_asset_iterator = std::find_if(
+            model->mesh_physics_assets.begin(),
+            model->mesh_physics_assets.end(),
+            [mesh_index](const model_mesh_physics_asset& value)
+            {
+                return value.mesh_index == mesh_index;
+            });
+        if (physics_asset_iterator != model->mesh_physics_assets.end())
+        {
+            const physics::physics_attribute_transfer_result transferred =
+                physics::transfer_physics_vertex_attribute_weights(
+                    updated_mesh, physics_asset_iterator->physics_mesh);
+            if (!transferred.success)
+            {
+                return make_status(status_code::asset_invalid,
+                    "Paint edit could not be transferred to the Physics Mesh: " +
+                        transferred.diagnostic);
+            }
+
+            // Commit both Render Mesh paint and the Physics Mesh transfer only after
+            // the complete boundary projection / harmonic solve has succeeded.
+            physics_asset_iterator->physics_mesh.vertex_attribute_weights =
+                transferred.vertex_weights;
+        }
+
+        mesh = std::move(updated_mesh);
         return make_status(status_code::ok, {});
     }
 
