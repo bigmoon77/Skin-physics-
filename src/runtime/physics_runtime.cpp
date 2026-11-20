@@ -37,7 +37,7 @@ namespace skin_physics::runtime
             uint32_t work_budget_block_origin = 0;
             uint32_t executed_integration_segments = 0;
             uint32_t minimum_required_integration_segments = 0;
-            uint32_t reserved[4] = {};
+            uint32_t reserved[2] = {};
         };
 
         static_assert(sizeof(gpu_tick_status_record) == 80,
@@ -407,9 +407,10 @@ namespace skin_physics::runtime
             std::vector<model_mesh_physics_asset> mesh_physics_assets;
             transform root_transform;
             std::vector<transform_sample> root_samples;
-            std::vector<animation_playback_desc> animation_playbacks;
-            std::vector<animation_blend_desc> animation_blends;
-            std::vector<std::array<bool, 2>> animation_modes;
+            bool has_animation_playback = false;
+            animation_playback_desc animation_playback;
+            bool has_animation_blend = false;
+            animation_blend_desc animation_blend;
             std::vector<mesh_physics_parameters> mesh_parameters;
             std::vector<bool> mesh_parameters_valid;
         };
@@ -977,9 +978,8 @@ namespace skin_physics::runtime
         model.mesh_physics_assets = std::move(mesh_assets);
         model.root_transform = desc.world_transform;
         model.root_samples.clear();
-        model.animation_playbacks.resize(model.source_model.meshes.size());
-        model.animation_blends.resize(model.source_model.meshes.size());
-        model.animation_modes.resize(model.source_model.meshes.size());
+        model.has_animation_playback = false;
+        model.has_animation_blend = false;
         model.mesh_parameters.resize(model.source_model.meshes.size());
         model.mesh_parameters_valid.resize(model.source_model.meshes.size(), false);
         model.occupied = true;
@@ -1388,16 +1388,9 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Animation Playback descriptor contains an invalid Clip, Time, Speed or Event Weight.");
         }
-        for (std::size_t index = 0; index < model->animation_modes.size(); ++index)
-        {
-            model->animation_modes[index][0] = false;
-            model->animation_modes[index][1] = false;
-        }
-        if (!model->animation_modes.empty())
-        {
-            model->animation_playbacks[0] = desc;
-            model->animation_modes[0][0] = true;
-        }
+        model->animation_playback = desc;
+        model->has_animation_playback = true;
+        model->has_animation_blend = false;
         return make_status(status_code::ok, {});
     }
 
@@ -1432,16 +1425,9 @@ namespace skin_physics::runtime
             return make_status(status_code::invalid_argument,
                 "Animation Blend descriptor is invalid or its Hermite Weight Curve leaves [0, 1].");
         }
-        for (std::size_t index = 0; index < model->animation_modes.size(); ++index)
-        {
-            model->animation_modes[index][0] = false;
-            model->animation_modes[index][1] = false;
-        }
-        if (!model->animation_modes.empty())
-        {
-            model->animation_blends[0] = desc;
-            model->animation_modes[0][1] = true;
-        }
+        model->animation_blend = desc;
+        model->has_animation_blend = true;
+        model->has_animation_playback = false;
         return make_status(status_code::ok, {});
     }
 
@@ -1682,6 +1668,11 @@ namespace skin_physics::runtime
         }
 
         *out_report = {};
+        if (!runtime.accepting_submissions)
+        {
+            return make_status(status_code::busy,
+                "Runtime is draining and does not accept new Tick submissions.");
+        }
         if (world->playback == playback_state::playing)
         {
             const double requested_delta =
@@ -1835,10 +1826,13 @@ namespace skin_physics::runtime
         result.reserved_tick_time = world->reserved_tick_time;
         result.gpu_committed_simulation_time = world->gpu_committed_simulation_time;
         result.cpu_observed_completed_time = world->cpu_observed_completed_time;
-        result.pending_tick_count =
-            count_pending_ticks(world->accumulator_seconds,
-                world->description.fixed_delta_time) +
+        const uint64_t pending_tick_count =
+            static_cast<uint64_t>(count_pending_ticks(
+                world->accumulator_seconds, world->description.fixed_delta_time)) +
             world->pending_single_step_requests;
+        result.pending_tick_count = static_cast<uint32_t>(
+            std::min<uint64_t>(pending_tick_count,
+                std::numeric_limits<uint32_t>::max()));
         result.in_flight_tick_count = world->in_flight_tick_count;
         result.simulation_backlog = result.effective_requested_time -
             result.gpu_committed_simulation_time -
@@ -1865,6 +1859,11 @@ namespace skin_physics::runtime
                 "Single Step requires a report output.");
         }
         *out_report = {};
+        if (!runtime.accepting_submissions)
+        {
+            return make_status(status_code::busy,
+                "Runtime is draining and does not accept new Step Requests.");
+        }
         if (world->playback == playback_state::playing)
         {
             return make_status(status_code::invalid_state,
@@ -2090,11 +2089,12 @@ namespace skin_physics::runtime
         }
         for (const implementation::world_slot& world : runtime.worlds)
         {
-            if (!world.occupied || world.in_flight_tick_count != 0u ||
-                world.reserved_tick_time > time_epsilon ||
-                world.render_lease_active ||
-                world.pending_single_step_requests != 0u ||
-                world.accumulator_seconds > time_epsilon)
+            if (world.occupied &&
+                (world.in_flight_tick_count != 0u ||
+                    world.reserved_tick_time > time_epsilon ||
+                    world.render_lease_active ||
+                    world.pending_single_step_requests != 0u ||
+                    world.accumulator_seconds > time_epsilon))
             {
                 return status_code::busy;
             }
