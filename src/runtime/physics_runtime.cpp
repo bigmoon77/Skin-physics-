@@ -5856,6 +5856,15 @@ namespace skin_physics::runtime
         for (implementation::collider_slot& collider : world->colliders)
         {
             collider.pose_samples.clear();
+            if (collider.occupied && collider.kinematic)
+            {
+                // Reset returns each Kinematic Collider to its immutable initial
+                // pose and re-establishes the t=0 sample used to bracket its
+                // first post-reset trajectory interval.
+                collider.pose_samples.push_back({
+                    0.0, collider.description.initial_transform, false
+                });
+            }
         }
         return make_status(status_code::ok, {});
     }
