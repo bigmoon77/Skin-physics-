@@ -253,6 +253,10 @@ namespace skin_physics::runtime
         float young_modulus = 100000.0f;
         float poisson_ratio = 0.3f;
         float damping = 0.01f;
+        // Kelvin-Voigt Animation Tracking coefficients. Zero stiffness disables
+        // the tracking force and its explicit integration stability limit.
+        float tracking_stiffness = 0.0f;
+        float tracking_damping = 0.0f;
         std::array<float,
             static_cast<std::size_t>(asset::physics_attribute_channel::count)>
             attribute_multipliers = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
