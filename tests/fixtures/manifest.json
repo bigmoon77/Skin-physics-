@@ -743,9 +743,9 @@
     }
   },
   "latest_ci_attempt": {
-    "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
-    "workflow_run_id": 44463177125,
-    "job_id": 135354596347,
+    "commit": "c4230cde389bc65e8577c14a96d888cdcd93c9f8",
+    "workflow_run_id": 44603883986,
+    "job_id": 135842299975,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
@@ -755,6 +755,6 @@
     "build": "not_verified",
     "tests": "not_started",
     "classification": "failed_before_any_reported_job_step",
-    "note": "This workflow run targets the latest design-document commit e0d7ed63af4b371f64df2182e0a643138f2e0d37. The job-step endpoint returned an empty steps array; no compiler or test step ran, and runner identity / pre-step cause are unavailable. This is not evidence of a source-code regression. Cases 45-47 remain specified_not_implemented until executable assertions consume their fixtures and pass CI."
+    "note": "This attempt targets the current implementation branch head. GitHub reports the job as failed, but the job-step endpoint returns an empty array and the log artifact is unavailable (BlobNotFound). No compiler or test step is evidenced; runner allocation and the pre-step failure cause remain unknown. This is not evidence of a source-code regression. WARP and Windows build/test status remain unverified."
   }
 }
