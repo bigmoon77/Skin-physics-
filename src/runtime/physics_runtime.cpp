@@ -784,7 +784,11 @@ namespace skin_physics::runtime
                 parameters.poisson_ratio <= -1.0f ||
                 parameters.poisson_ratio >= 0.5f ||
                 !finite_float(parameters.damping) ||
-                parameters.damping < 0.0f)
+                parameters.damping < 0.0f ||
+                !finite_float(parameters.tracking_stiffness) ||
+                parameters.tracking_stiffness < 0.0f ||
+                !finite_float(parameters.tracking_damping) ||
+                parameters.tracking_damping < 0.0f)
             {
                 return false;
             }
