@@ -1585,7 +1585,12 @@ namespace skin_physics::runtime
         world.next_tick_sequence = 1u;
         world.pending_single_step_requests = 0u;
         world.reservations.clear();
+        world.in_flight_ticks.clear();
         world.in_flight_tick_count = 0u;
+        world.commit_control_buffer.Reset();
+        world.commit_control_uav.Reset();
+        world.gpu_state_generation = 1u;
+        world.active_state_set = 0u;
         world.render_lease_active = false;
         world.render_lease_generation = 0u;
         world.state = tick_state::idle;
@@ -1604,6 +1609,13 @@ namespace skin_physics::runtime
         world.impulses.clear();
         world.event_ids.clear();
         world.observed_tick_sequences.clear();
+        world.observed_tick_deltas.clear();
+        if (!runtime.initialize_world_commit_control(world, diagnostic))
+        {
+            world.commit_control_buffer.Reset();
+            world.commit_control_uav.Reset();
+            return make_status(status_code::out_of_memory, diagnostic);
+        }
         world.occupied = true;
 
         out_world->index = index;
@@ -2780,7 +2792,17 @@ namespace skin_physics::runtime
         world->next_tick_sequence = 1u;
         world->pending_single_step_requests = 0u;
         world->reservations.clear();
+        world->in_flight_ticks.clear();
         world->in_flight_tick_count = 0u;
+        world->gpu_state_generation = 1u;
+        world->active_state_set = 0u;
+        gpu_tick_commit_control initial_control;
+        initial_control.state_generation_low = 1u;
+        initial_control.active_state_set = 0u;
+        initial_control.required_validation_mask = 1u;
+        runtime.immediate_context->UpdateSubresource(
+            world->commit_control_buffer.Get(), 0u, nullptr,
+            &initial_control, 0u, 0u);
         world->state = tick_state::idle;
         world->last_tick_status = status_code::ok;
         world->budget_block_origin = work_budget_block_origin::none;
@@ -2839,6 +2861,10 @@ namespace skin_physics::runtime
         world->impulses.clear();
         world->event_ids.clear();
         world->observed_tick_sequences.clear();
+        world->observed_tick_deltas.clear();
+        world->in_flight_ticks.clear();
+        world->commit_control_uav.Reset();
+        world->commit_control_buffer.Reset();
         if (world->generation == std::numeric_limits<uint32_t>::max())
         {
             world->retired = true;
