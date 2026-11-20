@@ -358,6 +358,22 @@ GPU Trajectory PacketはRead-only / Immutableとし、CursorはWorldごとのMut
         float reserved1;
     };
 
+    struct animation_skin_gpu_record
+    {
+        uint32_t mesh_node_channel_offset;
+        uint32_t skin_index;
+        uint32_t first_joint_record;
+        uint32_t joint_count;
+    };
+
+    struct animation_skin_joint_gpu_record
+    {
+        uint32_t joint_channel_offset;
+        uint32_t inverse_bind_record_index;
+        uint32_t joint_node_index;
+        uint32_t reserved;
+    };
+
     struct animation_channel_gpu_record
     {
         uint32_t node_index;
@@ -382,11 +398,11 @@ GPU Trajectory PacketはRead-only / Immutableとし、CursorはWorldごとのMut
         gpu_float4 scale_c3;
     };
 
-animation_span_gpu_record is exactly 80 bytes, animation_span_cursor_gpu_record is exactly 16 bytes (mutable per-World working state, not part of the immutable trajectory Packet), animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, and kinematic_collider_gpu_record is exactly 128 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and a WARP GPU ABI Readback Fixture verify the same values. `animation_span_cursor_gpu_record`はimmutableなAnimation Trajectory Packetとは別のWorldごとのMutable UAV Bufferで、Logical TickのWorking State / Segment Snapshotに属する。span_record_indexはimmutable Span Bufferの絶対Element Index、animation_input_version_low/highは参照Packet Version、u_segment_startは現在Segment開始時刻のSpan-local normalized coordinateである。GPU CAはcursor.u_segment_start + tau * span.inverse_span_durationからu_tauを求める。Segment終了時、通常 / Force / Impulse Segmentはdt_segment、TOI prefixはtauを加算してCursorだけを更新し、Packet Recordを書き換えない。次SegmentがSpan境界で開始するときは次Span Record Indexへ切り替え、Cursorを0へ戻す。正の時間進行でCursorが単調増加しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。Segment SnapshotにはCursor Recordも含み、TOI retime / Solver Retryは同じSpan Versionと開始CursorへRollbackする。Logical Tick全体のRejectはTick開始Cursorを再初期化し、Committed Packet / Source Stateを変更しない。Cursor BufferへのCPU Readback / CPU更新は行わない。
+animation_span_gpu_record is exactly 80 bytes, animation_span_cursor_gpu_record is exactly 16 bytes (mutable per-World working state, not part of the immutable trajectory Packet), animation_track_gpu_record is exactly 32 bytes, animation_channel_gpu_record is exactly 224 bytes, animation_blend_gpu_record is exactly 48 bytes, kinematic_collider_gpu_record is exactly 128 bytes, and each of animation_skin_gpu_record / animation_skin_joint_gpu_record is exactly 16 bytes under 4-byte field packing. C++ `static_assert(sizeof(...))`, `static_assert(alignof(...) == 4)`, `offsetof` assertions, HLSL StructuredBuffer stride validation, and WARP GPU ABI Readback Fixtures verify the same values. `animation_span_cursor_gpu_record`はimmutableなAnimation Trajectory Packetとは別のWorldごとのMutable UAV Bufferで、Logical TickのWorking State / Segment Snapshotに属する。span_record_indexはimmutable Span Bufferの絶対Element Index、animation_input_version_low/highは参照Packet Version、u_segment_startは現在Segment開始時刻のSpan-local normalized coordinateである。GPU CAはcursor.u_segment_start + tau * span.inverse_span_durationからu_tauを求める。Segment終了時、通常 / Force / Impulse Segmentはdt_segment、TOI prefixはtauを加算してCursorだけを更新し、Packet Recordを書き換えない。次SegmentがSpan境界で開始するときは次Span Record Indexへ切り替え、Cursorを0へ戻す。正の時間進行でCursorが単調増加しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。Segment SnapshotにはCursor Recordも含み、TOI retime / Solver Retryは同じSpan Versionと開始CursorへRollbackする。Logical Tick全体のRejectはTick開始Cursorを再初期化し、Committed Packet / Source Stateを変更しない。Cursor BufferへのCPU Readback / CPU更新は行わない。
 
 GPU Shared Recordは上記gpu_float4 / gpu_matrix4x4を使用する。HLSL側のgpu_float4はfloat4、gpu_matrix4x4は明示的なcolumn_major float4x4として同じColumn-Major Storageへ対応させる。
 
-gpu_float4はsizeof=16 / alignof=4、gpu_matrix4x4はsizeof=64 / alignof=4とする。MatrixはAsset / HLSLで統一したColumn-Major Storageを使い、column0..column3に16個のfloatを格納する。CPUからUploadする直前に既定のAsset Matrix Conventionへ変換する。逆Bind MatrixはImmutable Asset Buffer内のgpu_matrix4x4として保存し、inverse_bind_record_indexはこのStructuredBuffer内の絶対Element Indexを参照する。Joint Nodeは必ず有効Indexを持ち、非Joint NodeはUINT32_MAXとする。Record Structは標準レイアウト / Trivially Copyable / alignof=4とし、#pragma packでField Alignmentを暗黙に変えない。C++のgpu_float4とHLSL float4のfield offsetsはx=0,y=4,z=8,w=12である。
+gpu_float4はsizeof=16 / alignof=4、gpu_matrix4x4はsizeof=64 / alignof=4とする。MatrixはAsset / HLSLで統一したColumn-Major Storageを使い、column0..column3に16個のfloatを格納する。CPUからUploadする直前に既定のAsset Matrix Conventionへ変換する。Inverse Bind MatrixはImmutable Packet Buffer内のgpu_matrix4x4としてSkin / Jointペアごとに保存し、Skin Joint Recordのinverse_bind_record_indexはこのStructuredBuffer内の絶対Element Indexを参照する。Joint Nodeは必ず有効Indexを持ち、非Joint NodeはUINT32_MAXとする。Record Structは標準レイアウト / Trivially Copyable / alignof=4とし、#pragma packでField Alignmentを暗黙に変えない。C++のgpu_float4とHLSL float4のfield offsetsはx=0,y=4,z=8,w=12である。
 
 #### Channel / Track / Blend Flagsと係数の意味
 
@@ -411,11 +427,15 @@ Colliderのrotation_start / rotation_endはLocal-to-World Quaternion。angular_a
 | animation_channel_gpu_record (224 B) | node_index=0, parent_index=4, inverse_bind_record_index=8, interpolation_flags=12, channel_mask=16, node_role_flags=20, reserved0=24, reserved1=28, translation_c0=32, translation_c1=48, translation_c2=64, translation_c3=80, rotation_parameter0=96, rotation_parameter1=112, rotation_parameter2=128, rotation_parameter3=144, scale_c0=160, scale_c1=176, scale_c2=192, scale_c3=208 |
 | animation_blend_gpu_record (48 B) | source_track_index=0 (Span-relative), target_track_index=4 (Span-relative), weight_curve_flags=8, reserved0=12, weight_coefficients=16, duration=32, inverse_duration=36, blend_start_offset_seconds=40, reserved2=44 |
 | kinematic_collider_gpu_record (128 B) | stable_id_low=0, stable_id_high=4, span_sample_pair_id=8, flags=12, translation_start=16, translation_end=32, rotation_start=48, rotation_end=64, angular_axis_and_angle=80, duration=96, inverse_duration=100, linear_speed_bound=104, angular_speed_bound=108, maximum_local_radius=112, sagitta_bound=116, reserved0=120, reserved1=124 |
+| animation_skin_gpu_record (16 B) | mesh_node_channel_offset=0 (Track-relative), skin_index=4, first_joint_record=8, joint_count=12 |
+| animation_skin_joint_gpu_record (16 B) | joint_channel_offset=0 (Track-relative), inverse_bind_record_index=4 (absolute IBM Buffer index), joint_node_index=8, reserved=12 |
 
 #### Record Reference / Flag / Coefficient Semantic
 
 - Span Recordのfirst_*_record / *_record_countは各StructuredBufferに対する絶対Element Index / Count。Track Recordのfirst_channel_record / channel_record_countもChannel Buffer内の絶対Range。Track Recordのparent_indexは同じSpan / Track Channel Range内のParent Channel Record絶対Index。Root NodeはUINT32_MAX。Channel BufferはParentがChildより小さいIndexになるTopological Orderで格納する。
-- node_indexはAsset Node Index。inverse_bind_record_indexはImmutable Inverse Bind Matrix Bufferの絶対Index。Joint Roleを持つRecordは有効Index必須。非Joint NodeはUINT32_MAX。Mesh Node / Root / Required AncestorもChannel Recordへ含める。
+- node_indexはAsset Node Index。Channel Recordのinverse_bind_record_indexは同じJoint Nodeが最初に現れたSkinのIBM indexを診断 / 互換目的で保持する。LBSが使用する正式なSkin-specific IBM参照はanimation_skin_joint_gpu_record::inverse_bind_record_indexであり、Immutable Inverse Bind Matrix Bufferの絶対Indexを参照する。Joint Channelは有効な最初のIBM indexを持ち、非Joint NodeはUINT32_MAX。Mesh Node / Root / Required AncestorもChannel Recordへ含める。
+- animation_skin_gpu_recordはSkinned Mesh Nodeごとに1 Recordを持つ。mesh_node_channel_offsetは各Trackのfirst_channel_recordからの相対Channel Index、skin_indexはAsset Skin Index、first_joint_record / joint_countはSkin Joint Buffer内の連続Range。
+- animation_skin_joint_gpu_recordはSkin内のJoint順を維持する。joint_channel_offsetは同じTrack Channel Range内のJoint Channel相対Index、inverse_bind_record_indexはSkin / Jointペア固有のIBM Buffer絶対Index、joint_node_indexはAsset Node Index。同じJoint Nodeを複数Skinが異なるInverse Bind Matrixで参照しても、それぞれ独立したIBM Recordを保持する。複数Mesh Nodeが同じSkinを参照する場合もMesh NodeごとにSkin Recordを作成し、同じJoint Rangeを参照する。
 - channel_maskはbit0=Translation、bit1=Rotation、bit2=Scale。未設定ChannelはRest Local Transformの定数値。interpolation_flagsはTranslation bit0..1、Rotation bit2..3、Scale bit4..5。各2-bit値は0=STEP、1=LINEAR、2=CUBICSPLINE、3=Invalid。Reserved bitは0。
 - node_role_flagsはbit0=Joint、bit1=Mesh Node、bit2=Model Root、bit3=Required Joint Ancestor。複数Roleを許可する。Track flagsはbit0=Loop、bit1=Reverse Playback。clip_time_deltaはSpan内の符号付きClip Local Time差、playback_speed=clip_time_delta/span_durationを検証する。
 - Span flagsはbit0=Has Blend、bit1=Has Kinematic Collider、bit2=Has Root Motion。Blend weight_curve_flags bit0=Enabled。source_track_index / target_track_indexはSpan Track Range内の相対Index。範囲外参照はPacket Invalid。
@@ -494,7 +514,7 @@ Skin Matrixの微分には逆行列の微分を含める。
     S_j_dot = A_dot * joint_global[j] * inverse_bind[j]
               + A * joint_global_dot[j] * inverse_bind[j]
 
-Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivativeを合成し、Physics Vertex Rest Positionへ適用してTarget Position / Velocityを得る。animation_channel_gpu_recordは各必要Node（Bone / Mesh Node / Root / Joint Ancestor）をnode_indexで識別し、Skeleton JointのInverse Bind MatrixはAsset Immutable BufferのStatic Indexから参照し、animation_channel_gpu_record::inverse_bind_record_indexで指定する。非Joint NodeはUINT32_MAX。node_role_flagsはJoint / Mesh Node / Root / Required Ancestorを区別する。Mesh Node Global Matrix / Derivativeも同じHierarchy Passで評価して、skin_matrix = inverse(mesh_node_global) * joint_global * inverse_bindを構成する。
+Linear Blend SkinningではInfluence Weight付きでSkin Matrix / Matrix Derivativeを合成し、Physics Vertex Rest Positionへ適用してTarget Position / Velocityを得る。animation_skin_gpu_recordでMesh NodeごとのSkinとJoint Rangeを選び、animation_skin_joint_gpu_recordで各Joint ChannelとSkin固有のInverse Bind Matrixを解決する。両Channel OffsetはTrackのfirst_channel_recordからの相対Index、IBM IndexはImmutable Buffer先頭からの絶対Indexとする。これにより複数Skinned Meshが異なるJoint集合を持つ場合や、同じJoint NodeがSkinごとに異なるInverse Bind Matrixを持つ場合も正しく表現できる。Channel Recordは各必要Node（Bone / Mesh Node / Root / Joint Ancestor）をnode_indexで識別し、非Joint NodeはUINT32_MAXのChannel IBM参照を持つ。Mesh Node Global Matrix / Derivativeも同じHierarchy Passで評価して、各Skin-specific jointについてskin_matrix = inverse(mesh_node_global) * joint_global * inverse_bindを構成する。
 
 #### Conservative Trajectory Bounds
 
