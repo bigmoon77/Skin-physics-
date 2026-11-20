@@ -1060,7 +1060,8 @@ namespace skin_physics::runtime
             world_slot& world,
             uint32_t world_index)
         {
-            if (world.reservations.empty() ||
+            if (world.state == tick_state::failed ||
+                world.reservations.empty() ||
                 world.reservations.front().blocked ||
                 world.reservations.front().rejected ||
                 world.in_flight_tick_count != 0u)
@@ -2454,6 +2455,11 @@ namespace skin_physics::runtime
         if (!thread.success()) return thread;
         implementation::world_slot* world = runtime.find_world(world_handle_value);
         if (world == nullptr) return make_status(status_code::stale_handle, "World Handle is stale.");
+        if (world->state == tick_state::failed)
+        {
+            return make_status(status_code::invalid_state,
+                "World is in a terminal FAILED state; reset_world is required before further Tick requests.");
+        }
         if (out_report == nullptr || !finite_double(frame_delta_time) ||
             frame_delta_time < 0.0)
         {
