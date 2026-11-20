@@ -636,6 +636,17 @@
             "The Blend Weight cubic coefficients are reparameterized to the same merged interval and return finite in-range Weight with analytic World-Time derivative",
             "Invalid Source / Target Clip schedules, invalid Blend Weight curves, unrepresentable boundary intervals and merged Span-count overflow fail atomically without partial Source / Target / Weight records"
           ]
+        },
+        {
+          "id": "P09_ANIMATION_NODE_HIERARCHY_SKIN_MATRIX_DERIVATIVES",
+          "checks": [
+            "Every Node Local TRS / static affine Matrix is evaluated from Asset Rest Transform plus the synchronized Span channel for its Node / Path",
+            "Parent-before-child topological hierarchy construction produces Global Matrix = Parent Global * Local Matrix and analytic Global Matrix Derivative by the Product Rule",
+            "A skinned Mesh Node emits Skin Matrix = inverse(Mesh Node Global) * Joint Global * Inverse Bind Matrix, using identity when Inverse Bind Matrices are omitted",
+            "Skin Matrix derivatives include inverse_mesh_global_dot = -inverse_mesh_global * mesh_node_global_dot * inverse_mesh_global and the Joint Global derivative",
+            "Shared animated Root motion cancels in Mesh Node-relative Skin Matrices while Joint-relative motion remains in the analytic Skin Matrix derivative",
+            "Cyclic / inconsistent Node hierarchies, invalid animated channels, non-positive animated Scale, malformed Skin arrays and singular Mesh Node Global Matrices fail atomically"
+          ]
         }
       ],
       "automated_cases": [
