@@ -203,4 +203,76 @@ namespace skin_physics::physics
         const animation_channel_span& span,
         double span_local_u,
         double span_duration_seconds);
+
+    struct animation_blend_weight_curve_desc
+    {
+        double blend_start_time = 0.0;
+        double blend_end_time = 1.0;
+        float weight_start = 0.0f;
+        float weight_end = 1.0f;
+        float tangent_start = 0.0f;
+        float tangent_end = 0.0f;
+    };
+
+    enum class animation_blend_weight_error : uint8_t
+    {
+        none,
+        invalid_curve,
+        invalid_time,
+        span_crosses_curve_boundary
+    };
+
+    struct animation_blend_weight_span
+    {
+        double world_time_start = 0.0;
+        double world_time_duration = 0.0;
+        std::array<double, 4> coefficients = {};
+    };
+
+    struct animation_blend_weight_span_build_result
+    {
+        animation_blend_weight_span value;
+        animation_blend_weight_error error = animation_blend_weight_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    struct animation_blend_weight_spans_build_result
+    {
+        std::vector<animation_blend_weight_span> values;
+        animation_blend_weight_error error = animation_blend_weight_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    struct animation_blend_weight_sample
+    {
+        double weight = 0.0;
+        double world_time_derivative = 0.0;
+    };
+
+    struct animation_blend_weight_sample_result
+    {
+        animation_blend_weight_sample value;
+        animation_blend_weight_error error = animation_blend_weight_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    bool valid_animation_blend_weight_curve(
+        const animation_blend_weight_curve_desc& curve);
+
+    animation_blend_weight_span_build_result build_animation_blend_weight_span(
+        const animation_blend_weight_curve_desc& curve,
+        double world_time_start,
+        double world_time_duration);
+
+    animation_blend_weight_spans_build_result build_animation_blend_weight_spans(
+        const animation_blend_weight_curve_desc& curve,
+        double world_time_start,
+        double world_time_duration);
+
+    animation_blend_weight_sample_result evaluate_animation_blend_weight_span(
+        const animation_blend_weight_span& span,
+        double span_local_u);
 }
