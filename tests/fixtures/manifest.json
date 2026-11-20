@@ -599,7 +599,13 @@
             "Adjacent forward and reverse LINEAR Span records produce matching channel values at their shared Key boundaries",
             "Paused Tracks produce one zero-Clip-Time Span; duplicate / non-monotonic Keys fail atomically without partial Span records",
             "CUBICSPLINE Quaternion evaluation normalizes the raw Hermite polynomial and projects its analytic derivative into the quaternion tangent space",
-            "A single-key Animation Track remains one constant Span across its only key and returns zero target velocity"
+            "A single-key Animation Track remains one constant Span across its only key and returns zero target velocity",
+            "CUBICSPLINE Quaternion component polynomials normalize to unit quaternions and return tangent-space analytic derivatives",
+            "One-key animation samplers remain a single constant Span even when the requested Clip-Time range crosses the only key",
+            "STEP spans preserve directional one-sided values at a shared Key boundary for forward and reverse Playback",
+            "Signed Clip-Time spans map to positive World-Time partitions that remain ordered from the Logical Tick start to end",
+            "A paused Clip Track retains the full World-Time Tick as one zero-Clip-Time Span",
+            "Non-zero Clip-Time or World-Time deltas that cannot advance at their absolute start under double precision fail closed"
           ]
         }
       ],
