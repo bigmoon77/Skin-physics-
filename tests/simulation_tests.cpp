@@ -2302,6 +2302,297 @@ namespace
             "Source / Target / Weight interval mismatch must fail atomically before publishing a blended hierarchy.");
     }
 
+    void test_phase09_immutable_gpu_trajectory_packet_builder()
+    {
+        using skin_physics::asset::animation_key;
+        using skin_physics::asset::animation_path;
+        using skin_physics::asset::animation_track;
+        using skin_physics::asset::interpolation;
+        using skin_physics::asset::mat4;
+        using skin_physics::asset::model;
+        using skin_physics::asset::node;
+        using skin_physics::asset::skin;
+        using skin_physics::physics::animation_trajectory_packet_build_desc;
+        using skin_physics::physics::animation_trajectory_span_input;
+        using skin_physics::physics::animation_trajectory_track_span_input;
+
+        model source_model;
+        source_model.meshes.resize(1u);
+        source_model.nodes.resize(3u);
+
+        node& root_node = source_model.nodes[0u];
+        root_node.name = "packet_root";
+        root_node.children = { 1u, 2u };
+
+        node& joint_node = source_model.nodes[1u];
+        joint_node.name = "packet_joint";
+        joint_node.parent_index = 0u;
+        joint_node.translation = { 0.0f, 1.0f, 0.0f };
+
+        node& mesh_node = source_model.nodes[2u];
+        mesh_node.name = "packet_mesh";
+        mesh_node.parent_index = 0u;
+        mesh_node.mesh_index = 0u;
+        mesh_node.skin_index = 0u;
+        mesh_node.uses_matrix = true;
+        mesh_node.local_matrix = mat4{};
+        mesh_node.local_matrix.value[14u] = 2.0f;
+
+        skin source_skin;
+        source_skin.name = "packet_skin";
+        source_skin.skeleton_node_index = 1u;
+        source_skin.joints = { 1u };
+        mat4 inverse_bind;
+        inverse_bind.value[13u] = -1.0f;
+        source_skin.inverse_bind_matrices = { inverse_bind };
+        source_model.skins.push_back(source_skin);
+
+        skin_physics::asset::animation_clip clip;
+        clip.name = "packet_clip";
+        clip.duration = 1.0f;
+
+        animation_track root_translation;
+        root_translation.node_index = 0u;
+        root_translation.path = animation_path::translation;
+        root_translation.mode = interpolation::linear;
+        root_translation.component_count = 3u;
+        animation_key root_start;
+        root_start.time = 0.0f;
+        root_start.value = { 0.0f, 0.0f, 0.0f };
+        animation_key root_end;
+        root_end.time = 1.0f;
+        root_end.value = { 1.0f, 0.0f, 0.0f };
+        root_translation.keys = { root_start, root_end };
+
+        animation_track joint_translation;
+        joint_translation.node_index = 1u;
+        joint_translation.path = animation_path::translation;
+        joint_translation.mode = interpolation::cubic_spline;
+        joint_translation.component_count = 3u;
+        animation_key joint_start;
+        joint_start.time = 0.0f;
+        joint_start.in_tangent = { 0.0f, 0.0f, 0.0f };
+        joint_start.value = { 0.0f, 1.0f, 0.0f };
+        joint_start.out_tangent = { 0.0f, 0.0f, 0.0f };
+        animation_key joint_end;
+        joint_end.time = 1.0f;
+        joint_end.in_tangent = { 0.0f, 0.0f, 0.0f };
+        joint_end.value = { 0.0f, 3.0f, 0.0f };
+        joint_end.out_tangent = { 0.0f, 0.0f, 0.0f };
+        joint_translation.keys = { joint_start, joint_end };
+        clip.tracks = { root_translation, joint_translation };
+        source_model.animations.push_back(clip);
+
+        const skin_physics::physics::animation_clip_span_schedule_result scheduled =
+            skin_physics::physics::schedule_animation_clip_spans(
+                source_model.animations[0u], 3u,
+                0.0, 1.0, 10.0, 0.5);
+        require(scheduled.success && scheduled.values.size() == 1u &&
+            scheduled.values[0u].world_time_start == 10.0 &&
+            scheduled.values[0u].world_time_duration == 0.5,
+            "Packet fixture must build one synchronized positive World-Time Clip Span.");
+
+        animation_trajectory_span_input span_input;
+        span_input.span_id = 41u;
+        span_input.world_time_start = 10.0;
+        span_input.world_time_duration = 0.5;
+        span_input.bounds.speed_bound = 3.0f;
+        span_input.bounds.acceleration_bound = 4.0f;
+        span_input.bounds.chord_deviation_bound = 0.01f;
+        span_input.bounds.quaternion_normalization_lower_bound = 0.25f;
+        animation_trajectory_track_span_input track_input;
+        track_input.clip_index = 0u;
+        track_input.scheduled = scheduled.values[0u];
+        span_input.tracks.push_back(track_input);
+
+        animation_trajectory_packet_build_desc build_desc;
+        build_desc.animation_input_version = 0x1122334455667788ull;
+        build_desc.maximum_span_count = 8u;
+        build_desc.spans.push_back(span_input);
+
+        const skin_physics::physics::animation_trajectory_packet_build_result built =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, build_desc);
+        require(built.success &&
+            built.value.animation_input_version ==
+                build_desc.animation_input_version &&
+            built.value.span_records.size() == 1u &&
+            built.value.track_records.size() == 1u &&
+            built.value.channel_records.size() == 3u &&
+            built.value.inverse_bind_matrices.size() == 1u &&
+            built.value.static_node_matrices.size() == 3u &&
+            built.value.collider_records.empty() &&
+            built.value.span_world_time_starts ==
+                std::vector<double>({ 10.0 }),
+            "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind payload.");
+
+        const skin_physics::physics::animation_span_gpu_record& span_record =
+            built.value.span_records[0u];
+        const skin_physics::physics::animation_track_gpu_record& track_record =
+            built.value.track_records[0u];
+        require(span_record.span_id == 41u &&
+            span_record.animation_input_version_low == 0x55667788u &&
+            span_record.animation_input_version_high == 0x11223344u &&
+            span_record.first_track_record == 0u &&
+            span_record.track_record_count == 1u &&
+            span_record.first_channel_record == 0u &&
+            span_record.channel_record_count == 3u &&
+            span_record.first_blend_record == 0u &&
+            span_record.blend_record_count == 0u &&
+            span_record.span_duration_seconds == 0.5f &&
+            span_record.inverse_span_duration == 2.0f &&
+            span_record.speed_bound == 3.0f &&
+            span_record.acceleration_bound == 4.0f &&
+            span_record.chord_deviation_bound == 0.01f &&
+            span_record.quaternion_normalization_lower_bound == 0.25f,
+            "Span Record must preserve its immutable Input Version, contiguous Buffer Ranges, World-Time duration and certified Bounds.");
+        require(track_record.clip_index == 0u &&
+            track_record.first_channel_record == 0u &&
+            track_record.channel_record_count == 3u &&
+            track_record.clip_time_start == 0.0f &&
+            track_record.clip_time_delta == 1.0f &&
+            track_record.playback_speed == 2.0f &&
+            track_record.flags == 0u,
+            "Track Record must preserve Clip Time, signed delta, World-Time Playback Speed and its complete Node Channel Range.");
+
+        const auto find_channel =
+            [&built](uint32_t node_index) -> const skin_physics::physics::animation_channel_gpu_record*
+        {
+            const auto iterator = std::find_if(
+                built.value.channel_records.begin(),
+                built.value.channel_records.end(),
+                [node_index](
+                    const skin_physics::physics::animation_channel_gpu_record& value)
+                {
+                    return value.node_index == node_index;
+                });
+            return iterator == built.value.channel_records.end()
+                ? nullptr
+                : &(*iterator);
+        };
+        const auto* root_channel = find_channel(0u);
+        const auto* joint_channel = find_channel(1u);
+        const auto* mesh_channel = find_channel(2u);
+        require(root_channel != nullptr && joint_channel != nullptr &&
+            mesh_channel != nullptr &&
+            root_channel->parent_index == skin_physics::asset::invalid_index &&
+            joint_channel->parent_index == 0u &&
+            mesh_channel->parent_index == 0u,
+            "Channel Records must be emitted in Parent-before-Child order with Span-local Parent Record Indices.");
+        require((root_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_model_root) != 0u &&
+            (root_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_required_joint_ancestor) != 0u &&
+            (joint_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_joint) != 0u &&
+            (mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_mesh) != 0u &&
+            (mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_static_matrix) != 0u &&
+            root_channel->inverse_bind_record_index == skin_physics::asset::invalid_index &&
+            joint_channel->inverse_bind_record_index == 0u,
+            "Node Role flags must preserve Model Root / Joint / Mesh / Ancestor / Static Matrix semantics and non-Joint UINT32_MAX IBM references.");
+        require(root_channel->channel_mask ==
+                skin_physics::physics::animation_channel_mask_translation &&
+            root_channel->interpolation_flags ==
+                static_cast<uint32_t>(skin_physics::asset::interpolation::linear) &&
+            joint_channel->channel_mask ==
+                skin_physics::physics::animation_channel_mask_translation &&
+            joint_channel->interpolation_flags ==
+                (static_cast<uint32_t>(skin_physics::asset::interpolation::cubic_spline)),
+            "Animation Channel Records must preserve the original Node / Path channel masks and glTF interpolation flags.");
+        require(std::abs(root_channel->translation_c0.x) <= 1.0e-6f &&
+            std::abs(root_channel->translation_c1.x - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c0.y - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c1.y) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c2.y) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c3.y - 2.0f) <= 1.0e-6f,
+            "Channel Records must contain the exact Span-local LINEAR / CUBICSPLINE coefficient arrays.");
+        require(std::abs(
+                built.value.inverse_bind_matrices[0u].column3.y + 1.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.static_node_matrices[2u].column3.z - 2.0f) <= 1.0e-6f,
+            "Immutable Inverse Bind and dense Static Node Matrix payloads must retain the Asset Column-Major Matrix convention.");
+
+        skin_physics::physics::animation_span_cursor_gpu_record cursor;
+        std::string diagnostic;
+        require(skin_physics::physics::initialize_animation_span_cursor(
+                built.value, 0u, 10.25, cursor, diagnostic) &&
+            cursor.span_record_index == 0u &&
+            cursor.animation_input_version_low == 0x55667788u &&
+            cursor.animation_input_version_high == 0x11223344u &&
+            std::abs(cursor.u_segment_start - 0.5f) <= 1.0e-6f,
+            "Segment Cursor must map World Time into the immutable Span's normalized local coordinate and retain the exact Packet Version.");
+        require(skin_physics::physics::initialize_animation_span_cursor(
+                built.value, 0u, 10.5, cursor, diagnostic) &&
+            cursor.u_segment_start == 1.0f,
+            "A Segment starting at a Span's exact end boundary must initialize an exact normalized Cursor of one.");
+
+        skin_physics::physics::animation_span_cursor_gpu_record preserved_cursor;
+        preserved_cursor.span_record_index = 77u;
+        preserved_cursor.animation_input_version_low = 88u;
+        preserved_cursor.animation_input_version_high = 99u;
+        preserved_cursor.u_segment_start = 0.375f;
+        const skin_physics::physics::animation_span_cursor_gpu_record original_cursor =
+            preserved_cursor;
+        require(!skin_physics::physics::initialize_animation_span_cursor(
+                built.value, 0u, 9.999, preserved_cursor, diagnostic) &&
+            preserved_cursor.span_record_index == original_cursor.span_record_index &&
+            preserved_cursor.animation_input_version_low ==
+                original_cursor.animation_input_version_low &&
+            preserved_cursor.animation_input_version_high ==
+                original_cursor.animation_input_version_high &&
+            preserved_cursor.u_segment_start == original_cursor.u_segment_start,
+            "An out-of-Span Cursor request must fail atomically without overwriting the caller's previous Cursor.");
+
+        animation_trajectory_packet_build_desc invalid_version = build_desc;
+        invalid_version.animation_input_version = 0u;
+        const auto invalid_version_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_version);
+        require(!invalid_version_result.success &&
+            invalid_version_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_version &&
+            invalid_version_result.value.span_records.empty(),
+            "Packet Builder must reject a zero immutable Input Version without publishing partial records.");
+
+        animation_trajectory_packet_build_desc invalid_bounds = build_desc;
+        invalid_bounds.spans[0u].bounds.speed_bound = -1.0f;
+        const auto invalid_bounds_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_bounds);
+        require(!invalid_bounds_result.success &&
+            invalid_bounds_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_bounds &&
+            invalid_bounds_result.value.channel_records.empty(),
+            "Packet Builder must reject negative certified Bounds atomically.");
+
+        animation_trajectory_packet_build_desc invalid_channel_range = build_desc;
+        invalid_channel_range.spans[0u].tracks[0u].scheduled.clip.channels.pop_back();
+        const auto invalid_channel_range_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_channel_range);
+        require(!invalid_channel_range_result.success &&
+            invalid_channel_range_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_track &&
+            invalid_channel_range_result.value.span_records.empty(),
+            "Packet Builder must reject a Track whose scheduled Channel Range does not match the original Asset Track array.");
+
+        animation_trajectory_packet_build_desc non_contiguous_spans = build_desc;
+        animation_trajectory_span_input second_span = span_input;
+        second_span.span_id = 42u;
+        second_span.world_time_start = 10.75;
+        non_contiguous_spans.spans.push_back(second_span);
+        const auto non_contiguous_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, non_contiguous_spans);
+        require(!non_contiguous_result.success &&
+            non_contiguous_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span &&
+            non_contiguous_result.value.span_records.empty(),
+            "Packet Builder must reject a non-contiguous World-Time Span sequence without publishing the preceding valid Span.");
+    }
+
     void test_phase10_attribute_paint_and_serialization()
     {
         const test_json::value input = test_json::load(
