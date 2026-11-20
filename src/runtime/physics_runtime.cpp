@@ -4251,6 +4251,278 @@ namespace skin_physics::runtime
             return true;
         }
 
+        bool build_model_animation_tick_schedules(
+            const world_slot& world,
+            const tick_input_snapshot& input_snapshot,
+            const tick_reservation& reservation,
+            std::vector<model_animation_tick_schedule>& out_schedules,
+            std::string& diagnostic) const
+        {
+            out_schedules.clear();
+            diagnostic.clear();
+            if (reservation.input_snapshot == nullptr ||
+                input_snapshot.version != reservation.input_snapshot->version ||
+                !finite_double(reservation.start_time) ||
+                !finite_double(reservation.delta_time) ||
+                reservation.delta_time <= 0.0 ||
+                !finite_double(reservation.start_time + reservation.delta_time))
+            {
+                diagnostic =
+                    "Animation Scheduler requires the immutable Tick Snapshot and a finite positive Reservation interval.";
+                return false;
+            }
+
+            const auto resolve_clip_start =
+                [&reservation](
+                    const animation_track_desc& track,
+                    const asset::animation_clip& clip,
+                    double world_time_origin,
+                    double& out_clip_time,
+                    std::string& out_error) -> bool
+            {
+                if (!finite_double(world_time_origin) ||
+                    !finite_double(track.time) ||
+                    !finite_double(track.speed))
+                {
+                    out_error =
+                        "Animation Track Origin, Clip Time or Playback Speed is non-finite.";
+                    return false;
+                }
+                const double elapsed_world_time =
+                    reservation.start_time - world_time_origin;
+                const double clip_offset =
+                    elapsed_world_time * track.speed;
+                const double unwrapped_clip_time = track.time + clip_offset;
+                const double clip_duration =
+                    static_cast<double>(clip.duration);
+                if (!finite_double(elapsed_world_time) ||
+                    !finite_double(clip_offset) ||
+                    !finite_double(unwrapped_clip_time) ||
+                    !finite_double(clip_duration) ||
+                    clip_duration < 0.0)
+                {
+                    out_error =
+                        "Animation Track World-to-Clip time mapping is not representable.";
+                    return false;
+                }
+
+                if (track.loop)
+                {
+                    if (clip_duration <= 0.0)
+                    {
+                        if (track.speed != 0.0)
+                        {
+                            out_error =
+                                "A non-zero-speed looping Animation Track requires a positive Clip duration.";
+                            return false;
+                        }
+                        out_clip_time = 0.0;
+                    }
+                    else
+                    {
+                        out_clip_time = std::fmod(
+                            unwrapped_clip_time, clip_duration);
+                        if (out_clip_time < 0.0)
+                        {
+                            out_clip_time += clip_duration;
+                        }
+                        if (out_clip_time == clip_duration)
+                        {
+                            out_clip_time = 0.0;
+                        }
+                    }
+                }
+                else
+                {
+                    out_clip_time = std::max(
+                        0.0, std::min(clip_duration, unwrapped_clip_time));
+                }
+
+                if (!finite_double(out_clip_time))
+                {
+                    out_error =
+                        "Animation Track normalized Clip Time is not finite.";
+                    return false;
+                }
+                return true;
+            };
+
+            try
+            {
+                out_schedules.reserve(input_snapshot.models.size());
+                for (const model_input_snapshot& model_snapshot :
+                    input_snapshot.models)
+                {
+                    if (!model_snapshot.has_animation_playback &&
+                        !model_snapshot.has_animation_blend)
+                    {
+                        continue;
+                    }
+                    if (model_snapshot.has_animation_playback &&
+                        model_snapshot.has_animation_blend)
+                    {
+                        diagnostic =
+                            "One Model cannot submit Playback and two-Clip Blend as simultaneous independent Animation Inputs.";
+                        return false;
+                    }
+                    if (model_snapshot.model_index >= world.models.size())
+                    {
+                        diagnostic =
+                            "Animation Input Snapshot references a Model index outside the current World.";
+                        return false;
+                    }
+                    const model_slot& model =
+                        world.models[model_snapshot.model_index];
+                    if (!model.occupied ||
+                        model.generation != model_snapshot.generation)
+                    {
+                        diagnostic =
+                            "Animation Input Snapshot references a stale Model generation.";
+                        return false;
+                    }
+
+                    model_animation_tick_schedule schedule;
+                    schedule.model_index = model_snapshot.model_index;
+                    schedule.model_generation = model_snapshot.generation;
+                    const uint32_t maximum_span_count =
+                        std::max(1u, desc.maximum_integration_segments_per_tick_hard_limit);
+
+                    if (model_snapshot.has_animation_playback)
+                    {
+                        const animation_track_desc& track =
+                            model_snapshot.animation_playback.track;
+                        if (track.clip_index >= model.source_model.animations.size())
+                        {
+                            diagnostic =
+                                "Animation Playback Clip Index is outside the immutable Model Asset.";
+                            return false;
+                        }
+                        const asset::animation_clip& clip =
+                            model.source_model.animations[track.clip_index];
+                        double clip_time_start = 0.0;
+                        std::string time_diagnostic;
+                        if (!resolve_clip_start(
+                                track, clip,
+                                model_snapshot.animation_world_time_origin,
+                                clip_time_start, time_diagnostic))
+                        {
+                            diagnostic =
+                                "Animation Playback time mapping failed: " +
+                                time_diagnostic;
+                            return false;
+                        }
+                        const physics::animation_clip_span_schedule_result playback =
+                            physics::schedule_animation_clip_playback_spans(
+                                clip,
+                                static_cast<uint32_t>(
+                                    model.source_model.nodes.size()),
+                                clip_time_start,
+                                track.speed,
+                                track.loop,
+                                reservation.start_time,
+                                reservation.delta_time,
+                                maximum_span_count);
+                        if (!playback.success)
+                        {
+                            diagnostic =
+                                "Animation Playback Span scheduling failed: " +
+                                playback.message;
+                            return false;
+                        }
+                        schedule.playback_spans = playback.values;
+                    }
+                    else
+                    {
+                        const animation_blend_desc& blend =
+                            model_snapshot.animation_blend;
+                        if (blend.source_track.clip_index >=
+                                model.source_model.animations.size() ||
+                            blend.target_track.clip_index >=
+                                model.source_model.animations.size())
+                        {
+                            diagnostic =
+                                "Animation Blend Source / Target Clip Index is outside the immutable Model Asset.";
+                            return false;
+                        }
+                        const asset::animation_clip& source_clip =
+                            model.source_model.animations[
+                                blend.source_track.clip_index];
+                        const asset::animation_clip& target_clip =
+                            model.source_model.animations[
+                                blend.target_track.clip_index];
+                        double source_clip_time_start = 0.0;
+                        double target_clip_time_start = 0.0;
+                        std::string source_time_diagnostic;
+                        std::string target_time_diagnostic;
+                        if (!resolve_clip_start(
+                                blend.source_track,
+                                source_clip,
+                                model_snapshot.animation_world_time_origin,
+                                source_clip_time_start,
+                                source_time_diagnostic) ||
+                            !resolve_clip_start(
+                                blend.target_track,
+                                target_clip,
+                                model_snapshot.animation_world_time_origin,
+                                target_clip_time_start,
+                                target_time_diagnostic))
+                        {
+                            diagnostic =
+                                "Animation Blend Clip-Time mapping failed: Source=" +
+                                source_time_diagnostic + " Target=" +
+                                target_time_diagnostic;
+                            return false;
+                        }
+
+                        physics::animation_blend_weight_curve_desc weight_curve;
+                        weight_curve.blend_start_time = blend.blend_start_time;
+                        weight_curve.blend_end_time = blend.blend_end_time;
+                        weight_curve.weight_start = blend.weight_start;
+                        weight_curve.weight_end = blend.weight_end;
+                        weight_curve.tangent_start = blend.tangent_start;
+                        weight_curve.tangent_end = blend.tangent_end;
+                        const physics::animation_blend_clip_span_schedule_result blend_schedule =
+                            physics::schedule_animation_blend_clip_spans(
+                                source_clip,
+                                static_cast<uint32_t>(
+                                    model.source_model.nodes.size()),
+                                source_clip_time_start,
+                                blend.source_track.speed,
+                                blend.source_track.loop,
+                                target_clip,
+                                static_cast<uint32_t>(
+                                    model.source_model.nodes.size()),
+                                target_clip_time_start,
+                                blend.target_track.speed,
+                                blend.target_track.loop,
+                                weight_curve,
+                                reservation.start_time,
+                                reservation.delta_time,
+                                maximum_span_count);
+                        if (!blend_schedule.success)
+                        {
+                            diagnostic =
+                                "Synchronized Animation Blend Span scheduling failed: " +
+                                blend_schedule.message;
+                            return false;
+                        }
+                        schedule.has_blend = true;
+                        schedule.blend_spans = blend_schedule.values;
+                    }
+
+                    out_schedules.push_back(std::move(schedule));
+                }
+            }
+            catch (...)
+            {
+                out_schedules.clear();
+                diagnostic =
+                    "Unable to allocate immutable per-Model Animation Span schedules.";
+                return false;
+            }
+            return true;
+        }
+
         bool build_world_integration_segment_schedule(
             const tick_reservation& reservation,
             const tick_input_snapshot& input_snapshot,
