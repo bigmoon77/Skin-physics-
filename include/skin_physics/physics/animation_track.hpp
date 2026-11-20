@@ -82,7 +82,8 @@ namespace skin_physics::physics
         malformed_key,
         non_monotonic_time,
         span_crosses_key_boundary,
-        invalid_quaternion
+        invalid_quaternion,
+        capacity_exceeded
     };
 
     // Immutable CPU-side coefficients for one animation channel over a single
