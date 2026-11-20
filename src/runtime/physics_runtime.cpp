@@ -1135,6 +1135,8 @@ namespace skin_physics::runtime
             uint64_t dispatch_id = 0u;
             uint64_t reservation_token = 0u;
             uint64_t input_snapshot_version = 0u;
+            std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>
+                segment_parameter_buffers;
             uint64_t expected_predecessor_sequence = 0u;
             uint64_t expected_source_generation = 1u;
             uint32_t expected_source_state_set = 0u;
@@ -2749,29 +2751,30 @@ namespace skin_physics::runtime
             uint32_t destination_state_set,
             const tick_reservation& reservation,
             simulation::d3d11_compute_graph& graph,
+            std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
+                out_segment_parameter_buffers,
             std::string& diagnostic)
         {
             diagnostic.clear();
+            out_segment_parameter_buffers.clear();
             if (source_state_set > 1u || destination_state_set > 1u ||
                 source_state_set == destination_state_set ||
                 reservation.planned_substeps == 0u ||
+                reservation.planned_integration_segments == 0u ||
+                reservation.integration_segments.size() !=
+                    reservation.planned_integration_segments ||
                 !world_has_soft_body_work(world))
             {
                 diagnostic = "Soft Body Tick Passes require valid distinct State Banks and a non-empty Substep Schedule.";
                 return false;
             }
 
-            const double delta_time_double =
-                reservation.delta_time /
-                static_cast<double>(reservation.planned_substeps);
-            const float delta_time = static_cast<float>(delta_time_double);
-            if (!finite_double(delta_time_double) ||
-                delta_time_double <= 0.0 ||
-                !finite_float(delta_time) ||
-                delta_time <= 0.0f ||
+            if (!finite_double(reservation.start_time) ||
+                !finite_double(reservation.delta_time) ||
+                reservation.delta_time <= 0.0 ||
                 !finite_vec3(input_snapshot.description.gravity))
             {
-                diagnostic = "Soft Body Integration Segment time or World gravity is not representable as finite GPU float values.";
+                diagnostic = "Soft Body Tick time or World gravity is not representable as finite values.";
                 return false;
             }
 
@@ -2803,30 +2806,53 @@ namespace skin_physics::runtime
                         return false;
                     }
 
-                    gpu_soft_body_integration_parameters integration_parameters;
-                    integration_parameters.vertex_count = gpu_mesh.vertex_count;
-                    integration_parameters.delta_time = delta_time;
-                    integration_parameters.damping_rate = damping_rate;
-                    integration_parameters.gravity[0] =
-                        input_snapshot.description.gravity.x;
-                    integration_parameters.gravity[1] =
-                        input_snapshot.description.gravity.y;
-                    integration_parameters.gravity[2] =
-                        input_snapshot.description.gravity.z;
-                    immediate_context->UpdateSubresource(
-                        gpu_mesh.integration_parameters.Get(),
-                        0u,
-                        nullptr,
-                        &integration_parameters,
-                        0u,
-                        0u);
-
                     bool source_is_scratch = false;
                     uint32_t source_bank = source_state_set;
-                    for (uint32_t substep_index = 0u;
-                        substep_index < reservation.planned_substeps;
-                        ++substep_index)
+                    for (uint32_t segment_index = 0u;
+                        segment_index < reservation.planned_integration_segments;
+                        ++segment_index)
                     {
+                        const integration_segment& segment =
+                            reservation.integration_segments[segment_index];
+                        const float delta_time =
+                            static_cast<float>(segment.delta_time);
+                        if (!finite_double(segment.start_time) ||
+                            !finite_double(segment.delta_time) ||
+                            segment.delta_time <= 0.0 ||
+                            !finite_float(delta_time) ||
+                            delta_time <= 0.0f)
+                        {
+                            diagnostic =
+                                "World Integration Segment time cannot be represented as a positive finite GPU float.";
+                            return false;
+                        }
+
+                        gpu_soft_body_integration_parameters integration_parameters;
+                        integration_parameters.vertex_count = gpu_mesh.vertex_count;
+                        integration_parameters.delta_time = delta_time;
+                        integration_parameters.damping_rate = damping_rate;
+                        integration_parameters.gravity[0] =
+                            input_snapshot.description.gravity.x;
+                        integration_parameters.gravity[1] =
+                            input_snapshot.description.gravity.y;
+                        integration_parameters.gravity[2] =
+                            input_snapshot.description.gravity.z;
+                        Microsoft::WRL::ComPtr<ID3D11Buffer> segment_parameters;
+                        if (!create_constant_buffer(
+                                device.Get(),
+                                static_cast<uint32_t>(
+                                    sizeof(integration_parameters)),
+                                &integration_parameters,
+                                segment_parameters.GetAddressOf()))
+                        {
+                            diagnostic =
+                                "Unable to allocate an immutable per-Segment Soft Body Integration Parameters Buffer.";
+                            return false;
+                        }
+                        out_segment_parameter_buffers.push_back(
+                            std::move(segment_parameters));
+                        ID3D11Buffer* segment_parameters_buffer =
+                            out_segment_parameter_buffers.back().Get();
                         ID3D11ShaderResourceView* source_position_srv =
                             source_is_scratch
                                 ? gpu_mesh.position_scratch_srv.Get()
@@ -2837,7 +2863,7 @@ namespace skin_physics::runtime
                                 : gpu_mesh.velocity_bank_srvs[source_bank].Get();
 
                         const bool destination_is_scratch =
-                            (substep_index & 1u) == 0u;
+                            (segment_index & 1u) == 0u;
                         const uint32_t destination_bank = destination_state_set;
                         ID3D11UnorderedAccessView* destination_position_uav =
                             destination_is_scratch
@@ -2851,8 +2877,8 @@ namespace skin_physics::runtime
                         simulation::compute_pass_desc fem_pass;
                         fem_pass.name = "soft_body_fem_m" +
                             std::to_string(model_index) + "_mesh" +
-                            std::to_string(gpu_mesh.mesh_index) + "_substep" +
-                            std::to_string(substep_index);
+                            std::to_string(gpu_mesh.mesh_index) + "_segment" +
+                            std::to_string(segment_index);
                         fem_pass.shader = soft_body_fem_shader.Get();
                         fem_pass.shader_resources = {
                             { 0u, source_position_srv },
@@ -2875,8 +2901,8 @@ namespace skin_physics::runtime
                         simulation::compute_pass_desc gather_pass;
                         gather_pass.name = "soft_body_force_gather_m" +
                             std::to_string(model_index) + "_mesh" +
-                            std::to_string(gpu_mesh.mesh_index) + "_substep" +
-                            std::to_string(substep_index);
+                            std::to_string(gpu_mesh.mesh_index) + "_segment" +
+                            std::to_string(segment_index);
                         gather_pass.shader = soft_body_force_gather_shader.Get();
                         gather_pass.shader_resources = {
                             { 0u, gpu_mesh.tetrahedron_output_srv.Get() },
@@ -2901,8 +2927,8 @@ namespace skin_physics::runtime
                         simulation::compute_pass_desc integrate_pass;
                         integrate_pass.name = "soft_body_integrate_m" +
                             std::to_string(model_index) + "_mesh" +
-                            std::to_string(gpu_mesh.mesh_index) + "_substep" +
-                            std::to_string(substep_index);
+                            std::to_string(gpu_mesh.mesh_index) + "_segment" +
+                            std::to_string(segment_index);
                         integrate_pass.shader = soft_body_integrate_shader.Get();
                         integrate_pass.shader_resources = {
                             { 0u, source_position_srv },
@@ -2917,7 +2943,7 @@ namespace skin_physics::runtime
                             { 2u, world.commit_control_uav.Get(), 0xffffffffu }
                         };
                         integrate_pass.constant_buffers = {
-                            { 0u, gpu_mesh.integration_parameters.Get() }
+                            { 0u, segment_parameters_buffer }
                         };
                         integrate_pass.group_count_x = std::max(
                             1u, (gpu_mesh.vertex_count + 63u) / 64u);
@@ -3499,7 +3525,7 @@ namespace skin_physics::runtime
                 reservation.planned_integration_segments = 0u;
                 reservation.integration_segments.clear();
                 reservation.blocked = false;
-                reservation.rejected = true;
+                reservation.rejected = false;
                 world.planned_substeps = 0u;
                 world.planned_integration_segments = 0u;
                 world.work_budget_block_flags = 0u;
@@ -3881,6 +3907,8 @@ namespace skin_physics::runtime
             }
 
             simulation::d3d11_compute_graph graph;
+            std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>
+                segment_parameter_buffers;
             std::string diagnostic;
             simulation::compute_pass_desc begin_pass;
             begin_pass.name = "tick_begin_control";
@@ -3913,6 +3941,7 @@ namespace skin_physics::runtime
                         plan.destination_state_set,
                         reservation,
                         graph,
+                        segment_parameter_buffers,
                         diagnostic))
                 {
                     world.state = tick_state::failed;
@@ -4069,6 +4098,8 @@ namespace skin_physics::runtime
             in_flight.dispatch_id = next_dispatch_id;
             in_flight.reservation_token = reservation_token;
             in_flight.input_snapshot_version = input_snapshot_version;
+            in_flight.segment_parameter_buffers =
+                std::move(segment_parameter_buffers);
             in_flight.expected_predecessor_sequence =
                 world.scheduled_predecessor_sequence;
             in_flight.expected_source_generation =
