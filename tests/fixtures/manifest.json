@@ -803,7 +803,8 @@
     "automated_test_groups": [
       "R0_RUNTIME_INITIALIZATION_AND_HANDLES",
       "R0_RUNTIME_TIME_BUDGET_AND_PAUSE",
-      "R0_RUNTIME_SUBMISSION_THREAD_GUARD"
+      "R0_RUNTIME_SUBMISSION_THREAD_GUARD",
+      "R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY"
     ],
     "covered_contracts": [
       "host_device_immediate_context_feature_level_and_device_identity_validation",
@@ -812,7 +813,11 @@
       "fixed_step_accumulator_pause_stop_single_step_reset_accounting",
       "world_execution_budget_revision_and_hard_limit_validation",
       "submission_thread_enforcement",
-      "world_drain_shutdown_and_render_lease_busy_guards"
+      "world_drain_shutdown_and_render_lease_busy_guards",
+      "fixed_delta_time_moves_once_from_accumulator_into_head_tick_reservation",
+      "cpu_preflight_blocks_without_dropping_the_same_reservation_or_sequence",
+      "execution_budget_revision_rechecks_the_same_head_reservation",
+      "world_input_mutation_is_rejected_while_a_tick_reservation_or_render_lease_exists"
     ],
     "remaining_r0": [
       "GPU Tick Submission and per-World Dispatch Plan creation",
@@ -820,9 +825,9 @@
       "GPU Status Buffer production and per-Tick Event Query enqueue",
       "asynchronous COMMITTED status parsing and contiguous observed-prefix recovery",
       "two persistent State Banks and Segment Snapshot lifecycle",
-      "work-budget preflight reservation and same-Reservation retry",
       "Render Candidate Ring and Host Render Lease publication",
-      "Public Runtime integration with the production Soft Body / Cloth / Collision solvers"
+      "Public Runtime integration with the production Soft Body / Cloth / Collision solvers",
+      "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation"
     ],
     "validation": "WARP test source is registered in the Windows test project; execution and C++ compilation remain unverified until a Windows CI runner executes build-and-test."
   }
