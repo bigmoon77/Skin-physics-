@@ -2243,6 +2243,119 @@ namespace skin_physics::runtime
             return true;
         }
 
+        bool reserve_render_candidate_slot(
+            world_slot& world,
+            uint64_t tick_sequence,
+            uint32_t& out_slot_id,
+            uint32_t& out_slot_generation,
+            std::string& diagnostic)
+        {
+            out_slot_id = asset::invalid_index;
+            out_slot_generation = 0u;
+            diagnostic.clear();
+
+            if (!world_has_soft_body_work(world))
+            {
+                return true;
+            }
+            if (world.render_lease_active)
+            {
+                diagnostic =
+                    "Host Render Lease is active; a new Render Candidate cannot be admitted until Release.";
+                return false;
+            }
+
+            for (uint32_t slot_id = 0u;
+                slot_id < world.render_candidate_slots.size();
+                ++slot_id)
+            {
+                if (world.latest_render_slot_id == slot_id)
+                {
+                    continue;
+                }
+
+                render_candidate_slot_state& slot =
+                    world.render_candidate_slots[slot_id];
+                if (slot.retired || slot.reserved)
+                {
+                    continue;
+                }
+
+                if (slot.generation == 0u)
+                {
+                    slot.generation = 1u;
+                }
+                else if (slot.generation >= 0x0000ffffu)
+                {
+                    slot.retired = true;
+                    continue;
+                }
+                else
+                {
+                    ++slot.generation;
+                }
+
+                slot.reserved = true;
+                slot.committed = false;
+                slot.committed_tick_sequence = tick_sequence;
+                out_slot_id = slot_id;
+                out_slot_generation = slot.generation;
+                return true;
+            }
+
+            diagnostic =
+                "Render Candidate Ring has no reusable Slot while the latest CPU-observed Commit is retained.";
+            return false;
+        }
+
+        void release_render_candidate_slot(
+            world_slot& world,
+            uint32_t slot_id,
+            uint32_t slot_generation)
+        {
+            if (slot_id >= world.render_candidate_slots.size())
+            {
+                return;
+            }
+
+            render_candidate_slot_state& slot =
+                world.render_candidate_slots[slot_id];
+            if (slot.generation != slot_generation || !slot.reserved)
+            {
+                return;
+            }
+            slot.reserved = false;
+            slot.committed = false;
+            slot.committed_tick_sequence = 0u;
+        }
+
+        bool commit_render_candidate_slot(
+            world_slot& world,
+            uint32_t slot_id,
+            uint32_t slot_generation,
+            uint64_t tick_sequence)
+        {
+            if (slot_id >= world.render_candidate_slots.size())
+            {
+                return slot_id == asset::invalid_index;
+            }
+
+            render_candidate_slot_state& slot =
+                world.render_candidate_slots[slot_id];
+            if (!slot.reserved ||
+                slot.generation != slot_generation ||
+                slot.committed_tick_sequence != tick_sequence)
+            {
+                return false;
+            }
+
+            slot.reserved = false;
+            slot.committed = true;
+            world.latest_render_slot_id = slot_id;
+            world.latest_render_slot_generation = slot_generation;
+            return true;
+        }
+
         bool world_has_unsupported_physics_work(const world_slot& world) const
         {
             if (!world.forces.empty() || !world.impulses.empty())
