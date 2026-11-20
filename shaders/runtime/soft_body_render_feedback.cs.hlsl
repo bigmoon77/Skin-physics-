@@ -104,7 +104,7 @@ bool evaluate_render_position(uint render_vertex_index, out float3 position)
         float3 p2 = physics_positions[ic].xyz;
         if (!all(isfinite(p0)) || !all(isfinite(p1)) || !all(isfinite(p2)) ||
             !all(isfinite(binding.barycentric.xyz)) ||
-            !all(isfinite(binding.rest_offset_local.xyz))
+            !all(isfinite(binding.rest_offset_local.xyz)))
         {
             return false;
         }
