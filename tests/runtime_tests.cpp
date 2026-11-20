@@ -751,6 +751,13 @@ namespace
             third_tick_report.pending_tick_count == 0u,
             "A third Tick must be submitted before the Host acquires the previous committed Render Candidate.");
 
+        skin_physics::runtime::world_status third_tick_status;
+        require(runtime.poll(world, &third_tick_status).success() &&
+            third_tick_status.in_flight_tick_count == 1u &&
+            third_tick_status.planned_substeps == 3u &&
+            third_tick_status.planned_integration_segments == 3u,
+            "The WARP Soft Body Tick must submit one immutable Integration Parameters buffer per scheduled World Segment.");
+
         skin_physics::runtime::render_binding render_binding;
         require(runtime.get_render_binding(
                 world, model, 0u, &render_binding).success(),
@@ -1310,6 +1317,7 @@ int run_runtime_tests()
     std::cout << "[PASS] R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW\n";
     test_runtime_soft_body_gpu_tick_and_state_bank_sequence();
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS\n";
+    std::cout << "[PASS] R1_WARP_SOFT_BODY_SEGMENT_DT_PARAMETERS\n";
     std::cout << "[PASS] R1_RUNTIME_ANIMATION_INPUT_DEFERRED\n";
     std::cout << "[PASS] R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED\n";
     std::cout << "[PASS] R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE\n";
