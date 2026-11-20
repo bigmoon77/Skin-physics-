@@ -354,6 +354,16 @@
             "Sibling Mesh is unaffected by an exact-Mesh target",
             "Zero-support Event rejects the Tick with NO_FORCE_TARGET and no Commit"
           ]
+        },
+        {
+          "id": "R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY",
+          "input": "phase13_force_distribution/wendland_c2.input.json",
+          "expected": "phase13_force_distribution/wendland_c2.expected.json",
+          "checks": [
+            "Production Weight, Reduction, Finalize and Apply entry points compile and dispatch on WARP",
+            "GPU per-vertex unnormalized q values and normalization sum match the CPU double-precision reference",
+            "GPU per-vertex normalized weights match the CPU reference across three 64-thread groups with a 130-vertex input"
+          ]
         }
       ],
       "automated_cases": [
@@ -367,7 +377,8 @@
         "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE",
         "R1_RUNTIME_ANIMATION_INPUT_DEFERRED",
         "R1_FORCE_WENDLAND_C2_CPU_REFERENCE",
-        "R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT"
+        "R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT",
+        "R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY"
       ],
       "unimplemented": [
         "Physical / WARP numerical parity and SVD near-singular stress regression for the production Runtime path",
@@ -384,8 +395,11 @@
         "shaders/runtime/soft_body_render_feedback.cs.hlsl",
         "shaders/runtime/soft_body_force_distribution.cs.hlsl"
       ],
-      "status_note": "Production Soft Body GPU Runtime supports mass-weighted Wendland C2 Force / Impulse events for an exact single-Mesh target. World / Model-wide cross-Mesh normalization and Cloth event application remain blocked. The WARP regression source checks selected-Mesh response, unaffected sibling Mesh state, one-shot Impulse integration, and NO_FORCE_TARGET rejection. Exact per-vertex CPU/GPU weight readback remains an outstanding numerical parity test. CPU reference and GPU finalizer use the same 1.0e-20 SI-mass normalization threshold.",
+      "status_note": "Production Soft Body GPU Runtime supports mass-weighted Wendland C2 Force / Impulse events for an exact single-Mesh target. World / Model-wide cross-Mesh normalization and Cloth event application remain blocked. The Runtime WARP regression checks selected-Mesh response, unaffected sibling Mesh state, one-shot Impulse integration, and NO_FORCE_TARGET rejection. A dedicated WARP regression now compiles and dispatches the production Weight, Reduction, Finalize and Apply shader entry points and reads back per-vertex q, the normalization sum, and normalized per-vertex weights against the CPU double-precision reference. Hosted Windows execution remains unverified. CPU reference and GPU finalizer use the same 1.0e-20 SI-mass normalization threshold.",
       "warp_runtime_assertions": [
+        "production_Force_distribution_Weight_Reduction_Finalize_and_Apply_entrypoints_compile_and_dispatch_on_WARP",
+        "GPU_per_vertex_unnormalized_q_and_normalization_sum_match_CPU_double_reference",
+        "GPU_normalized_per_vertex_weights_match_CPU_double_reference_across_multiple_thread_groups",
         "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",
         "positive_near_singular_deformation_selects_Proper_Rotation_Jacobi_SVD_fallback",
