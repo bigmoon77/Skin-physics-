@@ -359,7 +359,8 @@
         "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",
         "positive_near_singular_deformation_selects_Proper_Rotation_Jacobi_SVD_fallback",
         "finite_inverted_deformation_publishes_CPU_parity_diagnostics_but_sets_terminal_failure",
-        "inverted_deformation_never_becomes_a_committed_Tick"
+        "inverted_deformation_never_becomes_a_committed_Tick",
+        "production_FEM_WARP_test_uses_the_80_byte_Render_Candidate_aware_Tick_Control_ABI"
       ],
       "implemented_runtime_contracts": [
         "render_mesh_shape_recovery_and_volume_paint_transfers_to_boundary_physics_vertices",
@@ -380,7 +381,8 @@
         "model_root_translation_and_rotation_are_inverted_before_render_candidate_publication",
         "accepted_near_unit_quaternions_are_normalized_before_initial_state_and_render_feedback",
         "finite_inverted_FEM_intermediates_match_CPU_reference_for_deformation_rotation_stress_force_and_energy",
-        "inverted_FEM_output_is_diagnostic_only_and_forces_terminal_failure_before_tick_commit"
+        "inverted_FEM_output_is_diagnostic_only_and_forces_terminal_failure_before_tick_commit",
+        "production_fem_warp_test_control_buffer_stride_matches_80_byte_runtime_shader_abi"
       ]
     },
     {
@@ -936,7 +938,8 @@
       "gpu_dynamic_toi_status_origin_is_preserved_when_later_predecessor_status_is_observed",
       "accepted_rigid_transform_quaternions_are_canonicalized_before_physics_upload_and_render_feedback",
       "production_runtime_fem_positive_and_inverted_finite_intermediates_match_cpu_reference",
-      "inverted_fem_publishes_diagnostics_but_tick_commit_is_rejected"
+      "inverted_fem_publishes_diagnostics_but_tick_commit_is_rejected",
+      "production_fem_warp_test_control_buffer_stride_matches_runtime_hlsl_tick_commit_control_abi"
     ],
     "remaining_r0": [
       "Cloth / Collider solver integration into the World Runtime scheduler",
@@ -944,6 +947,6 @@
       "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
       "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
     ],
-    "validation": "WARP runtime and CPU physics regression sources are registered; execution and C++ / HLSL compilation remain unverified because latest Windows CI jobs fail before reporting any build steps."
+    "validation": "WARP runtime / FEM / CPU physics regression sources are registered; execution and C++ / HLSL compilation remain unverified because latest Windows CI jobs fail before reporting any build steps."
   }
 }
