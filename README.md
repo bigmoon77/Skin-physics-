@@ -15,7 +15,8 @@ The implementation branch currently contains a partial R0 / R1 Runtime vertical 
 - Versioned immutable CPU Tick Input Snapshots are owned by Reservations and retained through Budget Retry, GPU Submission, Query observation and non-COMMITTED Reservation restoration.
 - CPU Preflight creates a World-common Integration Segment schedule from base Substeps plus Force start / end and Impulse event boundaries. Segment count participates in the World Execution Budget.
 - Soft Body GPU dispatch consumes each scheduled Segment duration using a distinct immutable Integration Parameters constant buffer retained by the In-Flight Tick until its Event Query is observed.
-- Force / Impulse GPU distribution, Animation Trajectory evaluation, Cloth, Collision / Contact coupling, full CCD / TOI scheduling and target-GPU qualification are still pending. Until an input path is integrated, accepting that input causes `BLOCKED_BY_INPUT`; the Runtime does not silently commit a Tick that ignores it.
+- Force / Impulse GPU distribution is implemented for an exact single Soft Body Model Mesh target using Rest Lumped Mass Wendland C2 weights, Segment-start positions, FEM Force composition and one-shot Impulse-before-damping integration. World-wide / Model-wide cross-Mesh target normalization and Cloth Force / Impulse remain deferred with `BLOCKED_BY_INPUT`.
+- Animation Trajectory evaluation, Cloth solver integration, Collision / Contact coupling, full CCD / TOI scheduling and target-GPU qualification remain pending. Unsupported inputs continue to defer submission rather than being silently ignored.
 
 See `docs/implementation_roadmap.md` and `docs/testing_strategy.md` for phase status and executable gates. The implementation PR remains Draft until the full integration and validation sequence is complete.
 
