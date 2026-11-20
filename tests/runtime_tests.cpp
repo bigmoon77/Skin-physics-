@@ -765,9 +765,9 @@ namespace
         // Render-to-Physics surface distance, but GPU Render Feedback must fail
         // its finite-area validation for this degenerate face.
         const std::array<skin_physics::asset::vec3, 3> degenerate_positions = {
-            skin_physics::asset::vec3{ 0.1f, 0.0f, 0.0f },
-            skin_physics::asset::vec3{ 0.2f, 0.0f, 0.0f },
-            skin_physics::asset::vec3{ 0.3f, 0.0f, 0.0f }
+            skin_physics::asset::vec3{ 0.125f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 0.25f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 0.375f, 0.0f, 0.0f }
         };
         for (const skin_physics::asset::vec3& position : degenerate_positions)
         {
