@@ -5621,6 +5621,100 @@ namespace skin_physics::physics
         return result;
     }
 
+    kinematic_collider_span_build_result build_kinematic_collider_span_from_samples(
+        uint64_t stable_collider_id,
+        const std::vector<kinematic_collider_transform_sample>& samples,
+        double world_time_start,
+        double world_time_duration,
+        float maximum_local_radius)
+    {
+        if (stable_collider_id == 0u)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_identity,
+                "Kinematic Collider sample scheduling requires a stable non-zero Collider ID.");
+        }
+        const double world_time_end = world_time_start + world_time_duration;
+        if (!std::isfinite(world_time_start) ||
+            !std::isfinite(world_time_duration) ||
+            world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_end) ||
+            !std::isfinite(maximum_local_radius) ||
+            maximum_local_radius < 0.0f)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_time,
+                "Kinematic Collider sample scheduling requires finite positive World-Time bounds and a finite non-negative local radius.");
+        }
+        if (samples.size() < 2u ||
+            samples.size() > static_cast<std::size_t>(asset::invalid_index))
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+                "Kinematic Collider sample scheduling requires at least one complete bracketing sample pair.");
+        }
+
+        for (std::size_t index = 0u; index < samples.size(); ++index)
+        {
+            const kinematic_collider_transform_sample& sample = samples[index];
+            if (!std::isfinite(sample.world_time) ||
+                sample.world_time < 0.0 ||
+                !finite(sample.translation) ||
+                !finite_asset_vec4_value(sample.rotation) ||
+                (index > 0u &&
+                    sample.world_time <= samples[index - 1u].world_time))
+            {
+                return make_collider_build_error(
+                    kinematic_collider_span_error::invalid_time,
+                    "Kinematic Collider Transform Samples must have finite values and strictly increasing World Times.");
+            }
+        }
+
+        const auto upper = std::upper_bound(
+            samples.begin(),
+            samples.end(),
+            world_time_start,
+            [](double time, const kinematic_collider_transform_sample& sample)
+            {
+                return time < sample.world_time;
+            });
+        if (upper == samples.begin() || upper == samples.end())
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+                "Kinematic Collider samples do not bracket the requested Span start.");
+        }
+
+        const std::size_t start_index =
+            static_cast<std::size_t>(std::distance(samples.begin(), upper) - 1);
+        const std::size_t end_index = start_index + 1u;
+        if (end_index >= samples.size() ||
+            world_time_end > samples[end_index].world_time)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+                "Kinematic Collider Span crosses a sample boundary or has no end bracket; split the World Segment before building its record.");
+        }
+
+        const kinematic_collider_transform_sample& start = samples[start_index];
+        const kinematic_collider_transform_sample& end = samples[end_index];
+        kinematic_collider_span_desc desc;
+        desc.stable_collider_id = stable_collider_id;
+        desc.span_sample_pair_id = static_cast<uint32_t>(start_index);
+        desc.world_time_start = world_time_start;
+        desc.world_time_duration = world_time_duration;
+        desc.sample_start_time = start.world_time;
+        desc.sample_end_time = end.world_time;
+        desc.sample_start_translation = start.translation;
+        desc.sample_end_translation = end.translation;
+        desc.sample_start_rotation = start.rotation;
+        desc.sample_end_rotation = end.rotation;
+        desc.sample_end_is_teleport = end.is_teleport;
+        desc.maximum_local_radius = maximum_local_radius;
+        return build_kinematic_collider_span(desc);
+    }
+
+
     kinematic_collider_sample_result evaluate_kinematic_collider_span(
         const kinematic_collider_gpu_record& span,
         double span_local_u,
