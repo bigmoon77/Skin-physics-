@@ -326,7 +326,7 @@
             "Cloth Segment prediction applies the exact Segment delta time and World gravity to dynamic Vertices while preserving zero-inverse-mass Vertex positions and zeroing their velocities",
             "Cloth Segment velocity reconstruction derives dynamic velocity from the solved Position delta divided by the same Segment duration and keeps pinned Vertices at zero velocity",
             "All Stretch / Shear / Bend XPBD Lambda arrays are explicitly zeroed at every new Integration Segment, then retained across that Segment's solver iterations",
-            "Invalid dimensions, non-finite input and non-positive Segment duration fail closed through the solver diagnostic buffer"
+            "Prediction and Velocity reconstruction reject a non-positive Segment duration through the solver diagnostic buffer"
           ]
         }
       ],
