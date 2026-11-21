@@ -844,6 +844,9 @@ namespace
         const ComPtr<ID3D11ComputeShader> epoch_displacement_shader =
             compile_compute_shader(
                 device.Get(), shader_root / "cloth_epoch_displacement.cs.hlsl", "main");
+        const ComPtr<ID3D11ComputeShader> epoch_aabb_shader =
+            compile_compute_shader(
+                device.Get(), shader_root / "cloth_epoch_swept_aabb.cs.hlsl", "main");
 
         const std::vector<gpu_float4> start_positions = {
             { 0.0f, 0.0f, 0.0f, 1.0f },
@@ -1054,6 +1057,119 @@ namespace
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
         require(epoch_status[0] == 0u,
             "Valid Cloth Position-Writer Epoch snapshot / displacement must not raise solver diagnostics.");
+
+        struct gpu_epoch_primitive
+        {
+            uint32_t vertices[4] = {};
+        };
+        struct gpu_epoch_aabb
+        {
+            gpu_float4 minimum;
+            gpu_float4 maximum;
+            uint32_t identity[4] = {};
+        };
+        static_assert(sizeof(gpu_epoch_primitive) == 16u);
+        static_assert(sizeof(gpu_epoch_aabb) == 48u);
+        struct alignas(16) epoch_aabb_parameters
+        {
+            uint32_t vertex_count = 0u;
+            uint32_t primitive_count = 0u;
+            uint32_t primitive_vertex_count = 0u;
+            float contact_thickness = 0.0f;
+        };
+        static_assert(sizeof(epoch_aabb_parameters) == 16u);
+        const std::vector<gpu_epoch_primitive> triangle_primitives = {
+            { { 0u, 1u, 2u, 0u } }
+        };
+        const ComPtr<ID3D11Buffer> triangle_primitive_buffer =
+            create_structured_buffer(
+                device.Get(), triangle_primitives,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> triangle_primitive_srv =
+            create_structured_srv<gpu_epoch_primitive>(
+                device.Get(), triangle_primitive_buffer.Get(), 1u);
+        const std::vector<gpu_epoch_aabb> empty_aabb = { {} };
+        const ComPtr<ID3D11Buffer> epoch_aabb_buffer =
+            create_structured_buffer(
+                device.Get(), empty_aabb,
+                D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> epoch_aabb_uav =
+            create_structured_uav<gpu_epoch_aabb>(
+                device.Get(), epoch_aabb_buffer.Get(), 1u);
+        epoch_aabb_parameters aabb_constants;
+        aabb_constants.vertex_count = 3u;
+        aabb_constants.primitive_count = 1u;
+        aabb_constants.primitive_vertex_count = 3u;
+        aabb_constants.contact_thickness = 0.1f;
+        const ComPtr<ID3D11Buffer> aabb_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &aabb_constants,
+                static_cast<UINT>(sizeof(aabb_constants)));
+        dispatch_compute(
+            context.Get(), epoch_aabb_shader.Get(),
+            { epoch_before_srv.Get(), epoch_after_srv.Get(),
+                triangle_primitive_srv.Get() },
+            { epoch_aabb_uav.Get(), status_uav.Get() },
+            aabb_constant_buffer.Get(), 1u);
+        const std::vector<gpu_epoch_aabb> triangle_aabb =
+            readback_structured_buffer<gpu_epoch_aabb>(
+                device.Get(), context.Get(), epoch_aabb_buffer.Get(), 1u);
+        const float triangle_minimum[3] = { 0.15f, -0.4f, -0.1f };
+        const float triangle_maximum[3] = { 105.1f, 6.1f, 7.1f };
+        require(
+            triangle_aabb[0].identity[0] == 0u &&
+            triangle_aabb[0].identity[1] == 3u &&
+            triangle_aabb[0].minimum.x <= triangle_minimum[0] &&
+            triangle_aabb[0].minimum.y <= triangle_minimum[1] &&
+            triangle_aabb[0].minimum.z <= triangle_minimum[2] &&
+            triangle_aabb[0].maximum.x >= triangle_maximum[0] &&
+            triangle_aabb[0].maximum.y >= triangle_maximum[1] &&
+            triangle_aabb[0].maximum.z >= triangle_maximum[2] &&
+            std::abs(triangle_aabb[0].minimum.x - triangle_minimum[0]) <= 1.0e-5f &&
+            std::abs(triangle_aabb[0].minimum.y - triangle_minimum[1]) <= 1.0e-5f &&
+            std::abs(triangle_aabb[0].minimum.z - triangle_minimum[2]) <= 1.0e-5f &&
+            std::abs(triangle_aabb[0].maximum.x - triangle_maximum[0]) <= 1.0e-4f &&
+            std::abs(triangle_aabb[0].maximum.y - triangle_maximum[1]) <= 1.0e-5f &&
+            std::abs(triangle_aabb[0].maximum.z - triangle_maximum[2]) <= 1.0e-5f,
+            "Cloth triangle Epoch swept AABB must enclose every before / after vertex endpoint with outward-rounded contact thickness.");
+
+        const std::vector<gpu_epoch_primitive> edge_primitives = {
+            { { 0u, 1u, 0u, 0u } }
+        };
+        const ComPtr<ID3D11Buffer> edge_primitive_buffer =
+            create_structured_buffer(
+                device.Get(), edge_primitives,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> edge_primitive_srv =
+            create_structured_srv<gpu_epoch_primitive>(
+                device.Get(), edge_primitive_buffer.Get(), 1u);
+        aabb_constants.primitive_vertex_count = 2u;
+        const ComPtr<ID3D11Buffer> edge_aabb_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &aabb_constants,
+                static_cast<UINT>(sizeof(aabb_constants)));
+        dispatch_compute(
+            context.Get(), epoch_aabb_shader.Get(),
+            { epoch_before_srv.Get(), epoch_after_srv.Get(),
+                edge_primitive_srv.Get() },
+            { epoch_aabb_uav.Get(), status_uav.Get() },
+            edge_aabb_constant_buffer.Get(), 1u);
+        const std::vector<gpu_epoch_aabb> edge_aabb =
+            readback_structured_buffer<gpu_epoch_aabb>(
+                device.Get(), context.Get(), epoch_aabb_buffer.Get(), 1u);
+        require(edge_aabb[0].identity[1] == 2u &&
+            edge_aabb[0].minimum.x <= 0.15f &&
+            edge_aabb[0].maximum.x >= 1.6f &&
+            edge_aabb[0].minimum.y <= -0.4f &&
+            edge_aabb[0].maximum.y >= 2.85f &&
+            edge_aabb[0].minimum.z <= -0.1f &&
+            edge_aabb[0].maximum.z >= 4.55f,
+            "Cloth edge Epoch swept AABB must include both endpoints of every Edge vertex motion.");
+        const std::vector<uint32_t> epoch_aabb_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(epoch_aabb_status[0] == 0u,
+            "Valid Cloth Epoch swept AABB generation must not raise solver diagnostics.");
 
         struct alignas(16) reconstruct_parameters
         {
