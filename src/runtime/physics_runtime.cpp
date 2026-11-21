@@ -4437,7 +4437,8 @@ namespace skin_physics::runtime
                 packet_data.static_node_matrices.size() != node_count)
             {
                 diagnostic =
-                    "GPU Animation Packet does not contain one dense topological Channel table for this Model. " +
+                    std::string(
+                        "GPU Animation Packet does not contain one dense topological Channel table for this Model. ") +
                     "node_count=" + std::to_string(node_count) +
                     " span_index=" + std::to_string(selected_span_record_index) +
                     " span_count=" + std::to_string(packet_data.span_records.size()) +
