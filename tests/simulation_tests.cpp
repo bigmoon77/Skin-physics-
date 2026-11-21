@@ -3176,6 +3176,55 @@ namespace
             invalid_bound.error ==
                 kinematic_collider_span_error::invalid_bounds,
             "Kinematic Collider evaluation must reject corrupted / under-conservative trajectory bounds.");
+
+        const std::vector<skin_physics::physics::kinematic_collider_transform_sample>
+            transform_samples = {
+                { 0.0, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, false },
+                { 1.0, { 5.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, true },
+                { 2.0, { 7.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, false }
+            };
+        const auto left_teleport_span =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                transform_samples, 0.25, 0.5, 1.0f);
+        require(left_teleport_span.success &&
+            left_teleport_span.value.span_sample_pair_id == 0u &&
+            left_teleport_span.value.translation_start.x == 0.0f &&
+            left_teleport_span.value.translation_end.x == 0.0f &&
+            left_teleport_span.value.linear_speed_bound == 0.0f &&
+            left_teleport_span.value.angular_speed_bound == 0.0f,
+            "Sample scheduler must hold the pre-Teleport Pose with zero velocity on the left Span.");
+
+        const auto right_teleport_span =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                transform_samples, 1.0, 0.5, 1.0f);
+        require(right_teleport_span.success &&
+            right_teleport_span.value.span_sample_pair_id == 1u &&
+            right_teleport_span.value.translation_start.x == 5.0f &&
+            right_teleport_span.value.translation_end.x == 6.0f &&
+            std::abs(right_teleport_span.value.linear_speed_bound - 2.0f) <= 1.0e-6f,
+            "Sample scheduler must begin the right Span at the teleported Pose and resume analytic velocity from the following sample.");
+
+        const auto crossing_teleport_span =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                transform_samples, 0.5, 1.0, 1.0f);
+        require(!crossing_teleport_span.success &&
+            crossing_teleport_span.error ==
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+            "Sample scheduler must reject a Span crossing a Transform Sample / Teleport boundary.");
+
+        auto non_monotonic_samples = transform_samples;
+        non_monotonic_samples[2u].world_time = 0.5;
+        const auto rejected_sample_order =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                non_monotonic_samples, 0.25, 0.5, 1.0f);
+        require(!rejected_sample_order.success &&
+            rejected_sample_order.error ==
+                kinematic_collider_span_error::invalid_time,
+            "Sample scheduler must reject non-monotonic Collider Transform Sample times.");
     }
 
 
