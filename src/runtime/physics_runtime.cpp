@@ -607,7 +607,7 @@ namespace skin_physics::runtime
                 });
             if (upper == samples.begin())
             {
-                out_transform = samples.front().value;
+                out_transform = fallback_transform;
                 return true;
             }
 
@@ -6724,7 +6724,7 @@ namespace skin_physics::runtime
                 world.budget_resolution = work_budget_resolution::none;
                 world.work_budget_block_flags = 0u;
                 world.diagnostic =
-                    "GPU submission is deferred because this World contains an unsupported Force / Impulse target, Animation / Root Transform, Cloth or Collider input. Force / Impulse scopes now include one exact Mesh, every Soft Body Mesh in a Model, or every Soft Body Mesh in the World.";
+                    "GPU submission is deferred because this World contains an unsupported Force / Impulse target, Root Transform Samples without an active Animation Track, Cloth or Collider input. Force / Impulse scopes now include one exact Mesh, every Soft Body Mesh in a Model, or every Soft Body Mesh in the World.";
                 return false;
             }
             if (world.render_lease_active)
