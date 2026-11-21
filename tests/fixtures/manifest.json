@@ -731,7 +731,10 @@
             "An empty optional Blend table remains absent while a nonempty Collider table uploads with its exact count and immutable StructuredBuffer stride",
             "WARP byte-for-byte readback covers immutable Span / Track / Channel / Skin / Skin Joint / Kinematic Collider records and the independent mutable Cursor",
             "An invalid Cursor Version or invalid Span-local Blend reference fails without replacing the previously uploaded Packet resources",
-            "The 128-byte Kinematic Collider StructuredBuffer is immutable, its Span first/count range and Has-Kinematic-Collider flag agree, and WARP readback preserves every Collider Record byte"
+            "The 128-byte Kinematic Collider StructuredBuffer is immutable, its Span first/count range and Has-Kinematic-Collider flag agree, and WARP readback preserves every Collider Record byte",
+            "Every Animation Span has exactly one immutable 96-byte Root Transform Record at the matching Span index; the dense mapping avoids a second range indirection",
+            "Root Transform records preserve endpoint Translation / shortest-arc Quaternion, World-space angular axis / angle, Span duration / inverse duration, exact flags and zero reserved field; invalid quaternion, axis or mismatched duration fails atomically",
+            "WARP byte-for-byte readback verifies the immutable Root Transform StructuredBuffer, exact element count and 96-byte stride alongside the Collider records"
           ]
         },
         {
