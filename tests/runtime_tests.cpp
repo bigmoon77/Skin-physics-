@@ -3017,7 +3017,7 @@ namespace
         translating_desc.world_time_start = 2.0;
         translating_desc.world_time_duration = 1.0;
         translating_desc.sample_start_time = 1.5;
-        translating_desc.sample_end_time = 2.5;
+        translating_desc.sample_end_time = 3.5;
         translating_desc.sample_start_translation = { -1.0f, 0.0f, 1.0f };
         translating_desc.sample_end_translation = { 1.0f, 2.0f, 1.0f };
         translating_desc.sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
