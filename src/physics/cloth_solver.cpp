@@ -101,6 +101,107 @@ namespace skin_physics::physics
             std::vector<edge_occurrence> occurrences;
         };
 
+        void build_vertex_constraint_csr(cloth_mesh& mesh)
+        {
+            const std::size_t vertex_count = mesh.rest_positions.size();
+            mesh.vertex_constraint_offsets.assign(
+                vertex_count + 1u, 0u);
+            mesh.vertex_constraint_refs.clear();
+
+            const auto count_constraint = [&mesh](
+                const uint32_t* vertices,
+                std::size_t vertex_indices_count)
+            {
+                for (std::size_t local_index = 0u;
+                    local_index < vertex_indices_count; ++local_index)
+                {
+                    ++mesh.vertex_constraint_offsets[
+                        static_cast<std::size_t>(vertices[local_index]) + 1u];
+                }
+            };
+
+            for (const cloth_stretch_constraint& constraint :
+                mesh.stretch_constraints)
+            {
+                count_constraint(constraint.vertices.data(), 2u);
+            }
+            for (const cloth_shear_constraint& constraint :
+                mesh.shear_constraints)
+            {
+                count_constraint(constraint.vertices.data(), 3u);
+            }
+            for (const cloth_bend_constraint& constraint :
+                mesh.bend_constraints)
+            {
+                count_constraint(constraint.vertices.data(), 4u);
+            }
+
+            for (std::size_t vertex_index = 1u;
+                vertex_index < mesh.vertex_constraint_offsets.size();
+                ++vertex_index)
+            {
+                mesh.vertex_constraint_offsets[vertex_index] +=
+                    mesh.vertex_constraint_offsets[vertex_index - 1u];
+            }
+
+            mesh.vertex_constraint_refs.resize(
+                mesh.vertex_constraint_offsets.back());
+            std::vector<uint32_t> cursors =
+                mesh.vertex_constraint_offsets;
+            const auto append_constraint = [&mesh, &cursors](
+                cloth_vertex_constraint_type type,
+                uint32_t constraint_index,
+                const uint32_t* vertices,
+                std::size_t vertex_indices_count)
+            {
+                for (uint32_t local_index = 0u;
+                    local_index < vertex_indices_count; ++local_index)
+                {
+                    cloth_vertex_constraint_ref reference;
+                    reference.type = static_cast<uint32_t>(type);
+                    reference.constraint_index = constraint_index;
+                    reference.local_vertex_index = local_index;
+                    const uint32_t vertex_index = vertices[local_index];
+                    mesh.vertex_constraint_refs[
+                        cursors[vertex_index]++] = reference;
+                }
+            };
+
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.stretch_constraints.size();
+                ++constraint_index)
+            {
+                const auto& constraint =
+                    mesh.stretch_constraints[constraint_index];
+                append_constraint(
+                    cloth_vertex_constraint_type::stretch,
+                    constraint_index,
+                    constraint.vertices.data(), 2u);
+            }
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.shear_constraints.size();
+                ++constraint_index)
+            {
+                const auto& constraint =
+                    mesh.shear_constraints[constraint_index];
+                append_constraint(
+                    cloth_vertex_constraint_type::shear,
+                    constraint_index,
+                    constraint.vertices.data(), 3u);
+            }
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.bend_constraints.size();
+                ++constraint_index)
+            {
+                const auto& constraint =
+                    mesh.bend_constraints[constraint_index];
+                append_constraint(
+                    cloth_vertex_constraint_type::bend,
+                    constraint_index,
+                    constraint.vertices.data(), 4u);
+            }
+        }
+
         void build_stretch_coloring(cloth_mesh& mesh)
         {
             std::vector<std::vector<uint32_t>> color_constraints;
@@ -394,6 +495,7 @@ namespace skin_physics::physics
         }
 
         build_stretch_coloring(result.value);
+        build_vertex_constraint_csr(result.value);
         std::string coloring_diagnostic;
         if (!validate_cloth_stretch_coloring(
                 result.value, coloring_diagnostic))
@@ -499,6 +601,171 @@ namespace skin_physics::physics
         {
             diagnostic =
                 "Stretch coloring does not cover the complete constraint set.";
+            return false;
+        }
+        return true;
+    }
+
+    bool validate_cloth_vertex_constraint_csr(
+        const cloth_mesh& mesh,
+        std::string& diagnostic)
+    {
+        diagnostic.clear();
+        if (mesh.vertex_constraint_offsets.size() !=
+                mesh.rest_positions.size() + 1u ||
+            mesh.vertex_constraint_offsets.empty() ||
+            mesh.vertex_constraint_offsets.front() != 0u ||
+            mesh.vertex_constraint_offsets.back() !=
+                mesh.vertex_constraint_refs.size())
+        {
+            diagnostic =
+                "Vertex-to-Constraint CSR offsets must contain V+1 entries and span the complete reference table.";
+            return false;
+        }
+
+        std::vector<uint8_t> stretch_seen(
+            mesh.stretch_constraints.size() * 2u, 0u);
+        std::vector<uint8_t> shear_seen(
+            mesh.shear_constraints.size() * 3u, 0u);
+        std::vector<uint8_t> bend_seen(
+            mesh.bend_constraints.size() * 4u, 0u);
+        std::size_t expected_reference_count = 0u;
+        for (std::size_t index = 1u;
+            index < mesh.vertex_constraint_offsets.size(); ++index)
+        {
+            if (mesh.vertex_constraint_offsets[index] <
+                mesh.vertex_constraint_offsets[index - 1u])
+            {
+                diagnostic =
+                    "Vertex-to-Constraint CSR offsets must be monotonically increasing.";
+                return false;
+            }
+        }
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < mesh.rest_positions.size(); ++vertex_index)
+        {
+            const uint32_t first =
+                mesh.vertex_constraint_offsets[vertex_index];
+            const uint32_t end =
+                mesh.vertex_constraint_offsets[vertex_index + 1u];
+            expected_reference_count += end - first;
+            for (uint32_t reference_index = first;
+                reference_index < end; ++reference_index)
+            {
+                const cloth_vertex_constraint_ref& reference =
+                    mesh.vertex_constraint_refs[reference_index];
+                if (reference.reserved != 0u)
+                {
+                    diagnostic =
+                        "Vertex-to-Constraint CSR reserved fields must be zero.";
+                    return false;
+                }
+
+                std::vector<uint8_t>* seen = nullptr;
+                std::size_t incidence_index = 0u;
+                if (reference.type == static_cast<uint32_t>(
+                        cloth_vertex_constraint_type::stretch))
+                {
+                    if (reference.constraint_index >=
+                            mesh.stretch_constraints.size() ||
+                        reference.local_vertex_index >= 2u)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Stretch reference is out of range.";
+                        return false;
+                    }
+                    const auto& constraint =
+                        mesh.stretch_constraints[reference.constraint_index];
+                    if (constraint.vertices[reference.local_vertex_index] !=
+                        vertex_index)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Stretch reference targets the wrong vertex.";
+                        return false;
+                    }
+                    seen = &stretch_seen;
+                    incidence_index =
+                        static_cast<std::size_t>(reference.constraint_index) * 2u +
+                        reference.local_vertex_index;
+                }
+                else if (reference.type == static_cast<uint32_t>(
+                        cloth_vertex_constraint_type::shear))
+                {
+                    if (reference.constraint_index >=
+                            mesh.shear_constraints.size() ||
+                        reference.local_vertex_index >= 3u)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Shear reference is out of range.";
+                        return false;
+                    }
+                    const auto& constraint =
+                        mesh.shear_constraints[reference.constraint_index];
+                    if (constraint.vertices[reference.local_vertex_index] !=
+                        vertex_index)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Shear reference targets the wrong vertex.";
+                        return false;
+                    }
+                    seen = &shear_seen;
+                    incidence_index =
+                        static_cast<std::size_t>(reference.constraint_index) * 3u +
+                        reference.local_vertex_index;
+                }
+                else if (reference.type == static_cast<uint32_t>(
+                        cloth_vertex_constraint_type::bend))
+                {
+                    if (reference.constraint_index >=
+                            mesh.bend_constraints.size() ||
+                        reference.local_vertex_index >= 4u)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Bend reference is out of range.";
+                        return false;
+                    }
+                    const auto& constraint =
+                        mesh.bend_constraints[reference.constraint_index];
+                    if (constraint.vertices[reference.local_vertex_index] !=
+                        vertex_index)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Bend reference targets the wrong vertex.";
+                        return false;
+                    }
+                    seen = &bend_seen;
+                    incidence_index =
+                        static_cast<std::size_t>(reference.constraint_index) * 4u +
+                        reference.local_vertex_index;
+                }
+                else
+                {
+                    diagnostic =
+                        "Vertex-to-Constraint CSR contains an unknown constraint type.";
+                    return false;
+                }
+
+                if ((*seen)[incidence_index] != 0u)
+                {
+                    diagnostic =
+                        "Vertex-to-Constraint CSR contains a duplicate constraint incidence.";
+                    return false;
+                }
+                (*seen)[incidence_index] = 1u;
+            }
+        }
+
+        if (expected_reference_count != mesh.vertex_constraint_refs.size() ||
+            std::find(stretch_seen.begin(), stretch_seen.end(), 0u) !=
+                stretch_seen.end() ||
+            std::find(shear_seen.begin(), shear_seen.end(), 0u) !=
+                shear_seen.end() ||
+            std::find(bend_seen.begin(), bend_seen.end(), 0u) !=
+                bend_seen.end())
+        {
+            diagnostic =
+                "Vertex-to-Constraint CSR must contain every topology incidence exactly once.";
             return false;
         }
         return true;
