@@ -818,6 +818,7 @@ namespace
 
         skin_physics::runtime::world_desc world_desc;
         world_desc.fixed_delta_time = 0.1;
+        world_desc.contact_max_substep_delta_time = 0.0;
         world_desc.maximum_steps_per_advance = 1u;
         skin_physics::runtime::world_handle world;
         require(runtime.create_world(world_desc, &world).success(),
