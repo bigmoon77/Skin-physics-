@@ -5081,4 +5081,459 @@ namespace skin_physics::physics
         return true;
     }
 
+
+
+    namespace
+    {
+        bool finite_asset_vec4_value(const asset::vec4& value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) &&
+                std::isfinite(value.z) && std::isfinite(value.w);
+        }
+
+        asset::vec4 to_asset_vec4(const quaternion& value)
+        {
+            return { value.x, value.y, value.z, value.w };
+        }
+
+        quaternion to_quaternion(const asset::vec4& value)
+        {
+            return { value.x, value.y, value.z, value.w };
+        }
+
+        quaternion multiply_quaternion(
+            const quaternion& left,
+            const quaternion& right)
+        {
+            return {
+                left.w * right.x + left.x * right.w +
+                    left.y * right.z - left.z * right.y,
+                left.w * right.y - left.x * right.z +
+                    left.y * right.w + left.z * right.x,
+                left.w * right.z + left.x * right.y -
+                    left.y * right.x + left.z * right.w,
+                left.w * right.w - left.x * right.x -
+                    left.y * right.y - left.z * right.z
+            };
+        }
+
+        asset::vec3 rotate_vector(
+            const quaternion& rotation,
+            const asset::vec3& vector)
+        {
+            const quaternion pure_vector{
+                vector.x, vector.y, vector.z, 0.0f
+            };
+            const quaternion inverse{
+                -rotation.x, -rotation.y, -rotation.z, rotation.w
+            };
+            const quaternion rotated = multiply_quaternion(
+                multiply_quaternion(rotation, pure_vector), inverse);
+            return { rotated.x, rotated.y, rotated.z };
+        }
+
+        asset::vec3 cross_vector(
+            const asset::vec3& left,
+            const asset::vec3& right)
+        {
+            return {
+                left.y * right.z - left.z * right.y,
+                left.z * right.x - left.x * right.z,
+                left.x * right.y - left.y * right.x
+            };
+        }
+
+        double vector_length(const asset::vec3& value)
+        {
+            return std::sqrt(
+                static_cast<double>(value.x) * value.x +
+                static_cast<double>(value.y) * value.y +
+                static_cast<double>(value.z) * value.z);
+        }
+
+        bool finite_float_value(double value, float& output)
+        {
+            if (!std::isfinite(value) ||
+                std::abs(value) >
+                    static_cast<double>(std::numeric_limits<float>::max()))
+            {
+                return false;
+            }
+            output = static_cast<float>(value);
+            return std::isfinite(output);
+        }
+
+        bool outward_float_bound(double value, float& output)
+        {
+            if (!std::isfinite(value) || value < 0.0 ||
+                value > static_cast<double>(std::numeric_limits<float>::max()))
+            {
+                return false;
+            }
+            output = static_cast<float>(value);
+            if (static_cast<double>(output) < value)
+            {
+                output = std::nextafter(
+                    output, std::numeric_limits<float>::infinity());
+            }
+            return std::isfinite(output);
+        }
+
+        kinematic_collider_span_build_result make_collider_build_error(
+            kinematic_collider_span_error error,
+            const std::string& message)
+        {
+            kinematic_collider_span_build_result result;
+            result.error = error;
+            result.message = message;
+            return result;
+        }
+
+        kinematic_collider_sample_result make_collider_sample_error(
+            kinematic_collider_span_error error,
+            const std::string& message)
+        {
+            kinematic_collider_sample_result result;
+            result.error = error;
+            result.message = message;
+            return result;
+        }
+    }
+
+    kinematic_collider_span_build_result build_kinematic_collider_span(
+        const kinematic_collider_span_desc& desc)
+    {
+        if (desc.stable_collider_id == 0u ||
+            desc.span_sample_pair_id == asset::invalid_index)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_identity,
+                "Kinematic Collider Span requires a stable non-zero Collider ID and a valid sample-pair ID.");
+        }
+        const double world_time_end =
+            desc.world_time_start + desc.world_time_duration;
+        if (!std::isfinite(desc.world_time_start) ||
+            !std::isfinite(desc.world_time_duration) ||
+            desc.world_time_duration <= 0.0 ||
+            !std::isfinite(world_time_end) ||
+            !std::isfinite(desc.sample_start_time) ||
+            !std::isfinite(desc.sample_end_time) ||
+            desc.sample_start_time < 0.0 ||
+            desc.sample_end_time <= desc.sample_start_time)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_time,
+                "Kinematic Collider Span and sample-pair times must be finite positive intervals.");
+        }
+        if (desc.world_time_start < desc.sample_start_time ||
+            world_time_end > desc.sample_end_time)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+                "Kinematic Collider sample pair does not bracket the complete requested World Span.");
+        }
+        if (desc.sample_end_is_teleport)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::teleport_crossing,
+                "Kinematic Collider Span cannot interpolate across a teleport sample boundary.");
+        }
+        if (!finite(desc.sample_start_translation) ||
+            !finite(desc.sample_end_translation) ||
+            !finite_asset_vec4_value(desc.sample_start_rotation) ||
+            !finite_asset_vec4_value(desc.sample_end_rotation) ||
+            !std::isfinite(desc.maximum_local_radius) ||
+            desc.maximum_local_radius < 0.0f)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_transform,
+                "Kinematic Collider samples require finite translations, quaternions and a non-negative local radius.");
+        }
+
+        const quaternion sample_start_rotation = normalize_quaternion(
+            to_quaternion(desc.sample_start_rotation));
+        quaternion sample_end_rotation = normalize_quaternion(
+            to_quaternion(desc.sample_end_rotation));
+        if (!finite(sample_start_rotation) ||
+            !finite(sample_end_rotation) ||
+            dot(sample_start_rotation, sample_start_rotation) <=
+                quaternion_epsilon ||
+            dot(sample_end_rotation, sample_end_rotation) <=
+                quaternion_epsilon)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_transform,
+                "Kinematic Collider sample rotation contains a zero or non-finite quaternion.");
+        }
+
+        const double sample_duration =
+            desc.sample_end_time - desc.sample_start_time;
+        const double span_start_u =
+            (desc.world_time_start - desc.sample_start_time) / sample_duration;
+        const double span_end_u =
+            (world_time_end - desc.sample_start_time) / sample_duration;
+        if (!std::isfinite(span_start_u) ||
+            !std::isfinite(span_end_u) ||
+            span_start_u < 0.0 || span_start_u > 1.0 ||
+            span_end_u < 0.0 || span_end_u > 1.0 ||
+            span_end_u < span_start_u)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+                "Kinematic Collider sample pair cannot represent the requested Span endpoints.");
+        }
+
+        const asset::vec3 span_start_translation = lerp(
+            desc.sample_start_translation,
+            desc.sample_end_translation,
+            static_cast<float>(span_start_u));
+        const asset::vec3 span_end_translation = lerp(
+            desc.sample_start_translation,
+            desc.sample_end_translation,
+            static_cast<float>(span_end_u));
+        const quaternion span_start_rotation = slerp_quaternion(
+            sample_start_rotation, sample_end_rotation,
+            static_cast<float>(span_start_u));
+        const quaternion span_end_rotation = slerp_quaternion(
+            sample_start_rotation, sample_end_rotation,
+            static_cast<float>(span_end_u));
+        if (!finite(span_start_translation) ||
+            !finite(span_end_translation) ||
+            !finite(span_start_rotation) ||
+            !finite(span_end_rotation))
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_transform,
+                "Kinematic Collider Span endpoint interpolation produced a non-finite Transform.");
+        }
+
+        quaternion hemisphere_end = span_end_rotation;
+        double rotation_cosine = static_cast<double>(
+            dot(span_start_rotation, hemisphere_end));
+        if (rotation_cosine < 0.0)
+        {
+            hemisphere_end = negate(hemisphere_end);
+            rotation_cosine = -rotation_cosine;
+        }
+        rotation_cosine = std::max(-1.0, std::min(1.0, rotation_cosine));
+        quaternion relative_rotation = normalize_quaternion(
+            multiply_quaternion(
+                hemisphere_end,
+                {
+                    -span_start_rotation.x,
+                    -span_start_rotation.y,
+                    -span_start_rotation.z,
+                    span_start_rotation.w
+                }));
+        if (!finite(relative_rotation))
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_transform,
+                "Kinematic Collider relative Quaternion could not be normalized.");
+        }
+
+        const double relative_sine = std::sqrt(
+            static_cast<double>(relative_rotation.x) * relative_rotation.x +
+            static_cast<double>(relative_rotation.y) * relative_rotation.y +
+            static_cast<double>(relative_rotation.z) * relative_rotation.z);
+        const double rotation_angle = 2.0 * std::atan2(
+            relative_sine,
+            std::max(0.0, static_cast<double>(relative_rotation.w)));
+        asset::vec3 angular_axis = { 1.0f, 0.0f, 0.0f };
+        if (relative_sine > 1.0e-10)
+        {
+            angular_axis = {
+                static_cast<float>(relative_rotation.x / relative_sine),
+                static_cast<float>(relative_rotation.y / relative_sine),
+                static_cast<float>(relative_rotation.z / relative_sine)
+            };
+        }
+
+        const double translation_delta_x =
+            static_cast<double>(span_end_translation.x) - span_start_translation.x;
+        const double translation_delta_y =
+            static_cast<double>(span_end_translation.y) - span_start_translation.y;
+        const double translation_delta_z =
+            static_cast<double>(span_end_translation.z) - span_start_translation.z;
+        const double translation_distance = std::sqrt(
+            translation_delta_x * translation_delta_x +
+            translation_delta_y * translation_delta_y +
+            translation_delta_z * translation_delta_z);
+        const double linear_speed =
+            translation_distance / desc.world_time_duration;
+        const double angular_speed =
+            rotation_angle / desc.world_time_duration;
+        const double sagitta =
+            static_cast<double>(desc.maximum_local_radius) *
+            (1.0 - std::cos(rotation_angle * 0.5));
+
+        kinematic_collider_gpu_record record;
+        record.stable_collider_id_low =
+            static_cast<uint32_t>(desc.stable_collider_id & 0xffffffffu);
+        record.stable_collider_id_high =
+            static_cast<uint32_t>(desc.stable_collider_id >> 32u);
+        record.span_sample_pair_id = desc.span_sample_pair_id;
+        record.flags = kinematic_collider_flag_valid;
+        if (!finite_float_value(span_start_translation.x, record.translation_start.x) ||
+            !finite_float_value(span_start_translation.y, record.translation_start.y) ||
+            !finite_float_value(span_start_translation.z, record.translation_start.z) ||
+            !finite_float_value(span_end_translation.x, record.translation_end.x) ||
+            !finite_float_value(span_end_translation.y, record.translation_end.y) ||
+            !finite_float_value(span_end_translation.z, record.translation_end.z) ||
+            !finite_float_value(span_start_rotation.x, record.rotation_start.x) ||
+            !finite_float_value(span_start_rotation.y, record.rotation_start.y) ||
+            !finite_float_value(span_start_rotation.z, record.rotation_start.z) ||
+            !finite_float_value(span_start_rotation.w, record.rotation_start.w) ||
+            !finite_float_value(hemisphere_end.x, record.rotation_end.x) ||
+            !finite_float_value(hemisphere_end.y, record.rotation_end.y) ||
+            !finite_float_value(hemisphere_end.z, record.rotation_end.z) ||
+            !finite_float_value(hemisphere_end.w, record.rotation_end.w) ||
+            !finite_float_value(angular_axis.x, record.angular_axis_and_angle.x) ||
+            !finite_float_value(angular_axis.y, record.angular_axis_and_angle.y) ||
+            !finite_float_value(angular_axis.z, record.angular_axis_and_angle.z) ||
+            !finite_float_value(rotation_angle, record.angular_axis_and_angle.w) ||
+            !finite_float_value(desc.world_time_duration, record.duration_seconds) ||
+            !finite_float_value(1.0 / desc.world_time_duration, record.inverse_duration) ||
+            !outward_float_bound(linear_speed, record.linear_speed_bound) ||
+            !outward_float_bound(angular_speed, record.angular_speed_bound) ||
+            !finite_float_value(desc.maximum_local_radius, record.maximum_local_radius) ||
+            !outward_float_bound(sagitta, record.sagitta_bound))
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::gpu_float_range,
+                "Kinematic Collider Span values or certified Bounds exceed the fixed GPU float ABI range.");
+        }
+        record.translation_start.w = 1.0f;
+        record.translation_end.w = 1.0f;
+        record.rotation_start.w = record.rotation_start.w;
+        record.rotation_end.w = record.rotation_end.w;
+        record.reserved0 = 0.0f;
+        record.reserved1 = 0.0f;
+
+        kinematic_collider_span_build_result result;
+        result.value = record;
+        result.success = true;
+        return result;
+    }
+
+    kinematic_collider_sample_result evaluate_kinematic_collider_span(
+        const kinematic_collider_gpu_record& span,
+        double span_local_u,
+        const asset::vec3& local_contact_point)
+    {
+        if ((span.flags & kinematic_collider_flag_valid) == 0u ||
+            !std::isfinite(span_local_u) ||
+            span_local_u < 0.0 || span_local_u > 1.0 ||
+            !finite(local_contact_point))
+        {
+            return make_collider_sample_error(
+                kinematic_collider_span_error::invalid_time,
+                "Kinematic Collider evaluation requires a valid record, u in [0,1] and a finite local contact point.");
+        }
+        if (!std::isfinite(span.duration_seconds) ||
+            span.duration_seconds <= 0.0f ||
+            !std::isfinite(span.inverse_duration) ||
+            span.inverse_duration <= 0.0f ||
+            !std::isfinite(span.maximum_local_radius) ||
+            span.maximum_local_radius < 0.0f ||
+            !std::isfinite(span.linear_speed_bound) ||
+            span.linear_speed_bound < 0.0f ||
+            !std::isfinite(span.angular_speed_bound) ||
+            span.angular_speed_bound < 0.0f ||
+            !std::isfinite(span.sagitta_bound) ||
+            span.sagitta_bound < 0.0f)
+        {
+            return make_collider_sample_error(
+                kinematic_collider_span_error::invalid_bounds,
+                "Kinematic Collider GPU Record contains an invalid duration or conservative Bound.");
+        }
+        const double contact_radius = vector_length(local_contact_point);
+        if (!std::isfinite(contact_radius) ||
+            contact_radius >
+                static_cast<double>(span.maximum_local_radius) + 1.0e-5)
+        {
+            return make_collider_sample_error(
+                kinematic_collider_span_error::invalid_bounds,
+                "Kinematic Collider local contact point exceeds the certified Maximum Local Radius.");
+        }
+
+        const quaternion start = normalize_quaternion({
+            span.rotation_start.x,
+            span.rotation_start.y,
+            span.rotation_start.z,
+            span.rotation_start.w
+        });
+        const quaternion end = normalize_quaternion({
+            span.rotation_end.x,
+            span.rotation_end.y,
+            span.rotation_end.z,
+            span.rotation_end.w
+        });
+        if (!finite(start) || !finite(end) ||
+            dot(start, start) <= quaternion_epsilon ||
+            dot(end, end) <= quaternion_epsilon ||
+            !std::isfinite(span.angular_axis_and_angle.x) ||
+            !std::isfinite(span.angular_axis_and_angle.y) ||
+            !std::isfinite(span.angular_axis_and_angle.z) ||
+            !std::isfinite(span.angular_axis_and_angle.w))
+        {
+            return make_collider_sample_error(
+                kinematic_collider_span_error::invalid_transform,
+                "Kinematic Collider Record contains an invalid endpoint or angular Quaternion.");
+        }
+
+        const float u = static_cast<float>(span_local_u);
+        const asset::vec3 translation = {
+            span.translation_start.x +
+                (span.translation_end.x - span.translation_start.x) * u,
+            span.translation_start.y +
+                (span.translation_end.y - span.translation_start.y) * u,
+            span.translation_start.z +
+                (span.translation_end.z - span.translation_start.z) * u
+        };
+        const quaternion rotation = slerp_quaternion(start, end, u);
+        const asset::vec3 linear_velocity = {
+            (span.translation_end.x - span.translation_start.x) *
+                span.inverse_duration,
+            (span.translation_end.y - span.translation_start.y) *
+                span.inverse_duration,
+            (span.translation_end.z - span.translation_start.z) *
+                span.inverse_duration
+        };
+        const asset::vec3 angular_velocity = {
+            span.angular_axis_and_angle.x *
+                span.angular_axis_and_angle.w * span.inverse_duration,
+            span.angular_axis_and_angle.y *
+                span.angular_axis_and_angle.w * span.inverse_duration,
+            span.angular_axis_and_angle.z *
+                span.angular_axis_and_angle.w * span.inverse_duration
+        };
+        const asset::vec3 world_contact_radius =
+            rotate_vector(rotation, local_contact_point);
+        const asset::vec3 angular_contact_velocity =
+            cross_vector(angular_velocity, world_contact_radius);
+        const asset::vec3 contact_velocity = {
+            linear_velocity.x + angular_contact_velocity.x,
+            linear_velocity.y + angular_contact_velocity.y,
+            linear_velocity.z + angular_contact_velocity.z
+        };
+        if (!finite(translation) || !finite(rotation) ||
+            !finite(linear_velocity) || !finite(angular_velocity) ||
+            !finite(contact_velocity))
+        {
+            return make_collider_sample_error(
+                kinematic_collider_span_error::gpu_float_range,
+                "Kinematic Collider evaluation produced a non-finite Transform or Velocity.");
+        }
+
+        kinematic_collider_sample_result result;
+        result.value.translation = translation;
+        result.value.rotation = to_asset_vec4(rotation);
+        result.value.linear_velocity = linear_velocity;
+        result.value.angular_velocity = angular_velocity;
+        result.value.contact_point_velocity = contact_velocity;
+        result.success = true;
+        return result;
+    }
+
 }
