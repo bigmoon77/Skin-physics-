@@ -4554,7 +4554,8 @@ namespace skin_physics::physics
                     channel_record.parent_index =
                         node.parent_index == asset::invalid_index
                             ? asset::invalid_index
-                            : node_channel_record_index[node.parent_index];
+                            : node_channel_record_index[node.parent_index] -
+                                track_record.first_channel_record;
                     channel_record.inverse_bind_record_index =
                         inverse_bind_index_by_node[node_index];
                     channel_record.node_role_flags =
