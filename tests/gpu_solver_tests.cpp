@@ -820,13 +820,13 @@ namespace
 
     void test_phase05_warp_cloth_segment_state_passes()
     {
+        std::cout << "[RUN] P05_WARP_CLOTH_SEGMENT_STATE_PASSES\\n";
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
         require(SUCCEEDED(create_warp_device(
                 device.GetAddressOf(), context.GetAddressOf())),
             "Cloth Segment State WARP test requires Feature Level 11_0.");
 
-        std::cout << "[RUN] P05_WARP_CLOTH_SEGMENT_STATE_PASSES\\n";
         const std::filesystem::path shader_root =
             test_support::fixture_directory().parent_path().parent_path() /
             "shaders" / "runtime";
@@ -6344,8 +6344,8 @@ namespace
 
 int run_gpu_solver_tests()
 {
-    test_phase05_warp_colored_cloth_stretch();
     test_phase05_warp_cloth_segment_state_passes();
+    test_phase05_warp_colored_cloth_stretch();
     test_phase05_warp_cloth_all_constraint_types();
     test_phase05_warp_cloth_jacobi_contribution_gather();
     test_phase06_warp_corotational_fem();
