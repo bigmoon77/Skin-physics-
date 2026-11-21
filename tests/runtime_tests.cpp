@@ -1292,6 +1292,31 @@ namespace
                 world, model, 0.01, root_sample_end, false).success(),
             "Animated Model Root Transform samples must accept ordered finite translation / quaternion keys.");
 
+        skin_physics::runtime::collider_desc kinematic_collider_desc;
+        kinematic_collider_desc.collision_mesh.vertices.resize(3u);
+        kinematic_collider_desc.collision_mesh.vertices[0u].position =
+            { -0.25f, 0.0f, 0.0f };
+        kinematic_collider_desc.collision_mesh.vertices[1u].position =
+            { 0.25f, 0.0f, 0.0f };
+        kinematic_collider_desc.collision_mesh.vertices[2u].position =
+            { 0.0f, 0.5f, 0.0f };
+        kinematic_collider_desc.collision_mesh.indices = { 0u, 1u, 2u };
+        skin_physics::runtime::collider_handle kinematic_collider;
+        require(runtime.create_kinematic_collider(
+                world, kinematic_collider_desc, &kinematic_collider).success(),
+            "Animated Soft Body Runtime must accept a Kinematic Collider for immutable Packet construction.");
+        skin_physics::runtime::transform collider_teleport_pose;
+        collider_teleport_pose.translation = { 0.5f, 0.0f, 0.0f };
+        skin_physics::runtime::transform collider_end_pose;
+        collider_end_pose.translation = { 0.75f, 0.0f, 0.0f };
+        require(runtime.set_kinematic_pose_sample(
+                world, kinematic_collider, 0.005,
+                collider_teleport_pose, true).success() &&
+            runtime.set_kinematic_pose_sample(
+                world, kinematic_collider, 0.01,
+                collider_end_pose, false).success(),
+            "Kinematic Collider sample boundaries and Teleport state must be retained in the immutable Tick Snapshot.");
+
         skin_physics::runtime::mesh_physics_parameters tracking_parameters;
         tracking_parameters.young_modulus = 1.0f;
         tracking_parameters.damping = 0.0f;
