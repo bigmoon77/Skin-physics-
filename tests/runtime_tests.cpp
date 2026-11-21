@@ -1103,11 +1103,11 @@ namespace
         mesh_node.mesh_index = 0u;
         mesh_node.skin_index = 0u;
 
-        skin_physics::asset::node second_mesh_node;
-        second_mesh_node.name = "runtime_second_skinned_mesh";
-        second_mesh_node.parent_index = 0u;
-        second_mesh_node.mesh_index = 1u;
-        second_mesh_node.skin_index = 0u;
+        skin_physics::asset::node second_skinned_mesh_node;
+        second_skinned_mesh_node.name = "runtime_second_skinned_mesh";
+        second_skinned_mesh_node.parent_index = 0u;
+        second_skinned_mesh_node.mesh_index = 1u;
+        second_skinned_mesh_node.skin_index = 0u;
 
         skin_physics::asset::animation_track joint_translation_track;
         joint_translation_track.node_index = 1u;
@@ -1142,7 +1142,7 @@ namespace
         model_desc.source_model.meshes.push_back(std::move(second_render_mesh));
         model_desc.source_model.skins.push_back(source_skin);
         model_desc.source_model.nodes = {
-            root_node, joint_node, mesh_node, second_mesh_node
+            root_node, joint_node, mesh_node, second_skinned_mesh_node
         };
         model_desc.source_model.scene_roots = { 0u };
         model_desc.source_model.animations.push_back(animation_clip);
@@ -1395,11 +1395,11 @@ namespace
             "Skinned Soft Body Model must release transferred CPU and GPU Skin Weight resources.");
 
         skin_physics::runtime::model_desc ambiguous_instance_desc = model_desc;
-        skin_physics::asset::node second_mesh_node = mesh_node;
-        second_mesh_node.name = "second_skinned_mesh_instance";
-        second_mesh_node.parent_index = 0u;
+        skin_physics::asset::node second_skinned_mesh_node = mesh_node;
+        second_skinned_mesh_node.name = "second_skinned_mesh_instance";
+        second_skinned_mesh_node.parent_index = 0u;
         ambiguous_instance_desc.source_model.nodes[0u].children = { 1u, 2u };
-        ambiguous_instance_desc.source_model.nodes.push_back(second_mesh_node);
+        ambiguous_instance_desc.source_model.nodes.push_back(second_skinned_mesh_node);
         skin_physics::runtime::model_handle invalid_model;
         require(runtime.add_model(
                 world, ambiguous_instance_desc, &invalid_model).code ==
