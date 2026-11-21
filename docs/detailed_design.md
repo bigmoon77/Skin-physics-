@@ -479,6 +479,16 @@ Speed / Acceleration / Deviation BoundをfloatへUploadする場合は外向き�
 
 WARP Golden Regression `P09_WARP_ANIMATION_CHANNEL_EVALUATION`はLINEAR Translation / Quaternion、CUBICSPLINE Scale、STEP / Rest TRS、不正QuaternionをCPU期待値と比較する。このStageはLocal Channel評価までを対象とし、Source / Target Blend、Parent Global Matrix、Mesh Node逆行列、Skin-specific IBM合成、Runtime Tick Cursor / Packetの実Dispatchは後続Stageで接続する。
 
+#### GPU Local Transform Blend Evaluation
+
+`shaders/runtime/animation_blend_local_transform.cs.hlsl`はSource / Target Trackから生成した同一Node / Parent / RoleのLocal Transform Bufferと、Immutable Packetの`animation_blend_gpu_record`を読み、Blended Local TRS / Derivativeを生成する。t0=Source Local Transform、t1=Target Local Transform、t2=Blend Record、b0=(node_count, span_duration_seconds, span_local_u, reserved)、u0=Blended Local Transform、u1=Segment Statusとする。出力は112-byteのSegment-local Working Recordで、Immutable Packetを変更しない。
+
+Blend Coordinateは`v=clamp((blend_start_offset_seconds + span_local_u * span_duration_seconds) * inverse_duration, 0, 1)`、Weightは`w=c0+c1*v+c2*v^2+c3*v^3)。vがClamp範囲内にある場合だけ`w_dot=(c1+2*c2*v+3*c3*v^2)*inverse_duration`を有効にする。Translation / ScaleはSource / Targetの値をWeightで線形補間し、Derivativeは`(1-w)*source_dot + w*target_dot + w_dot*(target-source)`とする。
+
+QuaternionはSource / Targetの値とDerivativeを正規化・Tangent-Space投影し、Dotが負ならTarget値 / Derivativeの両方を反転してHemisphereを合わせる。線形BlendしたRaw Quaternion / Raw Derivativeを再正規化し、Derivativeを同じ接空間へ射影する。Zero-Length Quaternion、Weight範囲逸脱、Source / TargetのNode / Parent / Role / Status不一致はStatus Failureとして出力を採用しない。
+
+WARP Golden Regression `P09_WARP_ANIMATION_BLEND_LOCAL_TRANSFORMS`はHermite Weightの時間微分がTranslation / Scaleへ寄与すること、Quaternion正規化 / 接空間微分、Node不一致のFail-Closedを検証する。GPU BlendはLocal Transform段階であり、GPU Hierarchy / Skin Matrix / Runtime Packet Dispatchは後続Stageで接続する。
+
 #### Channel補間と時間微分
 
 Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / Scaleの各Componentは次の多項式で表す。
