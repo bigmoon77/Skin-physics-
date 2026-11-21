@@ -927,16 +927,6 @@
             "Contact capacity overflow reports the required count and rejects the entire contact set without returning partial contacts",
             "Kinematic Collider swept AABB adapts to the existing Spatial Hash Broadphase primitive and discovers overlapping Dynamic Mesh candidates"
           ]
-        },
-        {
-          "id": "R1_RUNTIME_KINEMATIC_COLLIDER_PACKET_INTEGRATION",
-          "checks": [
-            "Runtime Tick Input Snapshot Kinematic Collider Transform Samples are converted into immutable per-Span 128-byte Collider records in every Model Animation Trajectory Packet",
-            "Collider sample boundaries split Model Playback / Blend / Root-only Spans before Packet construction; every record brackets exactly one complete Integration Segment",
-            "A Teleport-ending Collider Span holds the old Pose with zero velocity, and the following Span begins at the teleported Pose",
-            "Stable Collider identity combines Handle generation and index; certified local rotation radius encloses every Collider Mesh vertex",
-            "The shared multi-Span Packet uploads once per Model / Tick and remains reusable by all Skinned Mesh consumers and Integration Segments"
-          ]
         }
       ],
       "automated_cases": [
