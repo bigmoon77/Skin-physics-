@@ -204,6 +204,10 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     constraint_lambdas.GetDimensions(lambda_count, lambda_stride);
     solver_status.GetDimensions(status_count, status_stride);
 
+    if (status_count != 1u || status_stride != 4u)
+    {
+        return;
+    }
     if (constraint_count == 0u ||
         constraint_count > constraint_buffer_count ||
         constraint_count > contribution_count ||
@@ -212,8 +216,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         vertex_count != mass_count ||
         position_stride != 16u || mass_stride != 4u ||
         constraint_stride != 32u || contribution_stride != 64u ||
-        lambda_stride != 4u || status_count != 1u ||
-        status_stride != 4u ||
+        lambda_stride != 4u ||
         !isfinite(delta_time) || delta_time <= 0.0f ||
         !isfinite(relaxation) || relaxation <= 0.0f ||
         relaxation > 1.0f)
@@ -221,6 +224,10 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         fail_cloth_constraint();
         return;
     }
+
+    // Clear the per-constraint output before validation / evaluation so a
+    // failed constraint cannot leave a stale correction from a prior pass.
+    contributions[constraint_index] = (ClothContribution)0;
 
     const ClothConstraint constraint = constraints[constraint_index];
     const uint4 ids = constraint.indices;
