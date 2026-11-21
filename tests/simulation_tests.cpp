@@ -3248,6 +3248,44 @@ namespace
             evaluated.swept_bounds.maximum.z >= 1.0f,
             "Kinematic Collider swept AABB must conservatively enclose the complete translation segment expanded by its certified local radius.");
 
+        const auto collider_broadphase =
+            skin_physics::physics::make_kinematic_collider_broadphase_primitive(
+                7u, evaluated);
+        require(collider_broadphase.success &&
+            collider_broadphase.value.mesh_id == 7u &&
+            collider_broadphase.value.bounds.minimum.x ==
+                evaluated.swept_bounds.minimum.x &&
+            collider_broadphase.value.bounds.maximum.x ==
+                evaluated.swept_bounds.maximum.x,
+            "Kinematic Collider swept geometry must adapt to the existing broadphase primitive without narrowing its conservative bounds.");
+
+        skin_physics::physics::broadphase_primitive dynamic_primitive;
+        dynamic_primitive.mesh_id = 19u;
+        dynamic_primitive.bounds.minimum = { 2.0f, -0.25f, -0.25f };
+        dynamic_primitive.bounds.maximum = { 3.0f, 0.25f, 0.25f };
+        const std::vector<skin_physics::physics::broadphase_primitive> primitives = {
+            collider_broadphase.value, dynamic_primitive
+        };
+        const std::vector<skin_physics::physics::broadphase_mesh_pair> mesh_pairs = {
+            { 7u, 19u, true }
+        };
+        const auto candidates =
+            skin_physics::physics::generate_broadphase_candidates(
+                primitives, mesh_pairs);
+        require(candidates.success &&
+            candidates.candidates.size() == 1u &&
+            candidates.candidates[0u].primitive_a == 0u &&
+            candidates.candidates[0u].primitive_b == 1u,
+            "Existing Spatial Hash Broadphase must discover Dynamic Mesh candidates intersecting the Kinematic Collider swept AABB.");
+
+        const auto rejected_broadphase_id =
+            skin_physics::physics::make_kinematic_collider_broadphase_primitive(
+                skin_physics::asset::invalid_index, evaluated);
+        require(!rejected_broadphase_id.success &&
+            rejected_broadphase_id.error ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "Kinematic Collider Broadphase adapter must reject the reserved invalid Mesh ID.");
+
         for (const skin_physics::asset::vec3& world_vertex :
             evaluated.world_vertices)
         {
