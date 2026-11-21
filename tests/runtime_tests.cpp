@@ -1258,7 +1258,13 @@ namespace
         require(blend_observed &&
             blend_status.state == skin_physics::runtime::tick_state::committed &&
             blend_status.gpu_committed_sequence == 2u,
-            "The synchronized Animation Blend Tick must Commit only after the GPU Target validation and Tracking integration.");
+            "The synchronized Animation Blend Tick must Commit only after the GPU Target validation and Tracking integration. state=" +
+                std::to_string(static_cast<uint32_t>(blend_status.state)) +
+                " status=" +
+                std::to_string(static_cast<uint32_t>(blend_status.last_tick_status)) +
+                " committed=" +
+                std::to_string(blend_status.gpu_committed_sequence) +
+                " diagnostic=" + blend_status.diagnostic);
         skin_physics::runtime::render_binding blended_binding;
         require(runtime.get_render_binding(
                 world, model, 0u, &blended_binding).success(),
