@@ -721,6 +721,173 @@ namespace skin_physics::physics
         return result;
     }
 
+
+    kinematic_collider_contact_set_result
+    generate_kinematic_collider_vertex_triangle_contacts(
+        const std::vector<vec3>& vertex_positions,
+        const std::vector<vec3>& vertex_velocities,
+        const std::vector<float>& vertex_radii,
+        const asset::mesh& collider_mesh,
+        const kinematic_collider_geometry_result& collider_geometry,
+        float collider_thickness,
+        std::size_t contact_capacity)
+    {
+        kinematic_collider_contact_set_result result;
+        const std::size_t maximum_index =
+            static_cast<std::size_t>(std::numeric_limits<uint32_t>::max());
+        if (vertex_positions.size() != vertex_velocities.size() ||
+            vertex_positions.size() != vertex_radii.size() ||
+            vertex_positions.size() > maximum_index ||
+            collider_mesh.vertices.empty() ||
+            collider_mesh.indices.empty() ||
+            collider_mesh.indices.size() % 3u != 0u ||
+            collider_mesh.indices.size() / 3u > maximum_index ||
+            collider_geometry.world_vertices.size() !=
+                collider_mesh.vertices.size() ||
+            collider_geometry.world_vertex_velocities.size() !=
+                collider_mesh.vertices.size() ||
+            !collider_geometry.success ||
+            !std::isfinite(collider_thickness) ||
+            collider_thickness < 0.0f)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Moving Collider VT contact generation requires matching finite vertex arrays, a valid indexed Collider Mesh / geometry sample and non-negative thickness.";
+            return result;
+        }
+
+        for (std::size_t index = 0u; index < vertex_positions.size(); ++index)
+        {
+            if (!finite(vertex_positions[index]) ||
+                !finite(vertex_velocities[index]) ||
+                !std::isfinite(vertex_radii[index]) ||
+                vertex_radii[index] < 0.0f)
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact input contains a non-finite Vertex Position / Velocity or invalid radius.";
+                return result;
+            }
+        }
+
+        for (uint32_t index : collider_mesh.indices)
+        {
+            if (index >= collider_geometry.world_vertices.size() ||
+                index >= collider_geometry.world_vertex_velocities.size())
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact input contains an out-of-range Collider Mesh index.";
+                return result;
+            }
+        }
+
+        for (const vec3& position : collider_geometry.world_vertices)
+        {
+            if (!finite(position))
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact geometry contains a non-finite world Vertex.";
+                return result;
+            }
+        }
+        for (const vec3& velocity : collider_geometry.world_vertex_velocities)
+        {
+            if (!finite(velocity))
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact geometry contains a non-finite world Vertex Velocity.";
+                return result;
+            }
+        }
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < vertex_positions.size(); ++vertex_index)
+        {
+            for (std::size_t triangle_index = 0u;
+                triangle_index < collider_mesh.indices.size() / 3u;
+                ++triangle_index)
+            {
+                const std::size_t first_index = triangle_index * 3u;
+                const uint32_t index0 = collider_mesh.indices[first_index];
+                const uint32_t index1 = collider_mesh.indices[first_index + 1u];
+                const uint32_t index2 = collider_mesh.indices[first_index + 2u];
+                const std::array<vec3, 3> triangle = {
+                    collider_geometry.world_vertices[index0],
+                    collider_geometry.world_vertices[index1],
+                    collider_geometry.world_vertices[index2]
+                };
+                const std::array<vec3, 3> triangle_velocities = {
+                    collider_geometry.world_vertex_velocities[index0],
+                    collider_geometry.world_vertex_velocities[index1],
+                    collider_geometry.world_vertex_velocities[index2]
+                };
+                const float combined_radius =
+                    vertex_radii[vertex_index] + collider_thickness;
+                if (!std::isfinite(combined_radius))
+                {
+                    result.error = collision_error::invalid_geometry;
+                    result.diagnostic =
+                        "Moving Collider VT combined contact radius overflowed float range.";
+                    return result;
+                }
+
+                const moving_vertex_triangle_contact_result contact =
+                    find_moving_vertex_triangle_contact(
+                        vertex_positions[vertex_index],
+                        vertex_velocities[vertex_index],
+                        triangle,
+                        triangle_velocities,
+                        combined_radius);
+                if (!contact.success)
+                {
+                    result.error = collision_error::invalid_geometry;
+                    result.diagnostic =
+                        "Moving Collider VT narrowphase encountered a degenerate Triangle or invalid contact velocity.";
+                    result.contacts.clear();
+                    return result;
+                }
+                if (!contact.contact.hit)
+                {
+                    continue;
+                }
+
+                if (result.required_contacts ==
+                    std::numeric_limits<std::size_t>::max())
+                {
+                    result.error = collision_error::candidate_capacity_overflow;
+                    result.diagnostic =
+                        "Moving Collider VT contact count overflowed size_t.";
+                    result.contacts.clear();
+                    return result;
+                }
+                ++result.required_contacts;
+                if (result.required_contacts > contact_capacity)
+                {
+                    result.overflow = true;
+                    result.error = collision_error::candidate_capacity_overflow;
+                    result.diagnostic =
+                        "Moving Collider VT contact capacity is insufficient; the contact set was rejected atomically.";
+                    result.contacts.clear();
+                    return result;
+                }
+
+                kinematic_collider_vertex_triangle_contact candidate;
+                candidate.vertex_index =
+                    static_cast<uint32_t>(vertex_index);
+                candidate.triangle_index =
+                    static_cast<uint32_t>(triangle_index);
+                candidate.value = contact;
+                result.contacts.push_back(std::move(candidate));
+            }
+        }
+
+        result.success = true;
+        return result;
+    }
+
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
