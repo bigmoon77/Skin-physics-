@@ -838,6 +838,12 @@ namespace
         const ComPtr<ID3D11ComputeShader> reset_shader =
             compile_compute_shader(
                 device.Get(), shader_root / "cloth_reset_lambdas.cs.hlsl", "main");
+        const ComPtr<ID3D11ComputeShader> epoch_snapshot_shader =
+            compile_compute_shader(
+                device.Get(), shader_root / "cloth_epoch_snapshot.cs.hlsl", "main");
+        const ComPtr<ID3D11ComputeShader> epoch_displacement_shader =
+            compile_compute_shader(
+                device.Get(), shader_root / "cloth_epoch_displacement.cs.hlsl", "main");
 
         const std::vector<gpu_float4> start_positions = {
             { 0.0f, 0.0f, 0.0f, 1.0f },
@@ -974,6 +980,40 @@ namespace
             status_buffer.Get(), 0u, nullptr, clear_status.data(), 0u, 0u);
         predict_constants.delta_time = 0.25f;
 
+        const ComPtr<ID3D11Buffer> epoch_before_buffer =
+            create_structured_buffer(
+                device.Get(), predicted_positions,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> epoch_before_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), epoch_before_buffer.Get(), 3u);
+        const ComPtr<ID3D11ShaderResourceView> predicted_position_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), predicted_position_buffer.Get(), 3u);
+        struct alignas(16) epoch_parameters
+        {
+            uint32_t vertex_count = 0u;
+            uint32_t reserved[3] = {};
+        };
+        static_assert(sizeof(epoch_parameters) == 16u);
+        epoch_parameters epoch_constants;
+        epoch_constants.vertex_count = 3u;
+        const ComPtr<ID3D11Buffer> epoch_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &epoch_constants,
+                static_cast<UINT>(sizeof(epoch_constants)));
+        dispatch_compute(
+            context.Get(), epoch_snapshot_shader.Get(),
+            { predicted_position_srv.Get() },
+            { epoch_before_uav.Get(), status_uav.Get() },
+            epoch_constant_buffer.Get(), 1u);
+        const std::vector<gpu_float4> epoch_before_positions =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), epoch_before_buffer.Get(), 3u);
+        require(std::abs(epoch_before_positions[0].x - predicted_positions[0].x) <= 1.0e-7f &&
+            std::abs(epoch_before_positions[1].z - predicted_positions[1].z) <= 1.0e-7f,
+            "Every Cloth Position-Writer Epoch must snapshot the exact pre-dispatch Position state.");
+
         std::vector<gpu_float4> solved_positions = predicted_positions;
         solved_positions[0].x += 0.1f;
         solved_positions[0].y -= 0.05f;
@@ -982,6 +1022,33 @@ namespace
         context->UpdateSubresource(
             predicted_position_buffer.Get(), 0u, nullptr,
             solved_positions.data(), 0u, 0u);
+
+        const ComPtr<ID3D11Buffer> epoch_displacement_buffer =
+            create_structured_buffer(
+                device.Get(), start_positions,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> epoch_displacement_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), epoch_displacement_buffer.Get(), 3u);
+        const ComPtr<ID3D11ShaderResourceView> epoch_before_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), epoch_before_buffer.Get(), 3u);
+        const ComPtr<ID3D11ShaderResourceView> epoch_after_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), predicted_position_buffer.Get(), 3u);
+        dispatch_compute(
+            context.Get(), epoch_displacement_shader.Get(),
+            { epoch_before_srv.Get(), epoch_after_srv.Get() },
+            { epoch_displacement_uav.Get(), status_uav.Get() },
+            epoch_constant_buffer.Get(), 1u);
+        const std::vector<gpu_float4> epoch_displacements =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), epoch_displacement_buffer.Get(), 3u);
+        require(std::abs(epoch_displacements[0].x - 0.1f) <= 1.0e-6f &&
+            std::abs(epoch_displacements[0].y + 0.05f) <= 1.0e-6f &&
+            std::abs(epoch_displacements[1].z - 0.2f) <= 1.0e-6f &&
+            std::abs(epoch_displacements[2].x - 100.0f) <= 1.0e-6f,
+            "Cloth Position-Writer Epoch displacement must be the exact after-minus-before vector for every Vertex.");
 
         struct alignas(16) reconstruct_parameters
         {
