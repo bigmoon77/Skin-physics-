@@ -644,8 +644,17 @@ namespace
                         1.0f / 120.0f,
                         1.0e-5f,
                         0.8f);
-                require(step.success,
-                    "Colored Stretch CPU reference must solve a valid disjoint batch.");
+                if (!step.success)
+                {
+                    const std::string diagnostic =
+                        step.diagnostics.empty()
+                            ? "no solver diagnostic"
+                            : step.diagnostics.front().message;
+                    throw std::runtime_error(
+                        "Colored Stretch CPU reference failed at iteration " +
+                        std::to_string(iteration) + ", color " +
+                        std::to_string(color_index) + ": " + diagnostic);
+                }
                 positions = step.positions;
                 lambda_values = step.lambda_values;
                 for (float value : lambda_values)
