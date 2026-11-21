@@ -150,6 +150,7 @@
     <None Include="shaders\runtime\soft_body_fem.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_animation_skinning.cs.hlsl" />
     <None Include="shaders\runtime\animation_channel_evaluate.cs.hlsl" />
+    <None Include="shaders\runtime\animation_blend_local_transform.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_force_gather.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_force_distribution.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_integrate.cs.hlsl" />
