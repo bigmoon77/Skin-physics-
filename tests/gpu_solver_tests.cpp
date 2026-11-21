@@ -826,6 +826,7 @@ namespace
                 device.GetAddressOf(), context.GetAddressOf())),
             "Cloth Segment State WARP test requires Feature Level 11_0.");
 
+        std::cout << "[RUN] P05_WARP_CLOTH_SEGMENT_STATE_PASSES\\n";
         const std::filesystem::path shader_root =
             test_support::fixture_directory().parent_path().parent_path() /
             "shaders" / "runtime";
@@ -848,6 +849,7 @@ namespace
             compile_compute_shader(
                 device.Get(), shader_root / "cloth_epoch_swept_aabb.cs.hlsl", "main");
 
+        std::cout << "[INFO] Cloth Segment shaders compiled\\n";
         const std::vector<gpu_float4> start_positions = {
             { 0.0f, 0.0f, 0.0f, 1.0f },
             { 2.0f, 3.0f, 4.0f, 1.0f },
@@ -957,6 +959,7 @@ namespace
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
         require(prediction_status[0] == 0u,
             "Valid Cloth Segment prediction must not raise solver diagnostics.");
+        std::cout << "[INFO] Cloth Segment prediction passed\\n";
 
         const std::vector<uint32_t> clear_status = { 0u };
         context->UpdateSubresource(
@@ -1057,6 +1060,7 @@ namespace
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
         require(epoch_status[0] == 0u,
             "Valid Cloth Position-Writer Epoch snapshot / displacement must not raise solver diagnostics.");
+        std::cout << "[INFO] Cloth Epoch snapshot / displacement passed\\n";
 
         struct gpu_epoch_primitive
         {
@@ -1132,6 +1136,7 @@ namespace
             std::abs(triangle_aabb[0].maximum.y - triangle_maximum[1]) <= 1.0e-5f &&
             std::abs(triangle_aabb[0].maximum.z - triangle_maximum[2]) <= 1.0e-5f,
             "Cloth triangle Epoch swept AABB must enclose every before / after vertex endpoint with outward-rounded contact thickness.");
+        std::cout << "[INFO] Cloth triangle swept AABB passed\\n";
 
         const std::vector<gpu_epoch_primitive> edge_primitives = {
             { { 0u, 1u, 0u, 0u } }
@@ -1165,6 +1170,7 @@ namespace
             edge_aabb[0].minimum.z <= -0.1f &&
             edge_aabb[0].maximum.z >= 4.55f,
             "Cloth edge Epoch swept AABB must include both endpoints of every Edge vertex motion.");
+        std::cout << "[INFO] Cloth edge swept AABB passed\\n";
         const std::vector<uint32_t> epoch_aabb_status =
             readback_structured_buffer<uint32_t>(
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
@@ -1216,6 +1222,7 @@ namespace
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
         require(reconstruction_status[0] == 0u,
             "Valid Cloth Velocity reconstruction must not raise solver diagnostics.");
+        std::cout << "[INFO] Cloth velocity reconstruction passed\\n";
 
         const std::vector<float> dirty_lambdas = { 3.5f, -2.0f, 0.25f, 9.0f };
         const ComPtr<ID3D11Buffer> lambda_buffer =
@@ -1256,6 +1263,7 @@ namespace
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
         require(reset_status[0] == 0u,
             "Valid Cloth Lambda reset must not raise solver diagnostics.");
+        std::cout << "[INFO] Cloth Lambda reset passed\\n";
 
         context->UpdateSubresource(
             status_buffer.Get(), 0u, nullptr, clear_status.data(), 0u, 0u);
