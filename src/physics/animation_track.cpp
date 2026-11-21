@@ -4910,6 +4910,111 @@ namespace skin_physics::physics
         candidate.u_segment_start = gpu_cursor;
         out_cursor = candidate;
         return true;
+
+    }
+
+    bool advance_animation_span_cursor(
+        const animation_trajectory_packet& packet,
+        const animation_span_cursor_gpu_record& cursor,
+        double segment_duration_seconds,
+        animation_span_cursor_gpu_record& out_cursor,
+        std::string& diagnostic)
+    {
+        diagnostic.clear();
+        const uint32_t version_low = static_cast<uint32_t>(
+            packet.animation_input_version & 0xffffffffull);
+        const uint32_t version_high = static_cast<uint32_t>(
+            packet.animation_input_version >> 32u);
+        const float gpu_segment_duration =
+            static_cast<float>(segment_duration_seconds);
+        if (packet.animation_input_version == 0u ||
+            packet.span_records.empty() ||
+            packet.span_world_time_starts.size() !=
+                packet.span_records.size() ||
+            cursor.span_record_index >= packet.span_records.size() ||
+            cursor.animation_input_version_low != version_low ||
+            cursor.animation_input_version_high != version_high ||
+            !std::isfinite(segment_duration_seconds) ||
+            segment_duration_seconds <= 0.0 ||
+            !std::isfinite(gpu_segment_duration) ||
+            gpu_segment_duration <= 0.0f ||
+            !std::isfinite(cursor.u_segment_start) ||
+            cursor.u_segment_start < 0.0f ||
+            cursor.u_segment_start > 1.0f)
+        {
+            diagnostic =
+                "Animation Span Cursor advance requires a valid immutable Packet Version, current Span and finite positive World-Time Segment.";
+            return false;
+        }
+
+        const animation_span_gpu_record& span =
+            packet.span_records[cursor.span_record_index];
+        const float reciprocal_error =
+            span.span_duration_seconds * span.inverse_span_duration - 1.0f;
+        if (span.animation_input_version_low != version_low ||
+            span.animation_input_version_high != version_high ||
+            !std::isfinite(span.span_duration_seconds) ||
+            span.span_duration_seconds <= 0.0f ||
+            !std::isfinite(span.inverse_span_duration) ||
+            span.inverse_span_duration <= 0.0f ||
+            !std::isfinite(reciprocal_error) ||
+            std::abs(reciprocal_error) > 2.0e-5f)
+        {
+            diagnostic =
+                "Animation Span Cursor current Span has an invalid Packet Version or World-Time duration reciprocal.";
+            return false;
+        }
+
+        const float delta_u =
+            gpu_segment_duration * span.inverse_span_duration;
+        const float next_u = cursor.u_segment_start + delta_u;
+        constexpr float boundary_epsilon =
+            8.0f * std::numeric_limits<float>::epsilon();
+        if (!std::isfinite(delta_u) || delta_u <= 0.0f ||
+            !std::isfinite(next_u) ||
+            next_u > 1.0f + boundary_epsilon)
+        {
+            diagnostic =
+                "Animation Integration Segment crosses beyond the current Span boundary; CPU Scheduler must split the Segment.";
+            return false;
+        }
+
+        animation_span_cursor_gpu_record candidate = cursor;
+        if (next_u >= 1.0f - boundary_epsilon)
+        {
+            if (static_cast<std::size_t>(cursor.span_record_index) + 1u <
+                packet.span_records.size())
+            {
+                const uint32_t next_span_index =
+                    cursor.span_record_index + 1u;
+                const animation_span_gpu_record& next_span =
+                    packet.span_records[next_span_index];
+                if (next_span.animation_input_version_low != version_low ||
+                    next_span.animation_input_version_high != version_high ||
+                    !std::isfinite(next_span.span_duration_seconds) ||
+                    next_span.span_duration_seconds <= 0.0f ||
+                    !std::isfinite(next_span.inverse_span_duration) ||
+                    next_span.inverse_span_duration <= 0.0f)
+                {
+                    diagnostic =
+                        "Animation Span Cursor next Span is invalid or belongs to another immutable Packet Version.";
+                    return false;
+                }
+                candidate.span_record_index = next_span_index;
+                candidate.u_segment_start = 0.0f;
+            }
+            else
+            {
+                candidate.u_segment_start = 1.0f;
+            }
+        }
+        else
+        {
+            candidate.u_segment_start = next_u;
+        }
+
+        out_cursor = candidate;
+        return true;
     }
 
 }
