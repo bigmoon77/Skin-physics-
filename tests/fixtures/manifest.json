@@ -884,6 +884,16 @@
             "The evaluator validates homogeneous Translation endpoint w components before publishing a Transform",
             "A missing / null Cursor SRV is rejected after resource dimension validation and before any Cursor dereference"
           ]
+        },
+        {
+          "id": "P09_KINEMATIC_COLLIDER_GEOMETRY_REFERENCE",
+          "checks": [
+            "The CPU collision oracle transforms every indexed local Collider Mesh vertex with the same Span-local shortest-arc pose as the analytic trajectory evaluator",
+            "The Collider swept AABB encloses the complete endpoint translation segment expanded by the certified local bounding-sphere radius, independent of rotation",
+            "Swept AABB bounds are rounded outward and remain finite",
+            "Out-of-range triangle indices, non-finite local vertices and a Mesh exceeding the certified local radius fail closed",
+            "A failed vertex evaluation publishes no partial world-vertex array"
+          ]
         }
       ],
       "automated_cases": [
@@ -895,7 +905,8 @@
         "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
         "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
         "P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE",
-        "P09_WARP_KINEMATIC_COLLIDER_EVALUATION"
+        "P09_WARP_KINEMATIC_COLLIDER_EVALUATION",
+        "P09_KINEMATIC_COLLIDER_GEOMETRY_REFERENCE"
       ],
       "unimplemented": [
         "Quaternion / angular target-velocity interface for Animation Tracking",
