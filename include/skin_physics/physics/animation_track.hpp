@@ -454,6 +454,27 @@ namespace skin_physics::physics
         gpu_float4 column3;
     };
 
+    // Segment-local GPU working record shared by Channel / Blend / Hierarchy
+    // compute stages. The immutable Packet stores only Channel Records.
+    struct alignas(16) animation_node_local_transform_gpu_record
+    {
+        gpu_float4 translation;
+        gpu_float4 translation_velocity;
+        gpu_float4 rotation;
+        gpu_float4 rotation_velocity;
+        gpu_float4 scale;
+        gpu_float4 scale_velocity;
+        uint32_t node_index = asset::invalid_index;
+        uint32_t parent_index = asset::invalid_index;
+        uint32_t node_role_flags = 0u;
+        uint32_t status = 0u;
+    };
+
+    static_assert(std::is_standard_layout_v<animation_node_local_transform_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<animation_node_local_transform_gpu_record>);
+    static_assert(sizeof(animation_node_local_transform_gpu_record) == 112u);
+    static_assert(alignof(animation_node_local_transform_gpu_record) == 16u);
+
     struct animation_span_gpu_record
     {
         uint32_t span_id = 0u;
