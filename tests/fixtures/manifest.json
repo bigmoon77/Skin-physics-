@@ -864,11 +864,12 @@
         {
           "id": "P09_WARP_KINEMATIC_COLLIDER_EVALUATION",
           "checks": [
-            "The production Shader Model 5 Kinematic Collider evaluator consumes the immutable 128-byte Collider Span Record and evaluates arbitrary Span-local u",
-            "GPU Translation and shortest-arc Quaternion match the CPU trajectory evaluator at interior Span coordinates",
+            "The production Shader Model 5 evaluator consumes the immutable 128-byte Collider Span Record selected through the active immutable Span and versioned mutable Cursor",
+            "Each GPU sample selects a Collider Record by Span-local index, allowing multiple candidate contact points to evaluate the same Collider at one shared tau",
+            "GPU Translation and shortest-arc Quaternion match the CPU trajectory evaluator at an interior Span coordinate",
             "GPU Linear Velocity, World Angular Velocity and rotated contact-point velocity match the CPU analytic derivative reference",
-            "The evaluator validates stable Collider identity, sample-pair identity, flags, normalized endpoint quaternions, angular axis / angle, duration and certified motion bounds",
-            "A local contact point outside Maximum Local Radius fails closed and does not publish a valid sample"
+            "The evaluator validates buffer strides / ranges, Cursor and Packet Version, Collider and sample-pair identities, flags, normalized endpoint quaternions, angular axis / angle, duration and certified motion bounds",
+            "A local contact point outside Maximum Local Radius and a Collider Record whose duration differs from its owning Span fail closed"
           ]
         }
       ],
