@@ -124,13 +124,23 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     next_positions.GetDimensions(output_count, output_stride);
     solver_status.GetDimensions(status_count, status_stride);
 
-    if (reserved0 != 0u || reserved1 != 0u || reserved2 != 0u ||
-        vertex_count == 0u || vertex_count == 0xffffffffu ||
+    if (status_count != 1u || status_stride != 4u)
+    {
+        return;
+    }
+    if (vertex_count == 0u || vertex_count == 0xffffffffu ||
         vertex_count != position_count ||
         vertex_count != output_count || position_stride != 16u ||
-        output_stride != 16u || offset_count != vertex_count + 1u ||
-        offset_stride != 4u || reference_count > reference_buffer_count ||
-        reference_stride != 16u ||
+        output_stride != 16u)
+    {
+        fail_cloth_csr();
+        return;
+    }
+
+    const float4 source_position = current_positions[vertex_index];
+    if (reserved0 != 0u || reserved1 != 0u || reserved2 != 0u ||
+        offset_count != vertex_count + 1u || offset_stride != 4u ||
+        reference_count > reference_buffer_count || reference_stride != 16u ||
         stretch_constraint_count > stretch_constraint_buffer_count ||
         shear_constraint_count > shear_constraint_buffer_count ||
         bend_constraint_count > bend_constraint_buffer_count ||
@@ -139,11 +149,10 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         shear_contribution_count < shear_constraint_count ||
         bend_contribution_count < bend_constraint_count ||
         shear_contribution_stride != 64u ||
-        bend_contribution_stride != 64u ||
-        status_count != 1u || status_stride != 4u)
+        bend_contribution_stride != 64u)
     {
         fail_cloth_csr();
-        next_positions[vertex_index] = current_positions[vertex_index];
+        next_positions[vertex_index] = source_position;
         return;
     }
 
@@ -160,7 +169,6 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
-    const float4 source_position = current_positions[vertex_index];
     if (!all(isfinite(source_position)))
     {
         fail_cloth_csr();
