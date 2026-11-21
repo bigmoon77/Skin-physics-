@@ -683,6 +683,140 @@ namespace
             "Colored Stretch CPU reference must reject a mismatched Lambda array.");
     }
 
+    void test_phase05_cloth_gpu_topology_packet()
+    {
+        const auto built = load_cloth_fixture();
+        require(built.success,
+            "Cloth GPU topology fixture must build before packet packing.");
+
+        skin_physics::physics::cloth_solver_settings settings;
+        settings.stretch_compliance = 1.0e-3f;
+        settings.shear_compliance = 2.0e-3f;
+        settings.bend_compliance = 1.0e-2f;
+        settings.fixed_delta_time = 1.0f / 120.0f;
+        settings.relaxation = 0.75f;
+        settings.iterations = 6u;
+
+        const auto packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                built.value, settings);
+        require(packet.success,
+            "Validated Cloth topology must pack into the explicit GPU ABI: " +
+                packet.message);
+        require(packet.value.vertex_count == built.value.rest_positions.size() &&
+            packet.value.stretch_constraints.size() ==
+                built.value.stretch_constraints.size() &&
+            packet.value.stretch_color_ranges.size() ==
+                built.value.stretch_color_ranges.size() &&
+            packet.value.stretch_color_constraint_indices ==
+                built.value.stretch_color_constraint_indices &&
+            packet.value.shear_constraints.size() ==
+                built.value.shear_constraints.size() &&
+            packet.value.bend_constraints.size() ==
+                built.value.bend_constraints.size() &&
+            packet.value.vertex_constraint_offsets ==
+                built.value.vertex_constraint_offsets &&
+            packet.value.vertex_constraint_refs.size() ==
+                built.value.vertex_constraint_refs.size(),
+            "Cloth GPU topology packet must preserve Vertex, colored Stretch, Shear / Bend and CSR counts / ordering.");
+
+        for (std::size_t index = 0u;
+            index < built.value.stretch_constraints.size(); ++index)
+        {
+            const auto& source = built.value.stretch_constraints[index];
+            const auto& packed = packet.value.stretch_constraints[index];
+            require(packed.vertices == source.vertices &&
+                packed.rest_length == source.rest_length &&
+                packed.reserved == 0.0f,
+                "Packed Stretch ABI must preserve endpoints / Rest Length and zero its reserved field.");
+        }
+
+        for (std::size_t index = 0u;
+            index < built.value.shear_constraints.size(); ++index)
+        {
+            const auto& source = built.value.shear_constraints[index];
+            const auto& packed = packet.value.shear_constraints[index];
+            require(packed.indices[0] == source.vertices[0] &&
+                packed.indices[1] == source.vertices[1] &&
+                packed.indices[2] == source.vertices[2] &&
+                packed.indices[3] == 0u &&
+                packed.type == static_cast<uint32_t>(
+                    skin_physics::physics::cloth_vertex_constraint_type::shear) &&
+                packed.rest_value == source.rest_dot &&
+                packed.normalization == source.normalization_length &&
+                packed.compliance == settings.shear_compliance,
+                "Packed Shear ABI must preserve triangle mapping / Rest data and bind the configured Compliance.");
+        }
+
+        for (std::size_t index = 0u;
+            index < built.value.bend_constraints.size(); ++index)
+        {
+            const auto& source = built.value.bend_constraints[index];
+            const auto& packed = packet.value.bend_constraints[index];
+            require(packed.indices[0] == source.vertices[0] &&
+                packed.indices[1] == source.vertices[1] &&
+                packed.indices[2] == source.vertices[2] &&
+                packed.indices[3] == source.vertices[3] &&
+                packed.type == static_cast<uint32_t>(
+                    skin_physics::physics::cloth_vertex_constraint_type::bend) &&
+                packed.rest_value == source.rest_angle &&
+                packed.normalization == 0.0f &&
+                packed.compliance == settings.bend_compliance,
+                "Packed Bend ABI must preserve the four-Vertex hinge mapping / Rest Angle and configured Compliance.");
+        }
+
+        require(packet.value.stretch_lambdas.size() ==
+                built.value.stretch_constraints.size() &&
+            packet.value.shear_lambdas.size() ==
+                built.value.shear_constraints.size() &&
+            packet.value.bend_lambdas.size() ==
+                built.value.bend_constraints.size() &&
+            std::all_of(
+                packet.value.stretch_lambdas.begin(),
+                packet.value.stretch_lambdas.end(),
+                [](float value) { return value == 0.0f; }) &&
+            std::all_of(
+                packet.value.shear_lambdas.begin(),
+                packet.value.shear_lambdas.end(),
+                [](float value) { return value == 0.0f; }) &&
+            std::all_of(
+                packet.value.bend_lambdas.begin(),
+                packet.value.bend_lambdas.end(),
+                [](float value) { return value == 0.0f; }),
+            "Every GPU constraint family must receive a zero-initialized Segment-local Lambda array.");
+
+        auto invalid_settings = settings;
+        invalid_settings.bend_compliance = -1.0f;
+        const auto invalid_settings_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                built.value, invalid_settings);
+        require(!invalid_settings_packet.success &&
+            invalid_settings_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_settings,
+            "Cloth GPU topology packing must reject negative Compliance before publishing partial buffers.");
+
+        auto malformed_mesh = built.value;
+        malformed_mesh.stretch_constraints[0u].rest_length =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto malformed_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                malformed_mesh, settings);
+        require(!malformed_packet.success &&
+            malformed_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_mesh,
+            "Cloth GPU topology packing must reject non-finite Rest data.");
+
+        auto malformed_csr = built.value;
+        malformed_csr.vertex_constraint_offsets.back() -= 1u;
+        const auto malformed_csr_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                malformed_csr, settings);
+        require(!malformed_csr_packet.success &&
+            malformed_csr_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_csr,
+            "Cloth GPU topology packing must reject a truncated Vertex-to-Constraint CSR table.");
+    }
+
     void test_phase05_cloth_compliance_monotonicity()
     {
         const auto built = load_cloth_fixture();
@@ -5830,6 +5964,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
     test_phase05_cloth_stretch_color_reference();
     std::cout << "[PASS] P05_CLOTH_STRETCH_COLOR_REFERENCE\n";
+    test_phase05_cloth_gpu_topology_packet();
+    std::cout << "[PASS] P05_CLOTH_GPU_TOPOLOGY_PACKET\n";
     test_phase05_cloth_compliance_monotonicity();
     std::cout << "[PASS] P05_CLOTH_COMPLIANCE\n";
     test_phase06_corotational_fem_golden();
