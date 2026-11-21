@@ -815,7 +815,10 @@ namespace skin_physics::runtime
 
             const double world_time_end =
                 world_time_start + world_time_duration;
-            if (!finite_double(world_time_end))
+            const double world_time_midpoint =
+                world_time_start + world_time_duration * 0.5;
+            if (!finite_double(world_time_end) ||
+                !finite_double(world_time_midpoint))
             {
                 diagnostic =
                     "Root Transform Packet World-Time endpoint is not representable.";
@@ -841,29 +844,58 @@ namespace skin_physics::runtime
                 }
 
                 const auto upper = std::upper_bound(
-                    samples.begin(), samples.end(), world_time_start,
+                    samples.begin(), samples.end(), world_time_midpoint,
                     [](double time, const transform_sample& sample)
                     {
                         return time < sample.time;
                     });
                 if (upper != samples.begin())
                 {
-                    const transform_sample& start = *(upper - 1);
-                    start_transform = start.value;
-                    end_transform = start.value;
-                    // A Teleport is a hard boundary. The preceding Span holds
-                    // the old Pose; the following Span starts at the Teleport.
+                    const transform_sample& sample_start = *(upper - 1);
+                    start_transform = sample_start.value;
+                    end_transform = sample_start.value;
+
                     if (upper != samples.end() && !upper->is_teleport)
                     {
-                        end_transform = upper->value;
+                        if (world_time_start < sample_start.time ||
+                            world_time_end > upper->time)
+                        {
+                            diagnostic =
+                                "Root Transform Packet Span crosses a Sample boundary and must be split by the CPU Scheduler.";
+                            return false;
+                        }
+
+                        asset::mat4 ignored_derivative;
+                        if (!evaluate_root_transform_samples(
+                                samples, fallback_transform, world_time_start,
+                                start_transform, ignored_derivative, diagnostic) ||
+                            !evaluate_root_transform_samples(
+                                samples, fallback_transform, world_time_end,
+                                end_transform, ignored_derivative, diagnostic))
+                        {
+                            diagnostic =
+                                "Root Transform Packet endpoint evaluation failed: " +
+                                diagnostic;
+                            return false;
+                        }
                     }
+                    else if (world_time_start < sample_start.time)
+                    {
+                        diagnostic =
+                            "Root Transform Packet Span crosses an unrepresented leading Sample boundary.";
+                        return false;
+                    }
+                }
+                else if (world_time_end > samples.front().time)
+                {
+                    diagnostic =
+                        "Root Transform Packet Span crosses the first Root Sample boundary and must be split.";
+                    return false;
                 }
             }
 
-            const double duration = world_time_duration;
-            const double inverse_duration = 1.0 / duration;
-            if (!std::isfinite(inverse_duration) ||
-                inverse_duration <= 0.0)
+            const double inverse_duration = 1.0 / world_time_duration;
+            if (!std::isfinite(inverse_duration) || inverse_duration <= 0.0)
             {
                 diagnostic =
                     "Root Transform Packet inverse World-Time duration is invalid.";
@@ -926,9 +958,7 @@ namespace skin_physics::runtime
                     static_cast<float>(q1[2]),
                     static_cast<float>(q1[3])
                 };
-                cosine = -cosine;
             }
-            cosine = std::max(-1.0, std::min(1.0, cosine));
 
             // q_delta = q_end * conjugate(q_start) expresses the Slerp
             // rotation axis in World Space.
@@ -961,7 +991,8 @@ namespace skin_physics::runtime
                 };
             }
 
-            candidate.duration_seconds = static_cast<float>(duration);
+            candidate.duration_seconds =
+                static_cast<float>(world_time_duration);
             candidate.inverse_duration =
                 static_cast<float>(inverse_duration);
             candidate.flags =
