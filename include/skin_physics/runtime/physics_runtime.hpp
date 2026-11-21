@@ -167,11 +167,16 @@ namespace skin_physics::runtime
         uint64_t cache_identity = 0;
     };
 
+    // CPU-authored Cloth topology associated with one Render Mesh.
+    // Rest Position order and Triangle order must exactly match the source
+    // Asset Mesh so later Render Candidate publication can remain index-stable.
     struct model_mesh_cloth_asset
     {
         uint32_t mesh_index = asset::invalid_index;
         physics::cloth_mesh cloth_mesh;
         physics::cloth_solver_settings solver_settings;
+        // Empty means all vertices are dynamic (inverse mass 1). Zero pins a
+        // vertex; finite positive values are dynamic inverse masses.
         std::vector<float> inverse_masses;
     };
 
