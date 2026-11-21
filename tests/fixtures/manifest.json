@@ -306,7 +306,8 @@
             "Deterministic Stretch color ranges / flattened indices and Vertex-to-Constraint CSR offsets / references preserve exact CPU ordering",
             "Shear / Bend records preserve local Vertex mapping, Rest values, normalization and their configured Compliance coefficients",
             "Stretch / Shear / Bend Lambda arrays are independently allocated and initialized to zero for a new Segment",
-            "Invalid Compliance, non-finite Rest data, invalid Stretch coloring or malformed CSR reject packet construction transactionally"
+            "Invalid Compliance, non-finite Rest data, invalid Stretch coloring or malformed CSR reject packet construction transactionally",
+            "GPU topology packet contains source-ordered triangle primitives and canonical sorted unique undirected edge primitives, with zeroed unused indices and invalid topology rejection"
           ]
         },
         {
