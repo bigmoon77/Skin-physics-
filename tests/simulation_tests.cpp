@@ -616,7 +616,9 @@ namespace
 
     void test_phase05_cloth_stretch_color_reference()
     {
+        std::cout << "[TRACE] P05 colored Stretch fixture load begin\n";
         const auto built = load_cloth_fixture();
+        std::cout << "[TRACE] P05 colored Stretch fixture load complete\n";
         require(built.success,
             "Cloth fixture must build before colored Stretch reference evaluation.");
         std::vector<skin_physics::asset::vec3> positions =
@@ -630,6 +632,8 @@ namespace
         bool observed_nonzero_lambda = false;
         for (uint32_t iteration = 0u; iteration < 4u; ++iteration)
         {
+            std::cout << "[TRACE] P05 colored Stretch iteration " <<
+                iteration << " begin\n";
             for (uint32_t color_index = 0u;
                 color_index < built.value.stretch_color_ranges.size();
                 ++color_index)
@@ -5828,6 +5832,7 @@ int run_simulation_tests()
     std::cout << "[PASS] P04_STOP_PRESERVES_ACCUMULATOR\n";
     test_phase05_cloth_fixture_and_bend_gradient();
     std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
+    std::cout << "[TRACE] P05_CLOTH_STRETCH_COLOR_REFERENCE begin\n";
     test_phase05_cloth_stretch_color_reference();
     std::cout << "[PASS] P05_CLOTH_STRETCH_COLOR_REFERENCE\n";
     test_phase05_cloth_compliance_monotonicity();
