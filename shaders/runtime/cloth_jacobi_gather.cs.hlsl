@@ -50,6 +50,7 @@ StructuredBuffer<ClothContribution> bend_contributions : register(t7);
 RWStructuredBuffer<float4> next_positions : register(u0);
 RWStructuredBuffer<uint> solver_status : register(u1);
 
+static const uint CLOTH_CONSTRAINT_STRETCH = 0u;
 static const uint CLOTH_CONSTRAINT_SHEAR = 1u;
 static const uint CLOTH_CONSTRAINT_BEND = 2u;
 static const uint STATUS_INVALID_CLOTH_CSR = 1u << 2u;
