@@ -826,6 +826,10 @@ namespace
                 "Production colored Stretch GPU Lambda must match the Segment-local CPU reference.");
         }
 
+        // Release every Context-held reference before the local COM resources
+        // leave scope; this also makes repeated WARP runs deterministic.
+        context->ClearState();
+        context->Flush();
         std::cout << "[PASS] P05_WARP_COLORED_STRETCH_XPBD\n";
     }
 
@@ -1350,6 +1354,8 @@ namespace
         require(invalid_reconstruction_status[0] != 0u,
             "Cloth Velocity reconstruction must fail closed for a non-positive Segment duration.");
 
+        context->ClearState();
+        context->Flush();
         std::cout << "[PASS] P05_WARP_CLOTH_SEGMENT_STATE_PASSES\n";
     }
 
