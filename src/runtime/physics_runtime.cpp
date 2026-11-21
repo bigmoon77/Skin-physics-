@@ -1694,6 +1694,19 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_constraint_refs_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_constraint_refs_srv;
 
+            Microsoft::WRL::ComPtr<ID3D11Buffer> inverse_masses_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> inverse_masses_srv;
+            std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> position_banks;
+            std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
+                position_bank_srvs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, 2>
+                position_bank_uavs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11Buffer>, 2> velocity_banks;
+            std::array<Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>, 2>
+                velocity_bank_srvs;
+            std::array<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>, 2>
+                velocity_bank_uavs;
+
             Microsoft::WRL::ComPtr<ID3D11Buffer> stretch_lambdas_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> stretch_lambdas_srv;
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> stretch_lambdas_uav;
@@ -3185,6 +3198,203 @@ namespace skin_physics::runtime
                 {
                     diagnostic =
                         "Unable to allocate the per-Tick Render Candidate Ring Buffers.";
+                    return false;
+                }
+            }
+
+            out_mesh = std::move(candidate);
+            return true;
+        }
+
+        bool initialize_cloth_gpu_mesh(
+            uint32_t mesh_index,
+            const model_mesh_cloth_asset& mesh_asset,
+            cloth_gpu_mesh& out_mesh,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            const physics::cloth_gpu_topology_build_result packet_result =
+                physics::build_cloth_gpu_topology_packet(
+                    mesh_asset.cloth_mesh, mesh_asset.solver_settings);
+            if (!packet_result.success)
+            {
+                diagnostic = packet_result.message.empty()
+                    ? "Cloth GPU topology packet construction failed."
+                    : packet_result.message;
+                return false;
+            }
+
+            const physics::cloth_gpu_topology_packet& packet =
+                packet_result.value;
+            if (packet.vertex_count == 0u ||
+                packet.rest_positions.size() != packet.vertex_count)
+            {
+                diagnostic =
+                    "Cloth GPU topology packet has an invalid Rest Position count.";
+                return false;
+            }
+
+            std::vector<float> inverse_masses = mesh_asset.inverse_masses;
+            if (inverse_masses.empty())
+            {
+                inverse_masses.assign(packet.vertex_count, 1.0f);
+            }
+            if (inverse_masses.size() != packet.vertex_count)
+            {
+                diagnostic =
+                    "Cloth inverse-mass count must match the Rest Position count.";
+                return false;
+            }
+            for (float inverse_mass : inverse_masses)
+            {
+                if (!std::isfinite(inverse_mass) || inverse_mass < 0.0f)
+                {
+                    diagnostic =
+                        "Cloth inverse masses must be finite and non-negative.";
+                    return false;
+                }
+            }
+
+            cloth_gpu_mesh candidate;
+            candidate.mesh_index = mesh_index;
+            candidate.vertex_count = packet.vertex_count;
+            candidate.stretch_constraint_count =
+                static_cast<uint32_t>(packet.stretch_constraints.size());
+            candidate.shear_constraint_count =
+                static_cast<uint32_t>(packet.shear_constraints.size());
+            candidate.bend_constraint_count =
+                static_cast<uint32_t>(packet.bend_constraints.size());
+            candidate.stretch_color_count =
+                static_cast<uint32_t>(packet.stretch_color_ranges.size());
+
+            const auto upload_srv = [this](
+                const auto& values,
+                Microsoft::WRL::ComPtr<ID3D11Buffer>& buffer,
+                Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv) -> bool
+            {
+                if (values.empty())
+                {
+                    return true;
+                }
+                return create_structured_buffer_from_vector(
+                        device.Get(), values, D3D11_BIND_SHADER_RESOURCE,
+                        buffer.GetAddressOf()) &&
+                    create_structured_srv(
+                        device.Get(), buffer.Get(),
+                        static_cast<uint32_t>(values.size()),
+                        srv.GetAddressOf());
+            };
+
+            const auto upload_rw = [this](
+                const auto& values,
+                Microsoft::WRL::ComPtr<ID3D11Buffer>& buffer,
+                Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv,
+                Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>& uav) -> bool
+            {
+                if (values.empty())
+                {
+                    return true;
+                }
+                return create_structured_buffer_from_vector(
+                        device.Get(), values,
+                        D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+                        buffer.GetAddressOf()) &&
+                    create_structured_srv(
+                        device.Get(), buffer.Get(),
+                        static_cast<uint32_t>(values.size()),
+                        srv.GetAddressOf()) &&
+                    create_structured_uav(
+                        device.Get(), buffer.Get(),
+                        static_cast<uint32_t>(values.size()),
+                        uav.GetAddressOf());
+            };
+
+            if (!upload_srv(packet.rest_positions,
+                    candidate.rest_positions_buffer,
+                    candidate.rest_positions_srv) ||
+                !upload_srv(packet.stretch_constraints,
+                    candidate.stretch_constraints_buffer,
+                    candidate.stretch_constraints_srv) ||
+                !upload_srv(packet.stretch_color_ranges,
+                    candidate.stretch_color_ranges_buffer,
+                    candidate.stretch_color_ranges_srv) ||
+                !upload_srv(packet.stretch_color_constraint_indices,
+                    candidate.stretch_color_indices_buffer,
+                    candidate.stretch_color_indices_srv) ||
+                !upload_srv(packet.shear_constraints,
+                    candidate.shear_constraints_buffer,
+                    candidate.shear_constraints_srv) ||
+                !upload_srv(packet.bend_constraints,
+                    candidate.bend_constraints_buffer,
+                    candidate.bend_constraints_srv) ||
+                !upload_srv(packet.vertex_constraint_offsets,
+                    candidate.vertex_constraint_offsets_buffer,
+                    candidate.vertex_constraint_offsets_srv) ||
+                !upload_srv(packet.vertex_constraint_refs,
+                    candidate.vertex_constraint_refs_buffer,
+                    candidate.vertex_constraint_refs_srv) ||
+                !upload_rw(packet.stretch_lambdas,
+                    candidate.stretch_lambdas_buffer,
+                    candidate.stretch_lambdas_srv,
+                    candidate.stretch_lambdas_uav) ||
+                !upload_rw(packet.shear_lambdas,
+                    candidate.shear_lambdas_buffer,
+                    candidate.shear_lambdas_srv,
+                    candidate.shear_lambdas_uav) ||
+                !upload_rw(packet.bend_lambdas,
+                    candidate.bend_lambdas_buffer,
+                    candidate.bend_lambdas_srv,
+                    candidate.bend_lambdas_uav))
+            {
+                diagnostic =
+                    "Cloth immutable topology or Segment-local Lambda GPU buffer creation failed.";
+                return false;
+            }
+
+            if (!create_structured_buffer_from_vector(
+                    device.Get(), inverse_masses,
+                    D3D11_BIND_SHADER_RESOURCE,
+                    candidate.inverse_masses_buffer.GetAddressOf()) ||
+                !create_structured_srv(
+                    device.Get(), candidate.inverse_masses_buffer.Get(),
+                    packet.vertex_count,
+                    candidate.inverse_masses_srv.GetAddressOf()))
+            {
+                diagnostic =
+                    "Cloth inverse-mass GPU buffer creation failed.";
+                return false;
+            }
+
+            std::vector<asset::vec4> zero_velocities(packet.vertex_count);
+            for (uint32_t bank_index = 0u; bank_index < 2u; ++bank_index)
+            {
+                if (!create_structured_buffer_from_vector(
+                        device.Get(), packet.rest_positions,
+                        D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+                        candidate.position_banks[bank_index].GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(), candidate.position_banks[bank_index].Get(),
+                        packet.vertex_count,
+                        candidate.position_bank_srvs[bank_index].GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(), candidate.position_banks[bank_index].Get(),
+                        packet.vertex_count,
+                        candidate.position_bank_uavs[bank_index].GetAddressOf()) ||
+                    !create_structured_buffer_from_vector(
+                        device.Get(), zero_velocities,
+                        D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+                        candidate.velocity_banks[bank_index].GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(), candidate.velocity_banks[bank_index].Get(),
+                        packet.vertex_count,
+                        candidate.velocity_bank_srvs[bank_index].GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(), candidate.velocity_banks[bank_index].Get(),
+                        packet.vertex_count,
+                        candidate.velocity_bank_uavs[bank_index].GetAddressOf()))
+                {
+                    diagnostic =
+                        "Cloth double-buffered Position / Velocity State Bank creation failed.";
                     return false;
                 }
             }
