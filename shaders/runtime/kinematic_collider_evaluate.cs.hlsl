@@ -178,6 +178,8 @@ bool valid_collider_record(
         record_value.flags == COLLIDER_FLAGS_VALID &&
         finite4(record_value.translation_start) &&
         finite4(record_value.translation_end) &&
+        record_value.translation_start.w == 1.0f &&
+        record_value.translation_end.w == 1.0f &&
         finite4(record_value.rotation_start) &&
         finite4(record_value.rotation_end) &&
         finite4(record_value.angular_axis_and_angle) &&
@@ -228,7 +230,6 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
 
     kinematic_collider_sample_gpu_record output_value =
         (kinematic_collider_sample_gpu_record)0;
-    const animation_span_cursor_gpu_record cursor = animation_cursor[0];
     uint span_buffer_count = 0u;
     uint span_stride = 0u;
     uint cursor_buffer_count = 0u;
@@ -257,6 +258,21 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         cursor.span_record_index >= span_count ||
         cursor.span_record_index >= span_buffer_count ||
         !isfinite(tau_seconds) || tau_seconds < 0.0f ||
+        !isfinite(cursor.u_segment_start) ||
+        cursor.u_segment_start < 0.0f ||
+        cursor.u_segment_start > 1.0f)
+    {
+        output_value.status = STATUS_INVALID_INPUT;
+        collider_samples[local_index] = output_value;
+        return;
+    }
+
+    // Do not dereference the Cursor until GetDimensions has proved that the
+    // bound SRV contains exactly one correctly-strided record.
+    const animation_span_cursor_gpu_record cursor = animation_cursor[0];
+    if (cursor.span_record_index == INVALID_INDEX ||
+        cursor.span_record_index >= span_count ||
+        cursor.span_record_index >= span_buffer_count ||
         !isfinite(cursor.u_segment_start) ||
         cursor.u_segment_start < 0.0f ||
         cursor.u_segment_start > 1.0f)
