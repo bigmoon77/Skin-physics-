@@ -275,8 +275,3 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     next_positions[vertex_index] =
         float4(result_position, source_position.w);
 }
-
-bool finite3(float3 value)
-{
-    return all(isfinite(value));
-}
