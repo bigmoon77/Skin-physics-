@@ -126,7 +126,7 @@ namespace skin_physics::physics
                 if (selected_color == color_vertex_occupancy.size())
                 {
                     color_vertex_occupancy.emplace_back(
-                        mesh.rest_positions.size(), 0u);
+                        mesh.rest_positions.size(), static_cast<uint8_t>(0u));
                     color_constraints.emplace_back();
                 }
 
@@ -435,7 +435,7 @@ namespace skin_physics::physics
             return false;
         }
 
-        std::vector<uint8_t> visited(mesh.stretch_constraints.size(), 0u);
+        std::vector<uint8_t> visited(mesh.stretch_constraints.size(), static_cast<uint8_t>(0u));
         std::size_t expected_first = 0u;
         for (std::size_t color_index = 0u;
             color_index < mesh.stretch_color_ranges.size();
@@ -456,7 +456,7 @@ namespace skin_physics::physics
                 return false;
             }
 
-            std::vector<uint8_t> occupied(mesh.rest_positions.size(), 0u);
+            std::vector<uint8_t> occupied(mesh.rest_positions.size(), static_cast<uint8_t>(0u));
             for (uint32_t local_index = 0u;
                 local_index < range.constraint_count;
                 ++local_index)
