@@ -342,7 +342,9 @@ namespace skin_physics::physics
                     if (stable_id == 0u ||
                         !collider_ids.insert(stable_id).second ||
                         collider.span_sample_pair_id == asset::invalid_index ||
-                        (collider.flags & kinematic_collider_flag_valid) == 0u ||
+                        (collider.flags & kinematic_collider_flag_valid) !=
+                            kinematic_collider_flag_valid ||
+                        (collider.flags & ~kinematic_collider_flag_valid) != 0u ||
                         !std::isfinite(collider.translation_start.x) ||
                         !std::isfinite(collider.translation_start.y) ||
                         !std::isfinite(collider.translation_start.z) ||
@@ -354,10 +356,12 @@ namespace skin_physics::physics
                         std::abs(rotation_start_length - 1.0) > 1.0e-4 ||
                         std::abs(rotation_end_length - 1.0) > 1.0e-4 ||
                         !std::isfinite(axis_length) ||
-                        std::abs(axis_length - 1.0) > 1.0e-3 ||
                         !std::isfinite(collider.angular_axis_and_angle.w) ||
                         collider.angular_axis_and_angle.w < 0.0f ||
                         collider.angular_axis_and_angle.w > 3.1416927f ||
+                        (collider.angular_axis_and_angle.w > 1.0e-12f
+                            ? std::abs(axis_length - 1.0) > 1.0e-3
+                            : axis_length > 1.0e-3) ||
                         !std::isfinite(collider.duration_seconds) ||
                         collider.duration_seconds <= 0.0f ||
                         std::abs(static_cast<double>(collider.duration_seconds) -
