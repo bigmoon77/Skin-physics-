@@ -825,6 +825,24 @@ namespace
                     status_code::asset_invalid,
             "Runtime must reject a Cloth inverse-mass stream that does not match its Rest Position count.");
 
+        require(runtime.set_playback_state(
+                first_world, skin_physics::runtime::playback_state::playing).success(),
+            "Cloth-only Runtime World must accept the Playing state.");
+        skin_physics::runtime::advance_report cloth_advance_report;
+        require(runtime.advance(first_world, first_desc.fixed_delta_time,
+                &cloth_advance_report).success(),
+            "Cloth-only Runtime World must accept requested simulation time before the unsupported solver gate.");
+        skin_physics::runtime::world_status cloth_blocked_status;
+        require(runtime.poll(first_world, &cloth_blocked_status).success() &&
+            cloth_blocked_status.state ==
+                skin_physics::runtime::tick_state::blocked &&
+            cloth_blocked_status.last_tick_status == status_code::blocked_by_input &&
+            cloth_blocked_status.gpu_committed_sequence == 0u &&
+            cloth_blocked_status.pending_tick_count == 1u,
+            "Cloth topology upload must not silently enable GPU simulation or Commit before Cloth solver / Position-Writer Epoch integration.");
+        require(runtime.reset_world(first_world).success(),
+            "The explicitly blocked Cloth Reservation must be resettable without publishing a GPU Commit.");
+
         skin_physics::runtime::world_desc second_desc;
         second_desc.maximum_in_flight_ticks = 4u;
         skin_physics::runtime::world_handle second_world;
