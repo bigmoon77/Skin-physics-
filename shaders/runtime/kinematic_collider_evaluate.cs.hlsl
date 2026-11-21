@@ -158,13 +158,13 @@ bool valid_collider_record(
         abs(record_value.duration_seconds *
             record_value.inverse_duration - 1.0f) <= 1.0e-4f &&
         isfinite(record_value.linear_speed_bound) &&
-        record_value.linear_speed_bound >= expected_linear_speed &&
+        record_value.linear_speed_bound + 2.0e-5f * max(1.0f, expected_linear_speed) >= expected_linear_speed &&
         isfinite(record_value.angular_speed_bound) &&
-        record_value.angular_speed_bound >= expected_angular_speed &&
+        record_value.angular_speed_bound + 2.0e-5f * max(1.0f, expected_angular_speed) >= expected_angular_speed &&
         isfinite(record_value.maximum_local_radius) &&
         record_value.maximum_local_radius >= 0.0f &&
         isfinite(record_value.sagitta_bound) &&
-        record_value.sagitta_bound >= expected_sagitta &&
+        record_value.sagitta_bound + 2.0e-5f * max(1.0f, expected_sagitta) >= expected_sagitta &&
         isfinite(record_value.reserved0) &&
         record_value.reserved0 == 0.0f &&
         isfinite(record_value.reserved1) &&
