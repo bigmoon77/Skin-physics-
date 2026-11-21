@@ -2437,6 +2437,27 @@ namespace
         span_input.bounds.acceleration_bound = 4.0f;
         span_input.bounds.chord_deviation_bound = 0.01f;
         span_input.bounds.quaternion_normalization_lower_bound = 0.25f;
+        skin_physics::physics::kinematic_collider_span_desc collider_desc;
+        collider_desc.stable_collider_id = 0x0000000100000002ull;
+        collider_desc.span_sample_pair_id = 7u;
+        collider_desc.world_time_start = 10.0;
+        collider_desc.world_time_duration = 0.5;
+        collider_desc.sample_start_time = 9.5;
+        collider_desc.sample_end_time = 11.0;
+        collider_desc.sample_start_translation = { 0.0f, 0.0f, 0.0f };
+        collider_desc.sample_end_translation = { 3.0f, 0.0f, 0.0f };
+        collider_desc.sample_start_rotation = {
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        collider_desc.sample_end_rotation = {
+            0.0f, 0.0f, 0.38268343f, 0.92387953f
+        };
+        collider_desc.maximum_local_radius = 2.0f;
+        const auto collider_record =
+            skin_physics::physics::build_kinematic_collider_span(collider_desc);
+        require(collider_record.success,
+            "Packet fixture must build a finite, bracketed Kinematic Collider trajectory record.");
+        span_input.colliders.push_back(collider_record.value);
         animation_trajectory_track_span_input track_input;
         track_input.clip_index = 0u;
         track_input.scheduled = scheduled.values[0u];
@@ -2460,7 +2481,8 @@ namespace
             built.value.static_node_matrices.size() == 6u &&
             built.value.skin_records.size() == 3u &&
             built.value.skin_joint_records.size() == 3u &&
-            built.value.collider_records.empty() &&
+            built.value.collider_records.size() == 1u &&
+            built.value.span_records[0u].collider_record_count == 1u &&
             built.value.span_world_time_starts ==
                 std::vector<double>({ 10.0 }),
             "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind payload.");
@@ -2815,6 +2837,137 @@ namespace
                 skin_physics::physics::animation_trajectory_packet_error::invalid_span &&
             non_contiguous_result.value.span_records.empty(),
             "Packet Builder must reject a non-contiguous World-Time Span sequence without publishing the preceding valid Span.");
+    }
+
+    void test_phase09_kinematic_collider_trajectory()
+    {
+        using skin_physics::physics::kinematic_collider_span_desc;
+        using skin_physics::physics::kinematic_collider_span_error;
+
+        kinematic_collider_span_desc desc;
+        desc.stable_collider_id = 0x0000000200000003ull;
+        desc.span_sample_pair_id = 11u;
+        desc.world_time_start = 1.0;
+        desc.world_time_duration = 1.0;
+        desc.sample_start_time = 0.0;
+        desc.sample_end_time = 2.0;
+        desc.sample_start_translation = { 0.0f, 0.0f, 0.0f };
+        desc.sample_end_translation = { 4.0f, 0.0f, 0.0f };
+        desc.sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        desc.sample_end_rotation = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        desc.maximum_local_radius = 2.0f;
+
+        const auto built =
+            skin_physics::physics::build_kinematic_collider_span(desc);
+        require(built.success &&
+            built.value.stable_collider_id_low == 3u &&
+            built.value.stable_collider_id_high == 2u &&
+            built.value.span_sample_pair_id == 11u &&
+            built.value.flags ==
+                skin_physics::physics::kinematic_collider_flag_valid,
+            "Kinematic Collider Span must preserve stable Collider / sample-pair identity in its immutable GPU record.");
+
+        const auto middle =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                built.value, 0.5, { 1.0f, 0.0f, 0.0f });
+        const float expected_angle = 3.0f * 3.14159265358979323846f / 8.0f;
+        const float expected_angular_speed =
+            3.14159265358979323846f / 4.0f;
+        require(middle.success &&
+            std::abs(middle.value.translation.x - 3.0f) <= 1.0e-5f &&
+            std::abs(middle.value.translation.y) <= 1.0e-5f &&
+            std::abs(middle.value.rotation.z -
+                std::sin(expected_angle * 0.5f)) <= 1.0e-5f &&
+            std::abs(middle.value.rotation.w -
+                std::cos(expected_angle * 0.5f)) <= 1.0e-5f &&
+            std::abs(middle.value.linear_velocity.x - 2.0f) <= 1.0e-5f &&
+            std::abs(middle.value.angular_velocity.z -
+                expected_angular_speed) <= 1.0e-5f &&
+            std::abs(middle.value.contact_point_velocity.x -
+                (2.0f - expected_angular_speed *
+                    std::sin(expected_angle))) <= 1.0e-5f &&
+            std::abs(middle.value.contact_point_velocity.y -
+                expected_angular_speed * std::cos(expected_angle)) <= 1.0e-5f,
+            "Kinematic Collider evaluation must return shortest-arc Transform, analytic Linear / World Angular Velocity and v + omega cross r at arbitrary tau.");
+
+        kinematic_collider_span_desc reverse_hemisphere = desc;
+        reverse_hemisphere.sample_end_rotation = {
+            -desc.sample_end_rotation.x,
+            -desc.sample_end_rotation.y,
+            -desc.sample_end_rotation.z,
+            -desc.sample_end_rotation.w
+        };
+        const auto reverse_hemisphere_record =
+            skin_physics::physics::build_kinematic_collider_span(
+                reverse_hemisphere);
+        require(reverse_hemisphere_record.success,
+            "Kinematic Collider shortest-arc construction must accept equivalent negative-hemisphere endpoint Quaternions.");
+        const auto reverse_hemisphere_sample =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                reverse_hemisphere_record.value, 0.5, { 1.0f, 0.0f, 0.0f });
+        require(reverse_hemisphere_sample.success &&
+            std::abs(reverse_hemisphere_sample.value.rotation.z -
+                middle.value.rotation.z) <= 1.0e-5f &&
+            std::abs(reverse_hemisphere_sample.value.rotation.w -
+                middle.value.rotation.w) <= 1.0e-5f,
+            "Equivalent Quaternion hemispheres must produce identical Collider Trajectories.");
+
+        require(built.value.linear_speed_bound >= 2.0f &&
+            built.value.angular_speed_bound >= expected_angular_speed &&
+            built.value.maximum_local_radius >= 2.0f &&
+            built.value.sagitta_bound >=
+                2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f)),
+            "Kinematic Collider Speed / Angular / Radius / Sagitta Bounds must be outward conservative.");
+
+        kinematic_collider_span_desc unbracketed = desc;
+        unbracketed.world_time_start = 1.5;
+        unbracketed.world_time_duration = 1.0;
+        const auto unbracketed_result =
+            skin_physics::physics::build_kinematic_collider_span(unbracketed);
+        require(!unbracketed_result.success &&
+            unbracketed_result.error ==
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+            "Kinematic Collider construction must reject missing future Sample coverage instead of extrapolating.");
+
+        kinematic_collider_span_desc teleport = desc;
+        teleport.sample_end_is_teleport = true;
+        const auto teleport_result =
+            skin_physics::physics::build_kinematic_collider_span(teleport);
+        require(!teleport_result.success &&
+            teleport_result.error ==
+                kinematic_collider_span_error::teleport_crossing,
+            "Kinematic Collider trajectory construction must fail closed across an explicit Teleport boundary.");
+
+        kinematic_collider_span_desc invalid_rotation = desc;
+        invalid_rotation.sample_start_rotation = {};
+        const auto invalid_rotation_result =
+            skin_physics::physics::build_kinematic_collider_span(invalid_rotation);
+        require(!invalid_rotation_result.success &&
+            invalid_rotation_result.error ==
+                kinematic_collider_span_error::invalid_transform,
+            "Kinematic Collider construction must reject zero-length endpoint Quaternions.");
+
+        const auto invalid_contact =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                built.value, 0.5, { 3.0f, 0.0f, 0.0f });
+        require(!invalid_contact.success &&
+            invalid_contact.error ==
+                kinematic_collider_span_error::invalid_bounds,
+            "Contact point evaluation must reject a local point outside the certified Maximum Local Radius.");
+
+        auto invalid_record = built.value;
+        invalid_record.linear_speed_bound = 0.0f;
+        const auto invalid_bound =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                invalid_record, 0.5);
+        require(!invalid_bound.success &&
+            invalid_bound.error ==
+                kinematic_collider_span_error::invalid_bounds,
+            "Kinematic Collider evaluation must reject corrupted / under-conservative trajectory bounds.");
     }
 
     void test_phase09_physics_mesh_skinning_cpu_reference()
