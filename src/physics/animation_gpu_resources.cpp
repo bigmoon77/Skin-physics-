@@ -600,7 +600,10 @@ namespace skin_physics::physics
             _cursor_buffer != nullptr &&
             _cursor_srv != nullptr &&
             _cursor_uav != nullptr &&
-            _counts.spans != 0u;
+            _root_transform_buffer != nullptr &&
+            _root_transform_srv != nullptr &&
+            _counts.spans != 0u &&
+            _counts.root_transforms == _counts.spans;
     }
 
     uint64_t animation_trajectory_gpu_resources::animation_input_version() const noexcept
