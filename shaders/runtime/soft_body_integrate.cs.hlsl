@@ -115,7 +115,7 @@ void soft_body_integrate(uint3 dispatch_id : SV_DispatchThreadID)
     {
         if (animation_target_status[0] != 0u)
         {
-            mark_tick_failure(203u);
+            mark_tick_failure(203u + animation_target_status[0]);
             return;
         }
 
