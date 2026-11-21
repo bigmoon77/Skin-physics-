@@ -4649,7 +4649,20 @@ namespace skin_physics::physics
                     {
                         return fail(
                             animation_trajectory_packet_error::invalid_channel,
-                            "Animation Channel Span does not match its original Track Index / Node / Path / Interpolation / common Clip-Time interval.");
+                            "Animation Channel Span mismatch: track=" +
+                                std::to_string(channel_span.track_index) +
+                                "/" + std::to_string(track_index) +
+                                " node=" + std::to_string(channel_span.node_index) +
+                                "/" + std::to_string(asset_track.node_index) +
+                                " path=" + std::to_string(static_cast<uint32_t>(channel_span.path)) +
+                                "/" + std::to_string(static_cast<uint32_t>(asset_track.path)) +
+                                " interpolation=" + std::to_string(static_cast<uint32_t>(channel_span.interpolation_mode)) +
+                                "/" + std::to_string(static_cast<uint32_t>(asset_track.mode)) +
+                                " clip_start=" + std::to_string(channel_span.clip_time_start) +
+                                "/" + std::to_string(scheduled.clip.clip_time_start) +
+                                " clip_delta=" + std::to_string(channel_span.clip_time_delta) +
+                                "/" + std::to_string(scheduled.clip.clip_time_delta) +
+                                " node_count=" + std::to_string(node_count) + ".");
                     }
                     if (model.nodes[channel_span.node_index].uses_matrix)
                     {
