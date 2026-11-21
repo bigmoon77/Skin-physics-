@@ -6031,8 +6031,13 @@ namespace skin_physics::runtime
                 for (const model_input_snapshot& model_snapshot :
                     input_snapshot.models)
                 {
+                    const bool root_transform_only =
+                        !model_snapshot.has_animation_playback &&
+                        !model_snapshot.has_animation_blend &&
+                        !model_snapshot.root_samples.empty();
                     if (!model_snapshot.has_animation_playback &&
-                        !model_snapshot.has_animation_blend)
+                        !model_snapshot.has_animation_blend &&
+                        !root_transform_only)
                     {
                         continue;
                     }
@@ -6062,10 +6067,50 @@ namespace skin_physics::runtime
                     model_animation_tick_schedule schedule;
                     schedule.model_index = model_snapshot.model_index;
                     schedule.model_generation = model_snapshot.generation;
+                    schedule.root_transform_only = root_transform_only;
+                    schedule.root_only_clip_index =
+                        root_transform_only
+                            ? model.root_only_clip_index
+                            : asset::invalid_index;
                     const uint32_t maximum_span_count =
                         std::max(1u, desc.maximum_integration_segments_per_tick_hard_limit);
 
-                    if (model_snapshot.has_animation_playback)
+                    if (root_transform_only)
+                    {
+                        if (schedule.root_only_clip_index ==
+                                asset::invalid_index ||
+                            schedule.root_only_clip_index >=
+                                model.source_model.animations.size())
+                        {
+                            diagnostic =
+                                "Root-only Transform Samples require a valid private static-pose Clip and at least one TRS Node.";
+                            return false;
+                        }
+                        const asset::animation_clip& clip =
+                            model.source_model.animations[
+                                schedule.root_only_clip_index];
+                        const physics::animation_clip_span_schedule_result
+                            root_only_schedule =
+                                physics::schedule_animation_clip_playback_spans(
+                                    clip,
+                                    static_cast<uint32_t>(
+                                        model.source_model.nodes.size()),
+                                    0.0,
+                                    0.0,
+                                    false,
+                                    reservation.start_time,
+                                    reservation.delta_time,
+                                    maximum_span_count);
+                        if (!root_only_schedule.success)
+                        {
+                            diagnostic =
+                                "Root-only static-pose Span scheduling failed: " +
+                                root_only_schedule.message;
+                            return false;
+                        }
+                        schedule.playback_spans = root_only_schedule.values;
+                    }
+                    else if (model_snapshot.has_animation_playback)
                     {
                         const animation_track_desc& track =
                             model_snapshot.animation_playback.track;
