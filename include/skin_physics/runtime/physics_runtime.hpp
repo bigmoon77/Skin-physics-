@@ -401,7 +401,8 @@ namespace skin_physics::runtime
             world_handle world,
             collider_handle collider,
             double sample_time,
-            const transform& pose);
+            const transform& pose,
+            bool is_teleport = false);
 
         status advance(
             world_handle world, double frame_delta_time, advance_report* out_report);
