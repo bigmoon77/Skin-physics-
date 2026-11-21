@@ -241,7 +241,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         mesh_node.node_index != expected_mesh_node_index ||
         joint_node.node_index != joint.joint_node_index)
     {
-        fail_joint(joint_record_index);
+        fail_joint(local_joint_index);
         return;
     }
 
@@ -267,7 +267,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         !finite_matrix(inverse_bind) ||
         !affine_matrix(inverse_bind))
     {
-        fail_joint(joint_record_index);
+        fail_joint(local_joint_index);
         return;
     }
 
@@ -292,7 +292,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         !finite_matrix(inverse_mesh_with_joint) ||
         !finite_matrix(skin_derivative))
     {
-        fail_joint(joint_record_index);
+        fail_joint(local_joint_index);
         return;
     }
 
