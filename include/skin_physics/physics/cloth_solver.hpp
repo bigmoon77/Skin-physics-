@@ -34,11 +34,20 @@ namespace skin_physics::physics
         float rest_angle = 0.0f;
     };
 
+    struct cloth_stretch_color_range
+    {
+        uint32_t first_constraint_index = 0u;
+        uint32_t constraint_count = 0u;
+    };
+
     struct cloth_mesh
     {
         std::vector<asset::vec3> rest_positions;
         std::vector<std::array<uint32_t, 3>> triangles;
         std::vector<cloth_stretch_constraint> stretch_constraints;
+        std::vector<cloth_stretch_color_range> stretch_color_ranges;
+        // Flattened by color; each color is a vertex-disjoint write batch.
+        std::vector<uint32_t> stretch_color_constraint_indices;
         std::vector<cloth_shear_constraint> shear_constraints;
         std::vector<cloth_bend_constraint> bend_constraints;
     };
@@ -99,6 +108,13 @@ namespace skin_physics::physics
     };
 
     cloth_build_result build_cloth_mesh(const raw_cloth_mesh& input);
+
+    // Validates deterministic Stretch graph-color batches before GPU upload.
+    // Every constraint must occur exactly once and no two constraints in one
+    // color may write the same vertex.
+    bool validate_cloth_stretch_coloring(
+        const cloth_mesh& mesh,
+        std::string& diagnostic);
 
     cloth_bend_evaluation evaluate_cloth_bend(
         const std::array<asset::vec3, 4>& positions,
