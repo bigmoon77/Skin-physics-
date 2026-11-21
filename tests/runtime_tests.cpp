@@ -3247,14 +3247,32 @@ namespace
         require(actual[4u].status != 0u,
             "GPU Kinematic Collider evaluation must reject a non-homogeneous translation endpoint.");
 
-        // A missing Cursor SRV must be rejected using GetDimensions before
-        // the shader attempts to read Cursor[0].
-        ID3D11ShaderResourceView* missing_cursor_resources[] = {
-            span_srv.Get(), nullptr, collider_srv.Get(),
+        // A Cursor SRV with the wrong structured stride must be rejected
+        // from GetDimensions before the shader reads Cursor[0].
+        struct alignas(16) malformed_cursor_gpu_record
+        {
+            animation_span_cursor_gpu_record cursor;
+            uint32_t reserved[4] = {};
+        };
+        static_assert(sizeof(malformed_cursor_gpu_record) == 32u,
+            "Malformed Cursor test record must expose an invalid 32-byte stride.");
+        malformed_cursor_gpu_record malformed_cursor;
+        malformed_cursor.cursor = initial_cursor;
+        const std::vector<malformed_cursor_gpu_record> malformed_cursor_records = {
+            malformed_cursor
+        };
+        ComPtr<ID3D11Buffer> malformed_cursor_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), malformed_cursor_records, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11ShaderResourceView> malformed_cursor_srv =
+            create_distribution_test_srv(
+                device.Get(), malformed_cursor_buffer.Get(), 1u);
+        ID3D11ShaderResourceView* malformed_cursor_resources[] = {
+            span_srv.Get(), malformed_cursor_srv.Get(), collider_srv.Get(),
             collider_index_srv.Get(), point_srv.Get()
         };
         context->CSSetShader(collider_shader.Get(), nullptr, 0u);
-        context->CSSetShaderResources(0u, 5u, missing_cursor_resources);
+        context->CSSetShaderResources(0u, 5u, malformed_cursor_resources);
         context->CSSetUnorderedAccessViews(
             0u, 1u, unordered_access_views, nullptr);
         context->CSSetConstantBuffers(0u, 1u, constant_buffers);
@@ -3265,17 +3283,17 @@ namespace
         context->CSSetConstantBuffers(0u, 1u, null_constant_buffers);
         context->CSSetShader(nullptr, nullptr, 0u);
         context->Flush();
-        const std::vector<collider_sample_gpu_record> missing_cursor_output =
+        const std::vector<collider_sample_gpu_record> malformed_cursor_output =
             readback_render_srv<collider_sample_gpu_record>(
                 device.Get(), context.Get(), output_srv.Get(), 5u);
-        require(missing_cursor_output.size() == 5u &&
+        require(malformed_cursor_output.size() == 5u &&
             std::all_of(
-                missing_cursor_output.begin(), missing_cursor_output.end(),
+                malformed_cursor_output.begin(), malformed_cursor_output.end(),
                 [](const collider_sample_gpu_record& value)
                 {
                     return value.status != 0u;
                 }),
-            "GPU Kinematic Collider evaluation must fail closed when the Cursor SRV is absent.");
+            "GPU Kinematic Collider evaluation must reject a Cursor SRV with a non-16-byte structured stride.");
 
         std::cout << "[PASS] P09_WARP_KINEMATIC_COLLIDER_EVALUATION\n";
     }
