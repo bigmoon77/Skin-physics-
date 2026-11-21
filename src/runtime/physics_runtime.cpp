@@ -3709,16 +3709,21 @@ namespace skin_physics::runtime
                 const model_input_snapshot* model_snapshot =
                     find_model_input_snapshot(
                         input_snapshot, model_index, model.generation);
-                if (model_snapshot == nullptr ||
-                    !model_snapshot->root_samples.empty())
+                if (model_snapshot == nullptr)
                 {
-                    // Root Transform samples still require their own immutable
-                    // trajectory records and discontinuity / velocity policy.
                     return true;
                 }
                 const bool animation_active =
                     model_snapshot->has_animation_playback ||
                     model_snapshot->has_animation_blend;
+                if (!model_snapshot->root_samples.empty() &&
+                    !animation_active)
+                {
+                    // Root motion is currently evaluated by the GPU Skin
+                    // Matrix path when an Animation Track supplies the
+                    // immutable per-Segment Node / Skin mapping.
+                    return true;
+                }
 
                 for (uint32_t mesh_index = 0u;
                     mesh_index < model.source_model.meshes.size(); ++mesh_index)
@@ -5981,6 +5986,33 @@ namespace skin_physics::runtime
                 std::numeric_limits<std::size_t>::max();
             std::size_t maximum_boundary_count =
                 static_cast<std::size_t>(substep_count) + 1u;
+            std::size_t root_sample_boundary_count = 0u;
+            for (const model_input_snapshot& model_snapshot :
+                input_snapshot.models)
+            {
+                if (!model_snapshot.has_animation_playback &&
+                    !model_snapshot.has_animation_blend)
+                {
+                    continue;
+                }
+                if (model_snapshot.root_samples.size() >
+                    maximum_size - root_sample_boundary_count)
+                {
+                    diagnostic =
+                        "Root Transform Sample boundary count overflows size_t.";
+                    return false;
+                }
+                root_sample_boundary_count +=
+                    model_snapshot.root_samples.size();
+            }
+            if (root_sample_boundary_count >
+                maximum_size - maximum_boundary_count)
+            {
+                diagnostic =
+                    "Combined Root Transform / Substep boundary count overflows size_t.";
+                return false;
+            }
+            maximum_boundary_count += root_sample_boundary_count;
             std::size_t animation_boundary_count = 0u;
             for (const model_animation_tick_schedule& schedule :
                 reservation.animation_schedules)
@@ -6052,6 +6084,38 @@ namespace skin_physics::runtime
                         return false;
                     }
                     boundaries.push_back(boundary);
+                }
+
+                for (const model_input_snapshot& model_snapshot :
+                    input_snapshot.models)
+                {
+                    if (!model_snapshot.has_animation_playback &&
+                        !model_snapshot.has_animation_blend)
+                    {
+                        continue;
+                    }
+                    for (std::size_t sample_index = 0u;
+                        sample_index < model_snapshot.root_samples.size();
+                        ++sample_index)
+                    {
+                        const transform_sample& sample =
+                            model_snapshot.root_samples[sample_index];
+                        if (!finite_double(sample.time) || sample.time < 0.0 ||
+                            (sample_index > 0u &&
+                                sample.time <=
+                                    model_snapshot.root_samples[
+                                        sample_index - 1u].time))
+                        {
+                            diagnostic =
+                                "Immutable Root Transform Sample times must be finite and strictly increasing.";
+                            return false;
+                        }
+                        if (sample.time > tick_start &&
+                            sample.time < tick_end)
+                        {
+                            boundaries.push_back(sample.time);
+                        }
+                    }
                 }
 
                 for (const model_animation_tick_schedule& schedule :
