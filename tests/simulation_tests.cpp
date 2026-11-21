@@ -3181,7 +3181,6 @@ namespace
 
     void test_phase09_kinematic_collider_geometry_reference()
     {
-        std::cerr << "[TRACE] geometry start\n";
         using skin_physics::asset::mesh;
         using skin_physics::asset::vertex;
         using skin_physics::physics::kinematic_collider_span_desc;
@@ -3217,7 +3216,6 @@ namespace
 
         const auto evaluated = evaluate_kinematic_collider_geometry(
             collision_mesh, span.value, 0.5);
-        std::cerr << "[TRACE] geometry evaluated\n";
         const float half_span_rotation_angle = 3.14159265358979323846f / 4.0f;
         require(evaluated.success &&
             evaluated.world_vertices.size() == 3u &&
@@ -3250,11 +3248,9 @@ namespace
             evaluated.swept_bounds.maximum.z >= 1.0f,
             "Kinematic Collider swept AABB must conservatively enclose the complete translation segment expanded by its certified local radius.");
 
-        std::cerr << "[TRACE] before broadphase adapter\n";
         const auto collider_broadphase =
             skin_physics::physics::make_kinematic_collider_broadphase_primitive(
                 7u, evaluated);
-        std::cerr << "[TRACE] after broadphase adapter\n";
         require(collider_broadphase.success &&
             collider_broadphase.value.mesh_id == 7u &&
             collider_broadphase.value.bounds.minimum.x ==
@@ -3273,11 +3269,9 @@ namespace
         const std::vector<skin_physics::physics::broadphase_mesh_pair> mesh_pairs = {
             { 7u, 19u, true }
         };
-        std::cerr << "[TRACE] before spatial broadphase\n";
         const auto candidates =
             skin_physics::physics::generate_broadphase_candidates(
                 primitives, mesh_pairs);
-        std::cerr << "[TRACE] after spatial broadphase\n";
         require(candidates.success &&
             candidates.candidates.size() == 1u &&
             candidates.candidates[0u].primitive_a == 0u &&
@@ -3382,7 +3376,6 @@ namespace
             skin_physics::asset::vec3{ 0.0f, 0.0f, 1.0f },
             skin_physics::asset::vec3{ 0.0f, 0.0f, 1.0f }
         };
-        std::cerr << "[TRACE] before moving edge contact\n";
         const auto moving_edge_contact =
             skin_physics::physics::find_moving_edge_edge_contact(
                 edge_a, edge_a_velocities,
@@ -3406,7 +3399,6 @@ namespace
             point_velocity
         };
         const std::vector<float> dynamic_radii = { 0.1f };
-        std::cerr << "[TRACE] before contact set\n";
         const auto generated_contacts =
             skin_physics::physics::generate_kinematic_collider_vertex_triangle_contacts(
                 dynamic_positions, dynamic_velocities, dynamic_radii,
