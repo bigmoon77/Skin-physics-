@@ -4623,7 +4623,11 @@ namespace
         using skin_physics::asset::invalid_index;
         using skin_physics::physics::animation_skin_gpu_record;
         using skin_physics::physics::animation_skin_joint_gpu_record;
+        using skin_physics::physics::animation_span_gpu_record;
+        using skin_physics::physics::animation_span_cursor_gpu_record;
         using skin_physics::physics::gpu_matrix4x4;
+        using skin_physics::physics::root_transform_gpu_record;
+        using skin_physics::physics::root_transform_flag_valid_mask;
 
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
@@ -4717,6 +4721,56 @@ namespace
             create_structured_srv<gpu_matrix4x4>(
                 device.Get(), inverse_bind_buffer.Get(), 1u);
 
+        animation_span_gpu_record span_record;
+        span_record.animation_input_version_low = 0x55667788u;
+        span_record.animation_input_version_high = 0x11223344u;
+        span_record.span_duration_seconds = 1.0f;
+        span_record.inverse_span_duration = 1.0f;
+        const std::vector<animation_span_gpu_record> span_records = {
+            span_record
+        };
+        const ComPtr<ID3D11Buffer> span_buffer =
+            create_structured_buffer(
+                device.Get(), span_records, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> span_srv =
+            create_structured_srv<animation_span_gpu_record>(
+                device.Get(), span_buffer.Get(), 1u);
+
+        animation_span_cursor_gpu_record cursor_record;
+        cursor_record.span_record_index = 0u;
+        cursor_record.animation_input_version_low =
+            span_record.animation_input_version_low;
+        cursor_record.animation_input_version_high =
+            span_record.animation_input_version_high;
+        cursor_record.u_segment_start = 0.25f;
+        const std::vector<animation_span_cursor_gpu_record> cursor_records = {
+            cursor_record
+        };
+        const ComPtr<ID3D11Buffer> cursor_buffer =
+            create_structured_buffer(
+                device.Get(), cursor_records, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> cursor_srv =
+            create_structured_srv<animation_span_cursor_gpu_record>(
+                device.Get(), cursor_buffer.Get(), 1u);
+
+        root_transform_gpu_record root_record;
+        root_record.translation_start = { 10.0f, 0.0f, 0.0f, 1.0f };
+        root_record.translation_end = { 10.0f, 0.0f, 0.0f, 1.0f };
+        root_record.rotation_start = { 0.0f, 0.0f, 0.0f, 1.0f };
+        root_record.rotation_end = { 0.0f, 0.0f, 0.0f, 1.0f };
+        root_record.duration_seconds = 1.0f;
+        root_record.inverse_duration = 1.0f;
+        root_record.flags = root_transform_flag_valid_mask;
+        const std::vector<root_transform_gpu_record> root_records = {
+            root_record
+        };
+        const ComPtr<ID3D11Buffer> root_buffer =
+            create_structured_buffer(
+                device.Get(), root_records, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> root_srv =
+            create_structured_srv<root_transform_gpu_record>(
+                device.Get(), root_buffer.Get(), 1u);
+
         const std::vector<gpu_matrix4x4> empty_output(1u);
         const std::vector<uint32_t> clear_status(1u, 0u);
         const ComPtr<ID3D11Buffer> output_buffer =
@@ -4746,20 +4800,13 @@ namespace
             uint32_t skin_joint_record_count = 2u;
             uint32_t inverse_bind_matrix_count = 1u;
             uint32_t expected_mesh_node_index = 0u;
-            uint32_t reserved[2] = {};
-            gpu_matrix4x4 root_transform;
-            gpu_matrix4x4 root_transform_derivative;
+            uint32_t root_transform_record_index = 0u;
+            uint32_t root_transform_record_count = 1u;
+            uint32_t expected_span_record_index = 0u;
+            uint32_t reserved[3] = {};
         };
-        static_assert(sizeof(skin_matrix_parameters) == 160u);
+        static_assert(sizeof(skin_matrix_parameters) == 48u);
         skin_matrix_parameters parameters;
-        parameters.root_transform.column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
-        parameters.root_transform.column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
-        parameters.root_transform.column2 = { 0.0f, 0.0f, 1.0f, 0.0f };
-        parameters.root_transform.column3 = { 10.0f, 0.0f, 0.0f, 1.0f };
-        parameters.root_transform_derivative.column0 = {};
-        parameters.root_transform_derivative.column1 = {};
-        parameters.root_transform_derivative.column2 = {};
-        parameters.root_transform_derivative.column3 = {};
         const ComPtr<ID3D11Buffer> parameter_buffer =
             create_constant_buffer(
                 device.Get(), &parameters, sizeof(parameters));
@@ -4769,7 +4816,8 @@ namespace
             {
                 global_srv.Get(), derivative_srv.Get(),
                 skin_srv.Get(), joint_srv.Get(),
-                inverse_bind_srv.Get(), local_srv.Get()
+                inverse_bind_srv.Get(), local_srv.Get(),
+                root_srv.Get(), cursor_srv.Get(), span_srv.Get()
             },
             { output_uav.Get(), output_derivative_uav.Get(), status_uav.Get() },
             parameter_buffer.Get(),
@@ -4792,12 +4840,19 @@ namespace
             std::abs(skin_matrix_derivatives[0u].column3.w) <= 1.0e-6f,
             "GPU Skin Matrix must compute inverse(Mesh Global) * Joint Global * Skin-specific IBM and its analytic product-rule derivative.");
 
-        skin_matrix_parameters root_motion_parameters = parameters;
-        root_motion_parameters.root_transform_derivative.column0 = {};
-        root_motion_parameters.root_transform_derivative.column1 = {};
-        root_motion_parameters.root_transform_derivative.column2 = {};
-        root_motion_parameters.root_transform_derivative.column3 =
-            { 10.0f, 0.0f, 0.0f, 0.0f };
+        root_transform_gpu_record root_motion_record = root_record;
+        root_motion_record.translation_end.x = 20.0f;
+        const std::vector<root_transform_gpu_record> root_motion_records = {
+            root_motion_record
+        };
+        const ComPtr<ID3D11Buffer> root_motion_buffer =
+            create_structured_buffer(
+                device.Get(), root_motion_records,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> root_motion_srv =
+            create_structured_srv<root_transform_gpu_record>(
+                device.Get(), root_motion_buffer.Get(), 1u);
+        const skin_matrix_parameters root_motion_parameters = parameters;
         const ComPtr<ID3D11Buffer> root_motion_parameter_buffer =
             create_constant_buffer(
                 device.Get(), &root_motion_parameters,
@@ -4807,7 +4862,8 @@ namespace
             {
                 global_srv.Get(), derivative_srv.Get(),
                 skin_srv.Get(), joint_srv.Get(),
-                inverse_bind_srv.Get(), local_srv.Get()
+                inverse_bind_srv.Get(), local_srv.Get(),
+                root_motion_srv.Get(), cursor_srv.Get(), span_srv.Get()
             },
             { output_uav.Get(), output_derivative_uav.Get(), status_uav.Get() },
             root_motion_parameter_buffer.Get(),
@@ -4843,7 +4899,8 @@ namespace
             {
                 singular_global_srv.Get(), derivative_srv.Get(),
                 skin_srv.Get(), joint_srv.Get(),
-                inverse_bind_srv.Get(), local_srv.Get()
+                inverse_bind_srv.Get(), local_srv.Get(),
+                root_srv.Get(), cursor_srv.Get(), span_srv.Get()
             },
             { output_uav.Get(), output_derivative_uav.Get(), invalid_status_uav.Get() },
             parameter_buffer.Get(),
