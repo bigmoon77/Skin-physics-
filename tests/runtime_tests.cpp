@@ -1290,6 +1290,8 @@ namespace
         skin_physics::runtime::advance_report blend_report;
         const skin_physics::runtime::status blend_advance_status =
             runtime.advance(world, 0.01, &blend_report);
+        skin_physics::runtime::world_status blend_preflight_status;
+        runtime.poll(world, &blend_preflight_status);
         require(blend_advance_status.success() &&
             blend_report.submitted_tick_count == 1u &&
             blend_report.in_flight_tick_count == 1u &&
@@ -1299,7 +1301,18 @@ namespace
                 " diagnostic=" + blend_advance_status.diagnostic +
                 " submitted=" + std::to_string(blend_report.submitted_tick_count) +
                 " in_flight=" + std::to_string(blend_report.in_flight_tick_count) +
-                " pending=" + std::to_string(blend_report.pending_tick_count));
+                " pending=" + std::to_string(blend_report.pending_tick_count) +
+                " tick_state=" +
+                std::to_string(static_cast<uint32_t>(blend_preflight_status.state)) +
+                " last_tick_status=" +
+                std::to_string(static_cast<uint32_t>(blend_preflight_status.last_tick_status)) +
+                " budget_flags=" +
+                std::to_string(blend_preflight_status.work_budget_block_flags) +
+                " budget_origin=" +
+                std::to_string(static_cast<uint32_t>(blend_preflight_status.budget_block_origin)) +
+                " budget_resolution=" +
+                std::to_string(static_cast<uint32_t>(blend_preflight_status.budget_resolution)) +
+                " world_diagnostic=" + blend_preflight_status.diagnostic);
         skin_physics::runtime::world_status blend_status;
         bool blend_observed = false;
         for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
