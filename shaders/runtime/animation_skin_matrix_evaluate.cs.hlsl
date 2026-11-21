@@ -45,6 +45,10 @@ cbuffer AnimationSkinMatrixParameters : register(b0)
     uint inverse_bind_matrix_count;
     uint expected_mesh_node_index;
     uint2 reserved;
+    float4 root_transform_column0;
+    float4 root_transform_column1;
+    float4 root_transform_column2;
+    float4 root_transform_column3;
 };
 
 StructuredBuffer<gpu_matrix4x4> global_matrices : register(t0);
@@ -292,6 +296,31 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
-    skin_matrices[local_joint_index] = inverse_mesh_with_joint;
-    skin_matrix_derivatives[local_joint_index] = skin_derivative;
+    gpu_matrix4x4 root_transform;
+    root_transform.column0 = root_transform_column0;
+    root_transform.column1 = root_transform_column1;
+    root_transform.column2 = root_transform_column2;
+    root_transform.column3 = root_transform_column3;
+    if (!finite_matrix(root_transform) ||
+        !affine_matrix(root_transform))
+    {
+        fail_joint(local_joint_index);
+        return;
+    }
+
+    const gpu_matrix4x4 world_skin_matrix =
+        multiply_matrix(root_transform, inverse_mesh_with_joint);
+    const gpu_matrix4x4 world_skin_derivative =
+        multiply_matrix(root_transform, skin_derivative);
+    if (!finite_matrix(world_skin_matrix) ||
+        !affine_matrix(world_skin_matrix) ||
+        !finite_matrix(world_skin_derivative) ||
+        !affine_derivative_matrix(world_skin_derivative))
+    {
+        fail_joint(local_joint_index);
+        return;
+    }
+
+    skin_matrices[local_joint_index] = world_skin_matrix;
+    skin_matrix_derivatives[local_joint_index] = world_skin_derivative;
 }
