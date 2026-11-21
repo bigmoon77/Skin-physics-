@@ -3030,7 +3030,7 @@ namespace
 
         std::vector<kinematic_collider_gpu_record> collider_records = {
             rotating_span.value, translating_span.value, rotating_span.value,
-            translating_span.value
+            translating_span.value, rotating_span.value
         };
         collider_records[2u].maximum_local_radius = 0.25f;
         collider_records[3u].stable_collider_id_low = 3u;
@@ -3038,11 +3038,13 @@ namespace
         collider_records[3u].duration_seconds = 0.5f;
         collider_records[3u].inverse_duration = 2.0f;
         collider_records[3u].linear_speed_bound *= 2.0f;
+        collider_records[4u].translation_start.w = 0.0f;
 
         std::vector<test_gpu_float4> local_contact_points = {
             { 1.0f, 0.0f, 0.0f, 0.0f },
             { 0.25f, 0.0f, 0.0f, 0.0f },
             { 1.0f, 0.0f, 0.0f, 0.0f },
+            { 0.25f, 0.0f, 0.0f, 0.0f },
             { 0.25f, 0.0f, 0.0f, 0.0f }
         };
 
@@ -3075,7 +3077,9 @@ namespace
             create_distribution_test_srv(
                 device.Get(), collider_buffer.Get(),
                 static_cast<uint32_t>(collider_records.size()));
-        const std::vector<uint32_t> collider_record_indices = { 0u, 1u, 2u, 3u };
+        const std::vector<uint32_t> collider_record_indices = {
+            0u, 1u, 2u, 3u, 4u
+        };
         ComPtr<ID3D11Buffer> collider_index_buffer =
             create_distribution_test_structured_buffer(
                 device.Get(), collider_record_indices, D3D11_BIND_SHADER_RESOURCE);
@@ -3103,17 +3107,17 @@ namespace
         static_assert(sizeof(collider_sample_gpu_record) == 96u,
             "Kinematic Collider GPU output ABI must remain 96 bytes.");
 
-        const std::vector<collider_sample_gpu_record> initial_output(4u);
+        const std::vector<collider_sample_gpu_record> initial_output(5u);
         ComPtr<ID3D11Buffer> output_buffer =
             create_distribution_test_structured_buffer(
                 device.Get(), initial_output,
                 D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
         ComPtr<ID3D11ShaderResourceView> output_srv =
             create_distribution_test_srv(
-                device.Get(), output_buffer.Get(), 4u);
+                device.Get(), output_buffer.Get(), 5u);
         ComPtr<ID3D11UnorderedAccessView> output_uav =
             create_distribution_test_uav(
-                device.Get(), output_buffer.Get(), 4u);
+                device.Get(), output_buffer.Get(), 5u);
 
         constexpr uint32_t animation_input_version_low = 0x13579bdfu;
         constexpr uint32_t animation_input_version_high = 0x2468ace0u;
@@ -3197,8 +3201,8 @@ namespace
 
         const std::vector<collider_sample_gpu_record> actual =
             readback_render_srv<collider_sample_gpu_record>(
-                device.Get(), context.Get(), output_srv.Get(), 4u);
-        require(actual.size() == 4u,
+                device.Get(), context.Get(), output_srv.Get(), 5u);
+        require(actual.size() == 5u,
             "Kinematic Collider GPU readback must return every dispatched sample.");
 
         const auto is_near_value = [](float left, float right, float tolerance)
@@ -3240,6 +3244,37 @@ namespace
             "GPU Kinematic Collider evaluation must fail closed when the local contact point exceeds the certified radius.");
         require(actual[3u].status != 0u,
             "GPU Kinematic Collider evaluation must reject a record whose duration does not match its owning Animation Span.");
+        require(actual[4u].status != 0u,
+            "GPU Kinematic Collider evaluation must reject a non-homogeneous translation endpoint.");
+
+        // A missing Cursor SRV must be rejected using GetDimensions before
+        // the shader attempts to read Cursor[0].
+        ID3D11ShaderResourceView* missing_cursor_resources[] = {
+            span_srv.Get(), nullptr, collider_srv.Get(),
+            collider_index_srv.Get(), point_srv.Get()
+        };
+        context->CSSetShaderResources(0u, 5u, missing_cursor_resources);
+        context->CSSetUnorderedAccessViews(
+            0u, 1u, unordered_access_views, nullptr);
+        context->CSSetConstantBuffers(0u, 1u, constant_buffers);
+        context->Dispatch(1u, 1u, 1u);
+        context->CSSetShaderResources(0u, 5u, null_shader_resources);
+        context->CSSetUnorderedAccessViews(
+            0u, 1u, null_unordered_access_views, nullptr);
+        context->CSSetConstantBuffers(0u, 1u, null_constant_buffers);
+        context->CSSetShader(nullptr, nullptr, 0u);
+        context->Flush();
+        const std::vector<collider_sample_gpu_record> missing_cursor_output =
+            readback_render_srv<collider_sample_gpu_record>(
+                device.Get(), context.Get(), output_srv.Get(), 5u);
+        require(missing_cursor_output.size() == 5u &&
+            std::all_of(
+                missing_cursor_output.begin(), missing_cursor_output.end(),
+                [](const collider_sample_gpu_record& value)
+                {
+                    return value.status != 0u;
+                }),
+            "GPU Kinematic Collider evaluation must fail closed when the Cursor SRV is absent.");
 
         std::cout << "[PASS] P09_WARP_KINEMATIC_COLLIDER_EVALUATION\n";
     }
