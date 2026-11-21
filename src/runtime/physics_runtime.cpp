@@ -5544,42 +5544,6 @@ namespace skin_physics::runtime
 
                 }
 
-                // Every Skinned Mesh in one Model reads the same immutable
-                // Packet Cursor for this Segment. Advance that Cursor once,
-                // after all Mesh consumers have evaluated their Targets and
-                // before any Mesh integrates the Segment.
-                for (const collider_input_snapshot& collider_snapshot :
-                    input_snapshot.colliders)
-                {
-                    if (!collider_snapshot.kinematic)
-                    {
-                        continue;
-                    }
-                    for (std::size_t sample_index = 0u;
-                        sample_index < collider_snapshot.pose_samples.size();
-                        ++sample_index)
-                    {
-                        const transform_sample& sample =
-                            collider_snapshot.pose_samples[sample_index];
-                        if (!finite_double(sample.time) || sample.time < 0.0 ||
-                            !valid_transform(sample.value) ||
-                            (sample_index > 0u &&
-                                sample.time <=
-                                    collider_snapshot.pose_samples[
-                                        sample_index - 1u].time))
-                        {
-                            diagnostic =
-                                "Immutable Kinematic Collider Pose Sample times / transforms must be finite and strictly increasing.";
-                            return false;
-                        }
-                        if (sample.time > tick_start &&
-                            sample.time < tick_end)
-                        {
-                            boundaries.push_back(sample.time);
-                        }
-                    }
-                }
-
                 for (const model_animation_tick_schedule& schedule :
                     reservation.animation_schedules)
                 {
@@ -6469,6 +6433,38 @@ namespace skin_physics::runtime
                         {
                             diagnostic =
                                 "Immutable Root Transform Sample times must be finite and strictly increasing.";
+                            return false;
+                        }
+                        if (sample.time > tick_start &&
+                            sample.time < tick_end)
+                        {
+                            boundaries.push_back(sample.time);
+                        }
+                    }
+                }
+
+                for (const collider_input_snapshot& collider_snapshot :
+                    input_snapshot.colliders)
+                {
+                    if (!collider_snapshot.kinematic)
+                    {
+                        continue;
+                    }
+                    for (std::size_t sample_index = 0u;
+                        sample_index < collider_snapshot.pose_samples.size();
+                        ++sample_index)
+                    {
+                        const transform_sample& sample =
+                            collider_snapshot.pose_samples[sample_index];
+                        if (!finite_double(sample.time) || sample.time < 0.0 ||
+                            !valid_transform(sample.value) ||
+                            (sample_index > 0u &&
+                                sample.time <=
+                                    collider_snapshot.pose_samples[
+                                        sample_index - 1u].time))
+                        {
+                            diagnostic =
+                                "Immutable Kinematic Collider Pose Sample times / transforms must be finite and strictly increasing.";
                             return false;
                         }
                         if (sample.time > tick_start &&
