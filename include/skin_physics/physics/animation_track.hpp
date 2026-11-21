@@ -580,6 +580,28 @@ namespace skin_physics::physics
         float reserved1 = 0.0f;
     };
 
+    // One immutable Root Transform trajectory record per Animation Span.
+    // Translation is linear; Rotation is shortest-arc Slerp. The angular
+    // axis is expressed in World Space and angle is radians over this Span.
+    struct root_transform_gpu_record
+    {
+        gpu_float4 translation_start = { 0.0f, 0.0f, 0.0f, 1.0f };
+        gpu_float4 translation_end = { 0.0f, 0.0f, 0.0f, 1.0f };
+        gpu_float4 rotation_start = { 0.0f, 0.0f, 0.0f, 1.0f };
+        gpu_float4 rotation_end = { 0.0f, 0.0f, 0.0f, 1.0f };
+        gpu_float4 angular_axis_and_angle = {};
+        float duration_seconds = 1.0f;
+        float inverse_duration = 1.0f;
+        uint32_t flags = 0u;
+        uint32_t reserved = 0u;
+    };
+
+    constexpr uint32_t root_transform_flag_valid = 1u << 0u;
+    constexpr uint32_t root_transform_flag_shortest_arc_slerp = 1u << 1u;
+    constexpr uint32_t root_transform_flag_valid_mask =
+        root_transform_flag_valid |
+        root_transform_flag_shortest_arc_slerp;
+
     constexpr uint32_t kinematic_collider_flag_kinematic = 1u << 0u;
     constexpr uint32_t kinematic_collider_flag_shortest_arc_slerp = 1u << 1u;
     constexpr uint32_t kinematic_collider_flag_valid =
@@ -738,6 +760,16 @@ namespace skin_physics::physics
     static_assert(offsetof(animation_skin_joint_gpu_record, inverse_bind_record_index) == 4u);
     static_assert(offsetof(animation_skin_joint_gpu_record, joint_node_index) == 8u);
 
+    static_assert(std::is_standard_layout_v<root_transform_gpu_record>);
+    static_assert(std::is_trivially_copyable_v<root_transform_gpu_record>);
+    static_assert(sizeof(root_transform_gpu_record) == 96u);
+    static_assert(alignof(root_transform_gpu_record) == 4u);
+    static_assert(offsetof(root_transform_gpu_record, translation_start) == 0u);
+    static_assert(offsetof(root_transform_gpu_record, rotation_start) == 32u);
+    static_assert(offsetof(root_transform_gpu_record, angular_axis_and_angle) == 64u);
+    static_assert(offsetof(root_transform_gpu_record, duration_seconds) == 80u);
+    static_assert(offsetof(root_transform_gpu_record, flags) == 88u);
+
     static_assert(std::is_standard_layout_v<kinematic_collider_gpu_record>);
     static_assert(std::is_trivially_copyable_v<kinematic_collider_gpu_record>);
     static_assert(sizeof(kinematic_collider_gpu_record) == 128u);
@@ -794,6 +826,8 @@ namespace skin_physics::physics
         uint32_t target_track_index = 1u;
         animation_blend_weight_curve_desc blend_curve;
         std::vector<kinematic_collider_gpu_record> colliders;
+        bool has_root_transform = false;
+        root_transform_gpu_record root_transform;
         animation_trajectory_span_bounds bounds;
         // False is permitted for skinning-only Packets. CCD / no-miss consumers
         // must reject Spans without the Bounds-Certified flag.
@@ -823,6 +857,9 @@ namespace skin_physics::physics
         std::vector<animation_skin_gpu_record> skin_records;
         std::vector<animation_skin_joint_gpu_record> skin_joint_records;
         std::vector<kinematic_collider_gpu_record> collider_records;
+        // Dense one-record-per-Span table. It is immutable and indexed by the
+        // same absolute Span Record Index; no extra indirection is required.
+        std::vector<root_transform_gpu_record> root_transform_records;
         // CPU-only double World-Time metadata; this is never uploaded to the GPU.
         std::vector<double> span_world_time_starts;
     };
