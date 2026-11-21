@@ -4605,6 +4605,10 @@ namespace
         parameters.root_transform.column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
         parameters.root_transform.column2 = { 0.0f, 0.0f, 1.0f, 0.0f };
         parameters.root_transform.column3 = { 10.0f, 0.0f, 0.0f, 1.0f };
+        parameters.root_transform_derivative.column0 = {};
+        parameters.root_transform_derivative.column1 = {};
+        parameters.root_transform_derivative.column2 = {};
+        parameters.root_transform_derivative.column3 = {};
         const ComPtr<ID3D11Buffer> parameter_buffer =
             create_constant_buffer(
                 device.Get(), &parameters, sizeof(parameters));
