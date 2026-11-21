@@ -892,7 +892,8 @@
             "Swept AABB bounds are rounded outward and remain finite",
             "Out-of-range triangle indices, non-finite local vertices and a Mesh exceeding the certified local radius fail closed",
             "A failed vertex evaluation publishes no partial world-vertex array",
-            "Each transformed world vertex also returns analytic contact velocity, including Linear Velocity plus World Angular Velocity cross the rotated local vertex"
+            "Each transformed world vertex also returns analytic contact velocity, including Linear Velocity plus World Angular Velocity cross the rotated local vertex",
+            "CPU geometry evaluation rejects non-homogeneous Translation endpoints consistently with the GPU evaluator"
           ]
         }
       ],
