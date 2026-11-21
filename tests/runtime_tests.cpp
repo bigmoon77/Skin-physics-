@@ -1205,11 +1205,18 @@ namespace
             "Skinned Animation Runtime World must enter Playing.");
 
         skin_physics::runtime::advance_report animation_report;
-        require(runtime.advance(world, 0.01, &animation_report).success() &&
+        const skin_physics::runtime::status animation_advance_status =
+            runtime.advance(world, 0.01, &animation_report);
+        require(animation_advance_status.success() &&
             animation_report.submitted_tick_count == 1u &&
             animation_report.in_flight_tick_count == 1u &&
             animation_report.pending_tick_count == 0u,
-            "A fully skinned Soft Body Animation Playback Tick must build Span boundaries and submit GPU LBS / Tracking passes instead of BLOCKED_BY_INPUT.");
+            "A fully skinned Soft Body Animation Playback Tick must build Span boundaries and submit GPU LBS / Tracking passes instead of BLOCKED_BY_INPUT. status=" +
+                std::to_string(static_cast<uint32_t>(animation_advance_status.code)) +
+                " diagnostic=" + animation_advance_status.diagnostic +
+                " submitted=" + std::to_string(animation_report.submitted_tick_count) +
+                " in_flight=" + std::to_string(animation_report.in_flight_tick_count) +
+                " pending=" + std::to_string(animation_report.pending_tick_count));
         skin_physics::runtime::world_status animation_status;
         bool animation_observed = false;
         for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
