@@ -408,11 +408,13 @@ namespace skin_physics::physics
         }
 
         result.world_vertices.reserve(collision_mesh.vertices.size());
+        result.world_vertex_velocities.reserve(collision_mesh.vertices.size());
         for (const asset::vertex& vertex : collision_mesh.vertices)
         {
             if (!finite(vertex.position))
             {
                 result.world_vertices.clear();
+                result.world_vertex_velocities.clear();
                 result.error = collision_error::invalid_geometry;
                 result.diagnostic =
                     "Kinematic Collider Mesh contains a non-finite local vertex.";
@@ -425,6 +427,7 @@ namespace skin_physics::physics
             if (!sample.success)
             {
                 result.world_vertices.clear();
+                result.world_vertex_velocities.clear();
                 result.error = collision_error::invalid_geometry;
                 result.diagnostic =
                     "Kinematic Collider vertex exceeds its certified trajectory domain: " +
@@ -438,12 +441,15 @@ namespace skin_physics::physics
             if (!finite(world_position))
             {
                 result.world_vertices.clear();
+                result.world_vertex_velocities.clear();
                 result.error = collision_error::invalid_geometry;
                 result.diagnostic =
                     "Kinematic Collider Mesh evaluation produced a non-finite world vertex.";
                 return result;
             }
             result.world_vertices.push_back(world_position);
+            result.world_vertex_velocities.push_back(
+                sample.value.contact_point_velocity);
         }
 
         result.success = true;
