@@ -3209,6 +3209,7 @@ namespace skin_physics::runtime
         bool initialize_cloth_gpu_mesh(
             uint32_t mesh_index,
             const model_mesh_cloth_asset& mesh_asset,
+            const transform& root_transform,
             cloth_gpu_mesh& out_mesh,
             std::string& diagnostic)
         {
@@ -3365,11 +3366,34 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            std::vector<asset::vec4> initial_world_positions(
+                packet.vertex_count);
             std::vector<asset::vec4> zero_velocities(packet.vertex_count);
+            for (uint32_t vertex_index = 0u;
+                vertex_index < packet.vertex_count; ++vertex_index)
+            {
+                const asset::vec4& rest_position =
+                    packet.rest_positions[vertex_index];
+                const asset::vec3 world_position = transform_position(
+                    root_transform,
+                    { rest_position.x, rest_position.y, rest_position.z });
+                if (!finite_float(world_position.x) ||
+                    !finite_float(world_position.y) ||
+                    !finite_float(world_position.z))
+                {
+                    diagnostic =
+                        "Cloth initial world-space Position is not finite.";
+                    return false;
+                }
+                initial_world_positions[vertex_index] = {
+                    world_position.x, world_position.y, world_position.z, 1.0f
+                };
+            }
+
             for (uint32_t bank_index = 0u; bank_index < 2u; ++bank_index)
             {
                 if (!create_structured_buffer_from_vector(
-                        device.Get(), packet.rest_positions,
+                        device.Get(), initial_world_positions,
                         D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
                         candidate.position_banks[bank_index].GetAddressOf()) ||
                     !create_structured_srv(
@@ -9094,7 +9118,8 @@ namespace skin_physics::runtime
             implementation::cloth_gpu_mesh gpu_mesh;
             std::string diagnostic;
             if (!runtime.initialize_cloth_gpu_mesh(
-                    cloth_asset.mesh_index, cloth_asset, gpu_mesh, diagnostic))
+                    cloth_asset.mesh_index, cloth_asset, root_transform,
+                    gpu_mesh, diagnostic))
             {
                 return make_status(status_code::out_of_memory,
                     "Cloth GPU topology / State Bank creation failed: " + diagnostic);
