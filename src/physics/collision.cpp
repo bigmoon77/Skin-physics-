@@ -506,6 +506,54 @@ namespace skin_physics::physics
         return result;
     }
 
+
+    moving_vertex_triangle_contact_result find_moving_vertex_triangle_contact(
+        const vec3& point,
+        const vec3& point_velocity,
+        const std::array<vec3, 3>& triangle,
+        const std::array<vec3, 3>& triangle_vertex_velocities,
+        float point_radius)
+    {
+        moving_vertex_triangle_contact_result result;
+        if (!finite(point_velocity) ||
+            !finite(triangle_vertex_velocities[0]) ||
+            !finite(triangle_vertex_velocities[1]) ||
+            !finite(triangle_vertex_velocities[2]))
+        {
+            return result;
+        }
+
+        result.contact = find_vertex_triangle_contact(
+            point, triangle, point_radius);
+        if (!result.contact.valid)
+        {
+            return result;
+        }
+
+        result.point_velocity = point_velocity;
+        result.triangle_velocity = add(
+            add(
+                multiply(
+                    triangle_vertex_velocities[0],
+                    result.contact.barycentric[0]),
+                multiply(
+                    triangle_vertex_velocities[1],
+                    result.contact.barycentric[1])),
+            multiply(
+                triangle_vertex_velocities[2],
+                result.contact.barycentric[2]));
+        result.relative_velocity = subtract(
+            result.point_velocity, result.triangle_velocity);
+        if (!finite(result.triangle_velocity) ||
+            !finite(result.relative_velocity))
+        {
+            return moving_vertex_triangle_contact_result{};
+        }
+
+        result.success = true;
+        return result;
+    }
+
     vertex_triangle_solve_result solve_vertex_triangle_contact(
         const vertex_triangle_contact& contact,
         const std::array<vec3, 4>& positions,
