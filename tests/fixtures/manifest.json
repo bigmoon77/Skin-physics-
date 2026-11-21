@@ -831,6 +831,16 @@
             "Zero quaternions, malformed identity, under-conservative bounds, out-of-radius contact points and spans crossing teleport boundaries fail closed",
             "Immutable GPU Packet Builder appends Collider Records into each owning Span's explicit first/count range and rejects duplicate stable Collider IDs or mismatched durations"
           ]
+        },
+        {
+          "id": "R1_RUNTIME_KINEMATIC_SAMPLE_BOUNDARIES",
+          "checks": [
+            "Kinematic Collider Pose Samples are immutable Tick Input Snapshot data and require finite, strictly increasing times",
+            "The public Kinematic Collider sample API preserves explicit Teleport metadata",
+            "Every in-Tick Kinematic Collider sample time is inserted into the shared World Integration Segment boundary table",
+            "Kinematic Collider sample boundaries are merged with World Substep, Root Transform, Animation, Force and Impulse boundaries without dropping distinct times",
+            "Unsupported Collider submission remains BLOCKED_BY_INPUT after CPU Segment planning; the scheduler must not bypass the unsupported collision path"
+          ]
         }
       ],
       "automated_cases": [
