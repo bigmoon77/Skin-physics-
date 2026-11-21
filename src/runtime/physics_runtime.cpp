@@ -4343,11 +4343,12 @@ namespace skin_physics::runtime
                 uint32_t expected_mesh_node_index = asset::invalid_index;
                 uint32_t reserved[2] = {};
                 physics::gpu_matrix4x4 root_transform;
+                physics::gpu_matrix4x4 root_transform_derivative;
             };
             static_assert(sizeof(channel_evaluation_parameters) == 16u);
             static_assert(sizeof(blend_evaluation_parameters) == 16u);
             static_assert(sizeof(hierarchy_evaluation_parameters) == 16u);
-            static_assert(sizeof(skin_matrix_evaluation_parameters) == 96u);
+            static_assert(sizeof(skin_matrix_evaluation_parameters) == 160u);
 
             const double normalized_span_coordinate =
                 (world_time - selected_span_world_time_start) / span_duration;
@@ -4787,10 +4788,27 @@ namespace skin_physics::runtime
                     packet_build.value.inverse_bind_matrices.size());
             skin_parameters.expected_mesh_node_index =
                 gpu_mesh.skin_node_index;
+            transform segment_root_transform;
+            asset::mat4 segment_root_derivative;
+            if (!evaluate_root_transform_samples(
+                    model_snapshot.root_samples,
+                    model_snapshot.root_transform,
+                    world_time,
+                    segment_root_transform,
+                    segment_root_derivative,
+                    diagnostic))
+            {
+                diagnostic =
+                    "GPU Animation Root Transform evaluation failed: " +
+                    diagnostic;
+                return false;
+            }
             const asset::mat4 root_matrix =
-                make_root_transform_matrix(model_snapshot.root_transform);
+                make_root_transform_matrix(segment_root_transform);
             skin_parameters.root_transform =
                 to_gpu_matrix(root_matrix);
+            skin_parameters.root_transform_derivative =
+                to_gpu_matrix(segment_root_derivative);
             Microsoft::WRL::ComPtr<ID3D11Buffer> skin_parameter_buffer;
             if (!create_constant_buffer(
                     device.Get(),
