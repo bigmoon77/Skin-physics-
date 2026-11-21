@@ -748,6 +748,16 @@
             "WARP Target Position / Velocity readback matches the CPU double-precision Physics Mesh LBS oracle for one- and two-influence vertices",
             "An out-of-range positive-weight Joint index sets the GPU Target Status failure bit and does not publish a valid target stream"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_CHANNEL_EVALUATION",
+          "checks": [
+            "The GPU Channel Evaluator reads the immutable 224-byte animation_channel_gpu_record ABI and emits one 112-byte local TRS / derivative record per Asset Node Channel",
+            "LINEAR Translation and CUBICSPLINE Scale are evaluated in Span-local u and return analytic derivatives per World Simulation second",
+            "LINEAR Quaternion uses shortest-arc Slerp, normalized output and an analytic tangent-space derivative",
+            "STEP and Rest TRS channels remain constant and produce zero target velocity",
+            "Zero-length / non-finite quaternion input fails closed and sets the GPU Animation status bit"
+          ]
         }
       ],
       "automated_cases": [
