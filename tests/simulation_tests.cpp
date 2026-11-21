@@ -2487,7 +2487,40 @@ namespace
                 skin_physics::physics::animation_span_flag_has_kinematic_collider) != 0u &&
             built.value.span_world_time_starts ==
                 std::vector<double>({ 10.0 }),
-            "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind payload.");
+            "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind / Collider payload.");
+
+        animation_trajectory_packet_build_desc duplicate_collider_packet = build_desc;
+        duplicate_collider_packet.spans[0u].colliders.push_back(
+            collider_record.value);
+        const auto duplicate_collider_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, duplicate_collider_packet);
+        require(!duplicate_collider_result.success &&
+            duplicate_collider_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span,
+            "Packet Builder must reject duplicate Stable Collider IDs within one Span.");
+
+        animation_trajectory_packet_build_desc underbounded_collider_packet =
+            build_desc;
+        underbounded_collider_packet.spans[0u].colliders[0u].linear_speed_bound = 0.0f;
+        const auto underbounded_collider_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, underbounded_collider_packet);
+        require(!underbounded_collider_result.success &&
+            underbounded_collider_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span,
+            "Packet Builder must reject a Collider Record whose Speed Bound underestimates its stored trajectory.");
+
+        animation_trajectory_packet_build_desc mismatched_collider_packet =
+            build_desc;
+        mismatched_collider_packet.spans[0u].colliders[0u].duration_seconds = 0.25f;
+        const auto mismatched_collider_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, mismatched_collider_packet);
+        require(!mismatched_collider_result.success &&
+            mismatched_collider_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span,
+            "Packet Builder must reject a Collider Record whose duration differs from its owning Span.");
 
         animation_trajectory_span_input blended_span_input = span_input;
         blended_span_input.span_id = 42u;
