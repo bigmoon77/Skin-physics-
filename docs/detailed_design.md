@@ -467,6 +467,18 @@ CPUはdouble→float変換後のSpan Duration / inverse duration / 初期Cursor 
 
 Speed / Acceleration / Deviation BoundをfloatへUploadする場合は外向きに丸め、Boundを小さくしない。Boundの量子化後も同じNo-Miss条件を維持できない場合はSpanを分割し、それでも証明できない入力を拒否する。
 
+#### GPU Local Transform Channel Evaluation
+
+`shaders/runtime/animation_channel_evaluate.cs.hlsl`はImmutable Packet内の`animation_channel_gpu_record`を読み、1 Threadあたり1 NodeのLocal TRSと解析的World-Time Derivativeを生成する。入力はt0=Channel StructuredBuffer、b0=(channel_count, first_channel_record, span_local_u, inverse_span_duration)、出力はu0=112-byte `animation_node_local_transform_gpu_record`、u1=GPU Animation Statusとする。出力はTick / Segment所有のMutable Working Bufferであり、Immutable Packetへ書き戻さない。
+
+- Translation / ScaleはSpan-local c0..c3をHorner形式で評価し、導関数へinverse_span_durationを乗じてWorld Simulation second単位へ変換する。
+- Rotation STEPは定Quaternion、LINEARはhemisphere整合済みEndpoint QuaternionのShortest-Arc Slerp、CUBICSPLINEはRaw Quaternion Polynomialの正規化とTangent-Space Derivative Projectionを使う。
+- 未アニメーションChannelはPacketに格納されたRest TRS係数をそのまま評価し、Velocityを0にする。
+- Parent Indexは同一Track Channel Range内の相対Index。RootはUINT32_MAX。Node / Parent Range、Channel Mask、Interpolation Flag、有限値、Quaternion長をGPU側でも検査する。
+- 不正入力は該当Nodeの出力を無効化し、Segment StatusへFailure BitをAtomic ORする。RuntimeはStatusをCommit GateのValidationへ接続するまで、このStage単体の出力をSimulation Stateへ採用しない。
+
+WARP Golden Regression `P09_WARP_ANIMATION_CHANNEL_EVALUATION`はLINEAR Translation / Quaternion、CUBICSPLINE Scale、STEP / Rest TRS、不正QuaternionをCPU期待値と比較する。このStageはLocal Channel評価までを対象とし、Source / Target Blend、Parent Global Matrix、Mesh Node逆行列、Skin-specific IBM合成、Runtime Tick Cursor / Packetの実Dispatchは後続Stageで接続する。
+
 #### Channel補間と時間微分
 
 Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / Scaleの各Componentは次の多項式で表す。
