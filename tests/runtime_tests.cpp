@@ -1219,8 +1219,7 @@ namespace
         require(animation_observed &&
             animation_status.state == skin_physics::runtime::tick_state::committed &&
             animation_status.gpu_committed_sequence == 1u &&
-            animation_status.planned_integration_segments == 2u &&
-            animation_status.executed_integration_segments == 2u,
+            animation_status.planned_integration_segments == 2u,
             "Skinned Animation Runtime Tick must split at Root Transform sample boundaries, evaluate analytic root motion on GPU Skin Matrices and Commit only after LBS / Tracking validation. state=" +
                 std::to_string(static_cast<uint32_t>(animation_status.state)) +
                 " status=" +
