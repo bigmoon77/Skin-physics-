@@ -4075,6 +4075,181 @@ namespace
         std::cout << "[PASS] P09_WARP_ANIMATION_CHANNEL_EVALUATION\n";
     }
 
+    void test_phase09_warp_animation_blend_local_transforms()
+    {
+        using skin_physics::physics::animation_blend_flag_enabled;
+        using skin_physics::physics::animation_blend_gpu_record;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Animation Blend GPU Evaluator requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_directory().parent_path().parent_path() /
+                "shaders" / "runtime" / "animation_blend_local_transform.cs.hlsl",
+            "main");
+
+        gpu_animation_node_local_transform_record source;
+        source.translation = { 0.0f, 0.0f, 0.0f, 0.0f };
+        source.translation_velocity = { 1.0f, 0.0f, 0.0f, 0.0f };
+        source.rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        source.scale = { 1.0f, 1.0f, 1.0f, 0.0f };
+        source.scale_velocity = { 0.5f, 0.5f, 0.5f, 0.0f };
+        source.node_index = 7u;
+        source.parent_index = 3u;
+        source.node_role_flags = 1u;
+
+        gpu_animation_node_local_transform_record target = source;
+        target.translation = { 10.0f, 0.0f, 0.0f, 0.0f };
+        target.translation_velocity = { 3.0f, 0.0f, 0.0f, 0.0f };
+        target.rotation = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        target.scale = { 3.0f, 3.0f, 3.0f, 0.0f };
+        target.scale_velocity = { 1.5f, 1.5f, 1.5f, 0.0f };
+
+        const std::vector<gpu_animation_node_local_transform_record> source_values = {
+            source
+        };
+        const std::vector<gpu_animation_node_local_transform_record> target_values = {
+            target
+        };
+        const ComPtr<ID3D11Buffer> source_buffer =
+            create_structured_buffer(
+                device.Get(), source_values, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> target_buffer =
+            create_structured_buffer(
+                device.Get(), target_values, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> source_srv =
+            create_structured_srv<gpu_animation_node_local_transform_record>(
+                device.Get(), source_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> target_srv =
+            create_structured_srv<gpu_animation_node_local_transform_record>(
+                device.Get(), target_buffer.Get(), 1u);
+
+        animation_blend_gpu_record blend;
+        blend.source_track_index = 0u;
+        blend.target_track_index = 1u;
+        blend.weight_curve_flags = animation_blend_flag_enabled;
+        blend.weight_coefficients = { 0.0f, 1.0f, 0.0f, 0.0f };
+        blend.duration_seconds = 1.0f;
+        blend.inverse_duration = 1.0f;
+        blend.blend_start_offset_seconds = 0.0f;
+        const std::vector<animation_blend_gpu_record> blend_values = { blend };
+        const ComPtr<ID3D11Buffer> blend_buffer =
+            create_structured_buffer(
+                device.Get(), blend_values, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> blend_srv =
+            create_structured_srv<animation_blend_gpu_record>(
+                device.Get(), blend_buffer.Get(), 1u);
+
+        const std::vector<gpu_animation_node_local_transform_record> empty_output(1u);
+        const std::vector<uint32_t> clear_status(1u, 0u);
+        const ComPtr<ID3D11Buffer> output_buffer =
+            create_structured_buffer(
+                device.Get(), empty_output, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> output_uav =
+            create_structured_uav<gpu_animation_node_local_transform_record>(
+                device.Get(), output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), status_buffer.Get(), 1u);
+
+        struct alignas(16) blend_parameters
+        {
+            uint32_t node_count = 1u;
+            float span_duration_seconds = 1.0f;
+            float span_local_u = 0.5f;
+            uint32_t reserved = 0u;
+        };
+        const blend_parameters parameters;
+        const ComPtr<ID3D11Buffer> parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &parameters, sizeof(parameters));
+
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            { source_srv.Get(), target_srv.Get(), blend_srv.Get() },
+            { output_uav.Get(), status_uav.Get() },
+            parameter_buffer.Get(),
+            1u);
+
+        const std::vector<gpu_animation_node_local_transform_record> output =
+            readback_structured_buffer<gpu_animation_node_local_transform_record>(
+                device.Get(), context.Get(), output_buffer.Get(), 1u);
+        const std::vector<uint32_t> status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(status[0u] == 0u && output[0u].status == 0u,
+            "Valid Source / Target local transform records and Hermite Blend input must not set the GPU Animation failure bit.");
+        require(output[0u].node_index == 7u &&
+            output[0u].parent_index == 3u &&
+            std::abs(output[0u].translation.x - 5.0f) <= 1.0e-6f &&
+            std::abs(output[0u].translation_velocity.x - 12.0f) <= 1.0e-5f &&
+            std::abs(output[0u].scale.x - 2.0f) <= 1.0e-6f &&
+            std::abs(output[0u].scale_velocity.x - 3.0f) <= 1.0e-5f,
+            "GPU Blend must include the analytic weight-derivative term in Translation / Scale velocity.");
+
+        const float expected_rotation_z =
+            std::sin(3.14159265358979323846f / 8.0f);
+        const float expected_rotation_w =
+            std::cos(3.14159265358979323846f / 8.0f);
+        const float rotation_norm = std::sqrt(
+            output[0u].rotation.x * output[0u].rotation.x +
+            output[0u].rotation.y * output[0u].rotation.y +
+            output[0u].rotation.z * output[0u].rotation.z +
+            output[0u].rotation.w * output[0u].rotation.w);
+        const float rotation_tangent_dot =
+            output[0u].rotation.x * output[0u].rotation_velocity.x +
+            output[0u].rotation.y * output[0u].rotation_velocity.y +
+            output[0u].rotation.z * output[0u].rotation_velocity.z +
+            output[0u].rotation.w * output[0u].rotation_velocity.w;
+        require(std::abs(output[0u].rotation.z - expected_rotation_z) <= 1.0e-5f &&
+            std::abs(output[0u].rotation.w - expected_rotation_w) <= 1.0e-5f &&
+            std::abs(rotation_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(rotation_tangent_dot) <= 1.0e-5f,
+            "GPU Quaternion Blend must hemisphere-align, normalize and return its analytic tangent-space derivative.");
+
+        std::vector<gpu_animation_node_local_transform_record> mismatched_target = {
+            target
+        };
+        mismatched_target[0u].node_index = 8u;
+        const ComPtr<ID3D11Buffer> mismatched_target_buffer =
+            create_structured_buffer(
+                device.Get(), mismatched_target, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> mismatched_target_srv =
+            create_structured_srv<gpu_animation_node_local_transform_record>(
+                device.Get(), mismatched_target_buffer.Get(), 1u);
+        const ComPtr<ID3D11Buffer> mismatch_status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> mismatch_status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), mismatch_status_buffer.Get(), 1u);
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            { source_srv.Get(), mismatched_target_srv.Get(), blend_srv.Get() },
+            { output_uav.Get(), mismatch_status_uav.Get() },
+            parameter_buffer.Get(),
+            1u);
+        const std::vector<uint32_t> mismatch_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), mismatch_status_buffer.Get(), 1u);
+        require(mismatch_status[0u] == 1u,
+            "Source / Target Node or Parent mismatches must fail closed before publishing a blended local transform.");
+
+        std::cout << "[PASS] P09_WARP_ANIMATION_BLEND_LOCAL_TRANSFORMS\n";
+    }
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
@@ -4298,6 +4473,7 @@ int run_gpu_solver_tests()
     test_phase09_warp_animation_trajectory_packet_upload();
     test_phase09_warp_physics_mesh_skinning_targets();
     test_phase09_warp_animation_channel_evaluation();
+    test_phase09_warp_animation_blend_local_transforms();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
