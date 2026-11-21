@@ -1091,7 +1091,7 @@ namespace
 
         skin_physics::asset::node root_node;
         root_node.name = "runtime_model_root";
-        root_node.children = { 1u, 2u };
+        root_node.children = { 1u, 2u, 3u };
 
         skin_physics::asset::node joint_node;
         joint_node.name = "runtime_joint_root";
@@ -1102,6 +1102,12 @@ namespace
         mesh_node.parent_index = 0u;
         mesh_node.mesh_index = 0u;
         mesh_node.skin_index = 0u;
+
+        skin_physics::asset::node second_mesh_node;
+        second_mesh_node.name = "runtime_second_skinned_mesh";
+        second_mesh_node.parent_index = 0u;
+        second_mesh_node.mesh_index = 1u;
+        second_mesh_node.skin_index = 0u;
 
         skin_physics::asset::animation_track joint_translation_track;
         joint_translation_track.node_index = 1u;
@@ -1131,8 +1137,13 @@ namespace
 
         skin_physics::runtime::model_desc model_desc;
         model_desc.source_model.meshes.push_back(render_mesh);
+        skin_physics::asset::mesh second_render_mesh = render_mesh;
+        second_render_mesh.name = "runtime_second_skinned_soft_body_tet";
+        model_desc.source_model.meshes.push_back(std::move(second_render_mesh));
         model_desc.source_model.skins.push_back(source_skin);
-        model_desc.source_model.nodes = { root_node, joint_node, mesh_node };
+        model_desc.source_model.nodes = {
+            root_node, joint_node, mesh_node, second_mesh_node
+        };
         model_desc.source_model.scene_roots = { 0u };
         model_desc.source_model.animations.push_back(animation_clip);
         skin_physics::asset::animation_clip target_animation_clip =
@@ -1150,6 +1161,13 @@ namespace
         mesh_asset.mesh_index = 0u;
         mesh_asset.physics_mesh = built_mesh.value;
         model_desc.mesh_physics_assets.push_back(std::move(mesh_asset));
+
+        skin_physics::runtime::model_mesh_physics_asset second_mesh_asset;
+        second_mesh_asset.mesh_index = 1u;
+        second_mesh_asset.skin_node_index = 3u;
+        second_mesh_asset.skin_index = 0u;
+        second_mesh_asset.physics_mesh = built_mesh.value;
+        model_desc.mesh_physics_assets.push_back(std::move(second_mesh_asset));
 
         skin_physics::runtime::world_desc animation_world_desc;
         animation_world_desc.fixed_delta_time = 0.01;
@@ -1267,10 +1285,25 @@ namespace
         require(!animated_positions.empty() &&
             animated_positions[0u].x > 1.0e-5f,
             "GPU Skinning Target Velocity and non-zero Tracking damping must move the simulated Physics Vertex toward the animated joint.");
+        skin_physics::runtime::render_binding second_animated_binding;
+        require(runtime.get_render_binding(
+                world, model, 1u, &second_animated_binding).success(),
+            "A second Skinned Mesh in the same Model must consume the same immutable Animation Packet and Model Cursor.");
+        const std::vector<test_gpu_float4> second_animated_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), second_animated_binding.position_srv,
+                second_animated_binding.vertex_count);
+        require(!animated_positions.empty() &&
+            animated_positions[0u].x > 1.0e-5f &&
+            !second_animated_positions.empty() &&
+            second_animated_positions[0u].x > 1.0e-5f,
+            "Both Skinned Mesh consumers must evaluate the same Segment Cursor before it advances once per Model.");
         const float playback_position_x = animated_positions[0u].x;
         require(runtime.release_render_bindings(
-                world, animated_binding.lease_generation).success(),
-            "Skinned Animation Render Candidate Host Lease must release after readback.");
+                world, animated_binding.lease_generation).success() &&
+            runtime.release_render_bindings(
+                world, second_animated_binding.lease_generation).success(),
+            "Both Skinned Mesh Render Candidate Host Leases must release after readback.");
 
         skin_physics::runtime::animation_blend_desc blend;
         blend.source_track.clip_index = 0u;
