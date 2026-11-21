@@ -594,6 +594,66 @@ namespace
         return error;
     }
 
+    void test_phase05_cloth_stretch_color_reference()
+    {
+        const auto built = load_cloth_fixture();
+        require(built.success,
+            "Cloth fixture must build before colored Stretch reference evaluation.");
+        std::vector<skin_physics::asset::vec3> positions =
+            built.value.rest_positions;
+        positions[3].x += 0.2f;
+        positions[4].z += 0.1f;
+        const std::vector<float> inverse_mass(positions.size(), 1.0f);
+        std::vector<float> lambda_values(
+            built.value.stretch_constraints.size(), 0.0f);
+
+        bool observed_nonzero_lambda = false;
+        for (uint32_t iteration = 0u; iteration < 4u; ++iteration)
+        {
+            for (uint32_t color_index = 0u;
+                color_index < built.value.stretch_color_ranges.size();
+                ++color_index)
+            {
+                const auto step =
+                    skin_physics::physics::solve_cloth_stretch_color(
+                        built.value,
+                        color_index,
+                        positions,
+                        inverse_mass,
+                        lambda_values,
+                        1.0f / 120.0f,
+                        1.0e-5f,
+                        0.8f);
+                require(step.success,
+                    "Colored Stretch CPU reference must solve a valid disjoint batch.");
+                positions = step.positions;
+                lambda_values = step.lambda_values;
+                for (float value : lambda_values)
+                {
+                    require(std::isfinite(value),
+                        "Colored Stretch XPBD Lambda must remain finite.");
+                    observed_nonzero_lambda =
+                        observed_nonzero_lambda || std::abs(value) > 1.0e-8f;
+                }
+            }
+        }
+        require(observed_nonzero_lambda,
+            "Colored Stretch XPBD must retain and update Segment-local Lambda values across iterations.");
+
+        const auto invalid_state =
+            skin_physics::physics::solve_cloth_stretch_color(
+                built.value,
+                0u,
+                positions,
+                inverse_mass,
+                std::vector<float>{},
+                1.0f / 120.0f,
+                1.0e-5f,
+                0.8f);
+        require(!invalid_state.success,
+            "Colored Stretch CPU reference must reject a mismatched Lambda array.");
+    }
+
     void test_phase05_cloth_compliance_monotonicity()
     {
         const auto built = load_cloth_fixture();
@@ -5266,6 +5326,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P04_STOP_PRESERVES_ACCUMULATOR\n";
     test_phase05_cloth_fixture_and_bend_gradient();
     std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
+    test_phase05_cloth_stretch_color_reference();
+    std::cout << "[PASS] P05_CLOTH_STRETCH_COLOR_REFERENCE\n";
     test_phase05_cloth_compliance_monotonicity();
     std::cout << "[PASS] P05_CLOTH_COMPLIANCE\n";
     test_phase06_corotational_fem_golden();
