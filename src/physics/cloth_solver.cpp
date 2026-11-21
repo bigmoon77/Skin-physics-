@@ -504,6 +504,174 @@ namespace skin_physics::physics
         return true;
     }
 
+    cloth_stretch_color_step_result solve_cloth_stretch_color(
+        const cloth_mesh& mesh,
+        uint32_t color_index,
+        const std::vector<vec3>& current_positions,
+        const std::vector<float>& inverse_mass,
+        const std::vector<float>& lambda_values,
+        float delta_time,
+        float compliance,
+        float relaxation)
+    {
+        cloth_stretch_color_step_result result;
+        std::string coloring_diagnostic;
+        if (!validate_cloth_stretch_coloring(mesh, coloring_diagnostic))
+        {
+            add_diagnostic(
+                result.diagnostics, cloth_error::invalid_settings,
+                color_index, coloring_diagnostic);
+            return result;
+        }
+        if (color_index >= mesh.stretch_color_ranges.size() ||
+            current_positions.size() != mesh.rest_positions.size() ||
+            inverse_mass.size() != mesh.rest_positions.size() ||
+            lambda_values.size() != mesh.stretch_constraints.size() ||
+            !std::isfinite(delta_time) || delta_time <= 0.0f ||
+            !std::isfinite(compliance) || compliance < 0.0f ||
+            !std::isfinite(relaxation) ||
+            relaxation <= 0.0f || relaxation > 1.0f)
+        {
+            add_diagnostic(
+                result.diagnostics, cloth_error::invalid_settings,
+                color_index,
+                "Stretch color evaluation requires a valid color, matching state arrays and finite solver coefficients.");
+            return result;
+        }
+        for (std::size_t vertex_index = 0u;
+            vertex_index < current_positions.size(); ++vertex_index)
+        {
+            if (!finite(current_positions[vertex_index]) ||
+                !std::isfinite(inverse_mass[vertex_index]) ||
+                inverse_mass[vertex_index] < 0.0f)
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    static_cast<uint32_t>(vertex_index),
+                    "Stretch color input contains a non-finite Position or invalid inverse mass.");
+                return result;
+            }
+        }
+        for (std::size_t constraint_index = 0u;
+            constraint_index < lambda_values.size(); ++constraint_index)
+        {
+            if (!std::isfinite(lambda_values[constraint_index]))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    static_cast<uint32_t>(constraint_index),
+                    "Stretch color Lambda input must be finite.");
+                return result;
+            }
+        }
+
+        result.positions = current_positions;
+        result.lambda_values = lambda_values;
+        const cloth_stretch_color_range& range =
+            mesh.stretch_color_ranges[color_index];
+        const float alpha = compliance / (delta_time * delta_time);
+        if (!std::isfinite(alpha))
+        {
+            add_diagnostic(
+                result.diagnostics, cloth_error::invalid_settings,
+                color_index,
+                "Stretch color Compliance / dt^2 exceeded finite range.");
+            result.positions.clear();
+            result.lambda_values.clear();
+            return result;
+        }
+
+        for (uint32_t local_index = 0u;
+            local_index < range.constraint_count;
+            ++local_index)
+        {
+            const uint32_t constraint_index =
+                mesh.stretch_color_constraint_indices[
+                    range.first_constraint_index + local_index];
+            const cloth_stretch_constraint& constraint =
+                mesh.stretch_constraints[constraint_index];
+            const uint32_t first = constraint.vertices[0];
+            const uint32_t second = constraint.vertices[1];
+            const vec3 delta = subtract(
+                result.positions[first], result.positions[second]);
+            const float current_length = length(delta);
+            if (!std::isfinite(current_length) ||
+                current_length <= 1.0e-12f ||
+                !std::isfinite(constraint.rest_length) ||
+                constraint.rest_length <= 0.0f)
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::degenerate_constraint,
+                    constraint_index,
+                    "Stretch color encountered a degenerate edge or Rest Length.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
+            }
+
+            const float first_inverse_mass = inverse_mass[first];
+            const float second_inverse_mass = inverse_mass[second];
+            const float denominator =
+                first_inverse_mass + second_inverse_mass + alpha;
+            if (!std::isfinite(denominator))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    constraint_index,
+                    "Stretch color denominator became non-finite.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
+            }
+            if (denominator <= 1.0e-20f)
+            {
+                continue;
+            }
+
+            const vec3 direction = multiply(delta, 1.0f / current_length);
+            const float constraint_value =
+                current_length - constraint.rest_length;
+            const float delta_lambda =
+                (-constraint_value -
+                    alpha * result.lambda_values[constraint_index]) /
+                denominator;
+            const float applied = relaxation * delta_lambda;
+            if (!std::isfinite(applied))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    constraint_index,
+                    "Stretch color Lambda update became non-finite.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
+            }
+
+            result.lambda_values[constraint_index] += applied;
+            result.positions[first] = add(
+                result.positions[first],
+                multiply(direction, first_inverse_mass * applied));
+            result.positions[second] = add(
+                result.positions[second],
+                multiply(direction, -second_inverse_mass * applied));
+            if (!finite(result.positions[first]) ||
+                !finite(result.positions[second]) ||
+                !std::isfinite(result.lambda_values[constraint_index]))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    constraint_index,
+                    "Stretch color produced a non-finite Position or Lambda.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
+            }
+        }
+
+        result.success = true;
+        return result;
+    }
+
     cloth_bend_evaluation evaluate_cloth_bend(
         const std::array<vec3, 4>& positions,
         float rest_angle)
