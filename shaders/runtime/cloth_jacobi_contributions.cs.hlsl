@@ -271,7 +271,10 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     const float3 p2 = p2_value.xyz;
     const float3 p3 = p3_value.xyz;
     float3 gradients[4] = {
-        0.0f, 0.0f, 0.0f, 0.0f
+        float3(0.0f, 0.0f, 0.0f),
+        float3(0.0f, 0.0f, 0.0f),
+        float3(0.0f, 0.0f, 0.0f),
+        float3(0.0f, 0.0f, 0.0f)
     };
     float constraint_value = 0.0f;
     if (constraint.type == CLOTH_CONSTRAINT_SHEAR)
