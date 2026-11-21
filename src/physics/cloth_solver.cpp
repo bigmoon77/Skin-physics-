@@ -842,6 +842,7 @@ namespace skin_physics::physics
             mesh.stretch_color_constraint_indices.size() >= maximum_gpu_count ||
             mesh.shear_constraints.size() >= maximum_gpu_count ||
             mesh.bend_constraints.size() >= maximum_gpu_count ||
+            mesh.triangles.size() >= maximum_gpu_count ||
             mesh.vertex_constraint_refs.size() >= maximum_gpu_count)
         {
             result.error = cloth_gpu_topology_error::capacity_exceeded;
@@ -861,6 +862,48 @@ namespace skin_physics::physics
                     std::to_string(vertex_index) + ".";
                 return result;
             }
+        }
+
+        if (mesh.triangles.empty())
+        {
+            result.error = cloth_gpu_topology_error::invalid_mesh;
+            result.message =
+                "Cloth GPU topology requires at least one surface Triangle for Position-Writer Epoch bounds.";
+            return result;
+        }
+        std::map<std::pair<uint32_t, uint32_t>, uint8_t> unique_edges;
+        for (std::size_t triangle_index = 0u;
+            triangle_index < mesh.triangles.size(); ++triangle_index)
+        {
+            const std::array<uint32_t, 3>& triangle =
+                mesh.triangles[triangle_index];
+            if (triangle[0] >= mesh.rest_positions.size() ||
+                triangle[1] >= mesh.rest_positions.size() ||
+                triangle[2] >= mesh.rest_positions.size() ||
+                triangle[0] == triangle[1] ||
+                triangle[1] == triangle[2] ||
+                triangle[2] == triangle[0])
+            {
+                result.error = cloth_gpu_topology_error::invalid_mesh;
+                result.message =
+                    "Cloth GPU topology contains an invalid surface Triangle at index " +
+                    std::to_string(triangle_index) + ".";
+                return result;
+            }
+            for (std::size_t edge_index = 0u; edge_index < 3u; ++edge_index)
+            {
+                const uint32_t first = triangle[edge_index];
+                const uint32_t second = triangle[(edge_index + 1u) % 3u];
+                unique_edges[{ std::min(first, second),
+                    std::max(first, second) }] = 1u;
+            }
+        }
+        if (unique_edges.size() >= maximum_gpu_count)
+        {
+            result.error = cloth_gpu_topology_error::capacity_exceeded;
+            result.message =
+                "Cloth GPU unique Edge count exceeds the 32-bit StructuredBuffer index range.";
+            return result;
         }
 
         for (std::size_t constraint_index = 0u;
@@ -954,6 +997,22 @@ namespace skin_physics::physics
                 position.x, position.y, position.z, 1.0f
             });
         }
+        for (const std::array<uint32_t, 3>& triangle : mesh.triangles)
+        {
+            cloth_gpu_epoch_primitive_record record;
+            record.vertices = {
+                triangle[0], triangle[1], triangle[2], 0u
+            };
+            candidate.triangle_primitives.push_back(record);
+        }
+        for (const auto& edge : unique_edges)
+        {
+            cloth_gpu_epoch_primitive_record record;
+            record.vertices = {
+                edge.first.first, edge.first.second, 0u, 0u
+            };
+            candidate.edge_primitives.push_back(record);
+        }
         candidate.stretch_constraints.reserve(
             mesh.stretch_constraints.size());
         candidate.stretch_color_ranges = mesh.stretch_color_ranges;
@@ -961,6 +1020,8 @@ namespace skin_physics::physics
             mesh.stretch_color_constraint_indices;
         candidate.shear_constraints.reserve(mesh.shear_constraints.size());
         candidate.bend_constraints.reserve(mesh.bend_constraints.size());
+        candidate.triangle_primitives.reserve(mesh.triangles.size());
+        candidate.edge_primitives.reserve(unique_edges.size());
         candidate.vertex_constraint_offsets =
             mesh.vertex_constraint_offsets;
         candidate.vertex_constraint_refs = mesh.vertex_constraint_refs;
