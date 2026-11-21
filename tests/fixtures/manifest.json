@@ -327,7 +327,8 @@
             "Cloth Segment velocity reconstruction derives dynamic velocity from the solved Position delta divided by the same Segment duration and keeps pinned Vertices at zero velocity",
             "All Stretch / Shear / Bend XPBD Lambda arrays are explicitly zeroed at every new Integration Segment, then retained across that Segment's solver iterations",
             "Prediction and Velocity reconstruction reject a non-positive Segment duration through the solver diagnostic buffer",
-            "A Position-Writer Epoch snapshots the exact pre-dispatch Position and produces per-Vertex after-minus-before displacement vectors"
+            "A Position-Writer Epoch snapshots the exact pre-dispatch Position and produces per-Vertex after-minus-before displacement vectors",
+            "Per-primitive triangle and edge swept AABBs conservatively enclose all before / after Vertex endpoints with outward-rounded contact-thickness expansion"
           ]
         }
       ],
