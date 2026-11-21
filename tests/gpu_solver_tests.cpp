@@ -3592,6 +3592,21 @@ namespace
             resources.animation_input_version() == committed_version,
             "A Blend Record referencing one Track as both Source and Target must fail before upload and preserve the previous GPU Packet.");
 
+        animation_trajectory_packet skinning_only_packet = packet;
+        skinning_only_packet.span_records[0u].flags &=
+            ~animation_span_flag_bounds_certified;
+        skinning_only_packet.span_records[0u].speed_bound = 0.0f;
+        skinning_only_packet.span_records[0u].acceleration_bound = 0.0f;
+        skinning_only_packet.span_records[0u].chord_deviation_bound = 0.0f;
+        skinning_only_packet.span_records[0u].quaternion_normalization_lower_bound = 0.0f;
+        const bool uploaded_skinning_only_packet =
+            skin_physics::physics::upload_animation_trajectory_packet(
+                device.Get(), skinning_only_packet, cursor, resources, diagnostic);
+        require(uploaded_skinning_only_packet &&
+            resources.valid() &&
+            resources.animation_input_version() == committed_version,
+            "An explicitly uncertified skinning-only Packet must upload while preserving zero motion Bounds for downstream CCD rejection.");
+
         std::cout << "[PASS] P09_WARP_ANIMATION_TRAJECTORY_PACKET_UPLOAD\n";
     }
 
