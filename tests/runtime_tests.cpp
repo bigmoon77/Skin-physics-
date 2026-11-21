@@ -778,6 +778,53 @@ namespace
         require(runtime.create_world(first_desc, &first_world).success(),
             "Runtime must create a World with valid time and admission limits.");
 
+        skin_physics::asset::mesh cloth_render_mesh;
+        cloth_render_mesh.name = "runtime_cloth_triangle";
+        cloth_render_mesh.mode = skin_physics::asset::physics_mode::cloth;
+        cloth_render_mesh.vertices.resize(3u);
+        cloth_render_mesh.vertices[0].position = { 0.0f, 0.0f, 0.0f };
+        cloth_render_mesh.vertices[1].position = { 1.0f, 0.0f, 0.0f };
+        cloth_render_mesh.vertices[2].position = { 0.0f, 1.0f, 0.0f };
+        cloth_render_mesh.indices = { 0u, 1u, 2u };
+
+        skin_physics::physics::raw_cloth_mesh raw_cloth;
+        raw_cloth.rest_positions = {
+            { 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f },
+            { 0.0f, 1.0f, 0.0f }
+        };
+        raw_cloth.triangles = { { 0u, 1u, 2u } };
+        const skin_physics::physics::cloth_build_result cloth_build =
+            skin_physics::physics::build_cloth_mesh(raw_cloth);
+        require(cloth_build.success,
+            "Runtime Cloth fixture must produce deterministic Stretch / Shear / Bend topology.");
+
+        skin_physics::runtime::model_desc cloth_model_desc;
+        cloth_model_desc.source_model.meshes.push_back(cloth_render_mesh);
+        skin_physics::runtime::model_mesh_cloth_asset cloth_asset;
+        cloth_asset.mesh_index = 0u;
+        cloth_asset.cloth_mesh = cloth_build.value;
+        cloth_asset.inverse_masses = { 1.0f, 1.0f, 1.0f };
+        cloth_model_desc.cloth_mesh_assets.push_back(cloth_asset);
+
+        skin_physics::runtime::model_handle cloth_model;
+        const skin_physics::runtime::status cloth_registration =
+            runtime.add_model(first_world, cloth_model_desc, &cloth_model);
+        require(cloth_registration.success(),
+            std::string("Runtime must validate and upload the immutable Cloth topology, CSR and Segment-local Lambda resources. diagnostic=") +
+                cloth_registration.diagnostic);
+        require(runtime.destroy_model(first_world, cloth_model).success(),
+            "An idle Cloth Model must release its retained topology and GPU State Bank resources.");
+
+        skin_physics::runtime::model_desc invalid_cloth_model_desc =
+            cloth_model_desc;
+        invalid_cloth_model_desc.cloth_mesh_assets[0].inverse_masses = { 1.0f };
+        skin_physics::runtime::model_handle invalid_cloth_model;
+        require(runtime.add_model(
+                first_world, invalid_cloth_model_desc, &invalid_cloth_model).code ==
+                    status_code::asset_invalid,
+            "Runtime must reject a Cloth inverse-mass stream that does not match its Rest Position count.");
+
         skin_physics::runtime::world_desc second_desc;
         second_desc.maximum_in_flight_ticks = 4u;
         skin_physics::runtime::world_handle second_world;
