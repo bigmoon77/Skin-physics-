@@ -2000,6 +2000,13 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_feedback_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_validate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_predict_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_stretch_solve_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_jacobi_contributions_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_jacobi_gather_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reconstruct_velocity_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reset_lambdas_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_swept_aabb_shader;
         std::vector<world_slot> worlds;
         std::thread::id submission_thread;
         uint64_t device_generation = 1u;
@@ -8503,6 +8510,20 @@ namespace skin_physics::runtime
             shader_root / "soft_body_force_distribution.cs.hlsl";
         const std::filesystem::path soft_body_render_feedback_path =
             shader_root / "soft_body_render_feedback.cs.hlsl";
+        const std::filesystem::path cloth_predict_path =
+            shader_root / "cloth_predict.cs.hlsl";
+        const std::filesystem::path cloth_stretch_solve_path =
+            shader_root / "cloth_stretch_solve.cs.hlsl";
+        const std::filesystem::path cloth_jacobi_contributions_path =
+            shader_root / "cloth_jacobi_contributions.cs.hlsl";
+        const std::filesystem::path cloth_jacobi_gather_path =
+            shader_root / "cloth_jacobi_gather.cs.hlsl";
+        const std::filesystem::path cloth_reconstruct_velocity_path =
+            shader_root / "cloth_reconstruct_velocity.cs.hlsl";
+        const std::filesystem::path cloth_reset_lambdas_path =
+            shader_root / "cloth_reset_lambdas.cs.hlsl";
+        const std::filesystem::path cloth_epoch_swept_aabb_path =
+            shader_root / "cloth_epoch_swept_aabb.cs.hlsl";
 
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_begin_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_empty_shader;
@@ -8524,6 +8545,13 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_copy_state_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_feedback_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_render_validate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_predict_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_stretch_solve_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_jacobi_contributions_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_jacobi_gather_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reconstruct_velocity_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reset_lambdas_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_swept_aabb_shader;
         if (!compile_runtime_compute_shader(
                 device, tick_shader_path, "tick_begin_control",
                 tick_begin_shader.GetAddressOf(), diagnostic) ||
@@ -8587,7 +8615,28 @@ namespace skin_physics::runtime
                 soft_body_render_feedback_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
                 device, soft_body_render_feedback_path, "validate_render_candidate",
-                soft_body_render_validate_shader.GetAddressOf(), diagnostic))
+                soft_body_render_validate_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_predict_path, "main",
+                cloth_predict_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_stretch_solve_path, "main",
+                cloth_stretch_solve_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_jacobi_contributions_path, "main",
+                cloth_jacobi_contributions_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_jacobi_gather_path, "main",
+                cloth_jacobi_gather_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_reconstruct_velocity_path, "main",
+                cloth_reconstruct_velocity_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_reset_lambdas_path, "main",
+                cloth_reset_lambdas_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_epoch_swept_aabb_path, "main",
+                cloth_epoch_swept_aabb_shader.GetAddressOf(), diagnostic))
         {
             return make_status(status_code::gpu_execution_failed,
                 "Runtime Tick / Soft Body shader initialization failed: " + diagnostic);
@@ -8624,6 +8673,16 @@ namespace skin_physics::runtime
             std::move(soft_body_render_feedback_shader);
         runtime.soft_body_render_validate_shader =
             std::move(soft_body_render_validate_shader);
+        runtime.cloth_predict_shader = std::move(cloth_predict_shader);
+        runtime.cloth_stretch_solve_shader = std::move(cloth_stretch_solve_shader);
+        runtime.cloth_jacobi_contributions_shader =
+            std::move(cloth_jacobi_contributions_shader);
+        runtime.cloth_jacobi_gather_shader = std::move(cloth_jacobi_gather_shader);
+        runtime.cloth_reconstruct_velocity_shader =
+            std::move(cloth_reconstruct_velocity_shader);
+        runtime.cloth_reset_lambdas_shader = std::move(cloth_reset_lambdas_shader);
+        runtime.cloth_epoch_swept_aabb_shader =
+            std::move(cloth_epoch_swept_aabb_shader);
         runtime.submission_thread = std::this_thread::get_id();
 
         if (!runtime.ensure_status_capacity(desc.query_ring_capacity, diagnostic))
