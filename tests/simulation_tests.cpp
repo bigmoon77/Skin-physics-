@@ -2465,6 +2465,34 @@ namespace
                 std::vector<double>({ 10.0 }),
             "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind payload.");
 
+        animation_trajectory_span_input blended_span_input = span_input;
+        blended_span_input.span_id = 42u;
+        blended_span_input.has_blend = true;
+        blended_span_input.source_track_index = 0u;
+        blended_span_input.target_track_index = 1u;
+        blended_span_input.blend_curve.blend_start_time = 9.0;
+        blended_span_input.blend_curve.blend_end_time = 11.0;
+        blended_span_input.blend_curve.weight_start = 0.25f;
+        blended_span_input.blend_curve.weight_end = 0.75f;
+        blended_span_input.blend_curve.tangent_start = 0.0f;
+        blended_span_input.blend_curve.tangent_end = 0.0f;
+        blended_span_input.tracks.push_back(track_input);
+        animation_trajectory_packet_build_desc blended_build_desc = build_desc;
+        blended_build_desc.animation_input_version += 1u;
+        blended_build_desc.spans[0u] = blended_span_input;
+        const auto blended_built =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, blended_build_desc);
+        require(blended_built.success &&
+            blended_built.value.span_records.size() == 1u &&
+            blended_built.value.track_records.size() == 2u &&
+            blended_built.value.channel_records.size() == 12u &&
+            blended_built.value.blend_records.size() == 1u &&
+            blended_built.value.span_records[0u].track_record_count == 2u &&
+            blended_built.value.span_records[0u].channel_record_count == 12u &&
+            blended_built.value.span_records[0u].blend_record_count == 1u,
+            "Blend Packet Builder must finalize the Blend Record range after appending its two Track / dense Channel tables.");
+
         const skin_physics::physics::animation_clip_span_schedule_result
             held_terminal_schedule =
                 skin_physics::physics::schedule_animation_clip_spans(
