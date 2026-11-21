@@ -2458,6 +2458,24 @@ namespace
         require(collider_record.success,
             "Packet fixture must build a finite, bracketed Kinematic Collider trajectory record.");
         span_input.colliders.push_back(collider_record.value);
+        span_input.has_root_transform = true;
+        span_input.root_transform.translation_start =
+            { 1.0f, 2.0f, 3.0f, 1.0f };
+        span_input.root_transform.translation_end =
+            { 2.0f, 2.0f, 3.0f, 1.0f };
+        span_input.root_transform.rotation_start =
+            { 0.0f, 0.0f, 0.0f, 1.0f };
+        span_input.root_transform.rotation_end = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        span_input.root_transform.angular_axis_and_angle =
+            { 0.0f, 0.0f, 1.0f, 3.14159265358979323846f / 2.0f };
+        span_input.root_transform.duration_seconds = 0.5f;
+        span_input.root_transform.inverse_duration = 2.0f;
+        span_input.root_transform.flags =
+            skin_physics::physics::root_transform_flag_valid_mask;
         animation_trajectory_track_span_input track_input;
         track_input.clip_index = 0u;
         track_input.scheduled = scheduled.values[0u];
@@ -2482,12 +2500,27 @@ namespace
             built.value.skin_records.size() == 3u &&
             built.value.skin_joint_records.size() == 3u &&
             built.value.collider_records.size() == 1u &&
+            built.value.root_transform_records.size() == 1u &&
             built.value.span_records[0u].collider_record_count == 1u &&
+            (built.value.span_records[0u].flags &
+                skin_physics::physics::animation_span_flag_has_root_motion) != 0u &&
             (built.value.span_records[0u].flags &
                 skin_physics::physics::animation_span_flag_has_kinematic_collider) != 0u &&
             built.value.span_world_time_starts ==
                 std::vector<double>({ 10.0 }),
-            "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind / Collider payload.");
+            "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind / Collider / Root Transform payload.");
+
+        animation_trajectory_packet_build_desc invalid_root_transform_packet =
+            build_desc;
+        invalid_root_transform_packet.spans[0u].root_transform.duration_seconds = 0.25f;
+        const auto invalid_root_transform_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_root_transform_packet);
+        require(!invalid_root_transform_result.success &&
+            invalid_root_transform_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span &&
+            invalid_root_transform_result.value.root_transform_records.empty(),
+            "Packet Builder must reject a Root Transform Record whose duration differs from its owning Span without publishing partial records.");
 
         animation_trajectory_packet_build_desc duplicate_collider_packet = build_desc;
         duplicate_collider_packet.spans[0u].colliders.push_back(
