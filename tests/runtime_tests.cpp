@@ -833,13 +833,24 @@ namespace
                 &cloth_advance_report).success(),
             "Cloth-only Runtime World must accept requested simulation time before the unsupported solver gate.");
         skin_physics::runtime::world_status cloth_blocked_status;
-        require(runtime.poll(first_world, &cloth_blocked_status).success() &&
+        const skin_physics::runtime::status cloth_poll_status =
+            runtime.poll(first_world, &cloth_blocked_status);
+        require(cloth_poll_status.success() &&
             cloth_blocked_status.state ==
                 skin_physics::runtime::tick_state::blocked &&
             cloth_blocked_status.last_tick_status == status_code::blocked_by_input &&
             cloth_blocked_status.gpu_committed_sequence == 0u &&
             cloth_blocked_status.pending_tick_count == 1u,
-            "Cloth topology upload must not silently enable GPU simulation or Commit before Cloth solver / Position-Writer Epoch integration.");
+            "Cloth topology upload must not silently enable GPU simulation or Commit before Cloth solver / Position-Writer Epoch integration. poll=" +
+                std::to_string(static_cast<uint32_t>(cloth_poll_status.code)) +
+                " state=" +
+                std::to_string(static_cast<uint32_t>(cloth_blocked_status.state)) +
+                " tick_status=" +
+                std::to_string(static_cast<uint32_t>(cloth_blocked_status.last_tick_status)) +
+                " committed=" +
+                std::to_string(cloth_blocked_status.gpu_committed_sequence) +
+                " pending=" +
+                std::to_string(cloth_blocked_status.pending_tick_count));
         require(runtime.reset_world(first_world).success(),
             "The explicitly blocked Cloth Reservation must be resettable without publishing a GPU Commit.");
 
