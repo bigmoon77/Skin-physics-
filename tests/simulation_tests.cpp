@@ -2681,6 +2681,21 @@ namespace
             invalid_bounds_result.value.channel_records.empty(),
             "Packet Builder must reject negative certified Bounds atomically.");
 
+        animation_trajectory_packet_build_desc skinning_only_packet = build_desc;
+        skinning_only_packet.spans[0u].bounds = {};
+        skinning_only_packet.spans[0u].bounds_are_certified = false;
+        const auto skinning_only_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, skinning_only_packet);
+        require(skinning_only_result.success &&
+            (skinning_only_result.value.span_records[0u].flags &
+                skin_physics::physics::animation_span_flag_bounds_certified) == 0u &&
+            skinning_only_result.value.span_records[0u].speed_bound == 0.0f &&
+            skinning_only_result.value.span_records[0u].acceleration_bound == 0.0f &&
+            skinning_only_result.value.span_records[0u].chord_deviation_bound == 0.0f &&
+            skinning_only_result.value.span_records[0u].quaternion_normalization_lower_bound == 0.0f,
+            "A skinning-only Packet may omit certified motion bounds, but must mark the Span as unsuitable for CCD / no-miss consumers.");
+
         animation_trajectory_packet_build_desc invalid_channel_range = build_desc;
         invalid_channel_range.spans[0u].tracks[0u].scheduled.clip.channels.pop_back();
         const auto invalid_channel_range_result =
