@@ -3029,14 +3029,21 @@ namespace
                 translating_span.message);
 
         std::vector<kinematic_collider_gpu_record> collider_records = {
-            rotating_span.value, translating_span.value, rotating_span.value
+            rotating_span.value, translating_span.value, rotating_span.value,
+            translating_span.value
         };
         collider_records[2u].maximum_local_radius = 0.25f;
+        collider_records[3u].stable_collider_id_low = 3u;
+        collider_records[3u].stable_collider_id_high = 0u;
+        collider_records[3u].duration_seconds = 0.5f;
+        collider_records[3u].inverse_duration = 2.0f;
+        collider_records[3u].linear_speed_bound *= 2.0f;
 
         std::vector<test_gpu_float4> local_contact_points = {
             { 1.0f, 0.0f, 0.0f, 0.0f },
             { 0.25f, 0.0f, 0.0f, 0.0f },
-            { 1.0f, 0.0f, 0.0f, 0.0f }
+            { 1.0f, 0.0f, 0.0f, 0.0f },
+            { 0.25f, 0.0f, 0.0f, 0.0f }
         };
 
         const kinematic_collider_sample_result expected_rotating =
@@ -3068,7 +3075,7 @@ namespace
             create_distribution_test_srv(
                 device.Get(), collider_buffer.Get(),
                 static_cast<uint32_t>(collider_records.size()));
-        const std::vector<uint32_t> collider_record_indices = { 0u, 1u, 2u };
+        const std::vector<uint32_t> collider_record_indices = { 0u, 1u, 2u, 3u };
         ComPtr<ID3D11Buffer> collider_index_buffer =
             create_distribution_test_structured_buffer(
                 device.Get(), collider_record_indices, D3D11_BIND_SHADER_RESOURCE);
@@ -3096,17 +3103,17 @@ namespace
         static_assert(sizeof(collider_sample_gpu_record) == 96u,
             "Kinematic Collider GPU output ABI must remain 96 bytes.");
 
-        const std::vector<collider_sample_gpu_record> initial_output(3u);
+        const std::vector<collider_sample_gpu_record> initial_output(4u);
         ComPtr<ID3D11Buffer> output_buffer =
             create_distribution_test_structured_buffer(
                 device.Get(), initial_output,
                 D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
         ComPtr<ID3D11ShaderResourceView> output_srv =
             create_distribution_test_srv(
-                device.Get(), output_buffer.Get(), 3u);
+                device.Get(), output_buffer.Get(), 4u);
         ComPtr<ID3D11UnorderedAccessView> output_uav =
             create_distribution_test_uav(
-                device.Get(), output_buffer.Get(), 3u);
+                device.Get(), output_buffer.Get(), 4u);
 
         constexpr uint32_t animation_input_version_low = 0x13579bdfu;
         constexpr uint32_t animation_input_version_high = 0x2468ace0u;
@@ -3156,7 +3163,7 @@ namespace
         collider_evaluate_parameters parameters;
         parameters.span_count = 1u;
         parameters.sample_count =
-            static_cast<uint32_t>(collider_records.size());
+            static_cast<uint32_t>(local_contact_points.size());
         parameters.tau_seconds = 0.5f;
         ComPtr<ID3D11Buffer> parameter_buffer =
             create_distribution_test_constant_buffer(device.Get(), parameters);
@@ -3190,8 +3197,8 @@ namespace
 
         const std::vector<collider_sample_gpu_record> actual =
             readback_render_srv<collider_sample_gpu_record>(
-                device.Get(), context.Get(), output_srv.Get(), 3u);
-        require(actual.size() == 3u,
+                device.Get(), context.Get(), output_srv.Get(), 4u);
+        require(actual.size() == 4u,
             "Kinematic Collider GPU readback must return every dispatched sample.");
 
         const auto is_near_value = [](float left, float right, float tolerance)
@@ -3231,6 +3238,8 @@ namespace
             "GPU translating Collider Transform / Linear / Angular / Contact Velocity must match the CPU oracle.");
         require(actual[2u].status != 0u,
             "GPU Kinematic Collider evaluation must fail closed when the local contact point exceeds the certified radius.");
+        require(actual[3u].status != 0u,
+            "GPU Kinematic Collider evaluation must reject a record whose duration does not match its owning Animation Span.");
 
         std::cout << "[PASS] P09_WARP_KINEMATIC_COLLIDER_EVALUATION\n";
     }
