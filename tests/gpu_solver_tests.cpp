@@ -4210,6 +4210,8 @@ namespace
         span_record.animation_input_version_high = 0x01234567u;
         span_record.span_duration_seconds = 1.0f;
         span_record.inverse_span_duration = 1.0f;
+        span_record.first_blend_record = 0u;
+        span_record.blend_record_count = 1u;
         const std::vector<animation_span_gpu_record> span_values = {
             span_record
         };
