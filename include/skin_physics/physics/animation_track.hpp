@@ -667,6 +667,7 @@ namespace skin_physics::physics
     constexpr uint32_t animation_channel_mask_scale = 1u << 2u;
 
     constexpr uint32_t animation_span_flag_has_blend = 1u << 0u;
+    constexpr uint32_t animation_span_flag_bounds_certified = 1u << 3u;
     constexpr uint32_t animation_track_flag_loop = 1u << 0u;
     constexpr uint32_t animation_track_flag_reverse_playback = 1u << 1u;
     constexpr uint32_t animation_blend_flag_enabled = 1u << 0u;
@@ -700,6 +701,9 @@ namespace skin_physics::physics
         uint32_t target_track_index = 1u;
         animation_blend_weight_curve_desc blend_curve;
         animation_trajectory_span_bounds bounds;
+        // False is permitted for skinning-only Packets. CCD / no-miss consumers
+        // must reject Spans without the Bounds-Certified flag.
+        bool bounds_are_certified = true;
     };
 
     struct animation_trajectory_packet_build_desc
