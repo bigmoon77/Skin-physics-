@@ -236,16 +236,20 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     uint index_stride = 0u;
     uint contact_buffer_count = 0u;
     uint contact_stride = 0u;
+    uint output_buffer_count = 0u;
+    uint output_stride = 0u;
     animation_spans.GetDimensions(span_buffer_count, span_stride);
     animation_cursor.GetDimensions(cursor_buffer_count, cursor_stride);
     collider_records.GetDimensions(collider_buffer_count, collider_stride);
     collider_record_indices.GetDimensions(index_buffer_count, index_stride);
     local_contact_points.GetDimensions(contact_buffer_count, contact_stride);
+    collider_samples.GetDimensions(output_buffer_count, output_stride);
 
     if (span_count == 0u || span_count > span_buffer_count ||
         cursor_buffer_count != 1u || cursor_stride != 16u ||
         span_stride != 80u || collider_stride != 128u ||
         index_stride != 4u || contact_stride != 16u ||
+        output_stride != 96u || sample_count > output_buffer_count ||
         cursor.span_record_index == INVALID_INDEX ||
         cursor.span_record_index >= span_count ||
         cursor.span_record_index >= span_buffer_count ||
@@ -270,8 +274,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         span.animation_input_version_high !=
             cursor.animation_input_version_high ||
         (span.flags & SPAN_FLAG_HAS_KINEMATIC_COLLIDER) == 0u ||
-        sample_count > index_buffer_count ||
-        sample_count > contact_buffer_count ||
+        sample_count == 0u || sample_count > index_buffer_count ||
+        sample_count > contact_buffer_count || span.collider_record_count == 0u ||
         span.first_collider_record > collider_buffer_count ||
         span.collider_record_count >
             collider_buffer_count - span.first_collider_record ||
