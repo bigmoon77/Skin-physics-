@@ -297,6 +297,7 @@ bool evaluate_root_transform(
 
     const float u = cursor_value.u_segment_start;
     float4 rotation;
+    float4 rotation_derivative;
     if (cosine > 0.9995f)
     {
         const float4 raw = lerp(q0, q1, u);
@@ -306,6 +307,11 @@ bool evaluate_root_transform(
             return false;
         }
         rotation = raw / raw_length;
+        const float4 raw_derivative =
+            (q1 - q0) * record_value.inverse_duration;
+        rotation_derivative =
+            (raw_derivative - rotation * dot(rotation, raw_derivative)) /
+            raw_length;
     }
     else
     {
@@ -316,15 +322,20 @@ bool evaluate_root_transform(
         {
             return false;
         }
+        const float angle_u = interpolation_angle * u;
+        const float cosine_u = cos(angle_u);
+        const float sine_u = sin(angle_u);
         const float4 tangent =
             (q1 - cosine * q0) / interpolation_sine;
-        rotation =
-            q0 * cos(interpolation_angle * u) +
-            tangent * sin(interpolation_angle * u);
+        rotation = q0 * cosine_u + tangent * sine_u;
+        rotation_derivative =
+            interpolation_angle * record_value.inverse_duration *
+            (-q0 * sine_u + tangent * cosine_u);
     }
 
     const float rotation_length = length(rotation);
-    if (!isfinite(rotation_length) || rotation_length <= 1.0e-12f)
+    if (!isfinite(rotation_length) || rotation_length <= 1.0e-12f ||
+        !finite4(rotation_derivative))
     {
         return false;
     }
@@ -356,9 +367,16 @@ bool evaluate_root_transform(
             u),
         1.0f);
 
+    const float4 inverse_rotation =
+        float4(-rotation.x, -rotation.y, -rotation.z, rotation.w);
+    const float4 world_angular_quaternion = float4(
+        rotation_derivative.w * inverse_rotation.xyz +
+            inverse_rotation.w * rotation_derivative.xyz +
+            cross(rotation_derivative.xyz, inverse_rotation.xyz),
+        rotation_derivative.w * inverse_rotation.w -
+            dot(rotation_derivative.xyz, inverse_rotation.xyz));
     const float3 angular_velocity =
-        record_value.angular_axis_and_angle.xyz *
-        (angle * record_value.inverse_duration);
+        2.0f * world_angular_quaternion.xyz;
     const float3 linear_velocity =
         (record_value.translation_end.xyz -
             record_value.translation_start.xyz) *
