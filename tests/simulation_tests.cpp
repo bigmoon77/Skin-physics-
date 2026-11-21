@@ -3216,18 +3216,18 @@ namespace
 
         const auto evaluated = evaluate_kinematic_collider_geometry(
             collision_mesh, span.value, 0.5);
-        const float quarter_angle = 3.14159265358979323846f / 8.0f;
+        const float half_span_rotation_angle = 3.14159265358979323846f / 4.0f;
         require(evaluated.success &&
             evaluated.world_vertices.size() == 3u,
             "Kinematic Collider geometry evaluation must transform every indexed local vertex.");
         require(std::abs(evaluated.world_vertices[0u].x -
-                (2.0f + std::cos(quarter_angle))) <= 2.0e-5f &&
+                (2.0f + std::cos(half_span_rotation_angle))) <= 2.0e-5f &&
             std::abs(evaluated.world_vertices[0u].y -
-                std::sin(quarter_angle)) <= 2.0e-5f &&
+                std::sin(half_span_rotation_angle)) <= 2.0e-5f &&
             std::abs(evaluated.world_vertices[1u].x +
-                std::sin(quarter_angle) - 2.0f) <= 2.0e-5f &&
+                std::sin(half_span_rotation_angle) - 2.0f) <= 2.0e-5f &&
             std::abs(evaluated.world_vertices[1u].y -
-                std::cos(quarter_angle)) <= 2.0e-5f,
+                std::cos(half_span_rotation_angle)) <= 2.0e-5f,
             "Kinematic Collider world vertices must apply the same shortest-arc pose used by the analytic trajectory evaluator.");
 
         require(evaluated.swept_bounds.minimum.x <= 0.0f &&
