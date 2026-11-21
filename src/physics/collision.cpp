@@ -71,6 +71,32 @@ namespace skin_physics::physics
             return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
         }
 
+        vec3 rotate_vector(const asset::vec4& rotation, const vec3& value)
+        {
+            const vec3 quaternion_vector = {
+                rotation.x, rotation.y, rotation.z
+            };
+            const vec3 twice_cross = multiply(
+                cross(quaternion_vector, value), 2.0f);
+            return add(
+                add(value, multiply(twice_cross, rotation.w)),
+                cross(quaternion_vector, twice_cross));
+        }
+
+        float outward_lower_bound(double value)
+        {
+            const float rounded = static_cast<float>(value);
+            return std::nextafter(
+                rounded, -std::numeric_limits<float>::infinity());
+        }
+
+        float outward_upper_bound(double value)
+        {
+            const float rounded = static_cast<float>(value);
+            return std::nextafter(
+                rounded, std::numeric_limits<float>::infinity());
+        }
+
         bool closest_point_triangle(
             const vec3& point,
             const std::array<vec3, 3>& triangle,
@@ -292,6 +318,136 @@ namespace skin_physics::physics
             item.message = message;
             result.diagnostics.push_back(std::move(item));
         }
+    }
+
+
+    kinematic_collider_geometry_result evaluate_kinematic_collider_geometry(
+        const asset::mesh& collision_mesh,
+        const kinematic_collider_gpu_record& span,
+        double span_local_u)
+    {
+        kinematic_collider_geometry_result result;
+        if (collision_mesh.vertices.empty() ||
+            collision_mesh.indices.empty() ||
+            collision_mesh.indices.size() % 3u != 0u)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider Mesh requires finite vertices and a non-empty triangle index list.";
+            return result;
+        }
+
+        for (uint32_t index : collision_mesh.indices)
+        {
+            if (index >= collision_mesh.vertices.size())
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider Mesh contains an out-of-range triangle index.";
+                return result;
+            }
+        }
+
+        const kinematic_collider_sample_result start =
+            evaluate_kinematic_collider_span(span, 0.0, {});
+        const kinematic_collider_sample_result end =
+            evaluate_kinematic_collider_span(span, 1.0, {});
+        if (!start.success || !end.success)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic = !start.success
+                ? "Kinematic Collider Span start is invalid: " + start.message
+                : "Kinematic Collider Span end is invalid: " + end.message;
+            return result;
+        }
+
+        const double radius = span.maximum_local_radius;
+        const double lower_x =
+            std::min<double>(span.translation_start.x, span.translation_end.x) - radius;
+        const double lower_y =
+            std::min<double>(span.translation_start.y, span.translation_end.y) - radius;
+        const double lower_z =
+            std::min<double>(span.translation_start.z, span.translation_end.z) - radius;
+        const double upper_x =
+            std::max<double>(span.translation_start.x, span.translation_end.x) + radius;
+        const double upper_y =
+            std::max<double>(span.translation_start.y, span.translation_end.y) + radius;
+        const double upper_z =
+            std::max<double>(span.translation_start.z, span.translation_end.z) + radius;
+        const double float_limit =
+            static_cast<double>(std::numeric_limits<float>::max());
+        if (!std::isfinite(lower_x) || !std::isfinite(lower_y) ||
+            !std::isfinite(lower_z) || !std::isfinite(upper_x) ||
+            !std::isfinite(upper_y) || !std::isfinite(upper_z) ||
+            lower_x < -float_limit || lower_y < -float_limit ||
+            lower_z < -float_limit || upper_x > float_limit ||
+            upper_y > float_limit || upper_z > float_limit)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider swept bounds exceed the finite float AABB range.";
+            return result;
+        }
+
+        result.swept_bounds.minimum = {
+            outward_lower_bound(lower_x),
+            outward_lower_bound(lower_y),
+            outward_lower_bound(lower_z)
+        };
+        result.swept_bounds.maximum = {
+            outward_upper_bound(upper_x),
+            outward_upper_bound(upper_y),
+            outward_upper_bound(upper_z)
+        };
+        if (!aabb_valid(result.swept_bounds))
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider swept AABB could not be represented conservatively.";
+            return result;
+        }
+
+        result.world_vertices.reserve(collision_mesh.vertices.size());
+        for (const asset::vertex& vertex : collision_mesh.vertices)
+        {
+            if (!finite(vertex.position))
+            {
+                result.world_vertices.clear();
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider Mesh contains a non-finite local vertex.";
+                return result;
+            }
+
+            const kinematic_collider_sample_result sample =
+                evaluate_kinematic_collider_span(
+                    span, span_local_u, vertex.position);
+            if (!sample.success)
+            {
+                result.world_vertices.clear();
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider vertex exceeds its certified trajectory domain: " +
+                    sample.message;
+                return result;
+            }
+
+            const vec3 world_position = add(
+                sample.value.translation,
+                rotate_vector(sample.value.rotation, vertex.position));
+            if (!finite(world_position))
+            {
+                result.world_vertices.clear();
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider Mesh evaluation produced a non-finite world vertex.";
+                return result;
+            }
+            result.world_vertices.push_back(world_position);
+        }
+
+        result.success = true;
+        return result;
     }
 
     vertex_triangle_contact find_vertex_triangle_contact(
