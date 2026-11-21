@@ -1,4 +1,5 @@
 #include "skin_physics/runtime/physics_runtime.hpp"
+#include "skin_physics/physics/animation_track.hpp"
 #include "skin_physics/physics/physics_mesh_builder.hpp"
 #include "skin_physics/runtime/detail/force_distribution.hpp"
 #include "json_test_support.hpp"
@@ -2672,10 +2673,249 @@ namespace
         require(runtime.shutdown() == status_code::ok,
             "Runtime must shut down after the thread guard regression.");
     }
+
+    void test_runtime_animation_span_cursor_gpu_advance()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Animation Span Cursor regression requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const std::filesystem::path shader_path =
+            std::filesystem::path(runtime_shader_root()) /
+            "animation_span_cursor_advance.cs.hlsl";
+        require(std::filesystem::is_regular_file(shader_path),
+            "Animation Span Cursor regression must compile the production cursor shader.");
+
+        ComPtr<ID3DBlob> bytecode;
+        ComPtr<ID3DBlob> errors;
+        const HRESULT compile_result = D3DCompileFromFile(
+            shader_path.c_str(),
+            nullptr,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE,
+            "main",
+            "cs_5_0",
+            D3DCOMPILE_ENABLE_STRICTNESS,
+            0u,
+            bytecode.GetAddressOf(),
+            errors.GetAddressOf());
+        std::string compile_diagnostic;
+        if (errors != nullptr && errors->GetBufferSize() > 0u)
+        {
+            compile_diagnostic.assign(
+                static_cast<const char*>(errors->GetBufferPointer()),
+                errors->GetBufferSize());
+        }
+        require(SUCCEEDED(compile_result),
+            "Production Animation Span Cursor shader must compile: " +
+                compile_diagnostic);
+
+        ComPtr<ID3D11ComputeShader> cursor_shader;
+        require(SUCCEEDED(device->CreateComputeShader(
+                bytecode->GetBufferPointer(),
+                bytecode->GetBufferSize(),
+                nullptr,
+                cursor_shader.GetAddressOf())),
+            "Production Animation Span Cursor compute shader creation must succeed.");
+
+        using skin_physics::physics::animation_span_gpu_record;
+        using skin_physics::physics::animation_span_cursor_gpu_record;
+        static_assert(sizeof(animation_span_gpu_record) == 80u,
+            "Animation Span Cursor shader must retain the frozen 80-byte Span ABI.");
+        static_assert(sizeof(animation_span_cursor_gpu_record) == 16u,
+            "Animation Span Cursor shader must retain the frozen 16-byte Cursor ABI.");
+
+        constexpr uint32_t version_low = 0x13579bdfu;
+        constexpr uint32_t version_high = 0x2468ace0u;
+        std::vector<animation_span_gpu_record> spans(3u);
+        spans[0u].span_id = 10u;
+        spans[1u].span_id = 11u;
+        spans[2u].span_id = 12u;
+        for (animation_span_gpu_record& span : spans)
+        {
+            span.animation_input_version_low = version_low;
+            span.animation_input_version_high = version_high;
+        }
+        spans[0u].span_duration_seconds = 0.25f;
+        spans[0u].inverse_span_duration = 4.0f;
+        spans[1u].span_duration_seconds = 0.5f;
+        spans[1u].inverse_span_duration = 2.0f;
+        spans[2u].span_duration_seconds = 0.25f;
+        spans[2u].inverse_span_duration = 4.0f;
+
+        animation_span_cursor_gpu_record initial_cursor;
+        initial_cursor.span_record_index = 0u;
+        initial_cursor.animation_input_version_low = version_low;
+        initial_cursor.animation_input_version_high = version_high;
+        initial_cursor.u_segment_start = 0.5f;
+
+        const std::vector<uint32_t> initial_status = { 0u };
+        ComPtr<ID3D11Buffer> span_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), spans, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11ShaderResourceView> span_srv =
+            create_distribution_test_srv(
+                device.Get(), span_buffer.Get(),
+                static_cast<uint32_t>(spans.size()));
+
+        ComPtr<ID3D11Buffer> cursor_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(),
+                std::vector<animation_span_cursor_gpu_record>{ initial_cursor },
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        ComPtr<ID3D11ShaderResourceView> cursor_srv =
+            create_distribution_test_srv(device.Get(), cursor_buffer.Get(), 1u);
+        ComPtr<ID3D11UnorderedAccessView> cursor_uav =
+            create_distribution_test_uav(device.Get(), cursor_buffer.Get(), 1u);
+
+        ComPtr<ID3D11Buffer> status_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), initial_status, D3D11_BIND_SHADER_RESOURCE |
+                    D3D11_BIND_UNORDERED_ACCESS);
+        ComPtr<ID3D11ShaderResourceView> status_srv =
+            create_distribution_test_srv(device.Get(), status_buffer.Get(), 1u);
+        ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_distribution_test_uav(device.Get(), status_buffer.Get(), 1u);
+
+        struct alignas(16) cursor_parameters
+        {
+            uint32_t span_count = 0u;
+            float segment_duration_seconds = 0.0f;
+            uint32_t reserved[2] = {};
+        };
+        static_assert(sizeof(cursor_parameters) == 16u,
+            "Animation Span Cursor parameter buffer must match the 16-byte HLSL ABI.");
+        cursor_parameters parameters;
+        parameters.span_count = static_cast<uint32_t>(spans.size());
+        ComPtr<ID3D11Buffer> parameter_buffer =
+            create_distribution_test_constant_buffer(device.Get(), parameters);
+
+        auto dispatch = [&](float segment_duration_seconds)
+        {
+            parameters.segment_duration_seconds = segment_duration_seconds;
+            context->UpdateSubresource(
+                parameter_buffer.Get(), 0u, nullptr, &parameters, 0u, 0u);
+
+            ID3D11ShaderResourceView* shader_resources[] = {
+                span_srv.Get()
+            };
+            ID3D11UnorderedAccessView* unordered_access_views[] = {
+                cursor_uav.Get(), status_uav.Get()
+            };
+            ID3D11Buffer* constant_buffers[] = {
+                parameter_buffer.Get()
+            };
+            context->CSSetShader(cursor_shader.Get(), nullptr, 0u);
+            context->CSSetShaderResources(0u, 1u, shader_resources);
+            context->CSSetUnorderedAccessViews(
+                0u, 2u, unordered_access_views, nullptr);
+            context->CSSetConstantBuffers(0u, 1u, constant_buffers);
+            context->Dispatch(1u, 1u, 1u);
+
+            ID3D11ShaderResourceView* null_shader_resources[] = { nullptr };
+            ID3D11UnorderedAccessView* null_unordered_access_views[] = {
+                nullptr, nullptr
+            };
+            ID3D11Buffer* null_constant_buffers[] = { nullptr };
+            context->CSSetShaderResources(
+                0u, 1u, null_shader_resources);
+            context->CSSetUnorderedAccessViews(
+                0u, 2u, null_unordered_access_views, nullptr);
+            context->CSSetConstantBuffers(
+                0u, 1u, null_constant_buffers);
+            context->CSSetShader(nullptr, nullptr, 0u);
+            context->Flush();
+        };
+
+        auto read_cursor = [&]()
+        {
+            const std::vector<animation_span_cursor_gpu_record> values =
+                readback_render_srv<animation_span_cursor_gpu_record>(
+                    device.Get(), context.Get(), cursor_srv.Get(), 1u);
+            require(values.size() == 1u,
+                "Animation Span Cursor readback must return one record.");
+            return values[0u];
+        };
+        auto read_status = [&]()
+        {
+            const std::vector<uint32_t> values =
+                readback_render_srv<uint32_t>(
+                    device.Get(), context.Get(), status_srv.Get(), 1u);
+            require(values.size() == 1u,
+                "Animation Span Cursor Status readback must return one word.");
+            return values[0u];
+        };
+        auto clear_status = [&]()
+        {
+            const uint32_t clear_value = 0u;
+            context->UpdateSubresource(
+                status_buffer.Get(), 0u, nullptr, &clear_value, 0u, 0u);
+        };
+
+        dispatch(0.125f);
+        animation_span_cursor_gpu_record cursor = read_cursor();
+        require(cursor.span_record_index == 1u &&
+            cursor.animation_input_version_low == version_low &&
+            cursor.animation_input_version_high == version_high &&
+            cursor.u_segment_start == 0.0f &&
+            read_status() == 0u,
+            "Cursor advancement at an exact Span boundary must select the next immutable Span at u=0 without changing Packet Version.");
+
+        dispatch(0.25f);
+        cursor = read_cursor();
+        require(cursor.span_record_index == 1u &&
+            std::abs(cursor.u_segment_start - 0.5f) <= 1.0e-6f &&
+            read_status() == 0u,
+            "Cursor advancement inside a Span must add Segment World-Time divided by that Span's duration.");
+
+        dispatch(0.25f);
+        cursor = read_cursor();
+        require(cursor.span_record_index == 2u &&
+            cursor.u_segment_start == 0.0f &&
+            read_status() == 0u,
+            "Cursor advancement must cross exactly one scheduled boundary while preserving increasing World-Time.");
+
+        dispatch(0.25f);
+        cursor = read_cursor();
+        require(cursor.span_record_index == 2u &&
+            cursor.u_segment_start == 1.0f &&
+            read_status() == 0u,
+            "The final Packet Span must hold its terminal normalized coordinate without reading beyond the Span table.");
+
+        cursor = initial_cursor;
+        context->UpdateSubresource(
+            cursor_buffer.Get(), 0u, nullptr, &cursor, 0u, 0u);
+        clear_status();
+        dispatch(0.2f);
+        const animation_span_cursor_gpu_record rejected_overshoot = read_cursor();
+        require(rejected_overshoot.span_record_index == initial_cursor.span_record_index &&
+            rejected_overshoot.u_segment_start == initial_cursor.u_segment_start &&
+            (read_status() & (1u << 5u)) != 0u,
+            "A Segment duration that crosses more than the current Span must fail closed without mutating the Cursor.");
+
+        cursor = initial_cursor;
+        cursor.animation_input_version_low += 1u;
+        context->UpdateSubresource(
+            cursor_buffer.Get(), 0u, nullptr, &cursor, 0u, 0u);
+        clear_status();
+        dispatch(0.125f);
+        const animation_span_cursor_gpu_record rejected_version = read_cursor();
+        require(rejected_version.span_record_index == cursor.span_record_index &&
+            rejected_version.animation_input_version_low ==
+                cursor.animation_input_version_low &&
+            rejected_version.u_segment_start == cursor.u_segment_start &&
+            (read_status() & (1u << 5u)) != 0u,
+            "A stale Cursor Input Version must fail closed without modifying the immutable Packet or Cursor.");
+
+        std::cout << "[PASS] P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE\n";
+    }
+
+
 }
 
 int run_runtime_tests()
 {
+    test_runtime_animation_span_cursor_gpu_advance();
     test_runtime_force_distribution_gpu_cpu_parity();
     std::cout << "[PASS] R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY\n";
     test_runtime_initialization_and_world_handles();
