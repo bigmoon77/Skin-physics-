@@ -728,8 +728,8 @@
             "All non-empty Animation Trajectory record arrays upload as D3D11_USAGE_IMMUTABLE StructuredBuffers with shader-resource-only binding and exact CPU record stride",
             "The mutable per-World Segment Cursor is a separate D3D11_USAGE_DEFAULT StructuredBuffer with both SRV and UAV views",
             "Packet Version, per-Span record ranges, Track Channel ranges, Span-local Blend Track indices, Skin Joint ranges and certified Bounds are validated before upload",
-            "Empty optional Blend / Collider tables remain absent and are represented by zero element counts",
-            "WARP readback of the uploaded immutable Span / Track / Channel / Skin / Skin Joint records and initial Cursor matches the source CPU records byte-for-byte",
+            "An empty optional Blend table remains absent while a nonempty Collider table uploads with its exact count and immutable StructuredBuffer stride",
+            "WARP byte-for-byte readback covers immutable Span / Track / Channel / Skin / Skin Joint / Kinematic Collider records and the independent mutable Cursor",
             "An invalid Cursor Version or invalid Span-local Blend reference fails without replacing the previously uploaded Packet resources",
             "The 128-byte Kinematic Collider StructuredBuffer is immutable, its Span first/count range and Has-Kinematic-Collider flag agree, and WARP readback preserves every Collider Record byte"
           ]
@@ -829,7 +829,7 @@
             "Arbitrary Span-local evaluation returns normalized Transform, analytic linear velocity and world-space angular velocity",
             "Contact-point velocity is evaluated as linear velocity plus world angular velocity cross the rotated local contact radius",
             "Equivalent positive / negative quaternion hemispheres produce the same shortest-arc trajectory",
-            "Zero quaternions, malformed identity, under-conservative bounds, out-of-radius contact points and spans crossing teleport boundaries fail closed",
+            "A Span ending at a Teleport boundary holds the pre-teleport Pose with zero Linear / Angular Velocity; the following Span starts at the teleported sample and no interpolation crosses the discontinuity",
             "Immutable GPU Packet Builder appends Collider Records into each owning Span's explicit first/count range and rejects duplicate stable Collider IDs or mismatched durations"
           ]
         },
@@ -841,6 +841,18 @@
             "Every in-Tick Kinematic Collider sample time is inserted into the shared World Integration Segment boundary table",
             "Kinematic Collider sample boundaries are merged with World Substep, Root Transform, Animation, Force and Impulse boundaries without dropping distinct times",
             "Unsupported Collider submission remains BLOCKED_BY_INPUT after CPU Segment planning; the scheduler must not bypass the unsupported collision path"
+          ]
+        },
+        {
+          "id": "R1_WARP_ROOT_ONLY_SOFT_BODY_TRANSFORM",
+          "checks": [
+            "A fully skinned Soft Body Model with ordered Root Transform Samples but no caller-supplied Animation Clip / Track is admitted through the Runtime-private static-pose Clip adapter",
+            "The root-only adapter reuses the production GPU Channel / Hierarchy / Skin Matrix / LBS / Kelvin–Voigt Tracking path for every Skinned Mesh consumer in the Model",
+            "Root translation and shortest-arc Quaternion samples split exact World Integration Segment boundaries and provide analytic Root Matrix derivatives",
+            "A Teleport sample resets Root derivative at the discontinuity and does not interpolate velocity through the jump",
+            "The Tick commits successfully and every Skinned Mesh Render Candidate reflects the same root-only Transform trajectory",
+            "Root-only input on an unsupported unskinned Soft Body path remains BLOCKED_BY_INPUT without GPU submission or Commit",
+            "Reset restores the initial State Bank and clears Root Transform Sample history"
           ]
         }
       ],
