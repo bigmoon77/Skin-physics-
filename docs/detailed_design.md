@@ -499,6 +499,16 @@ TRS NodeのLocal MatrixはQuaternion / Scale / Translationから構築する。L
 
 Non-finite Transform / Matrix、非正Scale、Zero Quaternion、Self-Parent、非Topological Parent、Cycle、Static Matrix Index不正はHierarchy StatusへFailure Bitを立てる。WARP Golden `P09_WARP_ANIMATION_NODE_HIERARCHY`は3階層TRS、Static Matrix Child、Global Translation / Derivativeの親子合成と不正Parent拒否を検証する。Model Root Transform、Mesh Node Inverse、Skin-specific IBMの合成は別Stageで扱う。
 
+#### GPU Skin Matrix / Derivative Evaluation
+
+`shaders/runtime/animation_skin_matrix_evaluate.cs.hlsl`はGlobal Matrix / Derivative、Immutable Skin Record / Skin Joint Record、Skin-specific Inverse Bind Matrix Bufferを読み、Skin-local Joint順のSkin Matrix / Derivativeを出力する。t0=Global Matrix、t1=Global Derivative、t2=Skin Record、t3=Skin Joint Record、t4=Inverse Bind Matrix、t5=Local Transform Node Metadata、u0=Skin Matrix、u1=Skin Matrix Derivative、u2=Skin Matrix Statusとする。
+
+Skin Recordの`mesh_node_channel_offset`、Skin Joint Recordの`joint_channel_offset`はTrack Channel Range内の相対Indexである。GPUはMesh / Joint ChannelのAsset Node Indexを照合し、Skin Joint Recordの絶対IBM Indexから正しいSkin-specific Inverse Bind Matrixを取得する。出力BufferはSkin-local Joint順であり、Asset Skin Joint Bufferの`first_joint_record` Offsetは出力先へ持ち込まない。
+
+Affine Mesh Global MatrixをAとすると、Inverse MatrixはA^-1、Derivativeは`Ainv_dot = -A^-1 * A_dot * A^-1`とする。Skin Matrixは`S = A^-1 * J * IBM`、Derivativeは`S_dot = Ainv_dot * J * IBM + A^-1 * J_dot * IBM`で計算する。Inverseは3x3 Linear PartのCofactor / Determinantで構築し、Affine Translationを反映する。Singular / ill-conditioned Matrix、Non-affine Matrix / Derivative、Node Identity不一致、Skin / Joint / IBM Range不正はStatus Failureとする。
+
+WARP Golden `P09_WARP_ANIMATION_SKIN_MATRICES`はMesh Global Translation / Velocity、Joint Global Translation / Velocity、Skin-specific IBMを使い、Skin MatrixとProduct-Rule DerivativeをCPU解析値と比較する。Skin Joint RangeにPrefix Recordを置き、出力がSkin-local Joint Indexへ正しく詰められることも検証する。Singular Mesh Global MatrixはFail-Closedとなる。Model Root Transformの適用とRuntime Packet / CursorからのDispatchは後続Stageで接続する。
+
 #### Channel補間と時間微分
 
 Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / Scaleの各Componentは次の多項式で表す。
