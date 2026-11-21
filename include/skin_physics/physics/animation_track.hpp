@@ -522,6 +522,7 @@ namespace skin_physics::physics
     struct animation_channel_gpu_record
     {
         uint32_t node_index = asset::invalid_index;
+        // Parent Channel offset is local to this Track's Channel range.
         uint32_t parent_index = asset::invalid_index;
         // First encountered IBM for this Joint Node (compatibility / diagnostics).
         // Skin-specific LBS uses animation_skin_joint_gpu_record instead.
