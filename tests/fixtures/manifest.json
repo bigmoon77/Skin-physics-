@@ -818,6 +818,19 @@
             "Runtime graph advances the Cursor once per Mesh / Integration Segment after LBS and before Soft Body Integrate; Cursor diagnostics share the Segment Status consumed by Integrate",
             "A single immutable multi-Span Packet and one mutable Cursor are retained per Model / Tick and reused across all Integration Segments and Skinned Mesh consumers."
           ]
+        },
+        {
+          "id": "P09_KINEMATIC_COLLIDER_TRAJECTORY",
+          "checks": [
+            "Kinematic Collider sample-pair input must bracket the complete requested World Span; missing future / past samples fail closed without extrapolation",
+            "The immutable 128-byte Collider Record preserves stable Collider ID and sample-pair ID, Span-local endpoint translations / shortest-arc quaternions, duration and inverse duration",
+            "Translation Speed, World Angular Speed, Maximum Local Radius and rotational Sagitta Bounds are outward-rounded and conservative for the stored float32 trajectory",
+            "Arbitrary Span-local evaluation returns normalized Transform, analytic linear velocity and world-space angular velocity",
+            "Contact-point velocity is evaluated as linear velocity plus world angular velocity cross the rotated local contact radius",
+            "Equivalent positive / negative quaternion hemispheres produce the same shortest-arc trajectory",
+            "Zero quaternions, malformed identity, under-conservative bounds, out-of-radius contact points and spans crossing teleport boundaries fail closed",
+            "Immutable GPU Packet Builder appends Collider Records into each owning Span's explicit first/count range and rejects duplicate stable Collider IDs or mismatched durations"
+          ]
         }
       ],
       "automated_cases": [
