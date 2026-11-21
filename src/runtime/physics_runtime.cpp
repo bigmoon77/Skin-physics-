@@ -3817,6 +3817,9 @@ namespace skin_physics::runtime
             const model_animation_tick_schedule& schedule,
             soft_body_mesh_work_state& work,
             double world_time,
+            uint64_t animation_input_version,
+            std::vector<physics::animation_trajectory_gpu_resources>&
+                out_animation_packet_resources,
             simulation::d3d11_compute_graph& graph,
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
                 out_segment_parameter_buffers,
@@ -4126,6 +4129,8 @@ namespace skin_physics::runtime
                 out_segment_shader_resource_views,
             std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>&
                 out_segment_unordered_access_views,
+            std::vector<physics::animation_trajectory_gpu_resources>&
+                out_animation_packet_resources,
             force_distribution_global_scratch& out_force_distribution_scratch,
             std::string& diagnostic)
         {
@@ -4527,6 +4532,8 @@ namespace skin_physics::runtime
                                 *animation_schedule_iterator,
                                 work,
                                 segment.start_time,
+                                input_snapshot.version,
+                                out_animation_packet_resources,
                                 graph,
                                 out_segment_parameter_buffers,
                                 out_segment_shader_resource_views,
@@ -5971,6 +5978,8 @@ namespace skin_physics::runtime
             std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>
                 segment_unordered_access_views;
             force_distribution_global_scratch force_distribution_scratch;
+            std::vector<physics::animation_trajectory_gpu_resources>
+                animation_packet_resources;
             std::string diagnostic;
             simulation::compute_pass_desc begin_pass;
             begin_pass.name = "tick_begin_control";
@@ -6006,6 +6015,7 @@ namespace skin_physics::runtime
                         segment_parameter_buffers,
                         segment_shader_resource_views,
                         segment_unordered_access_views,
+                        animation_packet_resources,
                         force_distribution_scratch,
                         diagnostic))
                 {
@@ -6169,6 +6179,8 @@ namespace skin_physics::runtime
                 std::move(segment_shader_resource_views);
             in_flight.segment_unordered_access_views =
                 std::move(segment_unordered_access_views);
+            in_flight.animation_packet_resources =
+                std::move(animation_packet_resources);
             in_flight.force_distribution_scratch =
                 std::move(force_distribution_scratch);
             in_flight.expected_predecessor_sequence =
