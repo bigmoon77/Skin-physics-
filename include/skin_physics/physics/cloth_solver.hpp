@@ -144,9 +144,13 @@ namespace skin_physics::physics
     static_assert(sizeof(cloth_vertex_constraint_ref) == 16u,
         "Cloth Vertex-to-Constraint CSR reference ABI must remain 16 bytes.");
 
+    static_assert(sizeof(asset::vec4) == 16u,
+        "Cloth Rest Position GPU ABI must remain one float4.");
+
     struct cloth_gpu_topology_packet
     {
         uint32_t vertex_count = 0u;
+        std::vector<asset::vec4> rest_positions;
         std::vector<cloth_gpu_stretch_constraint_record> stretch_constraints;
         std::vector<cloth_stretch_color_range> stretch_color_ranges;
         std::vector<uint32_t> stretch_color_constraint_indices;
