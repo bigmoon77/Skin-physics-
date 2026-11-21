@@ -3386,6 +3386,8 @@ namespace
         using skin_physics::physics::gpu_matrix4x4;
         using skin_physics::physics::kinematic_collider_flag_valid;
         using skin_physics::physics::kinematic_collider_gpu_record;
+        using skin_physics::physics::root_transform_gpu_record;
+        using skin_physics::physics::root_transform_flag_valid_mask;
 
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
