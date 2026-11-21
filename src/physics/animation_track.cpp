@@ -5321,12 +5321,6 @@ namespace skin_physics::physics
                 kinematic_collider_span_error::sample_pair_does_not_bracket_span,
                 "Kinematic Collider sample pair does not bracket the complete requested World Span.");
         }
-        if (desc.sample_end_is_teleport)
-        {
-            return make_collider_build_error(
-                kinematic_collider_span_error::teleport_crossing,
-                "Kinematic Collider Span cannot interpolate across a teleport sample boundary.");
-        }
         if (!finite(desc.sample_start_translation) ||
             !finite(desc.sample_end_translation) ||
             !finite_asset_vec4_value(desc.sample_start_rotation) ||
@@ -5384,20 +5378,32 @@ namespace skin_physics::physics
                 "Kinematic Collider sample pair cannot represent the requested Span endpoints.");
         }
 
-        const asset::vec3 span_start_translation = lerp(
-            desc.sample_start_translation,
-            desc.sample_end_translation,
-            static_cast<float>(span_start_u));
-        const asset::vec3 span_end_translation = lerp(
-            desc.sample_start_translation,
-            desc.sample_end_translation,
-            static_cast<float>(span_end_u));
-        const quaternion span_start_rotation = slerp_quaternion(
-            sample_start_rotation, sample_end_rotation,
-            static_cast<float>(span_start_u));
-        const quaternion span_end_rotation = slerp_quaternion(
-            sample_start_rotation, sample_end_rotation,
-            static_cast<float>(span_end_u));
+        const asset::vec3 span_start_translation =
+            desc.sample_end_is_teleport
+                ? desc.sample_start_translation
+                : lerp(
+                    desc.sample_start_translation,
+                    desc.sample_end_translation,
+                    static_cast<float>(span_start_u));
+        const asset::vec3 span_end_translation =
+            desc.sample_end_is_teleport
+                ? desc.sample_start_translation
+                : lerp(
+                    desc.sample_start_translation,
+                    desc.sample_end_translation,
+                    static_cast<float>(span_end_u));
+        const quaternion span_start_rotation =
+            desc.sample_end_is_teleport
+                ? sample_start_rotation
+                : slerp_quaternion(
+                    sample_start_rotation, sample_end_rotation,
+                    static_cast<float>(span_start_u));
+        const quaternion span_end_rotation =
+            desc.sample_end_is_teleport
+                ? sample_start_rotation
+                : slerp_quaternion(
+                    sample_start_rotation, sample_end_rotation,
+                    static_cast<float>(span_end_u));
         if (!finite(span_start_translation) ||
             !finite(span_end_translation) ||
             !finite(span_start_rotation) ||
