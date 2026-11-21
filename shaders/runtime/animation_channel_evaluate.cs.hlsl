@@ -250,9 +250,21 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     output_record.parent_index = channel.parent_index;
     output_record.node_role_flags = channel.node_role_flags;
 
+    const uint translation_mode =
+        channel.interpolation_flags & 3u;
+    const uint rotation_mode =
+        (channel.interpolation_flags >> 2u) & 3u;
+    const uint scale_mode =
+        (channel.interpolation_flags >> 4u) & 3u;
     if (channel.node_index == 0xffffffffu ||
+        (channel.parent_index != 0xffffffffu &&
+            channel.parent_index >= channel_count) ||
         (channel.channel_mask & ~(CHANNEL_TRANSLATION |
-            CHANNEL_ROTATION | CHANNEL_SCALE)) != 0u)
+            CHANNEL_ROTATION | CHANNEL_SCALE)) != 0u ||
+        (channel.interpolation_flags & ~63u) != 0u ||
+        translation_mode > 2u ||
+        rotation_mode > 2u ||
+        scale_mode > 2u)
     {
         fail_channel(local_index);
         return;
