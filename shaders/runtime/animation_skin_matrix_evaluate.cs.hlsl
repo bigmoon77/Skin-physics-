@@ -80,6 +80,15 @@ bool affine_matrix(gpu_matrix4x4 value)
         abs(value.column3.w - 1.0f) <= tolerance;
 }
 
+bool affine_derivative_matrix(gpu_matrix4x4 value)
+{
+    const float tolerance = 1.0e-4f;
+    return abs(value.column0.w) <= tolerance &&
+        abs(value.column1.w) <= tolerance &&
+        abs(value.column2.w) <= tolerance &&
+        abs(value.column3.w) <= tolerance;
+}
+
 float4 transform_column_major(gpu_matrix4x4 matrix_value, float4 value)
 {
     return matrix_value.column0 * value.x +
@@ -142,7 +151,7 @@ bool invert_affine_matrix(
     const float determinant = dot(a, row0);
     const float scale = max(length(a), max(length(b), length(c)));
     const float determinant_tolerance =
-        1.0e-8f * max(1.0f, scale * scale * scale);
+        1.0e-12f * max(1.0f, scale * scale * scale);
     if (!isfinite(determinant) || !isfinite(scale) ||
         scale <= 0.0f ||
         abs(determinant) <= determinant_tolerance)
@@ -201,9 +210,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         skin.joint_count >
             skin_joint_record_count - skin.first_joint_record)
     {
-        fail_joint(min(
-            skin.first_joint_record + local_joint_index,
-            max(1u, skin_joint_record_count) - 1u));
+        uint previous_status = 0u;
+        InterlockedOr(skin_matrix_status[0], 1u, previous_status);
         return;
     }
 
@@ -246,11 +254,11 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     gpu_matrix4x4 inverse_mesh;
     if (!invert_affine_matrix(mesh_global, inverse_mesh) ||
         !finite_matrix(mesh_global_derivative) ||
-        !affine_matrix(mesh_global_derivative) ||
+        !affine_derivative_matrix(mesh_global_derivative) ||
         !finite_matrix(joint_global) ||
         !affine_matrix(joint_global) ||
         !finite_matrix(joint_global_derivative) ||
-        !affine_matrix(joint_global_derivative) ||
+        !affine_derivative_matrix(joint_global_derivative) ||
         !finite_matrix(inverse_bind) ||
         !affine_matrix(inverse_bind))
     {
