@@ -4495,9 +4495,10 @@ namespace
                 device.Get(), derivative_buffer.Get(), 2u);
 
         const std::vector<animation_skin_gpu_record> skins = {
-            { 0u, 0u, 0u, 1u }
+            { 0u, 0u, 1u, 1u }
         };
         const std::vector<animation_skin_joint_gpu_record> joints = {
+            { invalid_index, invalid_index, invalid_index, 0u },
             { 1u, 0u, 1u, 0u }
         };
         const ComPtr<ID3D11Buffer> skin_buffer =
@@ -4511,7 +4512,7 @@ namespace
                 device.Get(), skin_buffer.Get(), 1u);
         const ComPtr<ID3D11ShaderResourceView> joint_srv =
             create_structured_srv<animation_skin_joint_gpu_record>(
-                device.Get(), joint_buffer.Get(), 1u);
+                device.Get(), joint_buffer.Get(), 2u);
 
         std::vector<gpu_matrix4x4> inverse_bind_matrices(1u);
         inverse_bind_matrices[0u].column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
@@ -4551,7 +4552,7 @@ namespace
             uint32_t skin_record_index = 0u;
             uint32_t skin_record_count = 1u;
             uint32_t track_channel_count = 2u;
-            uint32_t skin_joint_record_count = 1u;
+            uint32_t skin_joint_record_count = 2u;
             uint32_t inverse_bind_matrix_count = 1u;
             uint32_t expected_mesh_node_index = 0u;
             uint32_t reserved[2] = {};
