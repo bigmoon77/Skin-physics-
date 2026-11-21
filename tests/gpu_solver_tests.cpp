@@ -886,8 +886,10 @@ namespace
             gpu_positions.push_back(
                 { position.x, position.y, position.z, 0.0f });
         }
-        const std::vector<float> inverse_masses(
+        std::vector<float> inverse_masses(
             source_positions.size(), 1.0f);
+        // Exercise pinned-vertex mass weighting in both Contribution and Gather.
+        inverse_masses[0u] = 0.0f;
 
         const float delta_time = static_cast<float>(
             input.at("fixed_delta_time").as_number());
