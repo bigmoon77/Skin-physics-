@@ -316,7 +316,8 @@
             "Runtime Model registration transactionally uploads immutable Rest Position, Stretch / Shear / Bend, graph-color, Vertex-to-Constraint CSR and Segment-local Lambda buffers",
             "Runtime creates two SRV / UAV Position State Banks and two Velocity State Banks plus a validated inverse-mass SRV",
             "Malformed inverse-mass counts, duplicate or cross-mode Mesh Assets, topology mismatches and invalid Cloth solver settings fail before publishing the Model Handle",
-            "GPU resources remain owned by the Model and are released on successful Model destruction; Cloth solver dispatch and Position-Writer Epoch integration remain explicitly pending"
+            "GPU resources remain owned by the Model and are released on successful Model destruction; Cloth solver dispatch and Position-Writer Epoch integration remain explicitly pending",
+            "A Cloth-only World remains BLOCKED_BY_INPUT with zero GPU Commit until Cloth prediction / XPBD / Position-Writer Epoch integration is complete; Reset releases the pending Reservation"
           ]
         }
       ],
