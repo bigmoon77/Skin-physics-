@@ -4541,7 +4541,10 @@ namespace skin_physics::physics
                     collider.angular_axis_and_angle.w < 0.0f ||
                     collider.angular_axis_and_angle.w > 3.1416927f ||
                     !std::isfinite(angular_axis_length) ||
-                    std::abs(angular_axis_length - 1.0) > 1.0e-3 ||
+                    (collider.angular_axis_and_angle.w >
+                        static_cast<float>(quaternion_epsilon)
+                        ? std::abs(angular_axis_length - 1.0) > 1.0e-3
+                        : angular_axis_length > 1.0e-3) ||
                     !std::isfinite(collider.duration_seconds) ||
                     collider.duration_seconds <= 0.0f ||
                     !approximately_equal_double(
@@ -4910,6 +4913,11 @@ namespace skin_physics::physics
                 static_cast<uint32_t>(
                     candidate.collider_records.size()) -
                 span_record.first_collider_record;
+            if (span_record.collider_record_count > 0u)
+            {
+                span_record.flags |=
+                    animation_span_flag_has_kinematic_collider;
+            }
             if (input.has_blend)
             {
                 const double blend_duration =
@@ -5432,8 +5440,9 @@ namespace skin_physics::physics
         const double rotation_angle = 2.0 * std::atan2(
             relative_sine,
             std::max(0.0, static_cast<double>(relative_rotation.w)));
-        asset::vec3 angular_axis = { 1.0f, 0.0f, 0.0f };
-        if (relative_sine > 1.0e-10)
+        asset::vec3 angular_axis = {};
+        if (rotation_angle > static_cast<double>(quaternion_epsilon) &&
+            relative_sine > 1.0e-10)
         {
             angular_axis = {
                 static_cast<float>(relative_rotation.x / relative_sine),
@@ -5620,10 +5629,13 @@ namespace skin_physics::physics
             raw_end_squared <= quaternion_epsilon ||
             !finite(start) || !finite(end) ||
             !std::isfinite(axis_length) ||
-            std::abs(axis_length - 1.0) > 1.0e-3 ||
             !std::isfinite(span.angular_axis_and_angle.w) ||
             span.angular_axis_and_angle.w < 0.0f ||
-            span.angular_axis_and_angle.w > 3.1416927f)
+            span.angular_axis_and_angle.w > 3.1416927f ||
+            (span.angular_axis_and_angle.w >
+                static_cast<float>(quaternion_epsilon)
+                ? std::abs(axis_length - 1.0) > 1.0e-3
+                : axis_length > 1.0e-3))
         {
             return make_collider_sample_error(
                 kinematic_collider_span_error::invalid_transform,
