@@ -3844,6 +3844,209 @@ namespace
         std::cout << "[PASS] P09_WARP_PHYSICS_MESH_SKINNING_TARGETS\n";
     }
 
+    struct alignas(16) gpu_animation_channel_evaluation_parameters
+    {
+        uint32_t channel_count = 0u;
+        uint32_t first_channel_record = 0u;
+        float span_local_u = 0.0f;
+        float inverse_span_duration = 0.0f;
+    };
+
+    struct alignas(16) gpu_animation_node_local_transform_record
+    {
+        gpu_float4 translation;
+        gpu_float4 translation_velocity;
+        gpu_float4 rotation;
+        gpu_float4 rotation_velocity;
+        gpu_float4 scale;
+        gpu_float4 scale_velocity;
+        uint32_t node_index = 0u;
+        uint32_t parent_index = 0u;
+        uint32_t node_role_flags = 0u;
+        uint32_t status = 0u;
+    };
+
+    static_assert(sizeof(gpu_animation_channel_evaluation_parameters) == 16u);
+    static_assert(sizeof(gpu_animation_node_local_transform_record) == 112u);
+
+    void test_phase09_warp_animation_channel_evaluation()
+    {
+        using skin_physics::asset::invalid_index;
+        using skin_physics::physics::animation_channel_gpu_record;
+        using skin_physics::physics::animation_channel_mask_rotation;
+        using skin_physics::physics::animation_channel_mask_scale;
+        using skin_physics::physics::animation_channel_mask_translation;
+        using skin_physics::physics::gpu_float4;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Animation Channel GPU Evaluator requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_directory().parent_path().parent_path() /
+                "shaders" / "runtime" / "animation_channel_evaluate.cs.hlsl",
+            "main");
+
+        std::vector<animation_channel_gpu_record> channels(2u);
+        animation_channel_gpu_record& linear_cubic = channels[0u];
+        linear_cubic.node_index = 0u;
+        linear_cubic.parent_index = invalid_index;
+        linear_cubic.channel_mask =
+            animation_channel_mask_translation |
+            animation_channel_mask_rotation |
+            animation_channel_mask_scale;
+        linear_cubic.interpolation_flags =
+            1u | (1u << 2u) | (2u << 4u);
+        linear_cubic.translation_c0 = { 0.0f, 1.0f, 2.0f, 0.0f };
+        linear_cubic.translation_c1 = { 2.0f, 0.0f, 0.0f, 0.0f };
+        linear_cubic.rotation_parameter0 = {
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        linear_cubic.rotation_parameter1 = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        linear_cubic.scale_c0 = { 1.0f, 1.0f, 1.0f, 0.0f };
+        linear_cubic.scale_c2 = { 2.0f, 0.0f, 0.0f, 0.0f };
+
+        animation_channel_gpu_record& step = channels[1u];
+        step.node_index = 1u;
+        step.parent_index = 0u;
+        step.channel_mask =
+            animation_channel_mask_translation |
+            animation_channel_mask_rotation |
+            animation_channel_mask_scale;
+        step.translation_c0 = { 5.0f, 6.0f, 7.0f, 0.0f };
+        step.rotation_parameter0 = { 0.0f, 0.0f, 0.0f, 1.0f };
+        step.scale_c0 = { 2.0f, 2.0f, 2.0f, 0.0f };
+
+        const ComPtr<ID3D11Buffer> channel_buffer =
+            create_structured_buffer(
+                device.Get(), channels, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> channel_srv =
+            create_structured_srv<animation_channel_gpu_record>(
+                device.Get(), channel_buffer.Get(),
+                static_cast<uint32_t>(channels.size()));
+
+        const std::vector<gpu_animation_node_local_transform_record> empty_outputs(
+            channels.size());
+        const std::vector<uint32_t> clear_status(1u, 0u);
+        const ComPtr<ID3D11Buffer> output_buffer =
+            create_structured_buffer(
+                device.Get(), empty_outputs, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> output_uav =
+            create_structured_uav<gpu_animation_node_local_transform_record>(
+                device.Get(), output_buffer.Get(),
+                static_cast<uint32_t>(empty_outputs.size()));
+        const ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), status_buffer.Get(), 1u);
+
+        gpu_animation_channel_evaluation_parameters parameters;
+        parameters.channel_count = static_cast<uint32_t>(channels.size());
+        parameters.first_channel_record = 0u;
+        parameters.span_local_u = 0.5f;
+        parameters.inverse_span_duration = 2.0f;
+        const ComPtr<ID3D11Buffer> parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &parameters, sizeof(parameters));
+
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            { channel_srv.Get() },
+            { output_uav.Get(), status_uav.Get() },
+            parameter_buffer.Get(),
+            1u);
+
+        const std::vector<gpu_animation_node_local_transform_record> outputs =
+            readback_structured_buffer<gpu_animation_node_local_transform_record>(
+                device.Get(), context.Get(), output_buffer.Get(),
+                static_cast<uint32_t>(channels.size()));
+        const std::vector<uint32_t> status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+
+        require(status[0u] == 0u &&
+            outputs[0u].status == 0u &&
+            outputs[1u].status == 0u,
+            "Valid immutable Channel records must evaluate without setting the GPU Animation status failure bit.");
+        require(outputs[0u].node_index == 0u &&
+            outputs[0u].parent_index == invalid_index &&
+            std::abs(outputs[0u].translation.x - 1.0f) <= 1.0e-6f &&
+            std::abs(outputs[0u].translation.y - 1.0f) <= 1.0e-6f &&
+            std::abs(outputs[0u].translation_velocity.x - 4.0f) <= 1.0e-6f &&
+            std::abs(outputs[0u].scale.x - 1.5f) <= 1.0e-6f &&
+            std::abs(outputs[0u].scale_velocity.x - 4.0f) <= 1.0e-6f,
+            "GPU LINEAR Translation and CUBICSPLINE Scale must preserve Span-local values and analytic World-Time derivatives.");
+
+        const float expected_rotation_z =
+            std::sin(3.14159265358979323846f / 8.0f);
+        const float expected_rotation_w =
+            std::cos(3.14159265358979323846f / 8.0f);
+        const float rotation_norm = std::sqrt(
+            outputs[0u].rotation.x * outputs[0u].rotation.x +
+            outputs[0u].rotation.y * outputs[0u].rotation.y +
+            outputs[0u].rotation.z * outputs[0u].rotation.z +
+            outputs[0u].rotation.w * outputs[0u].rotation.w);
+        const float rotation_tangent_dot =
+            outputs[0u].rotation.x * outputs[0u].rotation_velocity.x +
+            outputs[0u].rotation.y * outputs[0u].rotation_velocity.y +
+            outputs[0u].rotation.z * outputs[0u].rotation_velocity.z +
+            outputs[0u].rotation.w * outputs[0u].rotation_velocity.w;
+        require(std::abs(outputs[0u].rotation.z - expected_rotation_z) <= 1.0e-5f &&
+            std::abs(outputs[0u].rotation.w - expected_rotation_w) <= 1.0e-5f &&
+            std::abs(rotation_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(rotation_tangent_dot) <= 1.0e-5f,
+            "GPU LINEAR Quaternion evaluation must use shortest-arc Slerp and return a normalized quaternion with tangent-space derivative.");
+
+        require(outputs[1u].node_index == 1u &&
+            outputs[1u].parent_index == 0u &&
+            std::abs(outputs[1u].translation.x - 5.0f) <= 1.0e-6f &&
+            std::abs(outputs[1u].translation.y - 6.0f) <= 1.0e-6f &&
+            std::abs(outputs[1u].translation_velocity.x) <= 1.0e-6f &&
+            std::abs(outputs[1u].rotation_velocity.w) <= 1.0e-6f &&
+            std::abs(outputs[1u].scale.x - 2.0f) <= 1.0e-6f &&
+            std::abs(outputs[1u].scale_velocity.x) <= 1.0e-6f,
+            "GPU STEP / Rest TRS channels must remain constant with zero analytic velocity.");
+
+        std::vector<animation_channel_gpu_record> invalid_channels = channels;
+        invalid_channels[0u].rotation_parameter0 = {};
+        const ComPtr<ID3D11Buffer> invalid_channel_buffer =
+            create_structured_buffer(
+                device.Get(), invalid_channels, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> invalid_channel_srv =
+            create_structured_srv<animation_channel_gpu_record>(
+                device.Get(), invalid_channel_buffer.Get(),
+                static_cast<uint32_t>(invalid_channels.size()));
+        const ComPtr<ID3D11Buffer> invalid_status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> invalid_status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), invalid_status_buffer.Get(), 1u);
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            { invalid_channel_srv.Get() },
+            { output_uav.Get(), invalid_status_uav.Get() },
+            parameter_buffer.Get(),
+            1u);
+        const std::vector<uint32_t> invalid_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
+        require(invalid_status[0u] == 1u,
+            "A zero-length LINEAR Quaternion input must fail closed and set the GPU Animation status bit.");
+
+        std::cout << "[PASS] P09_WARP_ANIMATION_CHANNEL_EVALUATION\n";
+    }
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
@@ -4066,6 +4269,7 @@ int run_gpu_solver_tests()
     test_phase09_warp_animation_skin_abi();
     test_phase09_warp_animation_trajectory_packet_upload();
     test_phase09_warp_physics_mesh_skinning_targets();
+    test_phase09_warp_animation_channel_evaluation();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
