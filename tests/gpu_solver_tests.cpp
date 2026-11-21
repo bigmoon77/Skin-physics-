@@ -185,6 +185,12 @@ namespace
         const std::filesystem::path& path,
         const char* entry_point)
     {
+        if (!std::filesystem::is_regular_file(path))
+        {
+            throw std::runtime_error(
+                "Compute shader source file does not exist: " + path.string());
+        }
+
         ComPtr<ID3DBlob> bytecode;
         ComPtr<ID3DBlob> errors;
         const HRESULT compile_result = D3DCompileFromFile(
@@ -199,13 +205,17 @@ namespace
             errors.GetAddressOf());
         if (FAILED(compile_result))
         {
-            std::string diagnostic;
+            std::string diagnostic =
+                "source='" + path.string() + "' HRESULT=" +
+                std::to_string(static_cast<unsigned long>(compile_result));
             if (errors != nullptr)
             {
                 const char* begin = static_cast<const char*>(errors->GetBufferPointer());
-                diagnostic.assign(begin, begin + errors->GetBufferSize());
+                diagnostic += " diagnostics=";
+                diagnostic.append(begin, begin + errors->GetBufferSize());
             }
-            throw std::runtime_error("Compute shader compilation failed: " + diagnostic);
+            throw std::runtime_error(
+                "Compute shader compilation failed: " + diagnostic);
         }
 
         ComPtr<ID3D11ComputeShader> shader;
