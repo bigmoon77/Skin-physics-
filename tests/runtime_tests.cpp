@@ -1184,6 +1184,12 @@ namespace
         skin_physics::runtime::model_handle model;
         require(runtime.add_model(world, model_desc, &model).success(),
             "Runtime must transfer boundary Render Mesh Skin Weights to Physics Vertices and upload the normalized 8-influence GPU record buffer.");
+        skin_physics::runtime::animation_playback_desc private_clip_playback;
+        private_clip_playback.track.clip_index = 2u;
+        require(runtime.set_animation_playback(
+                world, model, private_clip_playback).code ==
+                    skin_physics::runtime::status_code::invalid_argument,
+            "The Runtime-private Root-only Static Pose Clip must not become addressable through public Asset Animation Clip indices.");
 
         skin_physics::runtime::transform root_sample_start;
         root_sample_start.translation = { 0.0f, 0.0f, 0.0f };
