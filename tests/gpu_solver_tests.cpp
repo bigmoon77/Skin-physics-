@@ -20,6 +20,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -1071,6 +1072,55 @@ namespace
         require(epoch_status[0] == 0u,
             "Valid Cloth Position-Writer Epoch snapshot / displacement must not raise solver diagnostics.");
         std::cout << "[INFO] Cloth Epoch snapshot / displacement passed\\n";
+
+        std::vector<gpu_float4> invalid_after_positions = solved_positions;
+        invalid_after_positions[0].x =
+            std::numeric_limits<float>::quiet_NaN();
+        context->UpdateSubresource(
+            predicted_position_buffer.Get(), 0u, nullptr,
+            invalid_after_positions.data(), 0u, 0u);
+        context->UpdateSubresource(
+            status_buffer.Get(), 0u, nullptr,
+            clear_status.data(), 0u, 0u);
+        dispatch_compute(
+            context.Get(), epoch_displacement_shader.Get(),
+            { epoch_before_srv.Get(), epoch_after_srv.Get() },
+            { epoch_displacement_uav.Get(), status_uav.Get() },
+            epoch_constant_buffer.Get(), 1u);
+        const std::vector<uint32_t> invalid_displacement_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        const std::vector<gpu_float4> invalid_displacements =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), epoch_displacement_buffer.Get(), 3u);
+        require((invalid_displacement_status[0] & (1u << 7u)) != 0u &&
+            invalid_displacements[0].x == 0.0f &&
+            invalid_displacements[0].y == 0.0f &&
+            invalid_displacements[0].z == 0.0f,
+            "Cloth Epoch displacement must flag non-finite endpoint data and zero the affected output.");
+        context->UpdateSubresource(
+            predicted_position_buffer.Get(), 0u, nullptr,
+            solved_positions.data(), 0u, 0u);
+        context->UpdateSubresource(
+            status_buffer.Get(), 0u, nullptr,
+            clear_status.data(), 0u, 0u);
+
+        epoch_constants.reserved[0] = 1u;
+        const ComPtr<ID3D11Buffer> invalid_epoch_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &epoch_constants,
+                static_cast<UINT>(sizeof(epoch_constants)));
+        dispatch_compute(
+            context.Get(), epoch_snapshot_shader.Get(),
+            { predicted_position_srv.Get() },
+            { epoch_before_uav.Get(), status_uav.Get() },
+            invalid_epoch_constant_buffer.Get(), 1u);
+        const std::vector<uint32_t> invalid_snapshot_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require((invalid_snapshot_status[0] & (1u << 6u)) != 0u,
+            "Cloth Epoch snapshot must fail closed for non-zero reserved ABI fields.");
+        epoch_constants.reserved[0] = 0u;
 
         struct gpu_epoch_primitive
         {
