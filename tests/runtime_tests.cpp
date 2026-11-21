@@ -1207,6 +1207,8 @@ namespace
         skin_physics::runtime::advance_report animation_report;
         const skin_physics::runtime::status animation_advance_status =
             runtime.advance(world, 0.01, &animation_report);
+        skin_physics::runtime::world_status animation_preflight_status;
+        runtime.poll(world, &animation_preflight_status);
         require(animation_advance_status.success() &&
             animation_report.submitted_tick_count == 1u &&
             animation_report.in_flight_tick_count == 1u &&
@@ -1216,7 +1218,16 @@ namespace
                 " diagnostic=" + animation_advance_status.diagnostic +
                 " submitted=" + std::to_string(animation_report.submitted_tick_count) +
                 " in_flight=" + std::to_string(animation_report.in_flight_tick_count) +
-                " pending=" + std::to_string(animation_report.pending_tick_count));
+                " pending=" + std::to_string(animation_report.pending_tick_count) +
+                " cpu_preflight_blocked=" +
+                std::to_string(animation_report.cpu_preflight_blocked_tick_count) +
+                " budget_origin=" +
+                std::to_string(static_cast<uint32_t>(animation_preflight_status.budget_block_origin)) +
+                " budget_resolution=" +
+                std::to_string(static_cast<uint32_t>(animation_preflight_status.budget_resolution)) +
+                " last_tick_status=" +
+                std::to_string(static_cast<uint32_t>(animation_preflight_status.last_tick_status)) +
+                " world_diagnostic=" + animation_preflight_status.diagnostic);
         skin_physics::runtime::world_status animation_status;
         bool animation_observed = false;
         for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
