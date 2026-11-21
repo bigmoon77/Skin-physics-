@@ -3181,7 +3181,6 @@ namespace
 
     void test_phase09_kinematic_collider_geometry_reference()
     {
-        std::cerr << "[TRACE] collider geometry start\n";
         using skin_physics::asset::mesh;
         using skin_physics::asset::vertex;
         using skin_physics::physics::kinematic_collider_span_desc;
@@ -3207,7 +3206,6 @@ namespace
         const auto span = build_kinematic_collider_span(description);
         require(span.success,
             "Kinematic Collider geometry reference requires a valid immutable Span.");
-        std::cerr << "[TRACE] collider geometry span built\n";
 
         mesh collision_mesh;
         collision_mesh.vertices.resize(3u);
@@ -3219,7 +3217,6 @@ namespace
         const auto evaluated = evaluate_kinematic_collider_geometry(
             collision_mesh, span.value, 0.5);
         const float half_span_rotation_angle = 3.14159265358979323846f / 4.0f;
-        std::cerr << "[TRACE] collider geometry evaluated\n";
         require(evaluated.success &&
             evaluated.world_vertices.size() == 3u &&
             evaluated.world_vertex_velocities.size() == 3u,
@@ -3272,7 +3269,6 @@ namespace
                 skin_physics::physics::collision_error::invalid_geometry,
             "Kinematic Collider geometry evaluation must reject out-of-range triangle indices.");
 
-        std::cerr << "[TRACE] collider geometry bounds verified\n";
         skin_physics::physics::kinematic_collider_gpu_record invalid_homogeneous =
             span.value;
         invalid_homogeneous.translation_end.w = 0.0f;
@@ -3283,13 +3279,11 @@ namespace
                 skin_physics::physics::collision_error::invalid_geometry,
             "CPU Kinematic Collider geometry evaluation must reject non-homogeneous Translation endpoints consistently with the GPU evaluator.");
 
-        std::cerr << "[TRACE] collider geometry homogeneous rejected\n";
         skin_physics::physics::kinematic_collider_gpu_record underbounded =
             span.value;
         underbounded.maximum_local_radius = 0.5f;
         const auto rejected_radius = evaluate_kinematic_collider_geometry(
             collision_mesh, underbounded, 0.5);
-        std::cerr << "[TRACE] collider geometry radius evaluated\n";
         require(!rejected_radius.success &&
             rejected_radius.world_vertices.empty(),
             "Kinematic Collider geometry evaluation must reject a Mesh outside its certified local radius without publishing partial vertices.");
