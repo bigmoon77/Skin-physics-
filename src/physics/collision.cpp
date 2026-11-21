@@ -348,6 +348,15 @@ namespace skin_physics::physics
             }
         }
 
+        if (span.translation_start.w != 1.0f ||
+            span.translation_end.w != 1.0f)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider Translation endpoints must use homogeneous w = 1.";
+            return result;
+        }
+
         const kinematic_collider_sample_result start =
             evaluate_kinematic_collider_span(span, 0.0, {});
         const kinematic_collider_sample_result end =
