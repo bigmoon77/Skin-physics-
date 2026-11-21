@@ -8130,6 +8130,56 @@ namespace skin_physics::runtime
 
         implementation::model_slot& model = world->models[index];
         model.source_model = desc.source_model;
+        model.source_animation_count = static_cast<uint32_t>(
+            model.source_model.animations.size());
+        model.root_only_clip_index = asset::invalid_index;
+
+        // Root-only motion still needs a dense GPU Node / Skin evaluation
+        // path. Add a private constant-pose Clip to the Runtime-owned Asset
+        // copy; it contains one no-op STEP channel on a TRS Node while every
+        // other Node keeps its immutable Rest TRS / Matrix from the Packet.
+        // Public Animation Clip indices remain restricted to source_animation_count.
+        for (uint32_t node_index = 0u;
+            node_index < model.source_model.nodes.size(); ++node_index)
+        {
+            const asset::node& node = model.source_model.nodes[node_index];
+            if (node.uses_matrix)
+            {
+                continue;
+            }
+
+            asset::animation_clip root_only_clip;
+            root_only_clip.name = "__skin_physics_root_only_static_pose";
+            root_only_clip.duration = 1.0f;
+
+            asset::animation_track root_only_track;
+            root_only_track.node_index = node_index;
+            root_only_track.path = asset::animation_path::translation;
+            root_only_track.mode = asset::interpolation::step;
+            root_only_track.component_count = 3u;
+
+            asset::animation_key root_only_start;
+            root_only_start.time = 0.0f;
+            root_only_start.value = {
+                node.translation.x, node.translation.y, node.translation.z
+            };
+            asset::animation_key root_only_end = root_only_start;
+            root_only_end.time = root_only_clip.duration;
+            root_only_track.keys = { root_only_start, root_only_end };
+            root_only_clip.tracks.push_back(std::move(root_only_track));
+
+            if (model.source_model.animations.size() >=
+                static_cast<std::size_t>(asset::invalid_index))
+            {
+                return make_status(status_code::capacity_exceeded,
+                    "Runtime Root-only Static Pose Clip exceeds the Asset Animation Index range.");
+            }
+            model.root_only_clip_index = static_cast<uint32_t>(
+                model.source_model.animations.size());
+            model.source_model.animations.push_back(std::move(root_only_clip));
+            break;
+        }
+
         model.mesh_physics_assets = std::move(mesh_assets);
         model.gpu_soft_body_meshes = std::move(gpu_soft_body_meshes);
         model.root_transform = root_transform;
@@ -8692,7 +8742,8 @@ namespace skin_physics::runtime
         if (model == nullptr) return make_status(status_code::stale_handle, "Model Handle is stale.");
         const status input_status = runtime.validate_input_mutation(*world);
         if (!input_status.success()) return input_status;
-        if (!valid_animation_track(model->source_model, desc.track) ||
+        if (desc.track.clip_index >= model->source_animation_count ||
+            !valid_animation_track(model->source_model, desc.track) ||
             !finite_float(desc.w_event) ||
             desc.w_event < 0.0f || desc.w_event > 1.0f)
         {
@@ -8724,7 +8775,9 @@ namespace skin_physics::runtime
         const status input_status = runtime.validate_input_mutation(*world);
         if (!input_status.success()) return input_status;
 
-        if (!valid_animation_track(model->source_model, desc.source_track) ||
+        if (desc.source_track.clip_index >= model->source_animation_count ||
+            desc.target_track.clip_index >= model->source_animation_count ||
+            !valid_animation_track(model->source_model, desc.source_track) ||
             !valid_animation_track(model->source_model, desc.target_track) ||
             !finite_double(desc.blend_start_time) ||
             !finite_double(desc.blend_end_time) ||
