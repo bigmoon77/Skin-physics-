@@ -882,7 +882,7 @@
             "The evaluator validates buffer strides / ranges, Cursor and Packet Version, Collider and sample-pair identities, flags, normalized endpoint quaternions, angular axis / angle, duration and certified motion bounds",
             "A local contact point outside Maximum Local Radius and a Collider Record whose duration differs from its owning Span fail closed",
             "The evaluator validates homogeneous Translation endpoint w components before publishing a Transform",
-            "A missing / null Cursor SRV is rejected after resource dimension validation and before any Cursor dereference"
+            "A Cursor SRV with an invalid structured stride is rejected by resource dimension validation before any Cursor dereference"
           ]
         },
         {
