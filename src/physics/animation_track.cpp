@@ -4523,7 +4523,9 @@ namespace skin_physics::physics
                 if (stable_id == 0u ||
                     collider.span_sample_pair_id == asset::invalid_index ||
                     !collider_ids_in_span.insert(stable_id).second ||
-                    (collider.flags & kinematic_collider_flag_valid) == 0u ||
+                    (collider.flags & kinematic_collider_flag_valid) !=
+                        kinematic_collider_flag_valid ||
+                    (collider.flags & ~kinematic_collider_flag_valid) != 0u ||
                     !std::isfinite(collider.translation_start.x) ||
                     !std::isfinite(collider.translation_start.y) ||
                     !std::isfinite(collider.translation_start.z) ||
@@ -5561,7 +5563,9 @@ namespace skin_physics::physics
             span.stable_collider_id_low;
         if (stable_collider_id == 0u ||
             span.span_sample_pair_id == asset::invalid_index ||
-            (span.flags & kinematic_collider_flag_valid) == 0u ||
+            (span.flags & kinematic_collider_flag_valid) !=
+                kinematic_collider_flag_valid ||
+            (span.flags & ~kinematic_collider_flag_valid) != 0u ||
             !std::isfinite(span_local_u) ||
             span_local_u < 0.0 || span_local_u > 1.0 ||
             !finite(local_contact_point))
