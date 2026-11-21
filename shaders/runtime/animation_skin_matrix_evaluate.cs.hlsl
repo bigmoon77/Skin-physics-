@@ -178,11 +178,11 @@ bool invert_affine_matrix(
     return finite_matrix(inverse_matrix);
 }
 
-void fail_joint(uint joint_record_index)
+void fail_joint(uint local_joint_index)
 {
     gpu_matrix4x4 zero_matrix = (gpu_matrix4x4)0;
-    skin_matrices[joint_record_index] = zero_matrix;
-    skin_matrix_derivatives[joint_record_index] = zero_matrix;
+    skin_matrices[local_joint_index] = zero_matrix;
+    skin_matrix_derivatives[local_joint_index] = zero_matrix;
     uint previous_status = 0u;
     InterlockedOr(skin_matrix_status[0], 1u, previous_status);
 }
@@ -224,7 +224,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         joint.inverse_bind_record_index >= inverse_bind_matrix_count ||
         joint.joint_node_index == 0xffffffffu)
     {
-        fail_joint(joint_record_index);
+        fail_joint(local_joint_index);
         return;
     }
 
@@ -292,6 +292,6 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
-    skin_matrices[joint_record_index] = inverse_mesh_with_joint;
-    skin_matrix_derivatives[joint_record_index] = skin_derivative;
+    skin_matrices[local_joint_index] = inverse_mesh_with_joint;
+    skin_matrix_derivatives[local_joint_index] = skin_derivative;
 }
