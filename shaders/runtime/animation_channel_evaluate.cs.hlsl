@@ -249,13 +249,16 @@ bool evaluate_rotation(
     return finite4(value) && finite4(world_derivative);
 }
 
-void fail_channel(uint output_index)
+void fail_channel(uint output_index, uint diagnostic_reason)
 {
     animation_node_local_transform_gpu_record failed = (animation_node_local_transform_gpu_record)0;
     failed.status = 1u;
     local_transforms[output_index] = failed;
     uint previous_status = 0u;
-    InterlockedOr(evaluation_status[0], 1u, previous_status);
+    InterlockedOr(
+        evaluation_status[0],
+        1u | (diagnostic_reason << 8u),
+        previous_status);
 }
 
 [numthreads(64, 1, 1)]
@@ -271,7 +274,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         animation_cursor[0];
     if (cursor.span_record_index != expected_span_record_index)
     {
-        fail_channel(local_index);
+        fail_channel(local_index, 1u);
         return;
     }
     const animation_span_gpu_record span =
@@ -284,21 +287,29 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         cursor.animation_input_version_high != version_high ||
         !isfinite(cursor.u_segment_start) ||
         cursor.u_segment_start < 0.0f ||
-        cursor.u_segment_start > 1.0f ||
-        !isfinite(span.span_duration_seconds) ||
+        cursor.u_segment_start > 1.0f)
+    {
+        fail_channel(local_index, 2u);
+        return;
+    }
+    if (!isfinite(span.span_duration_seconds) ||
         span.span_duration_seconds <= 0.0f ||
         !isfinite(span.inverse_span_duration) ||
         span.inverse_span_duration <= 0.0f ||
         !isfinite(span_reciprocal_error) ||
-        abs(span_reciprocal_error) > 2.0e-5f ||
-        first_channel_record < span.first_channel_record ||
+        abs(span_reciprocal_error) > 2.0e-5f)
+    {
+        fail_channel(local_index, 3u);
+        return;
+    }
+    if (first_channel_record < span.first_channel_record ||
         first_channel_record - span.first_channel_record >
             span.channel_record_count ||
         channel_count >
             span.channel_record_count -
                 (first_channel_record - span.first_channel_record))
     {
-        fail_channel(local_index);
+        fail_channel(local_index, 4u);
         return;
     }
     const float span_local_u = cursor.u_segment_start;
@@ -328,7 +339,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         rotation_mode > 2u ||
         scale_mode > 2u)
     {
-        fail_channel(local_index);
+        fail_channel(local_index, 0u);
         return;
     }
 
@@ -362,7 +373,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         !finite4(output_record.scale) ||
         !finite4(output_record.scale_velocity))
     {
-        fail_channel(local_index);
+        fail_channel(local_index, 0u);
         return;
     }
 
