@@ -8938,15 +8938,126 @@ namespace skin_physics::runtime
                 attribute_transfer.vertex_weights;
         }
 
+        std::vector<model_mesh_cloth_asset> cloth_assets =
+            desc.cloth_mesh_assets;
+        std::set<uint32_t> supplied_cloth_mesh_indices;
+        for (const model_mesh_cloth_asset& cloth_asset : cloth_assets)
+        {
+            if (cloth_asset.mesh_index >= desc.source_model.meshes.size() ||
+                !supplied_cloth_mesh_indices.insert(cloth_asset.mesh_index).second ||
+                supplied_mesh_indices.count(cloth_asset.mesh_index) != 0u)
+            {
+                return make_status(status_code::asset_invalid,
+                    "Cloth Mesh Asset has a duplicate / invalid Mesh Index or conflicts with a Soft Body Asset.");
+            }
+
+            const asset::mesh& render_mesh =
+                desc.source_model.meshes[cloth_asset.mesh_index];
+            if (render_mesh.mode != asset::physics_mode::cloth)
+            {
+                return make_status(status_code::invalid_argument,
+                    "Cloth Mesh Assets are accepted only for Meshes configured as Cloth.");
+            }
+            if (cloth_asset.cloth_mesh.rest_positions.size() !=
+                    render_mesh.vertices.size() ||
+                render_mesh.indices.empty() ||
+                (render_mesh.indices.size() % 3u) != 0u ||
+                cloth_asset.cloth_mesh.triangles.size() !=
+                    render_mesh.indices.size() / 3u)
+            {
+                return make_status(status_code::asset_invalid,
+                    "Cloth topology must preserve the Render Mesh Vertex and Triangle layout.");
+            }
+
+            for (std::size_t vertex_index = 0u;
+                vertex_index < render_mesh.vertices.size(); ++vertex_index)
+            {
+                const asset::vec3& render_position =
+                    render_mesh.vertices[vertex_index].position;
+                const asset::vec3& cloth_position =
+                    cloth_asset.cloth_mesh.rest_positions[vertex_index];
+                if (!finite_float(render_position.x) ||
+                    !finite_float(render_position.y) ||
+                    !finite_float(render_position.z) ||
+                    !finite_float(cloth_position.x) ||
+                    !finite_float(cloth_position.y) ||
+                    !finite_float(cloth_position.z) ||
+                    std::abs(render_position.x - cloth_position.x) > 1.0e-5f ||
+                    std::abs(render_position.y - cloth_position.y) > 1.0e-5f ||
+                    std::abs(render_position.z - cloth_position.z) > 1.0e-5f)
+                {
+                    return make_status(status_code::asset_invalid,
+                        "Cloth Rest Positions must match the corresponding Render Mesh Vertex order and coordinates.");
+                }
+            }
+
+            for (std::size_t triangle_index = 0u;
+                triangle_index < cloth_asset.cloth_mesh.triangles.size();
+                ++triangle_index)
+            {
+                const std::array<uint32_t, 3>& triangle =
+                    cloth_asset.cloth_mesh.triangles[triangle_index];
+                const std::size_t index_offset = triangle_index * 3u;
+                if (triangle[0] != render_mesh.indices[index_offset] ||
+                    triangle[1] != render_mesh.indices[index_offset + 1u] ||
+                    triangle[2] != render_mesh.indices[index_offset + 2u])
+                {
+                    return make_status(status_code::asset_invalid,
+                        "Cloth topology Triangle order must match the Render Mesh index buffer.");
+                }
+            }
+
+            std::vector<uint32_t> mesh_node_indices;
+            for (uint32_t node_index = 0u;
+                node_index < desc.source_model.nodes.size(); ++node_index)
+            {
+                if (desc.source_model.nodes[node_index].mesh_index ==
+                    cloth_asset.mesh_index)
+                {
+                    mesh_node_indices.push_back(node_index);
+                }
+            }
+            if (mesh_node_indices.size() > 1u)
+            {
+                return make_status(status_code::unsupported_feature,
+                    "A Cloth Mesh currently requires one unique Asset Mesh Node instance.");
+            }
+
+            if (!cloth_asset.inverse_masses.empty() &&
+                cloth_asset.inverse_masses.size() !=
+                    cloth_asset.cloth_mesh.rest_positions.size())
+            {
+                return make_status(status_code::asset_invalid,
+                    "Cloth inverse-mass count must match the Rest Position count.");
+            }
+
+            const physics::cloth_gpu_topology_build_result topology_validation =
+                physics::build_cloth_gpu_topology_packet(
+                    cloth_asset.cloth_mesh, cloth_asset.solver_settings);
+            if (!topology_validation.success)
+            {
+                return make_status(status_code::asset_invalid,
+                    "Cloth GPU topology validation failed: " +
+                        topology_validation.message);
+            }
+        }
+
         for (uint32_t mesh_index = 0;
             mesh_index < desc.source_model.meshes.size(); ++mesh_index)
         {
-            if (desc.source_model.meshes[mesh_index].mode ==
-                    asset::physics_mode::soft_body &&
+            const asset::physics_mode mode =
+                desc.source_model.meshes[mesh_index].mode;
+            if (mode == asset::physics_mode::soft_body &&
                 supplied_mesh_indices.count(mesh_index) == 0u)
             {
                 return make_status(status_code::asset_invalid,
                     "Every Soft Body Mesh requires a matching Physics Mesh Asset.");
+            }
+            if (mode == asset::physics_mode::cloth &&
+                supplied_cloth_mesh_indices.count(mesh_index) == 0u)
+            {
+                return make_status(status_code::asset_invalid,
+                    "Every Cloth Mesh requires a matching Cloth Mesh Asset.");
             }
         }
 
@@ -8974,6 +9085,21 @@ namespace skin_physics::runtime
                     "Soft Body GPU State Bank creation failed: " + diagnostic);
             }
             gpu_soft_body_meshes.push_back(std::move(gpu_mesh));
+        }
+
+        std::vector<implementation::cloth_gpu_mesh> gpu_cloth_meshes;
+        gpu_cloth_meshes.reserve(cloth_assets.size());
+        for (const model_mesh_cloth_asset& cloth_asset : cloth_assets)
+        {
+            implementation::cloth_gpu_mesh gpu_mesh;
+            std::string diagnostic;
+            if (!runtime.initialize_cloth_gpu_mesh(
+                    cloth_asset.mesh_index, cloth_asset, gpu_mesh, diagnostic))
+            {
+                return make_status(status_code::out_of_memory,
+                    "Cloth GPU topology / State Bank creation failed: " + diagnostic);
+            }
+            gpu_cloth_meshes.push_back(std::move(gpu_mesh));
         }
 
         uint32_t index = asset::invalid_index;
@@ -9051,6 +9177,8 @@ namespace skin_physics::runtime
 
         model.mesh_physics_assets = std::move(mesh_assets);
         model.gpu_soft_body_meshes = std::move(gpu_soft_body_meshes);
+        model.cloth_mesh_assets = std::move(cloth_assets);
+        model.gpu_cloth_meshes = std::move(gpu_cloth_meshes);
         model.root_transform = root_transform;
         model.root_samples.clear();
         model.has_animation_playback = false;
