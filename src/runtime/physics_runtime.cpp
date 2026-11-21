@@ -5253,6 +5253,14 @@ namespace skin_physics::runtime
                 }
             }
 
+            struct alignas(16) cursor_advance_parameters
+            {
+                uint32_t span_count = 0u;
+                float segment_duration_seconds = 0.0f;
+                uint32_t reserved[2] = {};
+            };
+            static_assert(sizeof(cursor_advance_parameters) == 16u);
+
             for (uint32_t segment_index = 0u;
                 segment_index < reservation.planned_integration_segments;
                 ++segment_index)
@@ -5464,9 +5472,9 @@ namespace skin_physics::runtime
 
                 for (soft_body_mesh_work_state& work : mesh_work)
                 {
-                    soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
                     work.has_animation_target = false;
                     work.animation_target_status_srv = nullptr;
+                    work.animation_cursor_status_uav = nullptr;
 
                     const auto animation_schedule_iterator = std::find_if(
                         reservation.animation_schedules.begin(),
@@ -5510,6 +5518,110 @@ namespace skin_physics::runtime
                         work.has_animation_target = true;
                     }
 
+                }
+
+                // Every Skinned Mesh in one Model reads the same immutable
+                // Packet Cursor for this Segment. Advance that Cursor once,
+                // after all Mesh consumers have evaluated their Targets and
+                // before any Mesh integrates the Segment.
+                for (const model_animation_tick_schedule& schedule :
+                    reservation.animation_schedules)
+                {
+                    const auto first_mesh_iterator = std::find_if(
+                        mesh_work.begin(),
+                        mesh_work.end(),
+                        [&schedule](const soft_body_mesh_work_state& value)
+                        {
+                            return value.model_index == schedule.model_index &&
+                                value.model != nullptr &&
+                                value.model->generation == schedule.model_generation &&
+                                value.has_animation_target;
+                        });
+                    if (first_mesh_iterator == mesh_work.end())
+                    {
+                        continue;
+                    }
+                    if (first_mesh_iterator->animation_cursor_status_uav == nullptr)
+                    {
+                        diagnostic =
+                            "Model Animation Span Cursor has no Segment Status UAV for failure propagation.";
+                        return false;
+                    }
+
+                    const auto packet_cache_iterator = std::find_if(
+                        out_animation_packet_resources.begin(),
+                        out_animation_packet_resources.end(),
+                        [&schedule](const animation_packet_work_state& value)
+                        {
+                            return value.model_index == schedule.model_index &&
+                                value.model_generation == schedule.model_generation;
+                        });
+                    if (packet_cache_iterator ==
+                        out_animation_packet_resources.end() ||
+                        packet_cache_iterator->resources.cursor_uav() == nullptr ||
+                        packet_cache_iterator->resources.span_srv() == nullptr)
+                    {
+                        diagnostic =
+                            "Model Animation Span Cursor lost its shared immutable Packet resources.";
+                        return false;
+                    }
+
+                    animation_packet_work_state& packet_cache =
+                        *packet_cache_iterator;
+                    cursor_advance_parameters cursor_parameters;
+                    cursor_parameters.span_count =
+                        packet_cache.resources.counts().spans;
+                    cursor_parameters.segment_duration_seconds = delta_time;
+                    if (cursor_parameters.span_count == 0u ||
+                        !std::isfinite(cursor_parameters.segment_duration_seconds) ||
+                        cursor_parameters.segment_duration_seconds <= 0.0f)
+                    {
+                        diagnostic =
+                            "GPU Model Animation Cursor Advance requires a valid immutable Span table and finite positive Integration Segment duration.";
+                        return false;
+                    }
+
+                    Microsoft::WRL::ComPtr<ID3D11Buffer> cursor_parameter_buffer;
+                    if (!create_constant_buffer(
+                            device.Get(),
+                            static_cast<uint32_t>(sizeof(cursor_parameters)),
+                            &cursor_parameters,
+                            cursor_parameter_buffer.GetAddressOf()))
+                    {
+                        diagnostic =
+                            "Unable to allocate shared per-Model Animation Cursor Advance Parameters.";
+                        return false;
+                    }
+
+                    simulation::compute_pass_desc cursor_advance_pass;
+                    cursor_advance_pass.name =
+                        "animation_span_cursor_advance_m" +
+                        std::to_string(schedule.model_index) + "_segment" +
+                        std::to_string(segment_index);
+                    cursor_advance_pass.shader =
+                        animation_span_cursor_advance_shader.Get();
+                    cursor_advance_pass.shader_resources = {
+                        { 0u, packet_cache.resources.span_srv() }
+                    };
+                    cursor_advance_pass.unordered_access_views = {
+                        { 0u, packet_cache.resources.cursor_uav(), 0xffffffffu },
+                        { 1u, first_mesh_iterator->animation_cursor_status_uav, 0xffffffffu }
+                    };
+                    cursor_advance_pass.constant_buffers = {
+                        { 0u, cursor_parameter_buffer.Get() }
+                    };
+                    cursor_advance_pass.group_count_x = 1u;
+                    if (!graph.add_pass(cursor_advance_pass, diagnostic))
+                    {
+                        return false;
+                    }
+                    out_segment_parameter_buffers.push_back(
+                        std::move(cursor_parameter_buffer));
+                }
+
+                for (soft_body_mesh_work_state& work : mesh_work)
+                {
+                    soft_body_gpu_mesh& gpu_mesh = *work.gpu_mesh;
                     gpu_soft_body_integration_parameters integration_parameters;
                     integration_parameters.vertex_count = gpu_mesh.vertex_count;
                     integration_parameters.delta_time = delta_time;
