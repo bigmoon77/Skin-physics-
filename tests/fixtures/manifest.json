@@ -730,7 +730,8 @@
             "Packet Version, per-Span record ranges, Track Channel ranges, Span-local Blend Track indices, Skin Joint ranges and certified Bounds are validated before upload",
             "Empty optional Blend / Collider tables remain absent and are represented by zero element counts",
             "WARP readback of the uploaded immutable Span / Track / Channel / Skin / Skin Joint records and initial Cursor matches the source CPU records byte-for-byte",
-            "An invalid Cursor Version or invalid Span-local Blend reference fails without replacing the previously uploaded Packet resources"
+            "An invalid Cursor Version or invalid Span-local Blend reference fails without replacing the previously uploaded Packet resources",
+            "The 128-byte Kinematic Collider StructuredBuffer is immutable, its Span first/count range and Has-Kinematic-Collider flag agree, and WARP readback preserves every Collider Record byte"
           ]
         },
         {
