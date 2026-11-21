@@ -2081,7 +2081,7 @@ namespace
             animation_status.head_reserved_tick_sequence == 1u &&
             animation_status.head_input_snapshot_version > force_snapshot_version &&
             animation_status.diagnostic.find(
-                "Root Transform Samples without an active Animation Track") !=
+                "root-only motion without a valid fully skinned Soft Body path") !=
                 std::string::npos,
             "Runtime must explicitly report BLOCKED_BY_INPUT for root-only Transform Samples instead of committing a Tick with the input silently ignored.");
         require(runtime.reset_world(world).success(),
