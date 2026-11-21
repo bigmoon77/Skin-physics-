@@ -2921,7 +2921,14 @@ namespace
             built.value.maximum_local_radius >= 2.0f &&
             built.value.sagitta_bound + 1.0e-5f >=
                 2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f)),
-            "Kinematic Collider Speed / Angular / Radius / Sagitta Bounds must conservatively cover the encoded float32 trajectory within numerical tolerance.");
+            std::string("Kinematic Collider Bounds mismatch: linear=") +
+                std::to_string(built.value.linear_speed_bound) +
+                " angular=" + std::to_string(built.value.angular_speed_bound) +
+                " radius=" + std::to_string(built.value.maximum_local_radius) +
+                " sagitta=" + std::to_string(built.value.sagitta_bound) +
+                " expectedAngular=" + std::to_string(expected_angular_speed) +
+                " expectedSagitta=" + std::to_string(
+                    2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f)));
 
         kinematic_collider_span_desc no_rotation = desc;
         no_rotation.sample_end_rotation = no_rotation.sample_start_rotation;
