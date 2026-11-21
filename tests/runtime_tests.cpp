@@ -803,6 +803,79 @@ namespace
             "Runtime shutdown must release the Status Ring and Host COM references after all Worlds are destroyed.");
     }
 
+    void test_runtime_kinematic_sample_boundaries()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Kinematic Collider boundary regression requires a D3D11 WARP device.");
+
+        physics_runtime runtime;
+        skin_physics::runtime::runtime_desc runtime_desc;
+        runtime_desc.shader_package_root = runtime_shader_root();
+        require(runtime.initialize(device.Get(), context.Get(), runtime_desc).success(),
+            "Kinematic Collider boundary Runtime initialization must succeed.");
+
+        skin_physics::runtime::world_desc world_desc;
+        world_desc.fixed_delta_time = 0.1;
+        world_desc.maximum_steps_per_advance = 1u;
+        skin_physics::runtime::world_handle world;
+        require(runtime.create_world(world_desc, &world).success(),
+            "Kinematic Collider boundary World creation must succeed.");
+
+        skin_physics::runtime::collider_desc collider_desc;
+        collider_desc.collision_mesh.vertices.resize(3u);
+        collider_desc.collision_mesh.vertices[0u].position = {
+            -1.0f, 0.0f, 0.0f
+        };
+        collider_desc.collision_mesh.vertices[1u].position = {
+            1.0f, 0.0f, 0.0f
+        };
+        collider_desc.collision_mesh.vertices[2u].position = {
+            0.0f, 1.0f, 0.0f
+        };
+        collider_desc.collision_mesh.indices = { 0u, 1u, 2u };
+        skin_physics::runtime::collider_handle collider;
+        require(runtime.create_kinematic_collider(
+                world, collider_desc, &collider).success(),
+            "Runtime must create a Kinematic Collider from a valid triangle mesh.");
+
+        skin_physics::runtime::transform teleport_pose;
+        teleport_pose.translation = { 1.0f, 0.0f, 0.0f };
+        require(runtime.set_kinematic_pose_sample(
+                world, collider, 0.05, teleport_pose, true).success(),
+            "Kinematic Collider API must preserve an explicit Teleport sample.");
+
+        skin_physics::runtime::transform moving_pose;
+        moving_pose.translation = { 2.0f, 0.0f, 0.0f };
+        require(runtime.set_kinematic_pose_sample(
+                world, collider, 0.1, moving_pose).success(),
+            "Kinematic Collider API must accept a subsequent continuous pose sample.");
+
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "Kinematic Collider boundary World must enter Playing.");
+        skin_physics::runtime::advance_report report;
+        require(runtime.advance(world, 0.1, &report).success(),
+            "Kinematic Collider boundary Tick must be admitted for CPU scheduling.");
+
+        skin_physics::runtime::world_status status;
+        require(runtime.poll(world, &status).success() &&
+            status.state == skin_physics::runtime::tick_state::blocked &&
+            status.last_tick_status ==
+                skin_physics::runtime::status_code::blocked_by_input &&
+            status.planned_substeps == 1u &&
+            status.planned_integration_segments == 2u,
+            "Kinematic Collider sample and Teleport boundaries must split the immutable World Segment schedule before unsupported collision submission is blocked.");
+
+        require(runtime.reset_world(world).success(),
+            "Kinematic Collider boundary regression must reset its blocked Reservation.");
+        require(runtime.destroy_world(world).success(),
+            "Kinematic Collider boundary World must be destroyable after Reset.");
+        require(runtime.shutdown() == status_code::ok,
+            "Kinematic Collider boundary Runtime must shut down after World destruction.");
+    }
+
     void test_runtime_time_budget_and_pause_contract()
     {
         ComPtr<ID3D11Device> device;
@@ -3136,6 +3209,8 @@ int run_runtime_tests()
     std::cout << "[PASS] R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY\n";
     test_runtime_initialization_and_world_handles();
     std::cout << "[PASS] R0_RUNTIME_INITIALIZATION_AND_HANDLES\n";
+    test_runtime_kinematic_sample_boundaries();
+    std::cout << "[PASS] R1_RUNTIME_KINEMATIC_SAMPLE_BOUNDARIES\n";
     test_runtime_time_budget_and_pause_contract();
     std::cout << "[PASS] R0_RUNTIME_TIME_BUDGET_AND_PAUSE\n";
     test_runtime_submission_thread_guard();
