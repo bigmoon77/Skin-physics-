@@ -31,6 +31,15 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    struct moving_vertex_triangle_contact_result
+    {
+        vertex_triangle_contact contact;
+        asset::vec3 point_velocity;
+        asset::vec3 triangle_velocity;
+        asset::vec3 relative_velocity;
+        bool success = false;
+    };
+
     struct edge_edge_contact
     {
         asset::vec3 closest_point_a;
@@ -147,6 +156,16 @@ namespace skin_physics::physics
     vertex_triangle_contact find_vertex_triangle_contact(
         const asset::vec3& point,
         const std::array<asset::vec3, 3>& triangle,
+        float point_radius);
+
+    // Evaluates a discrete VT contact against a moving triangle. The triangle
+    // contact velocity is interpolated with the exact contact barycentrics;
+    // relative_velocity is point_velocity - triangle_velocity.
+    moving_vertex_triangle_contact_result find_moving_vertex_triangle_contact(
+        const asset::vec3& point,
+        const asset::vec3& point_velocity,
+        const std::array<asset::vec3, 3>& triangle,
+        const std::array<asset::vec3, 3>& triangle_vertex_velocities,
         float point_radius);
 
     vertex_triangle_solve_result solve_vertex_triangle_contact(
