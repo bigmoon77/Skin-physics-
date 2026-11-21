@@ -1320,6 +1320,12 @@ namespace skin_physics::runtime
 
         struct in_flight_tick
         {
+            in_flight_tick() = default;
+            in_flight_tick(const in_flight_tick&) = delete;
+            in_flight_tick& operator=(const in_flight_tick&) = delete;
+            in_flight_tick(in_flight_tick&&) noexcept = default;
+            in_flight_tick& operator=(in_flight_tick&&) noexcept = default;
+
             tick_reservation reservation;
             uint64_t dispatch_id = 0u;
             uint64_t reservation_token = 0u;
@@ -1345,6 +1351,12 @@ namespace skin_physics::runtime
 
         struct world_slot
         {
+            world_slot() = default;
+            world_slot(const world_slot&) = delete;
+            world_slot& operator=(const world_slot&) = delete;
+            world_slot(world_slot&&) noexcept = default;
+            world_slot& operator=(world_slot&&) noexcept = default;
+
             uint32_t generation = 1u;
             bool occupied = false;
             bool retired = false;
