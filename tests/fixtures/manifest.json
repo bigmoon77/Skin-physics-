@@ -881,8 +881,7 @@
             "GPU Linear Velocity, World Angular Velocity and rotated contact-point velocity match the CPU analytic derivative reference",
             "The evaluator validates buffer strides / ranges, Cursor and Packet Version, Collider and sample-pair identities, flags, normalized endpoint quaternions, angular axis / angle, duration and certified motion bounds",
             "A local contact point outside Maximum Local Radius and a Collider Record whose duration differs from its owning Span fail closed",
-            "The evaluator validates homogeneous Translation endpoint w components before publishing a Transform",
-            "A Cursor SRV with an invalid structured stride is rejected by resource dimension validation before any Cursor dereference"
+            "The evaluator validates homogeneous Translation endpoint w components before publishing a Transform"
           ]
         },
         {
