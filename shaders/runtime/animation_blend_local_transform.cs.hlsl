@@ -84,7 +84,7 @@ void fail_node(uint node_index)
     failed.status = 1u;
     blended_local_transforms[node_index] = failed;
     uint previous_status = 0u;
-    InterlockedOr(blend_status[0], 1u, previous_status);
+    InterlockedOr(blend_status[0], 2u, previous_status);
 }
 
 [numthreads(64, 1, 1)]
