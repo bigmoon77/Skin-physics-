@@ -51,6 +51,11 @@ void fail_cloth_csr()
     InterlockedOr(solver_status[0], STATUS_INVALID_CLOTH_CSR, ignored);
 }
 
+bool finite3(float3 value)
+{
+    return all(isfinite(value));
+}
+
 float3 get_contribution(
     ClothContribution contribution,
     uint local_vertex_index)
@@ -102,7 +107,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     next_positions.GetDimensions(output_count, output_stride);
     solver_status.GetDimensions(status_count, status_stride);
 
-    if (vertex_count == 0u || vertex_count != position_count ||
+    if (vertex_count == 0u || vertex_count == 0xffffffffu ||
+        vertex_count != position_count ||
         vertex_count != output_count || position_stride != 16u ||
         output_stride != 16u || offset_count != vertex_count + 1u ||
         offset_stride != 4u || reference_count > reference_buffer_count ||
@@ -157,7 +163,6 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
 
         ClothConstraint constraint;
         ClothContribution contribution;
-        uint local_vertex_count = 0u;
         if (reference.type == CLOTH_CONSTRAINT_SHEAR)
         {
             if (reference.constraint_index >= shear_constraint_count ||
@@ -169,7 +174,6 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             }
             constraint = shear_constraints[reference.constraint_index];
             contribution = shear_contributions[reference.constraint_index];
-            local_vertex_count = 3u;
         }
         else if (reference.type == CLOTH_CONSTRAINT_BEND)
         {
@@ -182,7 +186,6 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             }
             constraint = bend_constraints[reference.constraint_index];
             contribution = bend_contributions[reference.constraint_index];
-            local_vertex_count = 4u;
         }
         else
         {
