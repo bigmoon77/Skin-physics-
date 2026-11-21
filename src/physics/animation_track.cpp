@@ -2348,14 +2348,22 @@ namespace skin_physics::physics
             std::unique(boundaries.begin(), boundaries.end()),
             boundaries.end());
         if (boundaries.size() < 2u ||
-            boundaries.front() != world_time_start ||
-            boundaries.back() != world_time_end)
+            !approximately_equal_double(
+                boundaries.front(), world_time_start) ||
+            !approximately_equal_double(
+                boundaries.back(), world_time_end))
         {
             result.error = animation_blend_clip_span_error::invalid_time;
             result.message =
-                "Merged Animation Blend Clip boundaries do not exactly cover the Logical Tick.";
+                "Merged Animation Blend Clip boundaries do not cover the Logical Tick within double-precision representational tolerance.";
             return result;
         }
+
+        // Source, Target and Weight schedules can reach the same Logical Tick
+        // endpoint through different affine mappings. Canonicalize only the
+        // two outer boundaries; interior event / Key boundaries remain exact.
+        boundaries.front() = world_time_start;
+        boundaries.back() = world_time_end;
 
         if (boundaries.size() - 1u >
             static_cast<std::size_t>(maximum_span_count) ||
