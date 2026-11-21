@@ -895,7 +895,10 @@
             "Each transformed world vertex also returns analytic contact velocity, including Linear Velocity plus World Angular Velocity cross the rotated local vertex",
             "CPU geometry evaluation rejects non-homogeneous Translation endpoints consistently with the GPU evaluator",
             "Moving VT narrowphase interpolates rigid Collider vertex velocities with the contact barycentrics and returns point-minus-triangle relative velocity; non-finite velocities fail closed",
-            "Moving EE narrowphase interpolates both edge endpoint velocities at the closest-segment parameters and returns relative velocity; non-finite endpoint velocities fail closed"
+            "Moving EE narrowphase interpolates both edge endpoint velocities at the closest-segment parameters and returns relative velocity; non-finite endpoint velocities fail closed",
+            "CPU moving Collider VT contact generation uses the transformed Collider Mesh and analytic per-vertex velocities to emit deterministic Vertex / Triangle contacts",
+            "Degenerate Collider triangles and invalid dynamic Vertex input fail closed",
+            "Contact capacity overflow reports the required count and rejects the entire contact set without returning partial contacts"
           ]
         }
       ],
