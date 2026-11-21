@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 namespace skin_physics::physics
 {
@@ -4487,7 +4488,6 @@ namespace skin_physics::physics
                 static_cast<uint32_t>(candidate.collider_records.size());
 
             std::unordered_set<uint64_t> collider_ids_in_span;
-            std::unordered_set<uint32_t> collider_pair_ids_in_span;
             for (const kinematic_collider_gpu_record& collider :
                 input.colliders)
             {
@@ -4523,8 +4523,6 @@ namespace skin_physics::physics
                 if (stable_id == 0u ||
                     collider.span_sample_pair_id == asset::invalid_index ||
                     !collider_ids_in_span.insert(stable_id).second ||
-                    !collider_pair_ids_in_span.insert(
-                        collider.span_sample_pair_id).second ||
                     (collider.flags & kinematic_collider_flag_valid) == 0u ||
                     !std::isfinite(collider.translation_start.x) ||
                     !std::isfinite(collider.translation_start.y) ||
@@ -5333,16 +5331,28 @@ namespace skin_physics::physics
                 "Kinematic Collider samples require finite translations, quaternions and a non-negative local radius.");
         }
 
-        const quaternion sample_start_rotation = normalize_quaternion(
-            to_quaternion(desc.sample_start_rotation));
-        quaternion sample_end_rotation = normalize_quaternion(
-            to_quaternion(desc.sample_end_rotation));
-        if (!finite(sample_start_rotation) ||
-            !finite(sample_end_rotation) ||
-            dot(sample_start_rotation, sample_start_rotation) <=
-                quaternion_epsilon ||
-            dot(sample_end_rotation, sample_end_rotation) <=
-                quaternion_epsilon)
+        const quaternion raw_sample_start_rotation =
+            to_quaternion(desc.sample_start_rotation);
+        const quaternion raw_sample_end_rotation =
+            to_quaternion(desc.sample_end_rotation);
+        const float sample_start_squared =
+            dot(raw_sample_start_rotation, raw_sample_start_rotation);
+        const float sample_end_squared =
+            dot(raw_sample_end_rotation, raw_sample_end_rotation);
+        if (!std::isfinite(sample_start_squared) ||
+            !std::isfinite(sample_end_squared) ||
+            sample_start_squared <= quaternion_epsilon ||
+            sample_end_squared <= quaternion_epsilon)
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::invalid_transform,
+                "Kinematic Collider sample rotation contains a zero or non-finite quaternion.");
+        }
+        const quaternion sample_start_rotation =
+            normalize_quaternion(raw_sample_start_rotation);
+        quaternion sample_end_rotation =
+            normalize_quaternion(raw_sample_end_rotation);
+        if (!finite(sample_start_rotation) || !finite(sample_end_rotation))
         {
             return make_collider_build_error(
                 kinematic_collider_span_error::invalid_transform,
@@ -5479,7 +5489,9 @@ namespace skin_physics::physics
             !finite_float_value(1.0 / desc.world_time_duration, record.inverse_duration) ||
             !outward_float_bound(linear_speed, record.linear_speed_bound) ||
             !outward_float_bound(angular_speed, record.angular_speed_bound) ||
-            !finite_float_value(desc.maximum_local_radius, record.maximum_local_radius) ||
+            !outward_float_bound(
+                static_cast<double>(desc.maximum_local_radius),
+                record.maximum_local_radius) ||
             !outward_float_bound(sagitta, record.sagitta_bound))
         {
             return make_collider_build_error(
@@ -5488,10 +5500,35 @@ namespace skin_physics::physics
         }
         record.translation_start.w = 1.0f;
         record.translation_end.w = 1.0f;
-        record.rotation_start.w = record.rotation_start.w;
-        record.rotation_end.w = record.rotation_end.w;
         record.reserved0 = 0.0f;
         record.reserved1 = 0.0f;
+        const double stored_translation_distance = std::sqrt(
+            std::pow(static_cast<double>(record.translation_end.x) -
+                record.translation_start.x, 2.0) +
+            std::pow(static_cast<double>(record.translation_end.y) -
+                record.translation_start.y, 2.0) +
+            std::pow(static_cast<double>(record.translation_end.z) -
+                record.translation_start.z, 2.0));
+        const double stored_linear_speed =
+            stored_translation_distance * record.inverse_duration;
+        const double stored_angular_speed =
+            static_cast<double>(record.angular_axis_and_angle.w) *
+            record.inverse_duration;
+        const double stored_sagitta =
+            static_cast<double>(record.maximum_local_radius) *
+            (1.0 - std::cos(
+                static_cast<double>(record.angular_axis_and_angle.w) * 0.5));
+        if (!outward_float_bound(
+                stored_linear_speed, record.linear_speed_bound) ||
+            !outward_float_bound(
+                stored_angular_speed, record.angular_speed_bound) ||
+            !outward_float_bound(
+                stored_sagitta, record.sagitta_bound))
+        {
+            return make_collider_build_error(
+                kinematic_collider_span_error::gpu_float_range,
+                "Kinematic Collider outward-rounded GPU motion Bounds are not representable.");
+        }
 
         kinematic_collider_span_build_result result;
         result.value = record;
