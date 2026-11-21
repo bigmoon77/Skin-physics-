@@ -2749,6 +2749,25 @@ namespace
         initial_cursor.animation_input_version_high = version_high;
         initial_cursor.u_segment_start = 0.5f;
 
+        skin_physics::physics::animation_trajectory_packet cpu_packet;
+        cpu_packet.animation_input_version =
+            (static_cast<uint64_t>(version_high) << 32u) | version_low;
+        cpu_packet.span_records = spans;
+        cpu_packet.span_world_time_starts = { 0.0, 0.25, 0.75 };
+        animation_span_cursor_gpu_record cpu_cursor = initial_cursor;
+        auto advance_cpu_cursor = [&](double duration)
+        {
+            animation_span_cursor_gpu_record next_cursor;
+            std::string diagnostic;
+            const bool success =
+                skin_physics::physics::advance_animation_span_cursor(
+                    cpu_packet, cpu_cursor, duration, next_cursor, diagnostic);
+            require(success,
+                "CPU Animation Span Cursor reference must accept a scheduled Segment: " +
+                    diagnostic);
+            cpu_cursor = next_cursor;
+        };
+
         const std::vector<uint32_t> initial_status = { 0u };
         ComPtr<ID3D11Buffer> span_buffer =
             create_distribution_test_structured_buffer(
@@ -2853,36 +2872,51 @@ namespace
         };
 
         dispatch(0.125f);
+        advance_cpu_cursor(0.125);
         animation_span_cursor_gpu_record cursor = read_cursor();
         require(cursor.span_record_index == 1u &&
             cursor.animation_input_version_low == version_low &&
             cursor.animation_input_version_high == version_high &&
-            cursor.u_segment_start == 0.0f &&
+            cursor.u_segment_start == cpu_cursor.u_segment_start &&
+            cursor.span_record_index == cpu_cursor.span_record_index &&
             read_status() == 0u,
             "Cursor advancement at an exact Span boundary must select the next immutable Span at u=0 without changing Packet Version.");
 
         dispatch(0.25f);
+        advance_cpu_cursor(0.25);
         cursor = read_cursor();
         require(cursor.span_record_index == 1u &&
-            std::abs(cursor.u_segment_start - 0.5f) <= 1.0e-6f &&
+            std::abs(cursor.u_segment_start - cpu_cursor.u_segment_start) <= 1.0e-6f &&
+            cursor.span_record_index == cpu_cursor.span_record_index &&
             read_status() == 0u,
             "Cursor advancement inside a Span must add Segment World-Time divided by that Span's duration.");
 
         dispatch(0.25f);
+        advance_cpu_cursor(0.25);
         cursor = read_cursor();
         require(cursor.span_record_index == 2u &&
-            cursor.u_segment_start == 0.0f &&
+            cursor.u_segment_start == cpu_cursor.u_segment_start &&
+            cursor.span_record_index == cpu_cursor.span_record_index &&
             read_status() == 0u,
             "Cursor advancement must cross exactly one scheduled boundary while preserving increasing World-Time.");
 
         dispatch(0.25f);
+        advance_cpu_cursor(0.25);
         cursor = read_cursor();
         require(cursor.span_record_index == 2u &&
-            cursor.u_segment_start == 1.0f &&
+            cursor.u_segment_start == cpu_cursor.u_segment_start &&
+            cursor.span_record_index == cpu_cursor.span_record_index &&
             read_status() == 0u,
             "The final Packet Span must hold its terminal normalized coordinate without reading beyond the Span table.");
 
         cursor = initial_cursor;
+        cpu_cursor = initial_cursor;
+        animation_span_cursor_gpu_record rejected_cpu_cursor;
+        std::string rejected_cpu_diagnostic;
+        require(!skin_physics::physics::advance_animation_span_cursor(
+                cpu_packet, cpu_cursor, 0.2,
+                rejected_cpu_cursor, rejected_cpu_diagnostic),
+            "CPU Animation Span Cursor reference must reject a Segment that crosses an unscheduled Span boundary.");
         context->UpdateSubresource(
             cursor_buffer.Get(), 0u, nullptr, &cursor, 0u, 0u);
         clear_status();
@@ -2895,6 +2929,11 @@ namespace
 
         cursor = initial_cursor;
         cursor.animation_input_version_low += 1u;
+        cpu_cursor = cursor;
+        require(!skin_physics::physics::advance_animation_span_cursor(
+                cpu_packet, cpu_cursor, 0.125,
+                rejected_cpu_cursor, rejected_cpu_diagnostic),
+            "CPU Animation Span Cursor reference must reject a stale Packet Version.");
         context->UpdateSubresource(
             cursor_buffer.Get(), 0u, nullptr, &cursor, 0u, 0u);
         clear_status();
