@@ -49,6 +49,10 @@ cbuffer AnimationSkinMatrixParameters : register(b0)
     float4 root_transform_column1;
     float4 root_transform_column2;
     float4 root_transform_column3;
+    float4 root_transform_derivative_column0;
+    float4 root_transform_derivative_column1;
+    float4 root_transform_derivative_column2;
+    float4 root_transform_derivative_column3;
 };
 
 StructuredBuffer<gpu_matrix4x4> global_matrices : register(t0);
@@ -301,8 +305,15 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     root_transform.column1 = root_transform_column1;
     root_transform.column2 = root_transform_column2;
     root_transform.column3 = root_transform_column3;
+    gpu_matrix4x4 root_transform_derivative;
+    root_transform_derivative.column0 = root_transform_derivative_column0;
+    root_transform_derivative.column1 = root_transform_derivative_column1;
+    root_transform_derivative.column2 = root_transform_derivative_column2;
+    root_transform_derivative.column3 = root_transform_derivative_column3;
     if (!finite_matrix(root_transform) ||
-        !affine_matrix(root_transform))
+        !affine_matrix(root_transform) ||
+        !finite_matrix(root_transform_derivative) ||
+        !affine_derivative_matrix(root_transform_derivative))
     {
         fail_joint(local_joint_index);
         return;
@@ -310,8 +321,9 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
 
     const gpu_matrix4x4 world_skin_matrix =
         multiply_matrix(root_transform, inverse_mesh_with_joint);
-    const gpu_matrix4x4 world_skin_derivative =
-        multiply_matrix(root_transform, skin_derivative);
+    const gpu_matrix4x4 world_skin_derivative = add_matrix(
+        multiply_matrix(root_transform_derivative, inverse_mesh_with_joint),
+        multiply_matrix(root_transform, skin_derivative));
     if (!finite_matrix(world_skin_matrix) ||
         !affine_matrix(world_skin_matrix) ||
         !finite_matrix(world_skin_derivative) ||
