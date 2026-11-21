@@ -286,6 +286,17 @@
             "The production WARP positions and Segment-local Lambda values match the CPU colored XPBD reference across repeated iterations",
             "Invalid color ownership, mismatched state arrays, degenerate edges and non-finite solver coefficients fail closed"
           ]
+        },
+        {
+          "id": "P05_WARP_CLOTH_JACOBI_CONTRIBUTION_GATHER",
+          "checks": [
+            "Production Shear / Bend contribution shader evaluates the same immutable Segment-start Position Snapshot and writes one 64-byte four-vertex correction record per constraint",
+            "Per-constraint Segment-local Lambda is updated with XPBD Compliance / delta-time / relaxation while zero-effective-mass constraints remain finite and produce zero correction",
+            "Production Vertex-to-Constraint CSR gather reads deterministic incident references, skips already-colored Stretch corrections, and gathers Shear / Bend corrections without inter-thread write conflicts",
+            "CSR offsets, type tags, constraint indices, local vertex indices, reserved fields and source vertex mappings are validated before correction publication",
+            "Non-finite contributions or invalid CSR references set a terminal solver diagnostic and preserve the affected source Position",
+            "WARP output Positions match the CPU simultaneous Shear / Bend XPBD reference for the same Segment duration, Compliance and relaxation"
+          ]
         }
       ],
       "automated_cases": [
