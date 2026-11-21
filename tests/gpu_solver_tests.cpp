@@ -60,6 +60,58 @@ namespace
         gpu_float4 lambda;
     };
 
+    struct gpu_cloth_jacobi_contribution
+    {
+        gpu_float4 correction0;
+        gpu_float4 correction1;
+        gpu_float4 correction2;
+        gpu_float4 correction3;
+    };
+
+    struct gpu_cloth_stretch_constraint
+    {
+        uint32_t vertices[2] = {};
+        float rest_length = 0.0f;
+        float reserved = 0.0f;
+    };
+
+    struct gpu_cloth_vertex_constraint_ref
+    {
+        uint32_t type = 0u;
+        uint32_t constraint_index = 0u;
+        uint32_t local_vertex_index = 0u;
+        uint32_t reserved = 0u;
+    };
+
+    struct alignas(16) gpu_cloth_jacobi_parameters
+    {
+        uint32_t constraint_count = 0u;
+        uint32_t vertex_count = 0u;
+        float delta_time = 0.0f;
+        float relaxation = 1.0f;
+    };
+
+    struct alignas(16) gpu_cloth_jacobi_gather_parameters
+    {
+        uint32_t vertex_count = 0u;
+        uint32_t stretch_constraint_count = 0u;
+        uint32_t shear_constraint_count = 0u;
+        uint32_t bend_constraint_count = 0u;
+        uint32_t reference_count = 0u;
+        uint32_t reserved[3] = {};
+    };
+
+    static_assert(sizeof(gpu_cloth_jacobi_contribution) == 64u,
+        "Production Cloth Jacobi Contribution ABI must remain 64 bytes.");
+    static_assert(sizeof(gpu_cloth_stretch_constraint) == 16u,
+        "Production Cloth Stretch Constraint ABI must remain 16 bytes.");
+    static_assert(sizeof(gpu_cloth_vertex_constraint_ref) == 16u,
+        "Production Cloth Vertex Constraint CSR ABI must remain 16 bytes.");
+    static_assert(sizeof(gpu_cloth_jacobi_parameters) == 16u,
+        "Production Cloth Jacobi Contribution parameters must remain 16 bytes.");
+    static_assert(sizeof(gpu_cloth_jacobi_gather_parameters) == 32u,
+        "Production Cloth Jacobi Gather parameters must remain 32 bytes.");
+
     struct alignas(16) gpu_step_parameters
     {
         float delta_time = 0.02f;
@@ -791,6 +843,302 @@ namespace
         test_phase05_warp_xpbd_constraints(
             device.Get(), context.Get(), shader.Get(), input, mesh, 2, "Bend");
         std::cout << "[PASS] P05_WARP_BEND\n";
+    }
+
+    void test_phase05_warp_cloth_jacobi_contribution_gather()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(SUCCEEDED(create_warp_device(
+                device.GetAddressOf(), context.GetAddressOf())),
+            "Cloth Jacobi contribution / gather WARP test requires Feature Level 11_0.");
+
+        const test_json::value input = test_json::load(
+            test_support::fixture_path("phase05_cloth/cloth_patch.input.json"));
+        const skin_physics::physics::cloth_mesh mesh = load_cloth_fixture(input);
+        require(!mesh.shear_constraints.empty() && !mesh.bend_constraints.empty() &&
+            !mesh.vertex_constraint_refs.empty() &&
+            mesh.vertex_constraint_offsets.size() == mesh.rest_positions.size() + 1u,
+            "Cloth Jacobi gather fixture requires Shear / Bend constraints and a valid Vertex-to-Constraint CSR.");
+
+        const std::filesystem::path shader_root =
+            test_support::fixture_directory().parent_path().parent_path() /
+            "shaders" / "runtime";
+        const ComPtr<ID3D11ComputeShader> contribution_shader =
+            compile_compute_shader(
+                device.Get(),
+                shader_root / "cloth_jacobi_contributions.cs.hlsl",
+                "main");
+        const ComPtr<ID3D11ComputeShader> gather_shader =
+            compile_compute_shader(
+                device.Get(),
+                shader_root / "cloth_jacobi_gather.cs.hlsl",
+                "main");
+
+        std::vector<vec3> source_positions = mesh.rest_positions;
+        source_positions[1u].y += 0.3f;
+        source_positions[2u].x += 0.1f;
+        source_positions[3u].z += 0.23f;
+        std::vector<gpu_float4> gpu_positions;
+        gpu_positions.reserve(source_positions.size());
+        for (const vec3& position : source_positions)
+        {
+            gpu_positions.push_back(
+                { position.x, position.y, position.z, 0.0f });
+        }
+        const std::vector<float> inverse_masses(
+            source_positions.size(), 1.0f);
+
+        const float delta_time = static_cast<float>(
+            input.at("fixed_delta_time").as_number());
+        const float shear_compliance = static_cast<float>(
+            input.at("compliance").at("shear").as_number());
+        const float bend_compliance = static_cast<float>(
+            input.at("compliance").at("bend").as_number());
+        constexpr float relaxation = 0.8f;
+
+        const std::vector<gpu_cloth_constraint> shear_constraints =
+            make_gpu_constraints(mesh, 1u, shear_compliance);
+        const std::vector<gpu_cloth_constraint> bend_constraints =
+            make_gpu_constraints(mesh, 2u, bend_compliance);
+        std::vector<gpu_cloth_stretch_constraint> stretch_constraints;
+        stretch_constraints.reserve(mesh.stretch_constraints.size());
+        for (const auto& source : mesh.stretch_constraints)
+        {
+            gpu_cloth_stretch_constraint value;
+            value.vertices[0] = source.vertices[0u];
+            value.vertices[1] = source.vertices[1u];
+            value.rest_length = source.rest_length;
+            stretch_constraints.push_back(value);
+        }
+
+        std::vector<gpu_cloth_vertex_constraint_ref> references;
+        references.reserve(mesh.vertex_constraint_refs.size());
+        for (const auto& source : mesh.vertex_constraint_refs)
+        {
+            gpu_cloth_vertex_constraint_ref value;
+            value.type = source.type;
+            value.constraint_index = source.constraint_index;
+            value.local_vertex_index = source.local_vertex_index;
+            value.reserved = source.reserved;
+            references.push_back(value);
+        }
+
+        const std::vector<float> initial_shear_lambdas(
+            shear_constraints.size(), 0.0f);
+        const std::vector<float> initial_bend_lambdas(
+            bend_constraints.size(), 0.0f);
+        const std::vector<gpu_cloth_jacobi_contribution> zero_shear_contributions(
+            shear_constraints.size());
+        const std::vector<gpu_cloth_jacobi_contribution> zero_bend_contributions(
+            bend_constraints.size());
+        const std::vector<uint32_t> initial_status = { 0u };
+
+        const ComPtr<ID3D11Buffer> positions_buffer =
+            create_structured_buffer(
+                device.Get(), gpu_positions, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> masses_buffer =
+            create_structured_buffer(
+                device.Get(), inverse_masses, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> shear_constraints_buffer =
+            create_structured_buffer(
+                device.Get(), shear_constraints, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> bend_constraints_buffer =
+            create_structured_buffer(
+                device.Get(), bend_constraints, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> shear_contributions_buffer =
+            create_structured_buffer(
+                device.Get(), zero_shear_contributions,
+                D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> bend_contributions_buffer =
+            create_structured_buffer(
+                device.Get(), zero_bend_contributions,
+                D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> shear_lambdas_buffer =
+            create_structured_buffer(
+                device.Get(), initial_shear_lambdas,
+                D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> bend_lambdas_buffer =
+            create_structured_buffer(
+                device.Get(), initial_bend_lambdas,
+                D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(
+                device.Get(), initial_status, D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11ShaderResourceView> positions_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), positions_buffer.Get(),
+                static_cast<UINT>(gpu_positions.size()));
+        const ComPtr<ID3D11ShaderResourceView> masses_srv =
+            create_structured_srv<float>(
+                device.Get(), masses_buffer.Get(),
+                static_cast<UINT>(inverse_masses.size()));
+        const ComPtr<ID3D11ShaderResourceView> shear_constraints_srv =
+            create_structured_srv<gpu_cloth_constraint>(
+                device.Get(), shear_constraints_buffer.Get(),
+                static_cast<UINT>(shear_constraints.size()));
+        const ComPtr<ID3D11ShaderResourceView> bend_constraints_srv =
+            create_structured_srv<gpu_cloth_constraint>(
+                device.Get(), bend_constraints_buffer.Get(),
+                static_cast<UINT>(bend_constraints.size()));
+        const ComPtr<ID3D11UnorderedAccessView> shear_contributions_uav =
+            create_structured_uav<gpu_cloth_jacobi_contribution>(
+                device.Get(), shear_contributions_buffer.Get(),
+                static_cast<UINT>(shear_constraints.size()));
+        const ComPtr<ID3D11UnorderedAccessView> bend_contributions_uav =
+            create_structured_uav<gpu_cloth_jacobi_contribution>(
+                device.Get(), bend_contributions_buffer.Get(),
+                static_cast<UINT>(bend_constraints.size()));
+        const ComPtr<ID3D11UnorderedAccessView> shear_lambdas_uav =
+            create_structured_uav<float>(
+                device.Get(), shear_lambdas_buffer.Get(),
+                static_cast<UINT>(initial_shear_lambdas.size()));
+        const ComPtr<ID3D11UnorderedAccessView> bend_lambdas_uav =
+            create_structured_uav<float>(
+                device.Get(), bend_lambdas_buffer.Get(),
+                static_cast<UINT>(initial_bend_lambdas.size()));
+        const ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), status_buffer.Get(), 1u);
+
+        gpu_cloth_jacobi_parameters contribution_parameters;
+        contribution_parameters.vertex_count =
+            static_cast<uint32_t>(gpu_positions.size());
+        contribution_parameters.delta_time = delta_time;
+        contribution_parameters.relaxation = relaxation;
+        const ComPtr<ID3D11Buffer> contribution_parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &contribution_parameters,
+                sizeof(contribution_parameters));
+
+        contribution_parameters.constraint_count =
+            static_cast<uint32_t>(shear_constraints.size());
+        contribution_parameters.relaxation = relaxation;
+        context->UpdateSubresource(
+            contribution_parameter_buffer.Get(), 0u, nullptr,
+            &contribution_parameters, 0u, 0u);
+        dispatch_compute(
+            context.Get(), contribution_shader.Get(),
+            { positions_srv.Get(), masses_srv.Get(), shear_constraints_srv.Get() },
+            { shear_contributions_uav.Get(), shear_lambdas_uav.Get(),
+                status_uav.Get() },
+            contribution_parameter_buffer.Get(),
+            static_cast<UINT>((shear_constraints.size() + 63u) / 64u));
+
+        contribution_parameters.constraint_count =
+            static_cast<uint32_t>(bend_constraints.size());
+        context->UpdateSubresource(
+            contribution_parameter_buffer.Get(), 0u, nullptr,
+            &contribution_parameters, 0u, 0u);
+        dispatch_compute(
+            context.Get(), contribution_shader.Get(),
+            { positions_srv.Get(), masses_srv.Get(), bend_constraints_srv.Get() },
+            { bend_contributions_uav.Get(), bend_lambdas_uav.Get(),
+                status_uav.Get() },
+            contribution_parameter_buffer.Get(),
+            static_cast<UINT>((bend_constraints.size() + 63u) / 64u));
+
+        const ComPtr<ID3D11Buffer> offsets_buffer =
+            create_structured_buffer(
+                device.Get(), mesh.vertex_constraint_offsets,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> references_buffer =
+            create_structured_buffer(
+                device.Get(), references, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> stretch_constraints_buffer =
+            create_structured_buffer(
+                device.Get(), stretch_constraints, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> output_positions_buffer =
+            create_structured_buffer(
+                device.Get(), gpu_positions, D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11ShaderResourceView> offsets_srv =
+            create_structured_srv<uint32_t>(
+                device.Get(), offsets_buffer.Get(),
+                static_cast<UINT>(mesh.vertex_constraint_offsets.size()));
+        const ComPtr<ID3D11ShaderResourceView> references_srv =
+            create_structured_srv<gpu_cloth_vertex_constraint_ref>(
+                device.Get(), references_buffer.Get(),
+                static_cast<UINT>(references.size()));
+        const ComPtr<ID3D11ShaderResourceView> stretch_constraints_srv =
+            create_structured_srv<gpu_cloth_stretch_constraint>(
+                device.Get(), stretch_constraints_buffer.Get(),
+                static_cast<UINT>(stretch_constraints.size()));
+        const ComPtr<ID3D11ShaderResourceView> shear_contributions_srv =
+            create_structured_srv<gpu_cloth_jacobi_contribution>(
+                device.Get(), shear_contributions_buffer.Get(),
+                static_cast<UINT>(shear_constraints.size()));
+        const ComPtr<ID3D11ShaderResourceView> bend_contributions_srv =
+            create_structured_srv<gpu_cloth_jacobi_contribution>(
+                device.Get(), bend_contributions_buffer.Get(),
+                static_cast<UINT>(bend_constraints.size()));
+        const ComPtr<ID3D11UnorderedAccessView> output_positions_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), output_positions_buffer.Get(),
+                static_cast<UINT>(gpu_positions.size()));
+
+        gpu_cloth_jacobi_gather_parameters gather_parameters;
+        gather_parameters.vertex_count =
+            static_cast<uint32_t>(gpu_positions.size());
+        gather_parameters.stretch_constraint_count =
+            static_cast<uint32_t>(stretch_constraints.size());
+        gather_parameters.shear_constraint_count =
+            static_cast<uint32_t>(shear_constraints.size());
+        gather_parameters.bend_constraint_count =
+            static_cast<uint32_t>(bend_constraints.size());
+        gather_parameters.reference_count =
+            static_cast<uint32_t>(references.size());
+        const ComPtr<ID3D11Buffer> gather_parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &gather_parameters, sizeof(gather_parameters));
+
+        dispatch_compute(
+            context.Get(), gather_shader.Get(),
+            { positions_srv.Get(), offsets_srv.Get(), references_srv.Get(),
+                stretch_constraints_srv.Get(), shear_constraints_srv.Get(),
+                bend_constraints_srv.Get(), shear_contributions_srv.Get(),
+                bend_contributions_srv.Get() },
+            { output_positions_uav.Get(), status_uav.Get() },
+            gather_parameter_buffer.Get(),
+            static_cast<UINT>((gpu_positions.size() + 63u) / 64u));
+
+        const std::vector<uint32_t> actual_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(actual_status[0u] == 0u,
+            "Production Cloth Jacobi contribution / gather passes must complete without diagnostics.");
+
+        const std::vector<gpu_float4> actual_positions =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(),
+                output_positions_buffer.Get(), gpu_positions.size());
+
+        skin_physics::physics::cloth_solver_settings cpu_settings;
+        cpu_settings.fixed_delta_time = delta_time;
+        cpu_settings.iterations = 1u;
+        cpu_settings.relaxation = relaxation;
+        cpu_settings.solve_stretch = false;
+        cpu_settings.solve_shear = true;
+        cpu_settings.solve_bend = true;
+        cpu_settings.shear_compliance = shear_compliance;
+        cpu_settings.bend_compliance = bend_compliance;
+        const auto cpu_result = skin_physics::physics::solve_cloth(
+            mesh, source_positions, inverse_masses, cpu_settings);
+        require(cpu_result.success,
+            "Cloth Jacobi gather CPU reference must complete successfully.");
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < actual_positions.size(); ++vertex_index)
+        {
+            const vec3& expected = cpu_result.positions[vertex_index];
+            require(std::abs(actual_positions[vertex_index].x - expected.x) <= 4.0e-4f &&
+                std::abs(actual_positions[vertex_index].y - expected.y) <= 4.0e-4f &&
+                std::abs(actual_positions[vertex_index].z - expected.z) <= 4.0e-4f,
+                "Production Cloth Jacobi contribution / CSR gather positions must match the CPU simultaneous XPBD reference.");
+        }
+
+        std::cout << "[PASS] P05_WARP_CLOTH_JACOBI_CONTRIBUTION_GATHER\n";
     }
 
     struct gpu_tet_input
@@ -5447,6 +5795,7 @@ int run_gpu_solver_tests()
 {
     test_phase05_warp_colored_cloth_stretch();
     test_phase05_warp_cloth_all_constraint_types();
+    test_phase05_warp_cloth_jacobi_contribution_gather();
     test_phase06_warp_corotational_fem();
     test_r1_warp_runtime_soft_body_fem_svd_parity();
     test_phase09_warp_animation_trajectory_packet_abi();
