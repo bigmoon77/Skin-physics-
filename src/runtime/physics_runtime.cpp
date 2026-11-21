@@ -793,6 +793,196 @@ namespace skin_physics::runtime
             return true;
         }
 
+        bool build_root_transform_gpu_record(
+            const std::vector<transform_sample>& samples,
+            const transform& fallback_transform,
+            double world_time_start,
+            double world_time_duration,
+            physics::root_transform_gpu_record& out_record,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            if (!finite_double(world_time_start) ||
+                world_time_start < 0.0 ||
+                !finite_double(world_time_duration) ||
+                world_time_duration <= 0.0 ||
+                !valid_transform(fallback_transform))
+            {
+                diagnostic =
+                    "Root Transform Packet construction received an invalid World-Time Span or fallback Transform.";
+                return false;
+            }
+
+            const double world_time_end =
+                world_time_start + world_time_duration;
+            if (!finite_double(world_time_end))
+            {
+                diagnostic =
+                    "Root Transform Packet World-Time endpoint is not representable.";
+                return false;
+            }
+
+            transform start_transform = fallback_transform;
+            transform end_transform = fallback_transform;
+            if (!samples.empty())
+            {
+                for (std::size_t index = 0u; index < samples.size(); ++index)
+                {
+                    if (!finite_double(samples[index].time) ||
+                        samples[index].time < 0.0 ||
+                        !valid_transform(samples[index].value) ||
+                        (index > 0u &&
+                            samples[index].time <= samples[index - 1u].time))
+                    {
+                        diagnostic =
+                            "Root Transform Packet requires finite, normalized and strictly time-ordered immutable Samples.";
+                        return false;
+                    }
+                }
+
+                const auto upper = std::upper_bound(
+                    samples.begin(), samples.end(), world_time_start,
+                    [](double time, const transform_sample& sample)
+                    {
+                        return time < sample.time;
+                    });
+                if (upper != samples.begin())
+                {
+                    const transform_sample& start = *(upper - 1);
+                    start_transform = start.value;
+                    end_transform = start.value;
+                    // A Teleport is a hard boundary. The preceding Span holds
+                    // the old Pose; the following Span starts at the Teleport.
+                    if (upper != samples.end() && !upper->is_teleport)
+                    {
+                        end_transform = upper->value;
+                    }
+                }
+            }
+
+            const double duration = world_time_duration;
+            const double inverse_duration = 1.0 / duration;
+            if (!std::isfinite(inverse_duration) ||
+                inverse_duration <= 0.0)
+            {
+                diagnostic =
+                    "Root Transform Packet inverse World-Time duration is invalid.";
+                return false;
+            }
+
+            physics::root_transform_gpu_record candidate;
+            const auto to_gpu_vec4 = [](const asset::vec3& value)
+            {
+                physics::gpu_float4 result;
+                result.x = value.x;
+                result.y = value.y;
+                result.z = value.z;
+                result.w = 1.0f;
+                return result;
+            };
+            candidate.translation_start =
+                to_gpu_vec4(start_transform.translation);
+            candidate.translation_end =
+                to_gpu_vec4(end_transform.translation);
+            candidate.rotation_start = {
+                start_transform.rotation.x,
+                start_transform.rotation.y,
+                start_transform.rotation.z,
+                start_transform.rotation.w
+            };
+            candidate.rotation_end = {
+                end_transform.rotation.x,
+                end_transform.rotation.y,
+                end_transform.rotation.z,
+                end_transform.rotation.w
+            };
+
+            std::array<double, 4> q0 = {
+                candidate.rotation_start.x,
+                candidate.rotation_start.y,
+                candidate.rotation_start.z,
+                candidate.rotation_start.w
+            };
+            std::array<double, 4> q1 = {
+                candidate.rotation_end.x,
+                candidate.rotation_end.y,
+                candidate.rotation_end.z,
+                candidate.rotation_end.w
+            };
+            double cosine = 0.0;
+            for (std::size_t component = 0u; component < 4u; ++component)
+            {
+                cosine += q0[component] * q1[component];
+            }
+            if (cosine < 0.0)
+            {
+                for (double& component : q1)
+                {
+                    component = -component;
+                }
+                candidate.rotation_end = {
+                    static_cast<float>(q1[0]),
+                    static_cast<float>(q1[1]),
+                    static_cast<float>(q1[2]),
+                    static_cast<float>(q1[3])
+                };
+                cosine = -cosine;
+            }
+            cosine = std::max(-1.0, std::min(1.0, cosine));
+
+            // q_delta = q_end * conjugate(q_start) expresses the Slerp
+            // rotation axis in World Space.
+            const std::array<double, 4> q_delta = {
+                q1[3] * q0[0] - q1[0] * q0[3] - q1[1] * q0[2] + q1[2] * q0[1],
+                q1[3] * q0[1] + q1[0] * q0[2] - q1[1] * q0[3] - q1[2] * q0[1],
+                q1[3] * q0[2] - q1[0] * q0[1] + q1[1] * q0[0] - q1[2] * q0[3],
+                q1[3] * q0[3] + q1[0] * q0[0] + q1[1] * q0[1] + q1[2] * q0[2]
+            };
+            const double vector_length = std::sqrt(
+                q_delta[0] * q_delta[0] +
+                q_delta[1] * q_delta[1] +
+                q_delta[2] * q_delta[2]);
+            const double angle =
+                2.0 * std::atan2(vector_length, std::max(0.0, q_delta[3]));
+            if (!std::isfinite(angle) || angle < 0.0 ||
+                angle > 3.1416927)
+            {
+                diagnostic =
+                    "Root Transform Packet World Angular Axis / Angle is invalid.";
+                return false;
+            }
+            if (angle > 1.0e-6)
+            {
+                candidate.angular_axis_and_angle = {
+                    static_cast<float>(q_delta[0] / vector_length),
+                    static_cast<float>(q_delta[1] / vector_length),
+                    static_cast<float>(q_delta[2] / vector_length),
+                    static_cast<float>(angle)
+                };
+            }
+
+            candidate.duration_seconds = static_cast<float>(duration);
+            candidate.inverse_duration =
+                static_cast<float>(inverse_duration);
+            candidate.flags =
+                physics::root_transform_flag_valid |
+                physics::root_transform_flag_shortest_arc_slerp;
+            if (!std::isfinite(candidate.duration_seconds) ||
+                candidate.duration_seconds <= 0.0f ||
+                !std::isfinite(candidate.inverse_duration) ||
+                candidate.inverse_duration <= 0.0f ||
+                !finite_vec3(start_transform.translation) ||
+                !finite_vec3(end_transform.translation))
+            {
+                diagnostic =
+                    "Root Transform Packet exceeds the finite GPU float range.";
+                return false;
+            }
+
+            out_record = candidate;
+            return true;
+        }
+
         asset::mat4 multiply_asset_matrices(
             const asset::mat4& left,
             const asset::mat4& right)
@@ -4288,6 +4478,20 @@ namespace skin_physics::runtime
                         span_input.world_time_start = scheduled.world_time_start;
                         span_input.world_time_duration =
                             scheduled.world_time_duration;
+                        span_input.has_root_transform = true;
+                        if (!build_root_transform_gpu_record(
+                                model_snapshot.root_samples,
+                                model_snapshot.root_transform,
+                                span_input.world_time_start,
+                                span_input.world_time_duration,
+                                span_input.root_transform,
+                                diagnostic))
+                        {
+                            diagnostic =
+                                "Immutable Root Transform Packet construction failed: " +
+                                diagnostic;
+                            return false;
+                        }
                         span_input.bounds_are_certified = false;
 
                         physics::animation_trajectory_track_span_input source_input;
@@ -4341,6 +4545,20 @@ namespace skin_physics::runtime
                         span_input.world_time_start = scheduled.world_time_start;
                         span_input.world_time_duration =
                             scheduled.world_time_duration;
+                        span_input.has_root_transform = true;
+                        if (!build_root_transform_gpu_record(
+                                model_snapshot.root_samples,
+                                model_snapshot.root_transform,
+                                span_input.world_time_start,
+                                span_input.world_time_duration,
+                                span_input.root_transform,
+                                diagnostic))
+                        {
+                            diagnostic =
+                                "Immutable Root Transform Packet construction failed: " +
+                                diagnostic;
+                            return false;
+                        }
                         span_input.bounds_are_certified = false;
 
                         physics::animation_trajectory_track_span_input playback_input;
