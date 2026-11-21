@@ -768,6 +768,16 @@
             "Quaternion Source / Target values and derivatives are normalized and hemisphere-aligned before Blend; the resulting quaternion derivative is projected into its tangent space",
             "Source / Target Node, Parent, Role and local transform Status must match; invalid input fails closed through the GPU Animation status bit"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_NODE_HIERARCHY",
+          "checks": [
+            "GPU Local TRS records are composed in parent-before-child order into Asset Node Global Matrices",
+            "Global Matrix Derivatives use the matrix product rule: parent_dot * local + parent * local_dot",
+            "Static affine Matrix nodes are loaded from the dense Asset Node matrix buffer and contribute zero local derivative",
+            "Node depth is dispatched in deterministic hierarchy levels; Parent references must be topological and acyclic",
+            "Invalid Parent references or non-finite Local / Global matrices fail closed through the GPU Hierarchy status bit"
+          ]
         }
       ],
       "automated_cases": [
