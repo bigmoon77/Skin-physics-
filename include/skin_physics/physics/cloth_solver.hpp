@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -108,6 +109,77 @@ namespace skin_physics::physics
         bool solve_shear = true;
         bool solve_bend = true;
     };
+
+    // Explicit Shader Model 5 StructuredBuffer records. These records are
+    // separate from the CPU topology structs so GPU layout changes remain
+    // deliberate and compile-time checked.
+    struct cloth_gpu_stretch_constraint_record
+    {
+        std::array<uint32_t, 2> vertices = {};
+        float rest_length = 0.0f;
+        float reserved = 0.0f;
+    };
+
+    struct cloth_gpu_constraint_record
+    {
+        std::array<uint32_t, 4> indices = {};
+        uint32_t type = 0u;
+        float rest_value = 0.0f;
+        float normalization = 0.0f;
+        float compliance = 0.0f;
+    };
+
+    static_assert(sizeof(cloth_gpu_stretch_constraint_record) == 16u,
+        "Cloth Stretch GPU constraint ABI must remain 16 bytes.");
+    static_assert(offsetof(cloth_gpu_stretch_constraint_record, rest_length) == 8u);
+    static_assert(sizeof(cloth_gpu_constraint_record) == 32u,
+        "Cloth Jacobi GPU constraint ABI must remain 32 bytes.");
+    static_assert(offsetof(cloth_gpu_constraint_record, type) == 16u);
+    static_assert(offsetof(cloth_gpu_constraint_record, compliance) == 28u);
+    static_assert(sizeof(cloth_vertex_constraint_ref) == 16u,
+        "Cloth Vertex-to-Constraint CSR reference ABI must remain 16 bytes.");
+
+    struct cloth_gpu_topology_packet
+    {
+        uint32_t vertex_count = 0u;
+        std::vector<cloth_gpu_stretch_constraint_record> stretch_constraints;
+        std::vector<cloth_stretch_color_range> stretch_color_ranges;
+        std::vector<uint32_t> stretch_color_constraint_indices;
+        std::vector<cloth_gpu_constraint_record> shear_constraints;
+        std::vector<cloth_gpu_constraint_record> bend_constraints;
+        std::vector<uint32_t> vertex_constraint_offsets;
+        std::vector<cloth_vertex_constraint_ref> vertex_constraint_refs;
+        // Lambda is Segment-local. These arrays are initialized to zero and
+        // must be reset at each new Segment, then retained across its iterations.
+        std::vector<float> stretch_lambdas;
+        std::vector<float> shear_lambdas;
+        std::vector<float> bend_lambdas;
+    };
+
+    enum class cloth_gpu_topology_error : uint8_t
+    {
+        none,
+        invalid_mesh,
+        invalid_settings,
+        invalid_coloring,
+        invalid_csr,
+        capacity_exceeded
+    };
+
+    struct cloth_gpu_topology_build_result
+    {
+        cloth_gpu_topology_packet value;
+        cloth_gpu_topology_error error = cloth_gpu_topology_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    // Builds a transactional, GPU-layout-checked topology packet from validated
+    // CPU Cloth data. Dynamic Positions / inverse masses and Segment-local
+    // Lambda resets remain Runtime-owned resources.
+    cloth_gpu_topology_build_result build_cloth_gpu_topology_packet(
+        const cloth_mesh& mesh,
+        const cloth_solver_settings& settings = {});
 
     struct cloth_bend_evaluation
     {
