@@ -254,13 +254,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         span_stride != 80u || collider_stride != 128u ||
         index_stride != 4u || contact_stride != 16u ||
         output_stride != 96u || sample_count > output_buffer_count ||
-        cursor.span_record_index == INVALID_INDEX ||
-        cursor.span_record_index >= span_count ||
-        cursor.span_record_index >= span_buffer_count ||
-        !isfinite(tau_seconds) || tau_seconds < 0.0f ||
-        !isfinite(cursor.u_segment_start) ||
-        cursor.u_segment_start < 0.0f ||
-        cursor.u_segment_start > 1.0f)
+        !isfinite(tau_seconds) || tau_seconds < 0.0f)
     {
         output_value.status = STATUS_INVALID_INPUT;
         collider_samples[local_index] = output_value;
