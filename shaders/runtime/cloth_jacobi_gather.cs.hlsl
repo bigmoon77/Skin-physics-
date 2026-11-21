@@ -1,3 +1,10 @@
+struct ClothStretchConstraint
+{
+    uint2 vertices;
+    float rest_length;
+    float reserved;
+};
+
 struct ClothConstraint
 {
     uint4 indices;
@@ -26,6 +33,7 @@ struct ClothVertexConstraintRef
 cbuffer ClothJacobiGatherParameters : register(b0)
 {
     uint vertex_count;
+    uint stretch_constraint_count;
     uint shear_constraint_count;
     uint bend_constraint_count;
     uint reference_count;
@@ -34,10 +42,11 @@ cbuffer ClothJacobiGatherParameters : register(b0)
 StructuredBuffer<float4> current_positions : register(t0);
 StructuredBuffer<uint> vertex_constraint_offsets : register(t1);
 StructuredBuffer<ClothVertexConstraintRef> vertex_constraint_refs : register(t2);
-StructuredBuffer<ClothConstraint> shear_constraints : register(t3);
-StructuredBuffer<ClothConstraint> bend_constraints : register(t4);
-StructuredBuffer<ClothContribution> shear_contributions : register(t5);
-StructuredBuffer<ClothContribution> bend_contributions : register(t6);
+StructuredBuffer<ClothStretchConstraint> stretch_constraints : register(t3);
+StructuredBuffer<ClothConstraint> shear_constraints : register(t4);
+StructuredBuffer<ClothConstraint> bend_constraints : register(t5);
+StructuredBuffer<ClothContribution> shear_contributions : register(t6);
+StructuredBuffer<ClothContribution> bend_contributions : register(t7);
 RWStructuredBuffer<float4> next_positions : register(u0);
 RWStructuredBuffer<uint> solver_status : register(u1);
 
@@ -81,6 +90,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     uint offset_stride = 0u;
     uint reference_buffer_count = 0u;
     uint reference_stride = 0u;
+    uint stretch_constraint_buffer_count = 0u;
+    uint stretch_constraint_stride = 0u;
     uint shear_constraint_buffer_count = 0u;
     uint shear_constraint_stride = 0u;
     uint bend_constraint_buffer_count = 0u;
@@ -96,6 +107,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     current_positions.GetDimensions(position_count, position_stride);
     vertex_constraint_offsets.GetDimensions(offset_count, offset_stride);
     vertex_constraint_refs.GetDimensions(reference_buffer_count, reference_stride);
+    stretch_constraints.GetDimensions(
+        stretch_constraint_buffer_count, stretch_constraint_stride);
     shear_constraints.GetDimensions(
         shear_constraint_buffer_count, shear_constraint_stride);
     bend_constraints.GetDimensions(
@@ -113,8 +126,10 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         output_stride != 16u || offset_count != vertex_count + 1u ||
         offset_stride != 4u || reference_count > reference_buffer_count ||
         reference_stride != 16u ||
+        stretch_constraint_count > stretch_constraint_buffer_count ||
         shear_constraint_count > shear_constraint_buffer_count ||
         bend_constraint_count > bend_constraint_buffer_count ||
+        stretch_constraint_stride != 16u ||
         shear_constraint_stride != 32u || bend_constraint_stride != 32u ||
         shear_contribution_count < shear_constraint_count ||
         bend_contribution_count < bend_constraint_count ||
@@ -159,6 +174,26 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             fail_cloth_csr();
             next_positions[vertex_index] = source_position;
             return;
+        }
+
+        if (reference.type == CLOTH_CONSTRAINT_STRETCH)
+        {
+            if (reference.constraint_index >= stretch_constraint_count ||
+                reference.local_vertex_index >= 2u)
+            {
+                fail_cloth_csr();
+                next_positions[vertex_index] = source_position;
+                return;
+            }
+            const ClothStretchConstraint constraint =
+                stretch_constraints[reference.constraint_index];
+            if (constraint.vertices[reference.local_vertex_index] != vertex_index)
+            {
+                fail_cloth_csr();
+                next_positions[vertex_index] = source_position;
+                return;
+            }
+            continue;
         }
 
         ClothConstraint constraint;
