@@ -391,6 +391,11 @@ namespace
 
 int main()
 {
+    // Keep per-test diagnostics visible even when a WARP driver / device
+    // failure terminates the process before normal stream destruction.
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
+
     try
     {
         run_test_case("P01_OBJ_TEMP_EDGE_CASES", test_obj_negative_indices_and_polygon);
