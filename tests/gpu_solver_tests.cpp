@@ -4236,6 +4236,29 @@ namespace
             std::abs(rotation_tangent_dot) <= 1.0e-5f,
             "GPU Quaternion Blend must hemisphere-align, normalize and return its analytic tangent-space derivative.");
 
+        blend_parameters start_parameters = parameters;
+        start_parameters.span_local_u = 0.0f;
+        const ComPtr<ID3D11Buffer> start_parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &start_parameters, sizeof(start_parameters));
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            { source_srv.Get(), target_srv.Get(), blend_srv.Get() },
+            { output_uav.Get(), status_uav.Get() },
+            start_parameter_buffer.Get(),
+            1u);
+        const std::vector<gpu_animation_node_local_transform_record>
+            start_output =
+                readback_structured_buffer<
+                    gpu_animation_node_local_transform_record>(
+                        device.Get(), context.Get(), output_buffer.Get(), 1u);
+        const std::vector<uint32_t> start_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(start_status[0u] == 0u &&
+            std::abs(start_output[0u].translation_velocity.x - 11.0f) <= 1.0e-5f,
+            "Hermite Blend must preserve its right-sided analytic weight derivative at the exact Blend Start boundary.");
+
         std::vector<gpu_animation_node_local_transform_record> mismatched_target = {
             target
         };
