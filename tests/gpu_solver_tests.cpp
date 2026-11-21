@@ -4556,8 +4556,14 @@ namespace
             uint32_t inverse_bind_matrix_count = 1u;
             uint32_t expected_mesh_node_index = 0u;
             uint32_t reserved[2] = {};
+            gpu_matrix4x4 root_transform;
         };
-        const skin_matrix_parameters parameters;
+        static_assert(sizeof(skin_matrix_parameters) == 96u);
+        skin_matrix_parameters parameters;
+        parameters.root_transform.column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
+        parameters.root_transform.column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
+        parameters.root_transform.column2 = { 0.0f, 0.0f, 1.0f, 0.0f };
+        parameters.root_transform.column3 = { 10.0f, 0.0f, 0.0f, 1.0f };
         const ComPtr<ID3D11Buffer> parameter_buffer =
             create_constant_buffer(
                 device.Get(), &parameters, sizeof(parameters));
@@ -4584,7 +4590,7 @@ namespace
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
         require(status[0u] == 0u,
             "Valid Mesh / Joint Global Matrices and Skin-specific IBM must not set the GPU Skin Matrix failure bit.");
-        require(std::abs(skin_matrices[0u].column3.x - 2.0f) <= 1.0e-6f &&
+        require(std::abs(skin_matrices[0u].column3.x - 12.0f) <= 1.0e-6f &&
             std::abs(skin_matrices[0u].column3.w - 1.0f) <= 1.0e-6f &&
             std::abs(skin_matrix_derivatives[0u].column3.x - 2.0f) <= 1.0e-6f &&
             std::abs(skin_matrix_derivatives[0u].column3.w) <= 1.0e-6f,
