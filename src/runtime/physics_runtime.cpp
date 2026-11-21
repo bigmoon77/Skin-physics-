@@ -4336,7 +4336,6 @@ namespace skin_physics::runtime
         bool append_soft_body_animation_skinning_pass(
             const model_slot& model,
             const model_input_snapshot& model_snapshot,
-            const tick_input_snapshot& input_snapshot,
             const model_animation_tick_schedule& schedule,
             soft_body_mesh_work_state& work,
             double world_time,
@@ -4497,114 +4496,6 @@ namespace skin_physics::runtime
                 }
                 packet_desc.spans.reserve(scheduled_span_count);
 
-                struct prepared_kinematic_collider
-                {
-                    uint64_t stable_id = 0u;
-                    uint32_t handle_index = asset::invalid_index;
-                    float maximum_local_radius = 0.0f;
-                    std::vector<physics::kinematic_collider_transform_sample>
-                        samples;
-                };
-                std::vector<prepared_kinematic_collider>
-                    prepared_kinematic_colliders;
-                for (const collider_input_snapshot& collider_snapshot :
-                    input_snapshot.colliders)
-                {
-                    if (!collider_snapshot.kinematic)
-                    {
-                        continue;
-                    }
-                    if (collider_snapshot.collider_index == asset::invalid_index ||
-                        collider_snapshot.generation == 0u)
-                    {
-                        diagnostic =
-                            "Immutable Kinematic Collider Packet contains an invalid Handle identity.";
-                        return false;
-                    }
-
-                    prepared_kinematic_collider prepared;
-                    prepared.handle_index = collider_snapshot.collider_index;
-                    prepared.stable_id =
-                        (static_cast<uint64_t>(collider_snapshot.generation) << 32u) |
-                        collider_snapshot.collider_index;
-                    prepared.samples.reserve(collider_snapshot.pose_samples.size());
-                    for (const transform_sample& sample :
-                        collider_snapshot.pose_samples)
-                    {
-                        physics::kinematic_collider_transform_sample converted;
-                        converted.world_time = sample.time;
-                        converted.translation = sample.value.translation;
-                        converted.rotation = sample.value.rotation;
-                        converted.is_teleport = sample.is_teleport;
-                        prepared.samples.push_back(converted);
-                    }
-
-                    double maximum_local_radius_squared = 0.0;
-                    for (const asset::vertex& vertex :
-                        collider_snapshot.description.collision_mesh.vertices)
-                    {
-                        const double x = vertex.position.x;
-                        const double y = vertex.position.y;
-                        const double z = vertex.position.z;
-                        const double radius_squared = x * x + y * y + z * z;
-                        if (!std::isfinite(radius_squared) ||
-                            radius_squared < 0.0)
-                        {
-                            diagnostic =
-                                "Kinematic Collider Mesh contains a non-finite local vertex while deriving its certified rotation radius.";
-                            return false;
-                        }
-                        maximum_local_radius_squared = std::max(
-                            maximum_local_radius_squared, radius_squared);
-                    }
-
-                    const double maximum_local_radius =
-                        std::sqrt(maximum_local_radius_squared);
-                    if (!std::isfinite(maximum_local_radius) ||
-                        maximum_local_radius >
-                            static_cast<double>(
-                                std::numeric_limits<float>::max()))
-                    {
-                        diagnostic =
-                            "Kinematic Collider Mesh local radius exceeds the GPU Float range.";
-                        return false;
-                    }
-                    prepared.maximum_local_radius =
-                        static_cast<float>(maximum_local_radius);
-                    prepared_kinematic_colliders.push_back(std::move(prepared));
-                }
-
-                const auto append_kinematic_collider_records =
-                    [&prepared_kinematic_colliders](
-                        physics::animation_trajectory_span_input& span_input,
-                        std::string& out_diagnostic) -> bool
-                {
-                    span_input.colliders.reserve(
-                        prepared_kinematic_colliders.size());
-                    for (const prepared_kinematic_collider& collider :
-                        prepared_kinematic_colliders)
-                    {
-                        const physics::kinematic_collider_span_build_result
-                            collider_span =
-                                physics::build_kinematic_collider_span_from_samples(
-                                    collider.stable_id,
-                                    collider.samples,
-                                    span_input.world_time_start,
-                                    span_input.world_time_duration,
-                                    collider.maximum_local_radius);
-                        if (!collider_span.success)
-                        {
-                            out_diagnostic =
-                                "Immutable Kinematic Collider Span construction failed for Handle " +
-                                std::to_string(collider.handle_index) +
-                                ": " + collider_span.message;
-                            return false;
-                        }
-                        span_input.colliders.push_back(collider_span.value);
-                    }
-                    return true;
-                };
-
                 if (schedule.has_blend)
                 {
                     for (std::size_t span_index = 0u;
@@ -4652,11 +4543,6 @@ namespace skin_physics::runtime
                         target_input.reverse_playback =
                             scheduled.target.clip.clip_time_delta < 0.0;
 
-                        if (!append_kinematic_collider_records(
-                                span_input, diagnostic))
-                        {
-                            return false;
-                        }
                         span_input.tracks.push_back(std::move(source_input));
                         span_input.tracks.push_back(std::move(target_input));
                         span_input.has_blend = true;
@@ -4718,11 +4604,6 @@ namespace skin_physics::runtime
                                 : model_snapshot.animation_playback.track.loop;
                         playback_input.reverse_playback =
                             scheduled.clip.clip_time_delta < 0.0;
-                        if (!append_kinematic_collider_records(
-                                span_input, diagnostic))
-                        {
-                            return false;
-                        }
                         span_input.tracks.push_back(std::move(playback_input));
                         packet_desc.spans.push_back(std::move(span_input));
                     }
@@ -5886,7 +5767,6 @@ namespace skin_physics::runtime
                             !append_soft_body_animation_skinning_pass(
                                 *work.model,
                                 *model_snapshot,
-                                input_snapshot,
                                 *animation_schedule_iterator,
                                 work,
                                 segment.start_time,
@@ -6504,32 +6384,7 @@ namespace skin_physics::runtime
                         return true;
                     };
 
-                    const auto append_kinematic_collider_sample_boundaries =
-                        [&input_snapshot](
-                            double span_start,
-                            double span_end,
-                            std::vector<double>& boundaries)
-                    {
-                        for (const collider_input_snapshot& collider_snapshot :
-                            input_snapshot.colliders)
-                        {
-                            if (!collider_snapshot.kinematic)
-                            {
-                                continue;
-                            }
-                            for (const transform_sample& sample :
-                                collider_snapshot.pose_samples)
-                            {
-                                if (sample.time > span_start &&
-                                    sample.time < span_end)
-                                {
-                                    boundaries.push_back(sample.time);
-                                }
-                            }
-                        }
-                    };
-
-                    const auto split_playback_spans_at_world_samples =
+                    const auto split_playback_spans_at_root_samples =
                         [&](
                             const asset::animation_clip& clip,
                             const std::vector<physics::scheduled_animation_clip_span>& source,
@@ -6543,19 +6398,8 @@ namespace skin_physics::runtime
                             const double span_end =
                                 span_start + original.world_time_duration;
                             std::vector<double> boundaries;
-                            std::size_t collider_sample_count = 0u;
-                            for (const collider_input_snapshot& collider_snapshot :
-                                input_snapshot.colliders)
-                            {
-                                if (collider_snapshot.kinematic)
-                                {
-                                    collider_sample_count +=
-                                        collider_snapshot.pose_samples.size();
-                                }
-                            }
                             boundaries.reserve(
-                                model_snapshot.root_samples.size() +
-                                collider_sample_count + 2u);
+                                model_snapshot.root_samples.size() + 2u);
                             boundaries.push_back(span_start);
                             for (const transform_sample& sample :
                                 model_snapshot.root_samples)
@@ -6566,13 +6410,7 @@ namespace skin_physics::runtime
                                     boundaries.push_back(sample.time);
                                 }
                             }
-                            append_kinematic_collider_sample_boundaries(
-                                span_start, span_end, boundaries);
                             boundaries.push_back(span_end);
-                            std::sort(boundaries.begin(), boundaries.end());
-                            boundaries.erase(
-                                std::unique(boundaries.begin(), boundaries.end()),
-                                boundaries.end());
 
                             for (std::size_t index = 0u;
                                 index + 1u < boundaries.size(); ++index)
@@ -6645,7 +6483,7 @@ namespace skin_physics::runtime
                                 root_only_schedule.message;
                             return false;
                         }
-                        if (!split_playback_spans_at_world_samples(
+                        if (!split_playback_spans_at_root_samples(
                                 clip, root_only_schedule.values,
                                 schedule.playback_spans))
                         {
@@ -6699,7 +6537,7 @@ namespace skin_physics::runtime
                                 playback.message;
                             return false;
                         }
-                        if (!split_playback_spans_at_world_samples(
+                        if (!split_playback_spans_at_root_samples(
                                 clip, playback.values,
                                 schedule.playback_spans))
                         {
@@ -6795,19 +6633,8 @@ namespace skin_physics::runtime
                             const double span_end =
                                 span_start + original.world_time_duration;
                             std::vector<double> boundaries;
-                            std::size_t collider_sample_count = 0u;
-                            for (const collider_input_snapshot& collider_snapshot :
-                                input_snapshot.colliders)
-                            {
-                                if (collider_snapshot.kinematic)
-                                {
-                                    collider_sample_count +=
-                                        collider_snapshot.pose_samples.size();
-                                }
-                            }
                             boundaries.reserve(
-                                model_snapshot.root_samples.size() +
-                                collider_sample_count + 2u);
+                                model_snapshot.root_samples.size() + 2u);
                             boundaries.push_back(span_start);
                             for (const transform_sample& sample :
                                 model_snapshot.root_samples)
@@ -6818,13 +6645,7 @@ namespace skin_physics::runtime
                                     boundaries.push_back(sample.time);
                                 }
                             }
-                            append_kinematic_collider_sample_boundaries(
-                                span_start, span_end, boundaries);
                             boundaries.push_back(span_end);
-                            std::sort(boundaries.begin(), boundaries.end());
-                            boundaries.erase(
-                                std::unique(boundaries.begin(), boundaries.end()),
-                                boundaries.end());
 
                             for (std::size_t boundary_index = 0u;
                                 boundary_index + 1u < boundaries.size();
