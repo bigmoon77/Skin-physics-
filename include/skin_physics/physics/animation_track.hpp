@@ -580,7 +580,11 @@ namespace skin_physics::physics
         float reserved1 = 0.0f;
     };
 
-    constexpr uint32_t kinematic_collider_flag_valid = 1u << 0u;
+    constexpr uint32_t kinematic_collider_flag_kinematic = 1u << 0u;
+    constexpr uint32_t kinematic_collider_flag_shortest_arc_slerp = 1u << 1u;
+    constexpr uint32_t kinematic_collider_flag_valid =
+        kinematic_collider_flag_kinematic |
+        kinematic_collider_flag_shortest_arc_slerp;
 
     struct kinematic_collider_span_desc
     {
@@ -754,6 +758,8 @@ namespace skin_physics::physics
     constexpr uint32_t animation_channel_mask_scale = 1u << 2u;
 
     constexpr uint32_t animation_span_flag_has_blend = 1u << 0u;
+    constexpr uint32_t animation_span_flag_has_kinematic_collider = 1u << 1u;
+    constexpr uint32_t animation_span_flag_has_root_motion = 1u << 2u;
     constexpr uint32_t animation_span_flag_bounds_certified = 1u << 3u;
     constexpr uint32_t animation_track_flag_loop = 1u << 0u;
     constexpr uint32_t animation_track_flag_reverse_playback = 1u << 1u;
