@@ -2083,7 +2083,19 @@ namespace
             animation_status.diagnostic.find(
                 "root-only motion without a valid fully skinned Soft Body path") !=
                 std::string::npos,
-            "Runtime must explicitly report BLOCKED_BY_INPUT for root-only Transform Samples instead of committing a Tick with the input silently ignored.");
+            "Runtime must explicitly report BLOCKED_BY_INPUT for unsupported unskinned root-only Transform Samples. state=" +
+                std::to_string(static_cast<uint32_t>(animation_status.state)) +
+                " status=" +
+                std::to_string(static_cast<uint32_t>(animation_status.last_tick_status)) +
+                " in_flight=" +
+                std::to_string(animation_status.in_flight_tick_count) +
+                " sequence=" +
+                std::to_string(animation_status.head_reserved_tick_sequence) +
+                " snapshot=" +
+                std::to_string(animation_status.head_input_snapshot_version) +
+                " force_snapshot=" +
+                std::to_string(force_snapshot_version) +
+                " diagnostic=" + animation_status.diagnostic);
         require(runtime.reset_world(world).success(),
             "Reset must explicitly clear the CPU-only Reservation and unintegrated Root Transform Samples.");
 
