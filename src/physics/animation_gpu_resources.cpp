@@ -553,7 +553,7 @@ namespace skin_physics::physics
                     root.duration_seconds <= 0.0f ||
                     std::abs(static_cast<double>(root.duration_seconds) -
                         owning_span.span_duration_seconds) >
-                        1.0e-5 * std::max(1.0,
+                        1.0e-5 * (std::max)(1.0,
                             static_cast<double>(owning_span.span_duration_seconds)) ||
                     !std::isfinite(root.inverse_duration) ||
                     root.inverse_duration <= 0.0f ||
