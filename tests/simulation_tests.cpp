@@ -5,8 +5,11 @@
 #include "skin_physics/physics/soft_body_fem.hpp"
 #include "skin_physics/physics/collision.hpp"
 #include "skin_physics/physics/ccd.hpp"
+#include "skin_physics/physics/correction_ccd.hpp"
 #include "skin_physics/physics/animation_track.hpp"
+#include "skin_physics/physics/physics_mesh_skinning.hpp"
 #include "skin_physics/physics/attribute_paint.hpp"
+#include "skin_physics/runtime/detail/force_distribution.hpp"
 #include "skin_physics/physics/performance_metrics.hpp"
 #include "skin_physics/simulation/fixed_step.hpp"
 #include "json_test_support.hpp"
@@ -17,6 +20,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -43,6 +47,79 @@ namespace
         {
             throw std::runtime_error(message);
         }
+    }
+
+    bool initialize_test_correction_segment_geometry(
+        skin_physics::physics::correction_segment_candidate_state& state,
+        uint64_t base_integration_segment_id,
+        const std::vector<skin_physics::physics::correction_primitive_epoch_input>& primitives,
+        float contact_thickness)
+    {
+        std::map<uint64_t, skin_physics::asset::vec3> unique_start_positions;
+        std::vector<skin_physics::physics::correction_vertex_motion>
+            envelope_vertex_motions;
+
+        for (const auto& primitive : primitives)
+        {
+            if (primitive.vertex_stable_ids.size() !=
+                    primitive.segment_start_positions.size() ||
+                primitive.vertex_stable_ids.size() !=
+                    primitive.vertex_motions.size())
+            {
+                return false;
+            }
+
+            for (std::size_t index = 0;
+                index < primitive.vertex_stable_ids.size(); ++index)
+            {
+                const uint64_t stable_id =
+                    primitive.vertex_stable_ids[index];
+                const skin_physics::asset::vec3& start_position =
+                    primitive.segment_start_positions[index];
+                const auto inserted = unique_start_positions.emplace(
+                    stable_id, start_position);
+                if (!inserted.second &&
+                    (inserted.first->second.x != start_position.x ||
+                    inserted.first->second.y != start_position.y ||
+                    inserted.first->second.z != start_position.z))
+                {
+                    return false;
+                }
+
+                envelope_vertex_motions.push_back({
+                    start_position, primitive.vertex_motions[index].before
+                });
+                envelope_vertex_motions.push_back(
+                    primitive.vertex_motions[index]);
+            }
+        }
+
+        if (envelope_vertex_motions.empty())
+        {
+            envelope_vertex_motions.push_back({
+                { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }
+            });
+        }
+
+        skin_physics::physics::collision_aabb physical_swept_bounds;
+        if (!skin_physics::physics::build_correction_swept_aabb(
+            envelope_vertex_motions, contact_thickness,
+            physical_swept_bounds))
+        {
+            return false;
+        }
+
+        std::vector<skin_physics::physics::correction_segment_vertex_snapshot>
+            segment_start_snapshot;
+        segment_start_snapshot.reserve(unique_start_positions.size());
+        for (const auto& entry : unique_start_positions)
+        {
+            segment_start_snapshot.push_back({ entry.first, entry.second });
+        }
+
+        return skin_physics::physics::initialize_correction_segment_geometry(
+            state, base_integration_segment_id,
+            segment_start_snapshot, physical_swept_bounds);
     }
 
     physics_mesh load_single_tetrahedron()
@@ -307,6 +384,61 @@ namespace
         require(built.value.bend_constraints.size() == 1,
             "Cloth patch should contain one bend hinge.");
 
+        std::string coloring_diagnostic;
+        require(skin_physics::physics::validate_cloth_stretch_coloring(
+                built.value, coloring_diagnostic),
+            "Cloth Stretch coloring must be valid: " + coloring_diagnostic);
+        require(!built.value.stretch_color_ranges.empty() &&
+            built.value.stretch_color_constraint_indices.size() ==
+                built.value.stretch_constraints.size(),
+            "Cloth Stretch coloring must cover every edge in deterministic color batches.");
+        for (const auto& color_range : built.value.stretch_color_ranges)
+        {
+            std::vector<uint8_t> occupied(built.value.rest_positions.size(), 0u);
+            for (uint32_t local_index = 0u;
+                local_index < color_range.constraint_count;
+                ++local_index)
+            {
+                const uint32_t constraint_index =
+                    built.value.stretch_color_constraint_indices[
+                        color_range.first_constraint_index + local_index];
+                const auto& constraint =
+                    built.value.stretch_constraints[constraint_index];
+                require(occupied[constraint.vertices[0]] == 0u &&
+                    occupied[constraint.vertices[1]] == 0u,
+                    "A Stretch color must contain only vertex-disjoint edges.");
+                occupied[constraint.vertices[0]] = 1u;
+                occupied[constraint.vertices[1]] = 1u;
+            }
+        }
+
+        auto invalid_coloring = built.value;
+        invalid_coloring.stretch_color_constraint_indices[1u] =
+            invalid_coloring.stretch_color_constraint_indices[0u];
+        require(!skin_physics::physics::validate_cloth_stretch_coloring(
+                invalid_coloring, coloring_diagnostic),
+            "Cloth Stretch coloring validation must reject duplicate constraint ownership.");
+
+        std::string csr_diagnostic;
+        require(skin_physics::physics::validate_cloth_vertex_constraint_csr(
+                built.value, csr_diagnostic),
+            "Cloth Vertex-to-Constraint CSR must be valid: " + csr_diagnostic);
+        const std::size_t expected_csr_references =
+            built.value.stretch_constraints.size() * 2u +
+            built.value.shear_constraints.size() * 3u +
+            built.value.bend_constraints.size() * 4u;
+        require(built.value.vertex_constraint_offsets.size() ==
+                built.value.rest_positions.size() + 1u &&
+            built.value.vertex_constraint_refs.size() ==
+                expected_csr_references,
+            "Cloth Vertex-to-Constraint CSR must contain every stretch / shear / bend incidence.");
+        auto invalid_csr = built.value;
+        invalid_csr.vertex_constraint_refs[0u].local_vertex_index =
+            0xffffffffu;
+        require(!skin_physics::physics::validate_cloth_vertex_constraint_csr(
+                invalid_csr, csr_diagnostic),
+            "Cloth Vertex-to-Constraint CSR validation must reject an out-of-range local vertex index.");
+
         const auto& input_edges = input.at("stretch_edges").as_array();
         const auto& expected_lengths = expected.at("rest_edge_lengths").as_array();
         for (std::size_t edge_index = 0; edge_index < input_edges.size(); ++edge_index)
@@ -480,6 +612,262 @@ namespace
             error += std::abs(evaluation.constraint);
         }
         return error;
+    }
+
+    void test_phase05_cloth_stretch_color_reference()
+    {
+        const auto built = load_cloth_fixture();
+        require(built.success,
+            "Cloth fixture must build before colored Stretch reference evaluation.");
+        std::vector<skin_physics::asset::vec3> positions =
+            built.value.rest_positions;
+        positions[3].x += 0.2f;
+        positions[2].z += 0.1f;
+        const std::vector<float> inverse_mass(positions.size(), 1.0f);
+        std::vector<float> lambda_values(
+            built.value.stretch_constraints.size(), 0.0f);
+
+        bool observed_nonzero_lambda = false;
+        for (uint32_t iteration = 0u; iteration < 4u; ++iteration)
+        {
+            for (uint32_t color_index = 0u;
+                color_index < built.value.stretch_color_ranges.size();
+                ++color_index)
+            {
+                const auto step =
+                    skin_physics::physics::solve_cloth_stretch_color(
+                        built.value,
+                        color_index,
+                        positions,
+                        inverse_mass,
+                        lambda_values,
+                        1.0f / 120.0f,
+                        1.0e-5f,
+                        0.8f);
+                if (!step.success)
+                {
+                    const std::string diagnostic =
+                        step.diagnostics.empty()
+                            ? "no solver diagnostic"
+                            : step.diagnostics.front().message;
+                    throw std::runtime_error(
+                        "Colored Stretch CPU reference failed at iteration " +
+                        std::to_string(iteration) + ", color " +
+                        std::to_string(color_index) + ": " + diagnostic);
+                }
+                positions = step.positions;
+                lambda_values = step.lambda_values;
+                for (float value : lambda_values)
+                {
+                    require(std::isfinite(value),
+                        "Colored Stretch XPBD Lambda must remain finite.");
+                    observed_nonzero_lambda =
+                        observed_nonzero_lambda || std::abs(value) > 1.0e-8f;
+                }
+            }
+        }
+        require(observed_nonzero_lambda,
+            "Colored Stretch XPBD must retain and update Segment-local Lambda values across iterations.");
+
+        const auto invalid_state =
+            skin_physics::physics::solve_cloth_stretch_color(
+                built.value,
+                0u,
+                positions,
+                inverse_mass,
+                std::vector<float>{},
+                1.0f / 120.0f,
+                1.0e-5f,
+                0.8f);
+        require(!invalid_state.success,
+            "Colored Stretch CPU reference must reject a mismatched Lambda array.");
+    }
+
+    void test_phase05_cloth_gpu_topology_packet()
+    {
+        const auto built = load_cloth_fixture();
+        require(built.success,
+            "Cloth GPU topology fixture must build before packet packing.");
+
+        skin_physics::physics::cloth_solver_settings settings;
+        settings.stretch_compliance = 1.0e-3f;
+        settings.shear_compliance = 2.0e-3f;
+        settings.bend_compliance = 1.0e-2f;
+        settings.fixed_delta_time = 1.0f / 120.0f;
+        settings.relaxation = 0.75f;
+        settings.iterations = 6u;
+
+        const auto packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                built.value, settings);
+        require(packet.success,
+            "Validated Cloth topology must pack into the explicit GPU ABI: " +
+                packet.message);
+        require(packet.value.vertex_count == built.value.rest_positions.size() &&
+            packet.value.stretch_constraints.size() ==
+                built.value.stretch_constraints.size() &&
+            packet.value.stretch_color_ranges.size() ==
+                built.value.stretch_color_ranges.size() &&
+            packet.value.stretch_color_constraint_indices ==
+                built.value.stretch_color_constraint_indices &&
+            packet.value.shear_constraints.size() ==
+                built.value.shear_constraints.size() &&
+            packet.value.bend_constraints.size() ==
+                built.value.bend_constraints.size() &&
+            packet.value.vertex_constraint_offsets ==
+                built.value.vertex_constraint_offsets &&
+            packet.value.vertex_constraint_refs.size() ==
+                built.value.vertex_constraint_refs.size(),
+            "Cloth GPU topology packet must preserve Vertex, colored Stretch, Shear / Bend and CSR counts / ordering.");
+
+        require(packet.value.triangle_primitives.size() ==
+                built.value.triangles.size(),
+            "Cloth Epoch topology packet must preserve every source Triangle.");
+        for (std::size_t index = 0u;
+            index < built.value.triangles.size(); ++index)
+        {
+            const auto& source = built.value.triangles[index];
+            const auto& packed = packet.value.triangle_primitives[index];
+            require(packed.vertices[0] == source[0] &&
+                packed.vertices[1] == source[1] &&
+                packed.vertices[2] == source[2] &&
+                packed.vertices[3] == 0u,
+                "Packed Cloth Triangle Epoch records must preserve source Vertex order and zero the unused index.");
+        }
+
+        std::vector<std::pair<uint32_t, uint32_t>> expected_edges;
+        for (const auto& triangle : built.value.triangles)
+        {
+            for (std::size_t edge_index = 0u; edge_index < 3u; ++edge_index)
+            {
+                const uint32_t first = triangle[edge_index];
+                const uint32_t second = triangle[(edge_index + 1u) % 3u];
+                expected_edges.emplace_back(
+                    std::min(first, second), std::max(first, second));
+            }
+        }
+        std::sort(expected_edges.begin(), expected_edges.end());
+        expected_edges.erase(
+            std::unique(expected_edges.begin(), expected_edges.end()),
+            expected_edges.end());
+        require(packet.value.edge_primitives.size() == expected_edges.size(),
+            "Cloth Epoch topology packet must deduplicate every undirected surface Edge.");
+        for (std::size_t index = 0u; index < expected_edges.size(); ++index)
+        {
+            const auto& packed = packet.value.edge_primitives[index];
+            require(packed.vertices[0] == expected_edges[index].first &&
+                packed.vertices[1] == expected_edges[index].second &&
+                packed.vertices[2] == 0u &&
+                packed.vertices[3] == 0u,
+                "Packed Cloth Edge Epoch records must be canonical, sorted and zero-pad unused indices.");
+        }
+
+        for (std::size_t index = 0u;
+            index < built.value.stretch_constraints.size(); ++index)
+        {
+            const auto& source = built.value.stretch_constraints[index];
+            const auto& packed = packet.value.stretch_constraints[index];
+            require(packed.vertices == source.vertices &&
+                packed.rest_length == source.rest_length &&
+                packed.reserved == 0.0f,
+                "Packed Stretch ABI must preserve endpoints / Rest Length and zero its reserved field.");
+        }
+
+        for (std::size_t index = 0u;
+            index < built.value.shear_constraints.size(); ++index)
+        {
+            const auto& source = built.value.shear_constraints[index];
+            const auto& packed = packet.value.shear_constraints[index];
+            require(packed.indices[0] == source.vertices[0] &&
+                packed.indices[1] == source.vertices[1] &&
+                packed.indices[2] == source.vertices[2] &&
+                packed.indices[3] == 0u &&
+                packed.type == static_cast<uint32_t>(
+                    skin_physics::physics::cloth_vertex_constraint_type::shear) &&
+                packed.rest_value == source.rest_dot &&
+                packed.normalization == source.normalization_length &&
+                packed.compliance == settings.shear_compliance,
+                "Packed Shear ABI must preserve triangle mapping / Rest data and bind the configured Compliance.");
+        }
+
+        for (std::size_t index = 0u;
+            index < built.value.bend_constraints.size(); ++index)
+        {
+            const auto& source = built.value.bend_constraints[index];
+            const auto& packed = packet.value.bend_constraints[index];
+            require(packed.indices[0] == source.vertices[0] &&
+                packed.indices[1] == source.vertices[1] &&
+                packed.indices[2] == source.vertices[2] &&
+                packed.indices[3] == source.vertices[3] &&
+                packed.type == static_cast<uint32_t>(
+                    skin_physics::physics::cloth_vertex_constraint_type::bend) &&
+                packed.rest_value == source.rest_angle &&
+                packed.normalization == 0.0f &&
+                packed.compliance == settings.bend_compliance,
+                "Packed Bend ABI must preserve the four-Vertex hinge mapping / Rest Angle and configured Compliance.");
+        }
+
+        require(packet.value.stretch_lambdas.size() ==
+                built.value.stretch_constraints.size() &&
+            packet.value.shear_lambdas.size() ==
+                built.value.shear_constraints.size() &&
+            packet.value.bend_lambdas.size() ==
+                built.value.bend_constraints.size() &&
+            std::all_of(
+                packet.value.stretch_lambdas.begin(),
+                packet.value.stretch_lambdas.end(),
+                [](float value) { return value == 0.0f; }) &&
+            std::all_of(
+                packet.value.shear_lambdas.begin(),
+                packet.value.shear_lambdas.end(),
+                [](float value) { return value == 0.0f; }) &&
+            std::all_of(
+                packet.value.bend_lambdas.begin(),
+                packet.value.bend_lambdas.end(),
+                [](float value) { return value == 0.0f; }),
+            "Every GPU constraint family must receive a zero-initialized Segment-local Lambda array.");
+
+        auto invalid_settings = settings;
+        invalid_settings.bend_compliance = -1.0f;
+        const auto invalid_settings_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                built.value, invalid_settings);
+        require(!invalid_settings_packet.success &&
+            invalid_settings_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_settings,
+            "Cloth GPU topology packing must reject negative Compliance before publishing partial buffers.");
+
+        auto malformed_mesh = built.value;
+        malformed_mesh.stretch_constraints[0u].rest_length =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto malformed_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                malformed_mesh, settings);
+        require(!malformed_packet.success &&
+            malformed_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_mesh,
+            "Cloth GPU topology packing must reject non-finite Rest data.");
+
+        auto malformed_triangle = built.value;
+        malformed_triangle.triangles[0u][0u] =
+            static_cast<uint32_t>(malformed_triangle.rest_positions.size());
+        const auto malformed_triangle_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                malformed_triangle, settings);
+        require(!malformed_triangle_packet.success &&
+            malformed_triangle_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_mesh,
+            "Cloth GPU topology packing must reject out-of-range surface Triangle indices before publishing Epoch primitives.");
+
+        auto malformed_csr = built.value;
+        malformed_csr.vertex_constraint_offsets.back() -= 1u;
+        const auto malformed_csr_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                malformed_csr, settings);
+        require(!malformed_csr_packet.success &&
+            malformed_csr_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_csr,
+            "Cloth GPU topology packing must reject a truncated Vertex-to-Constraint CSR table.");
     }
 
     void test_phase05_cloth_compliance_monotonicity()
@@ -1011,6 +1399,2528 @@ namespace
             "Teleport zero-velocity policy must not generate an artificial velocity spike.");
     }
 
+    void test_phase09_animation_channel_span_coefficients()
+    {
+        using skin_physics::asset::animation_key;
+        using skin_physics::asset::animation_path;
+        using skin_physics::asset::animation_track;
+        using skin_physics::asset::interpolation;
+        using skin_physics::physics::animation_channel_span_build_result;
+        using skin_physics::physics::animation_channel_span_sample_result;
+
+        skin_physics::physics::animation_blend_weight_curve_desc blend_curve;
+        blend_curve.blend_start_time = 0.5;
+        blend_curve.blend_end_time = 2.5;
+        blend_curve.weight_start = 0.0f;
+        blend_curve.weight_end = 1.0f;
+        blend_curve.tangent_start = 0.0f;
+        blend_curve.tangent_end = 0.0f;
+        require(skin_physics::physics::valid_animation_blend_weight_curve(
+                blend_curve),
+            "A monotonic cubic Hermite Blend Weight Curve must validate over its complete domain.");
+
+        const skin_physics::physics::animation_blend_weight_spans_build_result
+            blend_schedule =
+                skin_physics::physics::build_animation_blend_weight_spans(
+                    blend_curve, 0.0, 3.0);
+        require(blend_schedule.success &&
+            blend_schedule.values.size() == 3u &&
+            std::abs(blend_schedule.values[0u].world_time_start - 0.0) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[0u].world_time_duration - 0.5) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[1u].world_time_start - 0.5) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[1u].world_time_duration - 2.0) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[2u].world_time_start - 2.5) <= 1.0e-12 &&
+            std::abs(blend_schedule.values[2u].world_time_duration - 0.5) <= 1.0e-12,
+            "Blend Weight scheduling must split a Logical Tick at both blend boundaries.");
+
+        const skin_physics::physics::animation_blend_weight_sample_result
+            blend_before =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    blend_schedule.values[0u], 0.5);
+        const skin_physics::physics::animation_blend_weight_sample_result
+            blend_mid =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    blend_schedule.values[1u], 0.5);
+        const skin_physics::physics::animation_blend_weight_sample_result
+            blend_after =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    blend_schedule.values[2u], 0.5);
+        require(blend_before.success && blend_mid.success && blend_after.success &&
+            std::abs(blend_before.value.weight) <= 1.0e-12 &&
+            std::abs(blend_before.value.world_time_derivative) <= 1.0e-12 &&
+            std::abs(blend_mid.value.weight - 0.5) <= 1.0e-12 &&
+            std::abs(blend_mid.value.world_time_derivative - 0.75) <= 1.0e-12 &&
+            std::abs(blend_after.value.weight - 1.0) <= 1.0e-12 &&
+            std::abs(blend_after.value.world_time_derivative) <= 1.0e-12,
+            "Cubic Hermite Blend Weight spans must evaluate endpoint holds, interior Weight and analytic World-Time derivative.");
+
+        const skin_physics::physics::animation_blend_weight_span_build_result
+            partial_blend_span =
+                skin_physics::physics::build_animation_blend_weight_span(
+                    blend_curve, 1.0, 1.0);
+        const skin_physics::physics::animation_blend_weight_sample_result
+            partial_blend_sample =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    partial_blend_span.value, 0.5);
+        require(partial_blend_span.success && partial_blend_sample.success &&
+            std::abs(partial_blend_sample.value.weight - 0.5) <= 1.0e-12 &&
+            std::abs(partial_blend_sample.value.world_time_derivative - 0.75) <= 1.0e-12,
+            "A partial Blend Weight Span must reparameterize the original Hermite curve without changing its value or derivative.");
+
+        const skin_physics::physics::animation_blend_weight_span_build_result
+            crossing_blend_span =
+                skin_physics::physics::build_animation_blend_weight_span(
+                    blend_curve, 0.25, 1.0);
+        require(!crossing_blend_span.success &&
+            crossing_blend_span.error ==
+                skin_physics::physics::animation_blend_weight_error::span_crosses_curve_boundary,
+            "A Blend Weight Span crossing blend_start_time must be split by the scheduler.");
+
+        skin_physics::physics::animation_blend_weight_curve_desc overshooting_blend_curve =
+            blend_curve;
+        overshooting_blend_curve.tangent_start = 10.0f;
+        overshooting_blend_curve.tangent_end = 10.0f;
+        require(!skin_physics::physics::valid_animation_blend_weight_curve(
+                overshooting_blend_curve) &&
+            !skin_physics::physics::build_animation_blend_weight_spans(
+                overshooting_blend_curve, 0.0, 3.0).success,
+            "A Hermite Blend Weight Curve whose interior extrema leave [0, 1] must be rejected before Span construction.");
+
+        animation_track linear_translation;
+        linear_translation.node_index = 3u;
+        linear_translation.path = animation_path::translation;
+        linear_translation.mode = interpolation::linear;
+        linear_translation.component_count = 3u;
+        animation_key linear_start;
+        linear_start.time = 0.0f;
+        linear_start.value = { 0.0f, 1.0f, 2.0f };
+        animation_key linear_end;
+        linear_end.time = 2.0f;
+        linear_end.value = { 4.0f, 5.0f, 6.0f };
+        linear_translation.keys = { linear_start, linear_end };
+
+        const animation_channel_span_build_result linear_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_translation, 0.5, 1.0);
+        require(linear_span.success &&
+            linear_span.value.node_index == 3u &&
+            linear_span.value.interpolation_mode == interpolation::linear,
+            "LINEAR Animation Channel must build one immutable Key-bounded Span.");
+
+        const animation_channel_span_sample_result linear_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                linear_span.value, 0.5, 0.5);
+        require(linear_mid.success &&
+            std::abs(linear_mid.value.value.x - 2.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.value.y - 3.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.value.z - 4.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.world_time_derivative.x - 4.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.world_time_derivative.y - 4.0f) <= 1.0e-6f &&
+            std::abs(linear_mid.value.world_time_derivative.z - 4.0f) <= 1.0e-6f,
+            "LINEAR Span evaluation must return Position and analytic World-Time velocity.");
+
+        animation_track reverse_translation = linear_translation;
+        const animation_channel_span_build_result reverse_span =
+            skin_physics::physics::build_animation_channel_span(
+                reverse_translation, 1.5, -1.0);
+        require(reverse_span.success,
+            "A signed Clip-Time Delta must support reverse Playback inside one Key interval.");
+        const animation_channel_span_sample_result reverse_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                reverse_span.value, 0.5, 0.5);
+        require(reverse_mid.success &&
+            std::abs(reverse_mid.value.value.x - 2.0f) <= 1.0e-6f &&
+            std::abs(reverse_mid.value.world_time_derivative.x + 4.0f) <= 1.0e-6f,
+            "Reverse Span evaluation must reverse the analytic Target Velocity without reversing the world-time cursor.");
+
+        animation_track cubic_translation;
+        cubic_translation.node_index = 4u;
+        cubic_translation.path = animation_path::translation;
+        cubic_translation.mode = interpolation::cubic_spline;
+        cubic_translation.component_count = 3u;
+        animation_key cubic_start;
+        cubic_start.time = 0.0f;
+        cubic_start.in_tangent = { 0.0f, 0.0f, 0.0f };
+        cubic_start.value = { 0.0f, 0.0f, 0.0f };
+        cubic_start.out_tangent = { 0.0f, 0.0f, 0.0f };
+        animation_key cubic_end;
+        cubic_end.time = 2.0f;
+        cubic_end.in_tangent = { 0.0f, 0.0f, 0.0f };
+        cubic_end.value = { 1.0f, 2.0f, 3.0f };
+        cubic_end.out_tangent = { 0.0f, 0.0f, 0.0f };
+        cubic_translation.keys = { cubic_start, cubic_end };
+
+        const animation_channel_span_build_result cubic_span =
+            skin_physics::physics::build_animation_channel_span(
+                cubic_translation, 0.5, 1.0);
+        require(cubic_span.success &&
+            cubic_span.value.interpolation_mode == interpolation::cubic_spline,
+            "glTF CUBICSPLINE tangents must be converted into Span-local cubic coefficients.");
+        const animation_channel_span_sample_result cubic_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                cubic_span.value, 0.5, 0.5);
+        require(cubic_mid.success &&
+            std::abs(cubic_mid.value.value.x - 0.5f) <= 1.0e-6f &&
+            std::abs(cubic_mid.value.value.y - 1.0f) <= 1.0e-6f &&
+            std::abs(cubic_mid.value.value.z - 1.5f) <= 1.0e-6f &&
+            std::abs(cubic_mid.value.world_time_derivative.x - 1.5f) <= 1.0e-5f &&
+            std::abs(cubic_mid.value.world_time_derivative.y - 3.0f) <= 1.0e-5f &&
+            std::abs(cubic_mid.value.world_time_derivative.z - 4.5f) <= 1.0e-5f,
+            "CUBICSPLINE Span coefficients must preserve Hermite values and analytic derivatives after Clip-Time reparameterization.");
+
+        animation_track step_translation;
+        step_translation.node_index = 5u;
+        step_translation.path = animation_path::translation;
+        step_translation.mode = interpolation::step;
+        step_translation.component_count = 3u;
+        animation_key step_start;
+        step_start.time = 0.0f;
+        step_start.value = { 1.0f, 2.0f, 3.0f };
+        animation_key step_end;
+        step_end.time = 1.0f;
+        step_end.value = { 5.0f, 6.0f, 7.0f };
+        step_translation.keys = { step_start, step_end };
+        const animation_channel_span_build_result step_span =
+            skin_physics::physics::build_animation_channel_span(
+                step_translation, 0.25, 0.5);
+        require(step_span.success &&
+            step_span.value.interpolation_mode == interpolation::step,
+            "STEP Animation Channel must build a constant Span between Key boundaries.");
+        const animation_channel_span_sample_result step_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                step_span.value, 0.5, 0.5);
+        require(step_mid.success &&
+            step_mid.value.value.x == 1.0f &&
+            step_mid.value.value.y == 2.0f &&
+            step_mid.value.value.z == 3.0f &&
+            step_mid.value.world_time_derivative.x == 0.0f &&
+            step_mid.value.world_time_derivative.y == 0.0f &&
+            step_mid.value.world_time_derivative.z == 0.0f,
+            "STEP Span evaluation must produce a constant value and zero analytic velocity.");
+
+        animation_track linear_rotation;
+        linear_rotation.node_index = 6u;
+        linear_rotation.path = animation_path::rotation;
+        linear_rotation.mode = interpolation::linear;
+        linear_rotation.component_count = 4u;
+        animation_key rotation_start;
+        rotation_start.time = 0.0f;
+        rotation_start.value = { 0.0f, 0.0f, 0.0f, 1.0f };
+        animation_key rotation_end;
+        rotation_end.time = 2.0f;
+        rotation_end.value = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        linear_rotation.keys = { rotation_start, rotation_end };
+        const animation_channel_span_build_result rotation_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_rotation, 0.5, 1.0);
+        require(rotation_span.success,
+            "LINEAR Quaternion Span must pre-evaluate its exact Clip-Time endpoints before Slerp.");
+        const animation_channel_span_sample_result rotation_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                rotation_span.value, 0.5, 0.5);
+        const float quaternion_norm = std::sqrt(
+            rotation_mid.value.value.x * rotation_mid.value.value.x +
+            rotation_mid.value.value.y * rotation_mid.value.value.y +
+            rotation_mid.value.value.z * rotation_mid.value.value.z +
+            rotation_mid.value.value.w * rotation_mid.value.value.w);
+        const float quaternion_derivative_dot =
+            rotation_mid.value.value.x * rotation_mid.value.world_time_derivative.x +
+            rotation_mid.value.value.y * rotation_mid.value.world_time_derivative.y +
+            rotation_mid.value.value.z * rotation_mid.value.world_time_derivative.z +
+            rotation_mid.value.value.w * rotation_mid.value.world_time_derivative.w;
+        require(rotation_mid.success &&
+            std::abs(rotation_mid.value.value.z -
+                std::sin(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(rotation_mid.value.value.w -
+                std::cos(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(quaternion_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(quaternion_derivative_dot) <= 1.0e-5f,
+            "LINEAR Quaternion Span must use shortest-arc Slerp and its tangent-space analytic derivative.");
+
+        const animation_channel_span_build_result paused_rotation_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_rotation, 1.0, 0.0);
+        require(paused_rotation_span.success,
+            "A paused LINEAR rotation Track must build a constant Span at its current Clip Time.");
+        const animation_channel_span_sample_result paused_rotation =
+            skin_physics::physics::evaluate_animation_channel_span(
+                paused_rotation_span.value, 0.75, 0.25);
+        require(paused_rotation.success &&
+            std::abs(paused_rotation.value.value.z -
+                std::sin(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(paused_rotation.value.world_time_derivative.z) <= 1.0e-6f &&
+            std::abs(paused_rotation.value.world_time_derivative.w) <= 1.0e-6f,
+            "Paused LINEAR rotation must sample the current interpolated quaternion with zero velocity.");
+
+        animation_track cubic_rotation;
+        cubic_rotation.node_index = 7u;
+        cubic_rotation.path = animation_path::rotation;
+        cubic_rotation.mode = interpolation::cubic_spline;
+        cubic_rotation.component_count = 4u;
+        animation_key cubic_rotation_start;
+        cubic_rotation_start.time = 0.0f;
+        cubic_rotation_start.in_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cubic_rotation_start.value = { 0.0f, 0.0f, 0.0f, 1.0f };
+        cubic_rotation_start.out_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        animation_key cubic_rotation_end;
+        cubic_rotation_end.time = 2.0f;
+        cubic_rotation_end.in_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cubic_rotation_end.value = rotation_end.value;
+        cubic_rotation_end.out_tangent = { 0.0f, 0.0f, 0.0f, 0.0f };
+        cubic_rotation.keys = {
+            cubic_rotation_start, cubic_rotation_end
+        };
+        const animation_channel_span_build_result cubic_rotation_span =
+            skin_physics::physics::build_animation_channel_span(
+                cubic_rotation, 0.5, 1.0);
+        const animation_channel_span_sample_result cubic_rotation_mid =
+            skin_physics::physics::evaluate_animation_channel_span(
+                cubic_rotation_span.value, 0.5, 0.5);
+        const float cubic_rotation_norm = std::sqrt(
+            cubic_rotation_mid.value.value.x * cubic_rotation_mid.value.value.x +
+            cubic_rotation_mid.value.value.y * cubic_rotation_mid.value.value.y +
+            cubic_rotation_mid.value.value.z * cubic_rotation_mid.value.value.z +
+            cubic_rotation_mid.value.value.w * cubic_rotation_mid.value.value.w);
+        const float cubic_rotation_derivative_dot =
+            cubic_rotation_mid.value.value.x *
+                cubic_rotation_mid.value.world_time_derivative.x +
+            cubic_rotation_mid.value.value.y *
+                cubic_rotation_mid.value.world_time_derivative.y +
+            cubic_rotation_mid.value.value.z *
+                cubic_rotation_mid.value.world_time_derivative.z +
+            cubic_rotation_mid.value.value.w *
+                cubic_rotation_mid.value.world_time_derivative.w;
+        require(cubic_rotation_span.success && cubic_rotation_mid.success &&
+            std::abs(cubic_rotation_mid.value.value.z -
+                std::sin(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(cubic_rotation_mid.value.value.w -
+                std::cos(3.14159265358979323846f / 8.0f)) <= 1.0e-5f &&
+            std::abs(cubic_rotation_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(cubic_rotation_derivative_dot) <= 1.0e-5f,
+            "CUBICSPLINE Quaternion Span must normalize its raw Hermite polynomial and project its analytic derivative onto the quaternion tangent space.");
+
+        animation_track one_key_track;
+        one_key_track.node_index = 8u;
+        one_key_track.path = animation_path::translation;
+        one_key_track.mode = interpolation::linear;
+        one_key_track.component_count = 3u;
+        animation_key only_key;
+        only_key.time = 1.0f;
+        only_key.value = { 7.0f, 8.0f, 9.0f };
+        one_key_track.keys = { only_key };
+        const animation_channel_span_build_result one_key_span =
+            skin_physics::physics::build_animation_channel_span(
+                one_key_track, -2.0, 5.0);
+        const animation_channel_span_sample_result one_key_sample =
+            skin_physics::physics::evaluate_animation_channel_span(
+                one_key_span.value, 0.5, 0.5);
+        require(one_key_span.success && one_key_sample.success &&
+            one_key_sample.value.value.x == 7.0f &&
+            one_key_sample.value.value.y == 8.0f &&
+            one_key_sample.value.value.z == 9.0f &&
+            one_key_sample.value.world_time_derivative.x == 0.0f &&
+            one_key_sample.value.world_time_derivative.y == 0.0f &&
+            one_key_sample.value.world_time_derivative.z == 0.0f,
+            "A one-key Animation Track must remain a constant Span even when the requested Clip-Time range crosses its only key.");
+        const skin_physics::physics::animation_channel_spans_build_result one_key_schedule =
+            skin_physics::physics::build_animation_channel_spans(
+                one_key_track, -2.0, 5.0);
+        require(one_key_schedule.success && one_key_schedule.values.size() == 1u,
+            "The Channel Span Scheduler must not manufacture a discontinuity at the only key of a constant Track.");
+
+        animation_track key_bounded_track = linear_translation;
+        animation_key middle_key;
+        middle_key.time = 1.0f;
+        middle_key.value = { 2.0f, 3.0f, 4.0f };
+        key_bounded_track.keys.insert(
+            key_bounded_track.keys.begin() + 1, middle_key);
+        const animation_channel_span_build_result crossing_span =
+            skin_physics::physics::build_animation_channel_span(
+                key_bounded_track, 0.5, 1.0);
+        require(!crossing_span.success &&
+            crossing_span.error ==
+                skin_physics::physics::animation_channel_span_error::span_crosses_key_boundary,
+            "An Animation Span crossing an interior Key must be rejected for Scheduler subdivision.");
+
+        const skin_physics::physics::animation_channel_spans_build_result split_forward =
+            skin_physics::physics::build_animation_channel_spans(
+                key_bounded_track, 0.5, 1.0);
+        require(split_forward.success && split_forward.values.size() == 2u &&
+            std::abs(split_forward.values[0u].clip_time_start - 0.5) <= 1.0e-12 &&
+            std::abs(split_forward.values[0u].clip_time_delta - 0.5) <= 1.0e-12 &&
+            std::abs(split_forward.values[1u].clip_time_start - 1.0) <= 1.0e-12 &&
+            std::abs(split_forward.values[1u].clip_time_delta - 0.5) <= 1.0e-12,
+            "Forward Channel Span Scheduler must split at each crossed Key and preserve ordered Clip-Time ranges.");
+        const animation_channel_span_sample_result split_forward_left_end =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_forward.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result split_forward_right_start =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_forward.values[1u], 0.0, 0.25);
+        require(split_forward_left_end.success && split_forward_right_start.success &&
+            std::abs(split_forward_left_end.value.value.x -
+                split_forward_right_start.value.value.x) <= 1.0e-6f,
+            "Adjacent LINEAR Span records must evaluate to the same value at their shared Key boundary.");
+
+        const skin_physics::physics::animation_channel_spans_build_result split_reverse =
+            skin_physics::physics::build_animation_channel_spans(
+                key_bounded_track, 1.5, -1.0);
+        require(split_reverse.success && split_reverse.values.size() == 2u &&
+            std::abs(split_reverse.values[0u].clip_time_start - 1.5) <= 1.0e-12 &&
+            std::abs(split_reverse.values[0u].clip_time_delta + 0.5) <= 1.0e-12 &&
+            std::abs(split_reverse.values[1u].clip_time_start - 1.0) <= 1.0e-12 &&
+            std::abs(split_reverse.values[1u].clip_time_delta + 0.5) <= 1.0e-12,
+            "Reverse Channel Span Scheduler must traverse Key boundaries in descending Clip-Time order.");
+        const animation_channel_span_sample_result split_reverse_left_end =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_reverse.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result split_reverse_right_start =
+            skin_physics::physics::evaluate_animation_channel_span(
+                split_reverse.values[1u], 0.0, 0.25);
+        require(split_reverse_left_end.success && split_reverse_right_start.success &&
+            std::abs(split_reverse_left_end.value.value.x -
+                split_reverse_right_start.value.value.x) <= 1.0e-6f,
+            "Reverse LINEAR Span records must also meet at the same Key-boundary value.");
+
+        const skin_physics::physics::animation_channel_spans_build_result paused_schedule =
+            skin_physics::physics::build_animation_channel_spans(
+                key_bounded_track, 1.0, 0.0);
+        require(paused_schedule.success && paused_schedule.values.size() == 1u &&
+            paused_schedule.values[0u].clip_time_delta == 0.0,
+            "A paused Track must produce one immutable zero-Clip-Time Span rather than an empty schedule.");
+
+        animation_track step_bounded_track = key_bounded_track;
+        step_bounded_track.mode = interpolation::step;
+        const skin_physics::physics::animation_channel_spans_build_result
+            forward_step_schedule =
+                skin_physics::physics::build_animation_channel_spans(
+                    step_bounded_track, 0.5, 1.0);
+        require(forward_step_schedule.success &&
+            forward_step_schedule.values.size() == 2u,
+            "Forward STEP playback must produce one Span on each side of a discontinuous Key.");
+        const animation_channel_span_sample_result
+            forward_step_before_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    forward_step_schedule.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result
+            forward_step_after_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    forward_step_schedule.values[1u], 0.0, 0.25);
+        require(forward_step_before_boundary.success &&
+            forward_step_after_boundary.success &&
+            forward_step_before_boundary.value.value.x == 0.0f &&
+            forward_step_after_boundary.value.value.x == 2.0f,
+            "Forward STEP spans must preserve the pre-Key and post-Key one-sided values across a discontinuity.");
+
+        const skin_physics::physics::animation_channel_spans_build_result
+            reverse_step_schedule =
+                skin_physics::physics::build_animation_channel_spans(
+                    step_bounded_track, 1.5, -1.0);
+        require(reverse_step_schedule.success &&
+            reverse_step_schedule.values.size() == 2u,
+            "Reverse STEP playback must produce one Span on each side of a discontinuous Key.");
+        const animation_channel_span_sample_result
+            reverse_step_before_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    reverse_step_schedule.values[0u], 1.0, 0.25);
+        const animation_channel_span_sample_result
+            reverse_step_after_boundary =
+                skin_physics::physics::evaluate_animation_channel_span(
+                    reverse_step_schedule.values[1u], 0.0, 0.25);
+        require(reverse_step_before_boundary.success &&
+            reverse_step_after_boundary.success &&
+            reverse_step_before_boundary.value.value.x == 2.0f &&
+            reverse_step_after_boundary.value.value.x == 0.0f,
+            "Reverse STEP spans must preserve descending-time one-sided values across a discontinuity.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            forward_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 0.5, 1.0, 10.0, 0.4);
+        require(forward_world_schedule.success &&
+            forward_world_schedule.values.size() == 2u &&
+            std::abs(forward_world_schedule.values[0u].world_time_start - 10.0) <= 1.0e-12 &&
+            std::abs(forward_world_schedule.values[0u].world_time_duration - 0.2) <= 1.0e-12 &&
+            std::abs(forward_world_schedule.values[1u].world_time_start - 10.2) <= 1.0e-12 &&
+            std::abs(forward_world_schedule.values[1u].world_time_duration - 0.2) <= 1.0e-12,
+            "Forward Clip-Time spans must map onto positive ordered World-Time partitions within the Logical Tick.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            reverse_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 1.5, -1.0, 3.0, 0.8);
+        require(reverse_world_schedule.success &&
+            reverse_world_schedule.values.size() == 2u &&
+            std::abs(reverse_world_schedule.values[0u].world_time_start - 3.0) <= 1.0e-12 &&
+            std::abs(reverse_world_schedule.values[0u].world_time_duration - 0.4) <= 1.0e-12 &&
+            std::abs(reverse_world_schedule.values[1u].world_time_start - 3.4) <= 1.0e-12 &&
+            std::abs(reverse_world_schedule.values[1u].world_time_duration - 0.4) <= 1.0e-12,
+            "Reverse Clip-Time spans must retain forward-monotonic World-Time ordering and positive interval durations.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            paused_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 1.0, 0.0, 7.0, 0.5);
+        require(paused_world_schedule.success &&
+            paused_world_schedule.values.size() == 1u &&
+            std::abs(paused_world_schedule.values[0u].world_time_start - 7.0) <= 1.0e-12 &&
+            std::abs(paused_world_schedule.values[0u].world_time_duration - 0.5) <= 1.0e-12,
+            "A paused Track must retain the full Logical Tick World-Time interval.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            unrepresentable_clip_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 1.0e16, 1.0, 0.0, 0.1);
+        require(!unrepresentable_clip_schedule.success &&
+            unrepresentable_clip_schedule.values.empty() &&
+            unrepresentable_clip_schedule.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A non-zero Clip-Time delta smaller than the double-precision ULP at its start must fail closed.");
+
+        const skin_physics::physics::animation_channel_span_schedule_result
+            invalid_world_schedule =
+                skin_physics::physics::schedule_animation_channel_spans(
+                    key_bounded_track, 0.5, 1.0, 1.0e16, 0.1);
+        require(!invalid_world_schedule.success &&
+            invalid_world_schedule.values.empty() &&
+            invalid_world_schedule.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A World-Time Tick interval that cannot advance at its absolute start must fail closed.");
+
+        animation_track duplicate_key_track = key_bounded_track;
+        duplicate_key_track.keys[1u].time =
+            duplicate_key_track.keys[0u].time;
+        const skin_physics::physics::animation_channel_spans_build_result invalid_schedule =
+            skin_physics::physics::build_animation_channel_spans(
+                duplicate_key_track, 0.25, 0.5);
+        require(!invalid_schedule.success && invalid_schedule.values.empty() &&
+            invalid_schedule.error ==
+                skin_physics::physics::animation_channel_span_error::non_monotonic_time,
+            "The Channel Span Scheduler must fail atomically on duplicate Key times.");
+
+        skin_physics::asset::animation_clip synchronized_clip;
+        synchronized_clip.name = "synchronized_span_test";
+        synchronized_clip.duration = 2.0f;
+        animation_track synchronized_translation = key_bounded_track;
+        synchronized_translation.node_index = 3u;
+        animation_track synchronized_scale;
+        synchronized_scale.node_index = 1u;
+        synchronized_scale.path = animation_path::scale;
+        synchronized_scale.mode = interpolation::step;
+        synchronized_scale.component_count = 3u;
+        animation_key scale_key0;
+        scale_key0.time = 0.0f;
+        scale_key0.value = { 1.0f, 1.0f, 1.0f };
+        animation_key scale_key1;
+        scale_key1.time = 0.5f;
+        scale_key1.value = { 2.0f, 2.0f, 2.0f };
+        animation_key scale_key2;
+        scale_key2.time = 2.0f;
+        scale_key2.value = { 1.5f, 1.5f, 1.5f };
+        synchronized_scale.keys = { scale_key0, scale_key1, scale_key2 };
+        animation_track synchronized_rotation = linear_rotation;
+        synchronized_rotation.node_index = 2u;
+        animation_key rotation_middle;
+        rotation_middle.time = 1.5f;
+        rotation_middle.value = rotation_end.value;
+        synchronized_rotation.keys = {
+            rotation_start, rotation_middle, rotation_end
+        };
+        animation_track synchronized_constant_channel;
+        synchronized_constant_channel.node_index = 4u;
+        synchronized_constant_channel.path = animation_path::scale;
+        synchronized_constant_channel.mode = interpolation::linear;
+        synchronized_constant_channel.component_count = 3u;
+        animation_key constant_channel_key;
+        constant_channel_key.time = 1.25f;
+        constant_channel_key.value = { 4.0f, 4.0f, 4.0f };
+        synchronized_constant_channel.keys = { constant_channel_key };
+        synchronized_clip.tracks = {
+            synchronized_translation,
+            synchronized_scale,
+            synchronized_rotation,
+            synchronized_constant_channel
+        };
+
+        const skin_physics::physics::animation_clip_spans_build_result clip_spans =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 5u, 0.25, 1.5);
+        require(clip_spans.success && clip_spans.values.size() == 4u,
+            "An Animation Clip Span Scheduler must merge Key boundaries from all Tracks, not schedule each Node / Path independently.");
+        const double expected_clip_boundaries[5] = {
+            0.25, 0.5, 1.0, 1.5, 1.75
+        };
+        for (std::size_t span_index = 0u;
+            span_index < clip_spans.values.size(); ++span_index)
+        {
+            const skin_physics::physics::animation_clip_span& clip_span =
+                clip_spans.values[span_index];
+            require(clip_span.span_index == span_index &&
+                clip_span.channels.size() == synchronized_clip.tracks.size() &&
+                std::abs(clip_span.clip_time_start -
+                    expected_clip_boundaries[span_index]) <= 1.0e-12 &&
+                std::abs(clip_span.clip_time_start + clip_span.clip_time_delta -
+                    expected_clip_boundaries[span_index + 1u]) <= 1.0e-12,
+                "Every Clip Span must retain one globally merged interval and all original Asset Tracks.");
+            for (std::size_t track_index = 0u;
+                track_index < clip_span.channels.size(); ++track_index)
+            {
+                const skin_physics::physics::animation_channel_span& channel =
+                    clip_span.channels[track_index];
+                require(channel.track_index == track_index &&
+                    channel.node_index ==
+                        synchronized_clip.tracks[track_index].node_index &&
+                    channel.path == synchronized_clip.tracks[track_index].path &&
+                    channel.clip_time_start == clip_span.clip_time_start &&
+                    channel.clip_time_delta == clip_span.clip_time_delta,
+                    "All Node / Path channel records in a Clip Span must share the same Clip-Time interval and preserve original Track ordering.");
+            }
+        }
+
+        const skin_physics::physics::animation_clip_spans_build_result reverse_clip_spans =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 5u, 1.75, -1.5);
+        require(reverse_clip_spans.success &&
+            reverse_clip_spans.values.size() == 4u &&
+            std::abs(reverse_clip_spans.values[0u].clip_time_start - 1.75) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[0u].clip_time_delta + 0.25) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[1u].clip_time_start - 1.5) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[2u].clip_time_start - 1.0) <= 1.0e-12 &&
+            std::abs(reverse_clip_spans.values[3u].clip_time_start - 0.5) <= 1.0e-12,
+            "Multi-Track Clip Span scheduling must merge all Key times in descending order for reverse Playback.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            forward_loop_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, true, 30.0, 0.5);
+        require(forward_loop_spans.success &&
+            forward_loop_spans.values.size() == 2u &&
+            forward_loop_spans.values[0u].clip.span_index == 0u &&
+            forward_loop_spans.values[1u].clip.span_index == 1u &&
+            std::abs(forward_loop_spans.values[0u].clip.clip_time_start - 1.75) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[0u].clip.clip_time_delta - 0.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[0u].world_time_start - 30.0) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[0u].world_time_duration - 0.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].clip.clip_time_start) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].clip.clip_time_delta - 0.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].world_time_start - 30.25) <= 1.0e-12 &&
+            std::abs(forward_loop_spans.values[1u].world_time_duration - 0.25) <= 1.0e-12,
+            "Forward Loop Playback must split at Clip duration and resume at zero in the next World-Time Span.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            reverse_loop_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 0.25, -1.0, true, 40.0, 0.5);
+        require(reverse_loop_spans.success &&
+            reverse_loop_spans.values.size() == 2u &&
+            std::abs(reverse_loop_spans.values[0u].clip.clip_time_start - 0.25) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[0u].clip.clip_time_delta + 0.25) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[1u].clip.clip_time_start - 2.0) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[1u].clip.clip_time_delta + 0.25) <= 1.0e-12 &&
+            std::abs(reverse_loop_spans.values[1u].world_time_start - 40.25) <= 1.0e-12,
+            "Reverse Loop Playback must split at zero and resume from Clip duration without reversing World-Time order.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            non_loop_clamp_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, false, 50.0, 0.5);
+        require(non_loop_clamp_spans.success &&
+            non_loop_clamp_spans.values.size() == 2u &&
+            std::abs(non_loop_clamp_spans.values[0u].clip.clip_time_delta - 0.25) <= 1.0e-12 &&
+            std::abs(non_loop_clamp_spans.values[0u].world_time_duration - 0.25) <= 1.0e-12 &&
+            std::abs(non_loop_clamp_spans.values[1u].clip.clip_time_start - 2.0) <= 1.0e-12 &&
+            non_loop_clamp_spans.values[1u].clip.clip_time_delta == 0.0 &&
+            std::abs(non_loop_clamp_spans.values[1u].world_time_start - 50.25) <= 1.0e-12 &&
+            std::abs(non_loop_clamp_spans.values[1u].world_time_duration - 0.25) <= 1.0e-12,
+            "Non-looping Playback must hold the terminal Clip Pose for the unconsumed World-Time interval.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            reverse_non_loop_clamp_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 0.25, -1.0, false, 60.0, 0.5);
+        require(reverse_non_loop_clamp_spans.success &&
+            reverse_non_loop_clamp_spans.values.size() == 2u &&
+            std::abs(reverse_non_loop_clamp_spans.values[0u].clip.clip_time_delta + 0.25) <= 1.0e-12 &&
+            reverse_non_loop_clamp_spans.values[1u].clip.clip_time_start == 0.0 &&
+            reverse_non_loop_clamp_spans.values[1u].clip.clip_time_delta == 0.0 &&
+            std::abs(reverse_non_loop_clamp_spans.values[1u].world_time_start - 60.25) <= 1.0e-12,
+            "Reverse non-looping Playback must hold the first Clip Pose after reaching zero.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            paused_playback_spans =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 0.75, 0.0, true, 70.0, 0.4);
+        require(paused_playback_spans.success &&
+            paused_playback_spans.values.size() == 1u &&
+            std::abs(paused_playback_spans.values[0u].clip.clip_time_start - 0.75) <= 1.0e-12 &&
+            paused_playback_spans.values[0u].clip.clip_time_delta == 0.0 &&
+            std::abs(paused_playback_spans.values[0u].world_time_duration - 0.4) <= 1.0e-12,
+            "Paused Playback must preserve one zero-Clip-Time Span across the entire Logical Tick.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            exact_forward_wrap_boundary =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, true, 80.0, 0.25);
+        require(exact_forward_wrap_boundary.success &&
+            exact_forward_wrap_boundary.values.size() == 1u &&
+            exact_forward_wrap_boundary.values[0u].clip.clip_time_delta == 0.25,
+            "A Tick ending exactly on a Loop boundary must not emit an empty post-wrap Span.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            playback_span_overflow =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 1.75, 1.0, true, 90.0, 5.0, 2u);
+        require(!playback_span_overflow.success &&
+            playback_span_overflow.values.empty() &&
+            playback_span_overflow.error ==
+                skin_physics::physics::animation_channel_span_error::capacity_exceeded,
+            "Pathological Loop Playback must fail atomically when the immutable Span count exceeds its configured limit.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            invalid_playback_start =
+                skin_physics::physics::schedule_animation_clip_playback_spans(
+                    synchronized_clip, 5u, 2.1, 1.0, false, 100.0, 0.5);
+        require(!invalid_playback_start.success &&
+            invalid_playback_start.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time &&
+            invalid_playback_start.values.empty(),
+            "Playback scheduling must reject a Clip cursor outside the Asset Clip duration.");
+
+        skin_physics::physics::animation_blend_weight_curve_desc synchronized_blend_curve;
+        synchronized_blend_curve.blend_start_time = 10.1;
+        synchronized_blend_curve.blend_end_time = 10.4;
+        synchronized_blend_curve.weight_start = 0.0f;
+        synchronized_blend_curve.weight_end = 1.0f;
+        synchronized_blend_curve.tangent_start = 0.0f;
+        synchronized_blend_curve.tangent_end = 0.0f;
+
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            synchronized_blend_spans =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    synchronized_clip, 5u, 0.75, 1.0, false,
+                    synchronized_clip, 5u, 1.75, -1.5, false,
+                    synchronized_blend_curve, 10.0, 0.5);
+        require(synchronized_blend_spans.success &&
+            synchronized_blend_spans.values.size() == 5u,
+            std::string(
+                "Source / Target Key boundaries and Blend Start / End boundaries must merge into one shared World-Time partition. error=") +
+                std::to_string(static_cast<int>(synchronized_blend_spans.error)) +
+                " count=" +
+                std::to_string(synchronized_blend_spans.values.size()) +
+                " diagnostic=" + synchronized_blend_spans.message);
+        for (std::size_t span_index = 0u;
+            span_index < synchronized_blend_spans.values.size();
+            ++span_index)
+        {
+            const skin_physics::physics::animation_blend_clip_span& span =
+                synchronized_blend_spans.values[span_index];
+            require(span.span_index == span_index &&
+                span.source.clip.span_index == span_index &&
+                span.target.clip.span_index == span_index &&
+                span.source.world_time_start == span.world_time_start &&
+                span.target.world_time_start == span.world_time_start &&
+                span.blend_weight.world_time_start == span.world_time_start &&
+                span.source.world_time_duration == span.world_time_duration &&
+                span.target.world_time_duration == span.world_time_duration &&
+                span.blend_weight.world_time_duration == span.world_time_duration &&
+                span.source.clip.channels.size() == synchronized_clip.tracks.size() &&
+                span.target.clip.channels.size() == synchronized_clip.tracks.size(),
+                "A synchronized Blend Span must retain one World-Time interval for Source, Target and Weight while preserving every channel.");
+            for (std::size_t channel_index = 0u;
+                channel_index < synchronized_clip.tracks.size();
+                ++channel_index)
+            {
+                const skin_physics::physics::animation_channel_span& source_channel =
+                    span.source.clip.channels[channel_index];
+                const skin_physics::physics::animation_channel_span& target_channel =
+                    span.target.clip.channels[channel_index];
+                require(source_channel.track_index == channel_index &&
+                    target_channel.track_index == channel_index &&
+                    source_channel.clip_time_start ==
+                        span.source.clip.clip_time_start &&
+                    source_channel.clip_time_delta ==
+                        span.source.clip.clip_time_delta &&
+                    target_channel.clip_time_start ==
+                        span.target.clip.clip_time_start &&
+                    target_channel.clip_time_delta ==
+                        span.target.clip.clip_time_delta,
+                    "Source / Target channels must preserve Track order and each synchronized Clip's own signed Clip-Time interval.");
+            }
+
+            const skin_physics::physics::animation_blend_weight_sample_result weight_sample =
+                skin_physics::physics::evaluate_animation_blend_weight_span(
+                    span.blend_weight, 0.5);
+            require(weight_sample.success &&
+                weight_sample.value.weight >= 0.0 &&
+                weight_sample.value.weight <= 1.0 &&
+                std::isfinite(weight_sample.value.world_time_derivative),
+                "Every merged Blend Weight Span must retain a finite in-range Weight and analytic World-Time derivative.");
+        }
+        require(
+            std::abs(
+                synchronized_blend_spans.values.front().source.clip.clip_time_start -
+                0.75) <= 1.0e-12 &&
+            std::abs(
+                synchronized_blend_spans.values.front().source.clip.clip_time_delta -
+                0.1) <= 1.0e-12 &&
+            std::abs(
+                synchronized_blend_spans.values.front().target.clip.clip_time_start -
+                1.75) <= 1.0e-12 &&
+            std::abs(
+                synchronized_blend_spans.values.front().target.clip.clip_time_delta +
+                0.15) <= 1.0e-12,
+            "Merged Blend intervals must preserve independent Source / Target Playback Speeds when rebuilding Clip-Time coefficients.");
+
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            blend_span_overflow =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    synchronized_clip, 5u, 0.75, 1.0, false,
+                    synchronized_clip, 5u, 1.75, -1.5, false,
+                    synchronized_blend_curve, 10.0, 0.5, 2u);
+        require(!blend_span_overflow.success &&
+            blend_span_overflow.values.empty() &&
+            blend_span_overflow.error ==
+                skin_physics::physics::animation_blend_clip_span_error::capacity_exceeded,
+            "Synchronized Blend scheduling must fail atomically when merged Source / Target / Weight boundaries exceed the Span limit.");
+
+        skin_physics::physics::animation_blend_weight_curve_desc invalid_synchronized_blend =
+            synchronized_blend_curve;
+        invalid_synchronized_blend.tangent_start = 100.0f;
+        invalid_synchronized_blend.tangent_end = 100.0f;
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            invalid_blend_schedule =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    synchronized_clip, 5u, 0.75, 1.0, false,
+                    synchronized_clip, 5u, 1.75, -1.5, false,
+                    invalid_synchronized_blend, 10.0, 0.5);
+        require(!invalid_blend_schedule.success &&
+            invalid_blend_schedule.values.empty() &&
+            invalid_blend_schedule.error ==
+                skin_physics::physics::animation_blend_clip_span_error::invalid_blend_curve,
+            "An invalid Hermite Blend Curve must reject the complete synchronized Blend schedule before publishing partial spans.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            scheduled_clip_spans =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    synchronized_clip, 5u, 0.25, 1.5, 10.0, 0.6);
+        require(scheduled_clip_spans.success &&
+            scheduled_clip_spans.values.size() == 4u,
+            "Synchronized multi-Track Clip spans must also be mapped into World-Time intervals.");
+        const double expected_clip_world_starts[4] = {
+            10.0, 10.1, 10.3, 10.5
+        };
+        const double expected_clip_world_durations[4] = {
+            0.1, 0.2, 0.2, 0.1
+        };
+        for (std::size_t index = 0u;
+            index < scheduled_clip_spans.values.size(); ++index)
+        {
+            require(std::abs(
+                    scheduled_clip_spans.values[index].world_time_start -
+                    expected_clip_world_starts[index]) <= 1.0e-12 &&
+                std::abs(
+                    scheduled_clip_spans.values[index].world_time_duration -
+                    expected_clip_world_durations[index]) <= 1.0e-12 &&
+                scheduled_clip_spans.values[index].clip.channels.size() ==
+                    synchronized_clip.tracks.size(),
+                "Forward synchronized Clip spans must partition the Logical Tick without losing channel records.");
+        }
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            scheduled_reverse_clip_spans =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    synchronized_clip, 5u, 1.75, -1.5, 20.0, 0.9);
+        require(scheduled_reverse_clip_spans.success &&
+            scheduled_reverse_clip_spans.values.size() == 4u,
+            "Reverse synchronized Clip spans must retain their World-Time schedule.");
+        const double expected_reverse_world_starts[4] = {
+            20.0, 20.15, 20.45, 20.75
+        };
+        const double expected_reverse_world_durations[4] = {
+            0.15, 0.3, 0.3, 0.15
+        };
+        for (std::size_t index = 0u;
+            index < scheduled_reverse_clip_spans.values.size(); ++index)
+        {
+            require(std::abs(
+                    scheduled_reverse_clip_spans.values[index].world_time_start -
+                    expected_reverse_world_starts[index]) <= 1.0e-12 &&
+                std::abs(
+                    scheduled_reverse_clip_spans.values[index].world_time_duration -
+                    expected_reverse_world_durations[index]) <= 1.0e-12,
+                "Reverse Clip-Time traversal must map into monotonic positive World-Time partitions.");
+        }
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            scheduled_paused_clip =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    synchronized_clip, 5u, 1.0, 0.0, 30.0, 0.4);
+        require(scheduled_paused_clip.success &&
+            scheduled_paused_clip.values.size() == 1u &&
+            scheduled_paused_clip.values[0u].clip.channels.size() ==
+                synchronized_clip.tracks.size() &&
+            scheduled_paused_clip.values[0u].clip.clip_time_delta == 0.0 &&
+            std::abs(scheduled_paused_clip.values[0u].world_time_start - 30.0) <= 1.0e-12 &&
+            std::abs(scheduled_paused_clip.values[0u].world_time_duration - 0.4) <= 1.0e-12,
+            "Paused multi-Track Clips must retain all channels across the complete Logical Tick.");
+
+        const skin_physics::physics::animation_clip_spans_build_result
+            unrepresentable_clip_time =
+                skin_physics::physics::build_animation_clip_spans(
+                    synchronized_clip, 5u, 1.0e16, 1.0);
+        require(!unrepresentable_clip_time.success &&
+            unrepresentable_clip_time.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A non-zero multi-Track Clip delta below double-precision resolution must fail closed.");
+
+        const skin_physics::physics::animation_clip_spans_build_result clip_out_of_range =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 4u, 1.75, 0.5);
+        require(!clip_out_of_range.success &&
+            clip_out_of_range.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "A Clip Span must be split at loop-wrap boundaries before a scheduler accepts a range outside the Clip duration.");
+
+        const skin_physics::physics::animation_clip_spans_build_result invalid_clip_node =
+            skin_physics::physics::build_animation_clip_spans(
+                synchronized_clip, 3u, 0.25, 0.5);
+        require(!invalid_clip_node.success &&
+            invalid_clip_node.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_track,
+            "Multi-Track Clip scheduling must reject a Track Node Index outside the uploaded Model.");
+
+        skin_physics::asset::animation_clip duplicate_channel_clip = synchronized_clip;
+        duplicate_channel_clip.tracks.push_back(synchronized_translation);
+        const skin_physics::physics::animation_clip_spans_build_result duplicate_channel =
+            skin_physics::physics::build_animation_clip_spans(
+                duplicate_channel_clip, 4u, 0.25, 0.5);
+        require(!duplicate_channel.success &&
+            duplicate_channel.values.empty() &&
+            duplicate_channel.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_track,
+            "An Animation Clip must not publish ambiguous duplicate Node / Path channels.");
+
+        const animation_channel_span_build_result invalid_world_duration_span =
+            skin_physics::physics::build_animation_channel_span(
+                linear_translation, 0.5, 1.0);
+        const animation_channel_span_sample_result invalid_world_duration =
+            skin_physics::physics::evaluate_animation_channel_span(
+                invalid_world_duration_span.value, 0.5, 0.0);
+        require(!invalid_world_duration.success &&
+            invalid_world_duration.error ==
+                skin_physics::physics::animation_channel_span_error::invalid_time,
+            "Span derivative evaluation must reject a zero World-Time duration.");
+
+        animation_track malformed_cubic = cubic_translation;
+        malformed_cubic.keys[1].in_tangent.pop_back();
+        const animation_channel_span_build_result malformed_span =
+            skin_physics::physics::build_animation_channel_span(
+                malformed_cubic, 0.5, 0.5);
+        require(!malformed_span.success &&
+            malformed_span.error ==
+                skin_physics::physics::animation_channel_span_error::malformed_key,
+            "CUBICSPLINE Span construction must reject a tangent array with the wrong component count.");
+    }
+
+    void test_phase09_animation_node_hierarchy_and_skin_matrix_derivatives()
+    {
+        using skin_physics::asset::animation_key;
+        using skin_physics::asset::animation_path;
+        using skin_physics::asset::animation_track;
+        using skin_physics::asset::mat4;
+        using skin_physics::asset::model;
+        using skin_physics::asset::node;
+        using skin_physics::asset::skin;
+        using skin_physics::asset::interpolation;
+
+        model source_model;
+        source_model.meshes.resize(1u);
+        source_model.nodes.resize(3u);
+
+        node& root_node = source_model.nodes[0u];
+        root_node.name = "animated_root";
+        root_node.children = { 1u, 2u };
+
+        node& joint_node = source_model.nodes[1u];
+        joint_node.name = "animated_joint";
+        joint_node.parent_index = 0u;
+        joint_node.translation = { 0.0f, 1.0f, 0.0f };
+
+        node& mesh_node = source_model.nodes[2u];
+        mesh_node.name = "static_mesh_node";
+        mesh_node.parent_index = 0u;
+        mesh_node.mesh_index = 0u;
+        mesh_node.skin_index = 0u;
+        mesh_node.uses_matrix = true;
+        mesh_node.local_matrix = mat4{};
+        mesh_node.local_matrix.value[14u] = 2.0f;
+
+        skin source_skin;
+        source_skin.name = "single_joint_skin";
+        source_skin.skeleton_node_index = 1u;
+        source_skin.joints = { 1u };
+        source_skin.inverse_bind_matrices = { mat4{} };
+        source_model.skins.push_back(source_skin);
+
+        skin_physics::asset::animation_clip clip;
+        clip.name = "hierarchy_translation";
+        clip.duration = 2.0f;
+
+        animation_track root_translation;
+        root_translation.node_index = 0u;
+        root_translation.path = animation_path::translation;
+        root_translation.mode = interpolation::linear;
+        root_translation.component_count = 3u;
+        animation_key root_key_start;
+        root_key_start.time = 0.0f;
+        root_key_start.value = { 0.0f, 0.0f, 0.0f };
+        animation_key root_key_end;
+        root_key_end.time = 2.0f;
+        root_key_end.value = { 2.0f, 0.0f, 0.0f };
+        root_translation.keys = { root_key_start, root_key_end };
+
+        animation_track joint_translation;
+        joint_translation.node_index = 1u;
+        joint_translation.path = animation_path::translation;
+        joint_translation.mode = interpolation::linear;
+        joint_translation.component_count = 3u;
+        animation_key joint_key_start;
+        joint_key_start.time = 0.0f;
+        joint_key_start.value = { 0.0f, 1.0f, 0.0f };
+        animation_key joint_key_end;
+        joint_key_end.time = 2.0f;
+        joint_key_end.value = { 0.0f, 3.0f, 0.0f };
+        joint_translation.keys = { joint_key_start, joint_key_end };
+        clip.tracks = { root_translation, joint_translation };
+
+        const skin_physics::physics::animation_clip_spans_build_result clip_spans =
+            skin_physics::physics::build_animation_clip_spans(
+                clip, static_cast<uint32_t>(source_model.nodes.size()), 0.0, 2.0);
+        require(clip_spans.success && clip_spans.values.size() == 1u,
+            "Hierarchy regression must build one synchronized Clip Span for the animated Root and Joint.");
+
+        const skin_physics::physics::animation_hierarchy_sample_result evaluated =
+            skin_physics::physics::evaluate_animation_clip_hierarchy(
+                source_model, clip, clip_spans.values[0u], 0.5, 1.0);
+        require(evaluated.success &&
+            evaluated.value.local_matrices.size() == 3u &&
+            evaluated.value.global_matrices.size() == 3u &&
+            evaluated.value.skin_poses.size() == 1u,
+            "CPU Animation Hierarchy evaluation must publish every Node matrix and one Skin Pose.");
+
+        const mat4& root_global =
+            evaluated.value.global_matrices[0u];
+        const mat4& joint_global =
+            evaluated.value.global_matrices[1u];
+        const mat4& mesh_global =
+            evaluated.value.global_matrices[2u];
+        require(std::abs(root_global.value[12u] - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_global.value[12u] - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_global.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(mesh_global.value[12u] - 1.0f) <= 1.0e-6f &&
+            std::abs(mesh_global.value[14u] - 2.0f) <= 1.0e-6f,
+            "Node Global Matrices must accumulate Parent * Local in topological order and preserve static Matrix Nodes.");
+
+        const mat4& root_global_derivative =
+            evaluated.value.global_matrix_derivatives[0u];
+        const mat4& joint_global_derivative =
+            evaluated.value.global_matrix_derivatives[1u];
+        const mat4& mesh_global_derivative =
+            evaluated.value.global_matrix_derivatives[2u];
+        require(std::abs(root_global_derivative.value[12u] - 2.0f) <= 1.0e-6f &&
+            std::abs(joint_global_derivative.value[12u] - 2.0f) <= 1.0e-6f &&
+            std::abs(joint_global_derivative.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(mesh_global_derivative.value[12u] - 2.0f) <= 1.0e-6f &&
+            std::abs(mesh_global_derivative.value[14u]) <= 1.0e-6f,
+            "Global Matrix Derivatives must apply the Product Rule through animated and static Nodes.");
+
+        const skin_physics::physics::animation_skin_pose& skin_pose =
+            evaluated.value.skin_poses[0u];
+        require(skin_pose.mesh_node_index == 2u &&
+            skin_pose.skin_index == 0u &&
+            skin_pose.skin_matrices.size() == 1u &&
+            skin_pose.skin_matrix_derivatives.size() == 1u,
+            "Each skinned Mesh Node must expose one Skin Matrix and analytic derivative per Joint.");
+        const mat4& skin_matrix = skin_pose.skin_matrices[0u];
+        const mat4& skin_matrix_derivative =
+            skin_pose.skin_matrix_derivatives[0u];
+        require(std::abs(skin_matrix.value[12u]) <= 1.0e-6f &&
+            std::abs(skin_matrix.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(skin_matrix.value[14u] + 2.0f) <= 1.0e-6f,
+            "Skin Matrix must be inverse(Mesh Node Global) * Joint Global * Inverse Bind.");
+        require(std::abs(skin_matrix_derivative.value[12u]) <= 1.0e-6f &&
+            std::abs(skin_matrix_derivative.value[13u] - 2.0f) <= 1.0e-6f &&
+            std::abs(skin_matrix_derivative.value[14u]) <= 1.0e-6f,
+            "Skin Matrix derivative must cancel shared Root motion and retain the Joint's relative analytic velocity.");
+
+        model invalid_hierarchy = source_model;
+        invalid_hierarchy.nodes[0u].parent_index = 1u;
+        const skin_physics::physics::animation_hierarchy_sample_result cyclic_hierarchy =
+            skin_physics::physics::evaluate_animation_clip_hierarchy(
+                invalid_hierarchy, clip, clip_spans.values[0u], 0.5, 1.0);
+        require(!cyclic_hierarchy.success &&
+            cyclic_hierarchy.value.global_matrices.empty() &&
+            cyclic_hierarchy.error ==
+                skin_physics::physics::animation_hierarchy_error::invalid_hierarchy,
+            "A cyclic Asset Node hierarchy must fail atomically without publishing partial Global Matrices.");
+
+        model singular_mesh = source_model;
+        singular_mesh.nodes[2u].local_matrix.value[0u] = 0.0f;
+        const skin_physics::physics::animation_hierarchy_sample_result singular_skin =
+            skin_physics::physics::evaluate_animation_clip_hierarchy(
+                singular_mesh, clip, clip_spans.values[0u], 0.5, 1.0);
+        require(!singular_skin.success &&
+            singular_skin.value.skin_poses.empty() &&
+            singular_skin.error ==
+                skin_physics::physics::animation_hierarchy_error::singular_mesh_node,
+            "A singular Mesh Node Global Matrix must fail before emitting an invalid Skin Matrix.");
+
+        skin_physics::asset::animation_clip source_blend_clip = clip;
+        animation_track source_root_rotation;
+        source_root_rotation.node_index = 0u;
+        source_root_rotation.path = animation_path::rotation;
+        source_root_rotation.mode = interpolation::linear;
+        source_root_rotation.component_count = 4u;
+        animation_key source_rotation_start;
+        source_rotation_start.time = 0.0f;
+        source_rotation_start.value = { 0.0f, 0.0f, 0.0f, 1.0f };
+        animation_key source_rotation_end;
+        source_rotation_end.time = 2.0f;
+        source_rotation_end.value = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        source_root_rotation.keys = {
+            source_rotation_start, source_rotation_end
+        };
+        source_blend_clip.tracks.push_back(source_root_rotation);
+
+        skin_physics::asset::animation_clip target_blend_clip =
+            source_blend_clip;
+        target_blend_clip.name = "target_hierarchy_translation_rotation";
+        target_blend_clip.tracks[0u].keys[0u].value[0u] = 2.0f;
+        target_blend_clip.tracks[0u].keys[1u].value[0u] = 4.0f;
+        target_blend_clip.tracks[1u].keys[0u].value[1u] = 3.0f;
+        target_blend_clip.tracks[1u].keys[1u].value[1u] = 5.0f;
+        target_blend_clip.tracks[2u].keys[1u].value = {
+            0.0f, 0.0f, 1.0f, 0.0f
+        };
+
+        skin_physics::physics::animation_blend_weight_curve_desc blend_curve;
+        blend_curve.blend_start_time = 10.0;
+        blend_curve.blend_end_time = 12.0;
+        blend_curve.weight_start = 0.0f;
+        blend_curve.weight_end = 1.0f;
+        blend_curve.tangent_start = 0.0f;
+        blend_curve.tangent_end = 0.0f;
+        const skin_physics::physics::animation_blend_clip_span_schedule_result
+            blend_schedule =
+                skin_physics::physics::schedule_animation_blend_clip_spans(
+                    source_blend_clip, 3u, 0.0, 1.0, false,
+                    target_blend_clip, 3u, 0.0, 1.0, false,
+                    blend_curve, 10.0, 2.0);
+        require(blend_schedule.success && blend_schedule.values.size() == 1u,
+            "Source / Target Clip and Hermite Weight boundaries must produce one shared World-Time Pose Span.");
+
+        const skin_physics::physics::animation_hierarchy_sample_result blended_pose =
+            skin_physics::physics::evaluate_animation_blend_clip_hierarchy(
+                source_model,
+                source_blend_clip,
+                target_blend_clip,
+                blend_schedule.values[0u],
+                0.5);
+        require(blended_pose.success &&
+            blended_pose.value.local_transforms.size() == source_model.nodes.size() &&
+            blended_pose.value.global_matrices.size() == source_model.nodes.size() &&
+            blended_pose.value.skin_poses.size() == 1u,
+            "CPU Blend Pose evaluation must combine Source / Target local transforms before rebuilding the complete hierarchy and Skin Pose.");
+
+        const skin_physics::physics::animation_node_local_transform& blended_root =
+            blended_pose.value.local_transforms[0u];
+        const skin_physics::physics::animation_node_local_transform& blended_joint =
+            blended_pose.value.local_transforms[1u];
+        require(std::abs(blended_root.translation.x - 2.0f) <= 1.0e-6f &&
+            std::abs(blended_root.translation_velocity.x - 2.5f) <= 1.0e-5f &&
+            std::abs(blended_joint.translation.y - 3.0f) <= 1.0e-6f &&
+            std::abs(blended_joint.translation_velocity.y - 2.5f) <= 1.0e-5f,
+            "Translation Blend must include w_dot * (Target - Source) in its analytic World-Time derivative.");
+
+        const float blended_rotation_norm = std::sqrt(
+            blended_root.rotation.x * blended_root.rotation.x +
+            blended_root.rotation.y * blended_root.rotation.y +
+            blended_root.rotation.z * blended_root.rotation.z +
+            blended_root.rotation.w * blended_root.rotation.w);
+        const float blended_rotation_tangent_dot =
+            blended_root.rotation.x * blended_root.rotation_velocity.x +
+            blended_root.rotation.y * blended_root.rotation_velocity.y +
+            blended_root.rotation.z * blended_root.rotation_velocity.z +
+            blended_root.rotation.w * blended_root.rotation_velocity.w;
+        require(std::abs(blended_rotation_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(blended_rotation_tangent_dot) <= 1.0e-5f &&
+            std::isfinite(blended_root.rotation_velocity.z) &&
+            std::isfinite(blended_root.rotation_velocity.w),
+            "Quaternion Blend must hemisphere-align Source / Target, normalize the result and project its analytic derivative into the quaternion tangent space.");
+
+        const mat4& blended_root_global =
+            blended_pose.value.global_matrices[0u];
+        const mat4& blended_joint_global =
+            blended_pose.value.global_matrices[1u];
+        const mat4& blended_root_global_derivative =
+            blended_pose.value.global_matrix_derivatives[0u];
+        const float expected_blended_joint_global_x =
+            2.0f - 6.0f * blended_root.rotation.z * blended_root.rotation.w;
+        const float expected_blended_joint_global_y =
+            3.0f * (1.0f -
+                2.0f * blended_root.rotation.z * blended_root.rotation.z);
+        require(std::abs(blended_root_global.value[12u] - 2.0f) <= 1.0e-5f &&
+            std::abs(blended_joint_global.value[12u] -
+                expected_blended_joint_global_x) <= 1.0e-5f &&
+            std::abs(blended_joint_global.value[13u] -
+                expected_blended_joint_global_y) <= 1.0e-5f &&
+            std::abs(blended_root_global_derivative.value[12u] - 2.5f) <= 1.0e-5f,
+            "Blended Local Pose must be propagated through Parent Rotation, Parent * Local hierarchy matrices and analytic derivatives.");
+
+        const mat4& blended_skin_matrix =
+            blended_pose.value.skin_poses[0u].skin_matrices[0u];
+        const mat4& blended_skin_derivative =
+            blended_pose.value.skin_poses[0u].skin_matrix_derivatives[0u];
+        require(std::abs(blended_skin_matrix.value[12u]) <= 1.0e-5f &&
+            std::abs(blended_skin_matrix.value[13u] - 3.0f) <= 1.0e-5f &&
+            std::abs(blended_skin_matrix.value[14u] + 2.0f) <= 1.0e-5f &&
+            std::abs(blended_skin_derivative.value[12u]) <= 1.0e-5f &&
+            std::abs(blended_skin_derivative.value[13u] - 2.5f) <= 1.0e-5f,
+            "Blended Skin Matrix / derivative must be rebuilt after the Source / Target local Pose blend and cancel shared Root motion.");
+
+        skin_physics::physics::animation_blend_clip_span mismatched_blend_span =
+            blend_schedule.values[0u];
+        mismatched_blend_span.target.world_time_duration += 0.25;
+        const skin_physics::physics::animation_hierarchy_sample_result
+            mismatched_blend_pose =
+                skin_physics::physics::evaluate_animation_blend_clip_hierarchy(
+                    source_model,
+                    source_blend_clip,
+                    target_blend_clip,
+                    mismatched_blend_span,
+                    0.5);
+        require(!mismatched_blend_pose.success &&
+            mismatched_blend_pose.value.global_matrices.empty() &&
+            mismatched_blend_pose.error ==
+                skin_physics::physics::animation_hierarchy_error::invalid_blend,
+            "Source / Target / Weight interval mismatch must fail atomically before publishing a blended hierarchy.");
+    }
+
+    void test_phase09_immutable_gpu_trajectory_packet_builder()
+    {
+        using skin_physics::asset::animation_key;
+        using skin_physics::asset::animation_path;
+        using skin_physics::asset::animation_track;
+        using skin_physics::asset::interpolation;
+        using skin_physics::asset::mat4;
+        using skin_physics::asset::model;
+        using skin_physics::asset::node;
+        using skin_physics::asset::skin;
+        using skin_physics::physics::animation_trajectory_packet_build_desc;
+        using skin_physics::physics::animation_trajectory_span_input;
+        using skin_physics::physics::animation_trajectory_track_span_input;
+
+        model source_model;
+        source_model.meshes.resize(3u);
+        source_model.nodes.resize(6u);
+
+        node& root_node = source_model.nodes[0u];
+        root_node.name = "packet_root";
+        root_node.children = { 1u, 2u, 3u, 4u, 5u };
+
+        node& joint_node = source_model.nodes[1u];
+        joint_node.name = "packet_joint";
+        joint_node.parent_index = 0u;
+        joint_node.translation = { 0.0f, 1.0f, 0.0f };
+
+        node& mesh_node = source_model.nodes[2u];
+        mesh_node.name = "packet_mesh";
+        mesh_node.parent_index = 0u;
+        mesh_node.mesh_index = 0u;
+        mesh_node.skin_index = 0u;
+        mesh_node.uses_matrix = true;
+        mesh_node.local_matrix = mat4{};
+        mesh_node.local_matrix.value[14u] = 2.0f;
+
+        node& second_joint_node = source_model.nodes[3u];
+        second_joint_node.name = "packet_second_joint";
+        second_joint_node.parent_index = 0u;
+        second_joint_node.translation = { 0.0f, 2.0f, 0.0f };
+
+        node& second_mesh_node = source_model.nodes[4u];
+        second_mesh_node.name = "packet_second_mesh";
+        second_mesh_node.parent_index = 0u;
+        second_mesh_node.mesh_index = 1u;
+        second_mesh_node.skin_index = 1u;
+        second_mesh_node.uses_matrix = true;
+        second_mesh_node.local_matrix = mat4{};
+        second_mesh_node.local_matrix.value[12u] = 3.0f;
+
+        node& third_mesh_node = source_model.nodes[5u];
+        third_mesh_node.name = "packet_third_mesh";
+        third_mesh_node.parent_index = 0u;
+        third_mesh_node.mesh_index = 2u;
+        third_mesh_node.skin_index = 0u;
+        third_mesh_node.uses_matrix = true;
+        third_mesh_node.local_matrix = mat4{};
+        third_mesh_node.local_matrix.value[14u] = 4.0f;
+
+        skin source_skin;
+        source_skin.name = "packet_skin";
+        source_skin.skeleton_node_index = 1u;
+        source_skin.joints = { 1u };
+        mat4 inverse_bind;
+        inverse_bind.value[13u] = -1.0f;
+        source_skin.inverse_bind_matrices = { inverse_bind };
+        source_model.skins.push_back(source_skin);
+
+        skin second_skin;
+        second_skin.name = "packet_second_skin";
+        second_skin.skeleton_node_index = 1u;
+        second_skin.joints = { 1u, 3u };
+        mat4 shared_joint_inverse_bind;
+        shared_joint_inverse_bind.value[12u] = -3.0f;
+        mat4 second_joint_inverse_bind;
+        second_joint_inverse_bind.value[13u] = -2.0f;
+        second_skin.inverse_bind_matrices = {
+            shared_joint_inverse_bind, second_joint_inverse_bind
+        };
+        source_model.skins.push_back(second_skin);
+
+        skin_physics::asset::animation_clip clip;
+        clip.name = "packet_clip";
+        clip.duration = 1.0f;
+
+        animation_track root_translation;
+        root_translation.node_index = 0u;
+        root_translation.path = animation_path::translation;
+        root_translation.mode = interpolation::linear;
+        root_translation.component_count = 3u;
+        animation_key root_start;
+        root_start.time = 0.0f;
+        root_start.value = { 0.0f, 0.0f, 0.0f };
+        animation_key root_end;
+        root_end.time = 1.0f;
+        root_end.value = { 1.0f, 0.0f, 0.0f };
+        root_translation.keys = { root_start, root_end };
+
+        animation_track joint_translation;
+        joint_translation.node_index = 1u;
+        joint_translation.path = animation_path::translation;
+        joint_translation.mode = interpolation::cubic_spline;
+        joint_translation.component_count = 3u;
+        animation_key joint_start;
+        joint_start.time = 0.0f;
+        joint_start.in_tangent = { 0.0f, 0.0f, 0.0f };
+        joint_start.value = { 0.0f, 1.0f, 0.0f };
+        joint_start.out_tangent = { 0.0f, 0.0f, 0.0f };
+        animation_key joint_end;
+        joint_end.time = 1.0f;
+        joint_end.in_tangent = { 0.0f, 0.0f, 0.0f };
+        joint_end.value = { 0.0f, 3.0f, 0.0f };
+        joint_end.out_tangent = { 0.0f, 0.0f, 0.0f };
+        joint_translation.keys = { joint_start, joint_end };
+        clip.tracks = { root_translation, joint_translation };
+        source_model.animations.push_back(clip);
+
+        const skin_physics::physics::animation_clip_span_schedule_result scheduled =
+            skin_physics::physics::schedule_animation_clip_spans(
+                source_model.animations[0u], 6u,
+                0.0, 1.0, 10.0, 0.5);
+        require(scheduled.success && scheduled.values.size() == 1u &&
+            scheduled.values[0u].world_time_start == 10.0 &&
+            scheduled.values[0u].world_time_duration == 0.5,
+            "Packet fixture must build one synchronized positive World-Time Clip Span.");
+
+        animation_trajectory_span_input span_input;
+        span_input.span_id = 41u;
+        span_input.world_time_start = 10.0;
+        span_input.world_time_duration = 0.5;
+        span_input.bounds.speed_bound = 3.0f;
+        span_input.bounds.acceleration_bound = 4.0f;
+        span_input.bounds.chord_deviation_bound = 0.01f;
+        span_input.bounds.quaternion_normalization_lower_bound = 0.25f;
+        skin_physics::physics::kinematic_collider_span_desc collider_desc;
+        collider_desc.stable_collider_id = 0x0000000100000002ull;
+        collider_desc.span_sample_pair_id = 7u;
+        collider_desc.world_time_start = 10.0;
+        collider_desc.world_time_duration = 0.5;
+        collider_desc.sample_start_time = 9.5;
+        collider_desc.sample_end_time = 11.0;
+        collider_desc.sample_start_translation = { 0.0f, 0.0f, 0.0f };
+        collider_desc.sample_end_translation = { 3.0f, 0.0f, 0.0f };
+        collider_desc.sample_start_rotation = {
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        collider_desc.sample_end_rotation = {
+            0.0f, 0.0f, 0.38268343f, 0.92387953f
+        };
+        collider_desc.maximum_local_radius = 2.0f;
+        const auto collider_record =
+            skin_physics::physics::build_kinematic_collider_span(collider_desc);
+        require(collider_record.success,
+            "Packet fixture must build a finite, bracketed Kinematic Collider trajectory record.");
+        span_input.colliders.push_back(collider_record.value);
+        span_input.has_root_transform = true;
+        span_input.root_transform.translation_start =
+            { 1.0f, 2.0f, 3.0f, 1.0f };
+        span_input.root_transform.translation_end =
+            { 2.0f, 2.0f, 3.0f, 1.0f };
+        span_input.root_transform.rotation_start =
+            { 0.0f, 0.0f, 0.0f, 1.0f };
+        span_input.root_transform.rotation_end = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        span_input.root_transform.angular_axis_and_angle =
+            { 0.0f, 0.0f, 1.0f, 3.14159265358979323846f / 2.0f };
+        span_input.root_transform.duration_seconds = 0.5f;
+        span_input.root_transform.inverse_duration = 2.0f;
+        span_input.root_transform.flags =
+            skin_physics::physics::root_transform_flag_valid_mask;
+        animation_trajectory_track_span_input track_input;
+        track_input.clip_index = 0u;
+        track_input.scheduled = scheduled.values[0u];
+        span_input.tracks.push_back(track_input);
+
+        animation_trajectory_packet_build_desc build_desc;
+        build_desc.animation_input_version = 0x1122334455667788ull;
+        build_desc.maximum_span_count = 8u;
+        build_desc.spans.push_back(span_input);
+
+        const skin_physics::physics::animation_trajectory_packet_build_result built =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, build_desc);
+        require(built.success &&
+            built.value.animation_input_version ==
+                build_desc.animation_input_version &&
+            built.value.span_records.size() == 1u &&
+            built.value.track_records.size() == 1u &&
+            built.value.channel_records.size() == 6u &&
+            built.value.inverse_bind_matrices.size() == 3u &&
+            built.value.static_node_matrices.size() == 6u &&
+            built.value.skin_records.size() == 3u &&
+            built.value.skin_joint_records.size() == 3u &&
+            built.value.collider_records.size() == 1u &&
+            built.value.root_transform_records.size() == 1u &&
+            built.value.span_records[0u].collider_record_count == 1u &&
+            (built.value.span_records[0u].flags &
+                skin_physics::physics::animation_span_flag_has_root_motion) != 0u &&
+            (built.value.span_records[0u].flags &
+                skin_physics::physics::animation_span_flag_has_kinematic_collider) != 0u &&
+            built.value.span_world_time_starts ==
+                std::vector<double>({ 10.0 }),
+            "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind / Collider / Root Transform payload.");
+
+        animation_trajectory_packet_build_desc invalid_root_transform_packet =
+            build_desc;
+        invalid_root_transform_packet.spans[0u].root_transform.duration_seconds = 0.25f;
+        const auto invalid_root_transform_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_root_transform_packet);
+        require(!invalid_root_transform_result.success &&
+            invalid_root_transform_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span &&
+            invalid_root_transform_result.value.root_transform_records.empty(),
+            "Packet Builder must reject a Root Transform Record whose duration differs from its owning Span without publishing partial records.");
+
+        animation_trajectory_packet_build_desc duplicate_collider_packet = build_desc;
+        duplicate_collider_packet.spans[0u].colliders.push_back(
+            collider_record.value);
+        const auto duplicate_collider_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, duplicate_collider_packet);
+        require(!duplicate_collider_result.success &&
+            duplicate_collider_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span,
+            "Packet Builder must reject duplicate Stable Collider IDs within one Span.");
+
+        animation_trajectory_packet_build_desc underbounded_collider_packet =
+            build_desc;
+        underbounded_collider_packet.spans[0u].colliders[0u].linear_speed_bound = 0.0f;
+        const auto underbounded_collider_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, underbounded_collider_packet);
+        require(!underbounded_collider_result.success &&
+            underbounded_collider_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span,
+            "Packet Builder must reject a Collider Record whose Speed Bound underestimates its stored trajectory.");
+
+        animation_trajectory_packet_build_desc mismatched_collider_packet =
+            build_desc;
+        mismatched_collider_packet.spans[0u].colliders[0u].duration_seconds = 0.25f;
+        const auto mismatched_collider_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, mismatched_collider_packet);
+        require(!mismatched_collider_result.success &&
+            mismatched_collider_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span,
+            "Packet Builder must reject a Collider Record whose duration differs from its owning Span.");
+
+        animation_trajectory_span_input blended_span_input = span_input;
+        blended_span_input.span_id = 42u;
+        blended_span_input.has_blend = true;
+        blended_span_input.source_track_index = 0u;
+        blended_span_input.target_track_index = 1u;
+        blended_span_input.blend_curve.blend_start_time = 9.0;
+        blended_span_input.blend_curve.blend_end_time = 11.0;
+        blended_span_input.blend_curve.weight_start = 0.25f;
+        blended_span_input.blend_curve.weight_end = 0.75f;
+        blended_span_input.blend_curve.tangent_start = 0.0f;
+        blended_span_input.blend_curve.tangent_end = 0.0f;
+        blended_span_input.tracks.push_back(track_input);
+        animation_trajectory_packet_build_desc blended_build_desc = build_desc;
+        blended_build_desc.animation_input_version += 1u;
+        blended_build_desc.spans[0u] = blended_span_input;
+        const auto blended_built =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, blended_build_desc);
+        require(blended_built.success &&
+            blended_built.value.span_records.size() == 1u &&
+            blended_built.value.track_records.size() == 2u &&
+            blended_built.value.channel_records.size() == 12u &&
+            blended_built.value.blend_records.size() == 1u &&
+            blended_built.value.span_records[0u].track_record_count == 2u &&
+            blended_built.value.span_records[0u].channel_record_count == 12u &&
+            blended_built.value.span_records[0u].blend_record_count == 1u,
+            "Blend Packet Builder must finalize the Blend Record range after appending its two Track / dense Channel tables.");
+
+        const skin_physics::physics::animation_clip_span_schedule_result
+            held_terminal_schedule =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    source_model.animations[0u], 6u,
+                    1.0, 0.0, 20.0, 0.5);
+        require(held_terminal_schedule.success &&
+            held_terminal_schedule.values.size() == 1u &&
+            held_terminal_schedule.values[0u].clip.channels[0u].interpolation_mode ==
+                interpolation::step,
+            "A paused interpolated Track at its final Key must be represented as a constant effective STEP Span.");
+
+        animation_trajectory_packet_build_desc held_terminal_packet = build_desc;
+        held_terminal_packet.animation_input_version += 1u;
+        held_terminal_packet.spans[0u].span_id = 43u;
+        held_terminal_packet.spans[0u].world_time_start = 20.0;
+        held_terminal_packet.spans[0u].world_time_duration = 0.5;
+        held_terminal_packet.spans[0u].tracks[0u].scheduled =
+            held_terminal_schedule.values[0u];
+        const auto held_terminal_built =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, held_terminal_packet);
+        require(held_terminal_built.success &&
+            held_terminal_built.value.span_records.size() == 1u &&
+            held_terminal_built.value.channel_records.size() == 6u,
+            "Packet Builder must accept a constant effective STEP Span produced by a LINEAR Asset Track at its held terminal Key.");
+
+        const skin_physics::physics::animation_span_gpu_record& span_record =
+            built.value.span_records[0u];
+        const skin_physics::physics::animation_track_gpu_record& track_record =
+            built.value.track_records[0u];
+        require(span_record.span_id == 41u &&
+            span_record.animation_input_version_low == 0x55667788u &&
+            span_record.animation_input_version_high == 0x11223344u &&
+            span_record.first_track_record == 0u &&
+            span_record.track_record_count == 1u &&
+            span_record.first_channel_record == 0u &&
+            span_record.channel_record_count == 6u &&
+            span_record.first_blend_record == 0u &&
+            span_record.blend_record_count == 0u &&
+            span_record.span_duration_seconds == 0.5f &&
+            span_record.inverse_span_duration == 2.0f &&
+            span_record.speed_bound == 3.0f &&
+            span_record.acceleration_bound == 4.0f &&
+            span_record.chord_deviation_bound == 0.01f &&
+            span_record.quaternion_normalization_lower_bound == 0.25f,
+            "Span Record must preserve its immutable Input Version, contiguous Buffer Ranges, World-Time duration and certified Bounds.");
+        require(track_record.clip_index == 0u &&
+            track_record.first_channel_record == 0u &&
+            track_record.channel_record_count == 6u &&
+            track_record.clip_time_start == 0.0f &&
+            track_record.clip_time_delta == 1.0f &&
+            track_record.playback_speed == 2.0f &&
+            track_record.flags == 0u,
+            "Track Record must preserve Clip Time, signed delta, World-Time Playback Speed and its complete Node Channel Range.");
+
+        const auto find_channel =
+            [&built](uint32_t node_index) -> const skin_physics::physics::animation_channel_gpu_record*
+        {
+            const auto iterator = std::find_if(
+                built.value.channel_records.begin(),
+                built.value.channel_records.end(),
+                [node_index](
+                    const skin_physics::physics::animation_channel_gpu_record& value)
+                {
+                    return value.node_index == node_index;
+                });
+            return iterator == built.value.channel_records.end()
+                ? nullptr
+                : &(*iterator);
+        };
+        const auto* root_channel = find_channel(0u);
+        const auto* joint_channel = find_channel(1u);
+        const auto* mesh_channel = find_channel(2u);
+        const auto* second_joint_channel = find_channel(3u);
+        const auto* second_mesh_channel = find_channel(4u);
+        const auto* third_mesh_channel = find_channel(5u);
+        require(root_channel != nullptr && joint_channel != nullptr &&
+            mesh_channel != nullptr && second_joint_channel != nullptr &&
+            second_mesh_channel != nullptr && third_mesh_channel != nullptr &&
+            root_channel->parent_index == skin_physics::asset::invalid_index &&
+            joint_channel->parent_index == 0u &&
+            mesh_channel->parent_index == 0u &&
+            second_joint_channel->parent_index == 0u &&
+            second_mesh_channel->parent_index == 0u &&
+            third_mesh_channel->parent_index == 0u,
+            "Channel Records must be emitted in Parent-before-Child order with Span-local Parent Record Indices.");
+        require((root_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_model_root) != 0u &&
+            (root_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_required_joint_ancestor) != 0u &&
+            (joint_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_joint) != 0u &&
+            (mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_mesh) != 0u &&
+            (mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_static_matrix) != 0u &&
+            (second_joint_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_joint) != 0u &&
+            (second_mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_mesh) != 0u &&
+            (third_mesh_channel->node_role_flags &
+                    skin_physics::physics::animation_node_role_mesh) != 0u &&
+            root_channel->inverse_bind_record_index == skin_physics::asset::invalid_index &&
+            joint_channel->inverse_bind_record_index == 0u &&
+            second_joint_channel->inverse_bind_record_index == 2u,
+            "Node Role flags must preserve Model Root / Joint / Mesh / Ancestor / Static Matrix semantics and non-Joint UINT32_MAX IBM references.");
+        require(root_channel->channel_mask ==
+                skin_physics::physics::animation_channel_mask_translation &&
+            root_channel->interpolation_flags ==
+                static_cast<uint32_t>(skin_physics::asset::interpolation::linear) &&
+            joint_channel->channel_mask ==
+                skin_physics::physics::animation_channel_mask_translation &&
+            joint_channel->interpolation_flags ==
+                (static_cast<uint32_t>(skin_physics::asset::interpolation::cubic_spline)),
+            "Animation Channel Records must preserve the original Node / Path channel masks and glTF interpolation flags.");
+        require(std::abs(root_channel->translation_c0.x) <= 1.0e-6f &&
+            std::abs(root_channel->translation_c1.x - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c0.y - 1.0f) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c1.y) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c2.y - 6.0f) <= 1.0e-6f &&
+            std::abs(joint_channel->translation_c3.y + 4.0f) <= 1.0e-6f,
+            "Channel Records must contain the exact Span-local LINEAR / CUBICSPLINE coefficient arrays.");
+        require(std::abs(
+                built.value.inverse_bind_matrices[0u].column3.y + 1.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.inverse_bind_matrices[1u].column3.x + 3.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.inverse_bind_matrices[2u].column3.y + 2.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.static_node_matrices[2u].column3.z - 2.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.static_node_matrices[4u].column3.x - 3.0f) <= 1.0e-6f &&
+            std::abs(
+                built.value.static_node_matrices[5u].column3.z - 4.0f) <= 1.0e-6f,
+            "Per-Skin Inverse Bind and dense Static Node Matrix payloads must retain their independent Asset Column-Major values.");
+
+        const auto& first_skin_record = built.value.skin_records[0u];
+        const auto& second_skin_record = built.value.skin_records[1u];
+        const auto& third_skin_record = built.value.skin_records[2u];
+        require(first_skin_record.mesh_node_channel_offset == 2u &&
+            first_skin_record.skin_index == 0u &&
+            first_skin_record.first_joint_record == 0u &&
+            first_skin_record.joint_count == 1u &&
+            second_skin_record.mesh_node_channel_offset == 4u &&
+            second_skin_record.skin_index == 1u &&
+            second_skin_record.first_joint_record == 1u &&
+            second_skin_record.joint_count == 2u &&
+            third_skin_record.mesh_node_channel_offset == 5u &&
+            third_skin_record.skin_index == 0u &&
+            third_skin_record.first_joint_record == 0u &&
+            third_skin_record.joint_count == 1u,
+            "Each Skinned Mesh Node must retain its own Skin Index and ordered Joint range, even when the Skin shares Joint Nodes with another Mesh.");
+        const auto& first_skin_joint = built.value.skin_joint_records[0u];
+        const auto& second_skin_shared_joint = built.value.skin_joint_records[1u];
+        const auto& second_skin_extra_joint = built.value.skin_joint_records[2u];
+        require(first_skin_joint.joint_channel_offset == 1u &&
+            first_skin_joint.inverse_bind_record_index == 0u &&
+            first_skin_joint.joint_node_index == 1u &&
+            second_skin_shared_joint.joint_channel_offset == 1u &&
+            second_skin_shared_joint.inverse_bind_record_index == 1u &&
+            second_skin_shared_joint.joint_node_index == 1u &&
+            second_skin_extra_joint.joint_channel_offset == 3u &&
+            second_skin_extra_joint.inverse_bind_record_index == 2u &&
+            second_skin_extra_joint.joint_node_index == 3u,
+            "Skin Joint records must preserve each Skin's ordered Joint set and Skin-specific Inverse Bind index; a shared Joint may use different IBM records in different Skins.");
+
+        source_model.animations.push_back(source_model.animations[0u]);
+        animation_trajectory_span_input blend_span_input = span_input;
+        blend_span_input.span_id = 42u;
+        blend_span_input.tracks.clear();
+        animation_trajectory_track_span_input blend_source_track;
+        blend_source_track.clip_index = 0u;
+        blend_source_track.scheduled = scheduled.values[0u];
+        animation_trajectory_track_span_input blend_target_track;
+        blend_target_track.clip_index = 1u;
+        blend_target_track.scheduled = scheduled.values[0u];
+        blend_span_input.tracks.push_back(blend_source_track);
+        blend_span_input.tracks.push_back(blend_target_track);
+        blend_span_input.has_blend = true;
+        blend_span_input.source_track_index = 0u;
+        blend_span_input.target_track_index = 1u;
+        blend_span_input.blend_curve.blend_start_time = 10.0;
+        blend_span_input.blend_curve.blend_end_time = 11.0;
+        blend_span_input.blend_curve.weight_start = 0.25f;
+        blend_span_input.blend_curve.weight_end = 0.75f;
+        blend_span_input.blend_curve.tangent_start = 0.5f;
+        blend_span_input.blend_curve.tangent_end = 0.5f;
+        animation_trajectory_packet_build_desc blend_build_desc;
+        blend_build_desc.animation_input_version =
+            build_desc.animation_input_version + 1u;
+        blend_build_desc.maximum_span_count = 8u;
+        blend_build_desc.spans.push_back(blend_span_input);
+        const skin_physics::physics::animation_trajectory_packet_build_result
+            blend_built =
+                skin_physics::physics::build_animation_trajectory_packet(
+                    source_model, blend_build_desc);
+        require(blend_built.success &&
+            blend_built.value.track_records.size() == 2u &&
+            blend_built.value.channel_records.size() == 12u &&
+            blend_built.value.span_records[0u].channel_record_count == 12u &&
+            blend_built.value.track_records[0u].first_channel_record == 0u &&
+            blend_built.value.track_records[1u].first_channel_record == 6u &&
+            blend_built.value.channel_records[7u].parent_index == 0u &&
+            blend_built.value.channel_records[8u].parent_index == 0u &&
+            blend_built.value.channel_records[9u].parent_index == 0u,
+            "Every Blend Track must store Parent Channel offsets relative to its own dense Channel range, never absolute Packet offsets.");
+
+        skin_physics::physics::animation_span_cursor_gpu_record cursor;
+        std::string diagnostic;
+        require(skin_physics::physics::initialize_animation_span_cursor(
+                built.value, 0u, 10.25, cursor, diagnostic) &&
+            cursor.span_record_index == 0u &&
+            cursor.animation_input_version_low == 0x55667788u &&
+            cursor.animation_input_version_high == 0x11223344u &&
+            std::abs(cursor.u_segment_start - 0.5f) <= 1.0e-6f,
+            "Segment Cursor must map World Time into the immutable Span's normalized local coordinate and retain the exact Packet Version.");
+        require(skin_physics::physics::initialize_animation_span_cursor(
+                built.value, 0u, 10.5, cursor, diagnostic) &&
+            cursor.u_segment_start == 1.0f,
+            "A Segment starting at a Span's exact end boundary must initialize an exact normalized Cursor of one.");
+
+        skin_physics::physics::animation_span_cursor_gpu_record preserved_cursor;
+        preserved_cursor.span_record_index = 77u;
+        preserved_cursor.animation_input_version_low = 88u;
+        preserved_cursor.animation_input_version_high = 99u;
+        preserved_cursor.u_segment_start = 0.375f;
+        const skin_physics::physics::animation_span_cursor_gpu_record original_cursor =
+            preserved_cursor;
+        require(!skin_physics::physics::initialize_animation_span_cursor(
+                built.value, 0u, 9.999, preserved_cursor, diagnostic) &&
+            preserved_cursor.span_record_index == original_cursor.span_record_index &&
+            preserved_cursor.animation_input_version_low ==
+                original_cursor.animation_input_version_low &&
+            preserved_cursor.animation_input_version_high ==
+                original_cursor.animation_input_version_high &&
+            preserved_cursor.u_segment_start == original_cursor.u_segment_start,
+            "An out-of-Span Cursor request must fail atomically without overwriting the caller's previous Cursor.");
+
+        model duplicate_skin_joints = source_model;
+        duplicate_skin_joints.skins[1u].joints[1u] = 1u;
+        const auto duplicate_skin_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                duplicate_skin_joints, build_desc);
+        require(!duplicate_skin_result.success &&
+            duplicate_skin_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_skin &&
+            duplicate_skin_result.value.skin_records.empty() &&
+            duplicate_skin_result.value.skin_joint_records.empty(),
+            "A Skin with duplicate Joint Nodes must fail atomically without publishing partial Skin / Joint mappings.");
+
+        model invalid_skin_joint = source_model;
+        invalid_skin_joint.skins[1u].joints[1u] = 99u;
+        const auto invalid_skin_joint_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                invalid_skin_joint, build_desc);
+        require(!invalid_skin_joint_result.success &&
+            invalid_skin_joint_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_skin &&
+            invalid_skin_joint_result.value.skin_records.empty(),
+            "A Skin Joint Node outside the Asset Model must fail atomically.");
+
+        animation_trajectory_packet_build_desc invalid_version = build_desc;
+        invalid_version.animation_input_version = 0u;
+        const auto invalid_version_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_version);
+        require(!invalid_version_result.success &&
+            invalid_version_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_version &&
+            invalid_version_result.value.span_records.empty(),
+            "Packet Builder must reject a zero immutable Input Version without publishing partial records.");
+
+        animation_trajectory_packet_build_desc invalid_bounds = build_desc;
+        invalid_bounds.spans[0u].bounds.speed_bound = -1.0f;
+        const auto invalid_bounds_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_bounds);
+        require(!invalid_bounds_result.success &&
+            invalid_bounds_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_bounds &&
+            invalid_bounds_result.value.channel_records.empty(),
+            "Packet Builder must reject negative certified Bounds atomically.");
+
+        animation_trajectory_packet_build_desc skinning_only_packet = build_desc;
+        skinning_only_packet.spans[0u].bounds = {};
+        skinning_only_packet.spans[0u].bounds_are_certified = false;
+        const auto skinning_only_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, skinning_only_packet);
+        require(skinning_only_result.success &&
+            (skinning_only_result.value.span_records[0u].flags &
+                skin_physics::physics::animation_span_flag_bounds_certified) == 0u &&
+            skinning_only_result.value.span_records[0u].speed_bound == 0.0f &&
+            skinning_only_result.value.span_records[0u].acceleration_bound == 0.0f &&
+            skinning_only_result.value.span_records[0u].chord_deviation_bound == 0.0f &&
+            skinning_only_result.value.span_records[0u].quaternion_normalization_lower_bound == 0.0f,
+            "A skinning-only Packet may omit certified motion bounds, but must mark the Span as unsuitable for CCD / no-miss consumers.");
+
+        animation_trajectory_packet_build_desc invalid_channel_range = build_desc;
+        invalid_channel_range.spans[0u].tracks[0u].scheduled.clip.channels.pop_back();
+        const auto invalid_channel_range_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, invalid_channel_range);
+        require(!invalid_channel_range_result.success &&
+            invalid_channel_range_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_track &&
+            invalid_channel_range_result.value.span_records.empty(),
+            "Packet Builder must reject a Track whose scheduled Channel Range does not match the original Asset Track array.");
+
+        animation_trajectory_packet_build_desc non_contiguous_spans = build_desc;
+        animation_trajectory_span_input second_span = span_input;
+        second_span.span_id = 42u;
+        second_span.world_time_start = 10.75;
+        non_contiguous_spans.spans.push_back(second_span);
+        const auto non_contiguous_result =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, non_contiguous_spans);
+        require(!non_contiguous_result.success &&
+            non_contiguous_result.error ==
+                skin_physics::physics::animation_trajectory_packet_error::invalid_span &&
+            non_contiguous_result.value.span_records.empty(),
+            "Packet Builder must reject a non-contiguous World-Time Span sequence without publishing the preceding valid Span.");
+    }
+
+    void test_phase09_kinematic_collider_trajectory()
+    {
+        using skin_physics::physics::kinematic_collider_span_desc;
+        using skin_physics::physics::kinematic_collider_span_error;
+
+        kinematic_collider_span_desc desc;
+        desc.stable_collider_id = 0x0000000200000003ull;
+        desc.span_sample_pair_id = 11u;
+        desc.world_time_start = 1.0;
+        desc.world_time_duration = 1.0;
+        desc.sample_start_time = 0.0;
+        desc.sample_end_time = 2.0;
+        desc.sample_start_translation = { 0.0f, 0.0f, 0.0f };
+        desc.sample_end_translation = { 4.0f, 0.0f, 0.0f };
+        desc.sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        desc.sample_end_rotation = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        desc.maximum_local_radius = 2.0f;
+
+        const auto built =
+            skin_physics::physics::build_kinematic_collider_span(desc);
+        require(built.success &&
+            built.value.stable_collider_id_low == 3u &&
+            built.value.stable_collider_id_high == 2u &&
+            built.value.span_sample_pair_id == 11u &&
+            built.value.flags ==
+                skin_physics::physics::kinematic_collider_flag_valid,
+            "Kinematic Collider Span must preserve stable Collider / sample-pair identity in its immutable GPU record.");
+
+        const auto middle =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                built.value, 0.5, { 1.0f, 0.0f, 0.0f });
+        const float expected_angle = 3.0f * 3.14159265358979323846f / 8.0f;
+        const float expected_angular_speed =
+            3.14159265358979323846f / 4.0f;
+        require(middle.success &&
+            std::abs(middle.value.translation.x - 3.0f) <= 1.0e-5f &&
+            std::abs(middle.value.translation.y) <= 1.0e-5f &&
+            std::abs(middle.value.rotation.z -
+                std::sin(expected_angle * 0.5f)) <= 1.0e-5f &&
+            std::abs(middle.value.rotation.w -
+                std::cos(expected_angle * 0.5f)) <= 1.0e-5f &&
+            std::abs(middle.value.linear_velocity.x - 2.0f) <= 1.0e-5f &&
+            std::abs(middle.value.angular_velocity.z -
+                expected_angular_speed) <= 1.0e-5f &&
+            std::abs(middle.value.contact_point_velocity.x -
+                (2.0f - expected_angular_speed *
+                    std::sin(expected_angle))) <= 1.0e-5f &&
+            std::abs(middle.value.contact_point_velocity.y -
+                expected_angular_speed * std::cos(expected_angle)) <= 1.0e-5f,
+            "Kinematic Collider evaluation must return shortest-arc Transform, analytic Linear / World Angular Velocity and v + omega cross r at arbitrary tau.");
+
+        kinematic_collider_span_desc reverse_hemisphere = desc;
+        reverse_hemisphere.sample_end_rotation = {
+            -desc.sample_end_rotation.x,
+            -desc.sample_end_rotation.y,
+            -desc.sample_end_rotation.z,
+            -desc.sample_end_rotation.w
+        };
+        const auto reverse_hemisphere_record =
+            skin_physics::physics::build_kinematic_collider_span(
+                reverse_hemisphere);
+        require(reverse_hemisphere_record.success,
+            "Kinematic Collider shortest-arc construction must accept equivalent negative-hemisphere endpoint Quaternions.");
+        const auto reverse_hemisphere_sample =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                reverse_hemisphere_record.value, 0.5, { 1.0f, 0.0f, 0.0f });
+        require(reverse_hemisphere_sample.success &&
+            std::abs(reverse_hemisphere_sample.value.rotation.z -
+                middle.value.rotation.z) <= 1.0e-5f &&
+            std::abs(reverse_hemisphere_sample.value.rotation.w -
+                middle.value.rotation.w) <= 1.0e-5f,
+            "Equivalent Quaternion hemispheres must produce identical Collider Trajectories.");
+
+        require(built.value.linear_speed_bound + 1.0e-6f >= 2.0f &&
+            built.value.angular_speed_bound + 1.0e-5f >= expected_angular_speed &&
+            built.value.maximum_local_radius >= 2.0f &&
+            built.value.sagitta_bound + 1.0e-5f >=
+                2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f)),
+            std::string("Kinematic Collider Bounds mismatch: linear=") +
+                std::to_string(built.value.linear_speed_bound) +
+                " angular=" + std::to_string(built.value.angular_speed_bound) +
+                " radius=" + std::to_string(built.value.maximum_local_radius) +
+                " sagitta=" + std::to_string(built.value.sagitta_bound) +
+                " expectedAngular=" + std::to_string(expected_angular_speed) +
+                " expectedSagitta=" + std::to_string(
+                    2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f))));
+
+        kinematic_collider_span_desc no_rotation = desc;
+        no_rotation.sample_end_rotation = no_rotation.sample_start_rotation;
+        const auto no_rotation_record =
+            skin_physics::physics::build_kinematic_collider_span(no_rotation);
+        require(no_rotation_record.success &&
+            no_rotation_record.value.angular_axis_and_angle.x == 0.0f &&
+            no_rotation_record.value.angular_axis_and_angle.y == 0.0f &&
+            no_rotation_record.value.angular_axis_and_angle.z == 0.0f &&
+            no_rotation_record.value.angular_axis_and_angle.w == 0.0f &&
+            no_rotation_record.value.angular_speed_bound == 0.0f &&
+            no_rotation_record.value.sagitta_bound == 0.0f,
+            "A zero-angle Collider Span must encode a zero world angular axis / velocity and zero Sagitta exactly.");
+
+        kinematic_collider_span_desc unbracketed = desc;
+        unbracketed.world_time_start = 1.5;
+        unbracketed.world_time_duration = 1.0;
+        const auto unbracketed_result =
+            skin_physics::physics::build_kinematic_collider_span(unbracketed);
+        require(!unbracketed_result.success &&
+            unbracketed_result.error ==
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+            "Kinematic Collider construction must reject missing future Sample coverage instead of extrapolating.");
+
+        kinematic_collider_span_desc teleport = desc;
+        teleport.sample_end_is_teleport = true;
+        const auto teleport_result =
+            skin_physics::physics::build_kinematic_collider_span(teleport);
+        const auto pre_teleport_sample = teleport_result.success
+            ? skin_physics::physics::evaluate_kinematic_collider_span(
+                teleport_result.value, 0.75)
+            : skin_physics::physics::kinematic_collider_sample_result{};
+        require(teleport_result.success && pre_teleport_sample.success &&
+            pre_teleport_sample.value.translation.x == 0.0f &&
+            pre_teleport_sample.value.linear_velocity.x == 0.0f &&
+            pre_teleport_sample.value.angular_velocity.z == 0.0f,
+            "A Span ending at a Teleport boundary must hold the pre-teleport pose with zero trajectory velocity; the next Span starts from the teleported sample.");
+
+        kinematic_collider_span_desc invalid_rotation = desc;
+        invalid_rotation.sample_start_rotation = {};
+        const auto invalid_rotation_result =
+            skin_physics::physics::build_kinematic_collider_span(invalid_rotation);
+        require(!invalid_rotation_result.success &&
+            invalid_rotation_result.error ==
+                kinematic_collider_span_error::invalid_transform,
+            "Kinematic Collider construction must reject zero-length endpoint Quaternions.");
+
+        const auto invalid_contact =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                built.value, 0.5, { 3.0f, 0.0f, 0.0f });
+        require(!invalid_contact.success &&
+            invalid_contact.error ==
+                kinematic_collider_span_error::invalid_bounds,
+            "Contact point evaluation must reject a local point outside the certified Maximum Local Radius.");
+
+        auto invalid_record = built.value;
+        invalid_record.linear_speed_bound = 0.0f;
+        const auto invalid_bound =
+            skin_physics::physics::evaluate_kinematic_collider_span(
+                invalid_record, 0.5);
+        require(!invalid_bound.success &&
+            invalid_bound.error ==
+                kinematic_collider_span_error::invalid_bounds,
+            "Kinematic Collider evaluation must reject corrupted / under-conservative trajectory bounds.");
+
+        const std::vector<skin_physics::physics::kinematic_collider_transform_sample>
+            transform_samples = {
+                { 0.0, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, false },
+                { 1.0, { 5.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, true },
+                { 2.0, { 7.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 1.0f }, false }
+            };
+        const auto left_teleport_span =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                transform_samples, 0.25, 0.5, 1.0f);
+        require(left_teleport_span.success &&
+            left_teleport_span.value.span_sample_pair_id == 0u &&
+            left_teleport_span.value.translation_start.x == 0.0f &&
+            left_teleport_span.value.translation_end.x == 0.0f &&
+            left_teleport_span.value.linear_speed_bound == 0.0f &&
+            left_teleport_span.value.angular_speed_bound == 0.0f,
+            "Sample scheduler must hold the pre-Teleport Pose with zero velocity on the left Span.");
+
+        const auto right_teleport_span =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                transform_samples, 1.0, 0.5, 1.0f);
+        require(right_teleport_span.success &&
+            right_teleport_span.value.span_sample_pair_id == 1u &&
+            right_teleport_span.value.translation_start.x == 5.0f &&
+            right_teleport_span.value.translation_end.x == 6.0f &&
+            std::abs(right_teleport_span.value.linear_speed_bound - 2.0f) <= 1.0e-6f,
+            "Sample scheduler must begin the right Span at the teleported Pose and resume analytic velocity from the following sample.");
+
+        const auto crossing_teleport_span =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                transform_samples, 0.5, 1.0, 1.0f);
+        require(!crossing_teleport_span.success &&
+            crossing_teleport_span.error ==
+                kinematic_collider_span_error::sample_pair_does_not_bracket_span,
+            "Sample scheduler must reject a Span crossing a Transform Sample / Teleport boundary.");
+
+        auto non_monotonic_samples = transform_samples;
+        non_monotonic_samples[2u].world_time = 0.5;
+        const auto rejected_sample_order =
+            skin_physics::physics::build_kinematic_collider_span_from_samples(
+                0x0000000200000003ull,
+                non_monotonic_samples, 0.25, 0.5, 1.0f);
+        require(!rejected_sample_order.success &&
+            rejected_sample_order.error ==
+                kinematic_collider_span_error::invalid_time,
+            "Sample scheduler must reject non-monotonic Collider Transform Sample times.");
+    }
+
+
+    void test_phase09_kinematic_collider_geometry_reference()
+    {
+        using skin_physics::asset::mesh;
+        using skin_physics::asset::vertex;
+        using skin_physics::physics::kinematic_collider_span_desc;
+        using skin_physics::physics::build_kinematic_collider_span;
+        using skin_physics::physics::evaluate_kinematic_collider_geometry;
+
+        kinematic_collider_span_desc description;
+        description.stable_collider_id = 0x0000000100000007ull;
+        description.span_sample_pair_id = 17u;
+        description.world_time_start = 0.0;
+        description.world_time_duration = 1.0;
+        description.sample_start_time = 0.0;
+        description.sample_end_time = 1.0;
+        description.sample_start_translation = { 1.0f, 0.0f, 0.0f };
+        description.sample_end_translation = { 3.0f, 0.0f, 0.0f };
+        description.sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        description.sample_end_rotation = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        description.maximum_local_radius = 1.0f;
+        const auto span = build_kinematic_collider_span(description);
+        require(span.success,
+            "Kinematic Collider geometry reference requires a valid immutable Span.");
+
+        mesh collision_mesh;
+        collision_mesh.vertices.resize(3u);
+        collision_mesh.vertices[0u].position = { 1.0f, 0.0f, 0.0f };
+        collision_mesh.vertices[1u].position = { 0.0f, 1.0f, 0.0f };
+        collision_mesh.vertices[2u].position = { -1.0f, 0.0f, 0.0f };
+        collision_mesh.indices = { 0u, 1u, 2u };
+
+        const auto evaluated = evaluate_kinematic_collider_geometry(
+            collision_mesh, span.value, 0.5);
+        const float half_span_rotation_angle = 3.14159265358979323846f / 4.0f;
+        require(evaluated.success &&
+            evaluated.world_vertices.size() == 3u &&
+            evaluated.world_vertex_velocities.size() == 3u,
+            "Kinematic Collider geometry evaluation must transform every indexed local vertex and return its analytic velocity.");
+        require(std::abs(evaluated.world_vertices[0u].x -
+                (2.0f + std::cos(half_span_rotation_angle))) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertices[0u].y -
+                std::sin(half_span_rotation_angle)) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertices[1u].x +
+                std::sin(half_span_rotation_angle) - 2.0f) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertices[1u].y -
+                std::cos(half_span_rotation_angle)) <= 2.0e-5f,
+            "Kinematic Collider world vertices must apply the same shortest-arc pose used by the analytic trajectory evaluator.");
+        const float angular_speed =
+            3.14159265358979323846f / 2.0f;
+        require(std::abs(evaluated.world_vertex_velocities[0u].x -
+                (2.0f - angular_speed *
+                    std::sin(half_span_rotation_angle))) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertex_velocities[0u].y -
+                angular_speed *
+                    std::cos(half_span_rotation_angle)) <= 2.0e-5f,
+            "Kinematic Collider world vertex velocities must include linear translation plus World Angular Velocity cross the rotated local vertex.");
+
+        require(evaluated.swept_bounds.minimum.x <= 0.0f &&
+            evaluated.swept_bounds.maximum.x >= 4.0f &&
+            evaluated.swept_bounds.minimum.y <= -1.0f &&
+            evaluated.swept_bounds.maximum.y >= 1.0f &&
+            evaluated.swept_bounds.minimum.z <= -1.0f &&
+            evaluated.swept_bounds.maximum.z >= 1.0f,
+            "Kinematic Collider swept AABB must conservatively enclose the complete translation segment expanded by its certified local radius.");
+
+        const auto collider_broadphase =
+            skin_physics::physics::make_kinematic_collider_broadphase_primitive(
+                7u, evaluated);
+        require(collider_broadphase.success &&
+            collider_broadphase.value.mesh_id == 7u &&
+            collider_broadphase.value.bounds.minimum.x ==
+                evaluated.swept_bounds.minimum.x &&
+            collider_broadphase.value.bounds.maximum.x ==
+                evaluated.swept_bounds.maximum.x,
+            "Kinematic Collider swept geometry must adapt to the existing broadphase primitive without narrowing its conservative bounds.");
+
+        skin_physics::physics::broadphase_primitive dynamic_primitive;
+        dynamic_primitive.mesh_id = 19u;
+        dynamic_primitive.bounds.minimum = { 2.0f, -0.25f, -0.25f };
+        dynamic_primitive.bounds.maximum = { 3.0f, 0.25f, 0.25f };
+        const std::vector<skin_physics::physics::broadphase_primitive> primitives = {
+            collider_broadphase.value, dynamic_primitive
+        };
+        const std::vector<skin_physics::physics::broadphase_mesh_pair> mesh_pairs = {
+            { 7u, 19u, true }
+        };
+        const auto candidates =
+            skin_physics::physics::generate_broadphase_candidates(
+                primitives, mesh_pairs);
+        require(candidates.success &&
+            candidates.candidates.size() == 1u &&
+            candidates.candidates[0u].primitive_a == 0u &&
+            candidates.candidates[0u].primitive_b == 1u,
+            "Existing Spatial Hash Broadphase must discover Dynamic Mesh candidates intersecting the Kinematic Collider swept AABB.");
+
+        const auto rejected_broadphase_id =
+            skin_physics::physics::make_kinematic_collider_broadphase_primitive(
+                skin_physics::asset::invalid_index, evaluated);
+        require(!rejected_broadphase_id.success &&
+            rejected_broadphase_id.error ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "Kinematic Collider Broadphase adapter must reject the reserved invalid Mesh ID.");
+
+        for (const skin_physics::asset::vec3& world_vertex :
+            evaluated.world_vertices)
+        {
+            require(world_vertex.x >= evaluated.swept_bounds.minimum.x &&
+                world_vertex.x <= evaluated.swept_bounds.maximum.x &&
+                world_vertex.y >= evaluated.swept_bounds.minimum.y &&
+                world_vertex.y <= evaluated.swept_bounds.maximum.y &&
+                world_vertex.z >= evaluated.swept_bounds.minimum.z &&
+                world_vertex.z <= evaluated.swept_bounds.maximum.z,
+                "Every evaluated Kinematic Collider vertex must lie inside its conservative swept AABB.");
+        }
+
+        const std::array<skin_physics::asset::vec3, 3> world_triangle = {
+            evaluated.world_vertices[0u],
+            evaluated.world_vertices[1u],
+            evaluated.world_vertices[2u]
+        };
+        const std::array<skin_physics::asset::vec3, 3> triangle_velocities = {
+            evaluated.world_vertex_velocities[0u],
+            evaluated.world_vertex_velocities[1u],
+            evaluated.world_vertex_velocities[2u]
+        };
+        const skin_physics::asset::vec3 triangle_center = {
+            (world_triangle[0u].x + world_triangle[1u].x +
+                world_triangle[2u].x) / 3.0f,
+            (world_triangle[0u].y + world_triangle[1u].y +
+                world_triangle[2u].y) / 3.0f,
+            (world_triangle[0u].z + world_triangle[1u].z +
+                world_triangle[2u].z) / 3.0f
+        };
+        const skin_physics::asset::vec3 point_position = {
+            triangle_center.x, triangle_center.y,
+            triangle_center.z + 0.05f
+        };
+        const skin_physics::asset::vec3 point_velocity = {
+            0.0f, 0.0f, -1.0f
+        };
+        const auto moving_contact =
+            skin_physics::physics::find_moving_vertex_triangle_contact(
+                point_position, point_velocity,
+                world_triangle, triangle_velocities, 0.1f);
+        const skin_physics::asset::vec3 expected_triangle_velocity = {
+            (triangle_velocities[0u].x + triangle_velocities[1u].x +
+                triangle_velocities[2u].x) / 3.0f,
+            (triangle_velocities[0u].y + triangle_velocities[1u].y +
+                triangle_velocities[2u].y) / 3.0f,
+            (triangle_velocities[0u].z + triangle_velocities[1u].z +
+                triangle_velocities[2u].z) / 3.0f
+        };
+        require(moving_contact.success &&
+            moving_contact.contact.hit &&
+            std::abs(moving_contact.contact.penetration_depth - 0.05f) <= 2.0e-5f &&
+            std::abs(moving_contact.triangle_velocity.x -
+                expected_triangle_velocity.x) <= 2.0e-5f &&
+            std::abs(moving_contact.triangle_velocity.y -
+                expected_triangle_velocity.y) <= 2.0e-5f &&
+            std::abs(moving_contact.relative_velocity.x +
+                expected_triangle_velocity.x) <= 2.0e-5f &&
+            std::abs(moving_contact.relative_velocity.y +
+                expected_triangle_velocity.y) <= 2.0e-5f &&
+            std::abs(moving_contact.relative_velocity.z + 1.0f) <= 2.0e-5f,
+            "Moving VT contact must interpolate rigid Collider vertex velocities with the contact barycentrics and return point-minus-triangle relative velocity.");
+
+        std::array<skin_physics::asset::vec3, 3> invalid_triangle_velocities =
+            triangle_velocities;
+        invalid_triangle_velocities[1u].x =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto rejected_velocity =
+            skin_physics::physics::find_moving_vertex_triangle_contact(
+                point_position, point_velocity,
+                world_triangle, invalid_triangle_velocities, 0.1f);
+        require(!rejected_velocity.success,
+            "Moving VT contact must reject a non-finite Collider vertex velocity.");
+
+        const std::array<skin_physics::asset::vec3, 2> edge_a = {
+            skin_physics::asset::vec3{ 0.0f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f }
+        };
+        const std::array<skin_physics::asset::vec3, 2> edge_a_velocities = {
+            skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 1.0f, 2.0f, 0.0f }
+        };
+        const std::array<skin_physics::asset::vec3, 2> edge_b = {
+            skin_physics::asset::vec3{ 0.5f, -0.5f, 0.05f },
+            skin_physics::asset::vec3{ 0.5f, 0.5f, 0.05f }
+        };
+        const std::array<skin_physics::asset::vec3, 2> edge_b_velocities = {
+            skin_physics::asset::vec3{ 0.0f, 0.0f, 1.0f },
+            skin_physics::asset::vec3{ 0.0f, 0.0f, 1.0f }
+        };
+        const auto moving_edge_contact =
+            skin_physics::physics::find_moving_edge_edge_contact(
+                edge_a, edge_a_velocities,
+                edge_b, edge_b_velocities, 0.1f);
+        require(moving_edge_contact.success &&
+            moving_edge_contact.contact.hit &&
+            std::abs(moving_edge_contact.contact.parameter_a - 0.5f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.contact.parameter_b - 0.5f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.edge_a_velocity.x - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.edge_a_velocity.y - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.edge_b_velocity.z - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.relative_velocity.x - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.relative_velocity.y - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.relative_velocity.z + 1.0f) <= 1.0e-5f,
+            "Moving EE contact must interpolate both edge velocities at the closest-segment parameters and return relative velocity.");
+
+        const std::vector<skin_physics::asset::vec3> dynamic_positions = {
+            point_position
+        };
+        const std::vector<skin_physics::asset::vec3> dynamic_velocities = {
+            point_velocity
+        };
+        const std::vector<float> dynamic_radii = { 0.1f };
+        const auto generated_contacts =
+            skin_physics::physics::generate_kinematic_collider_vertex_triangle_contacts(
+                dynamic_positions, dynamic_velocities, dynamic_radii,
+                collision_mesh, evaluated, 0.0f, 1u);
+        require(generated_contacts.success &&
+            !generated_contacts.overflow &&
+            generated_contacts.required_contacts == 1u &&
+            generated_contacts.contacts.size() == 1u &&
+            generated_contacts.contacts[0u].vertex_index == 0u &&
+            generated_contacts.contacts[0u].triangle_index == 0u &&
+            generated_contacts.contacts[0u].value.contact.hit,
+            "Moving Collider VT contact generation must produce a deterministic Vertex / Triangle contact set with the interpolated relative velocity.");
+
+        const auto contact_overflow =
+            skin_physics::physics::generate_kinematic_collider_vertex_triangle_contacts(
+                dynamic_positions, dynamic_velocities, dynamic_radii,
+                collision_mesh, evaluated, 0.0f, 0u);
+        require(!contact_overflow.success &&
+            contact_overflow.overflow &&
+            contact_overflow.error ==
+                skin_physics::physics::collision_error::candidate_capacity_overflow &&
+            contact_overflow.required_contacts == 1u &&
+            contact_overflow.contacts.empty(),
+            "Moving Collider VT contact capacity overflow must reject the complete contact set without publishing partial contacts.");
+
+        mesh degenerate_collider = collision_mesh;
+        degenerate_collider.indices = { 0u, 0u, 0u };
+        const auto rejected_degenerate =
+            skin_physics::physics::generate_kinematic_collider_vertex_triangle_contacts(
+                dynamic_positions, dynamic_velocities, dynamic_radii,
+                degenerate_collider, evaluated, 0.0f, 1u);
+        require(!rejected_degenerate.success &&
+            rejected_degenerate.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_degenerate.contacts.empty(),
+            "Moving Collider VT contact generation must fail closed on degenerate Collider triangles.");
+
+        std::array<skin_physics::asset::vec3, 2> invalid_edge_velocities =
+            edge_b_velocities;
+        invalid_edge_velocities[0u].z =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto rejected_edge_velocity =
+            skin_physics::physics::find_moving_edge_edge_contact(
+                edge_a, edge_a_velocities,
+                edge_b, invalid_edge_velocities, 0.1f);
+        require(!rejected_edge_velocity.success,
+            "Moving EE contact must reject non-finite endpoint velocities.");
+
+        const skin_physics::asset::vec3 collider_edge_start =
+            evaluated.world_vertices[0u];
+        const skin_physics::asset::vec3 collider_edge_end =
+            evaluated.world_vertices[1u];
+        const auto make_offset_edge_point = [](
+            const skin_physics::asset::vec3& start,
+            const skin_physics::asset::vec3& end,
+            float parameter)
+        {
+            return skin_physics::asset::vec3{
+                start.x + (end.x - start.x) * parameter,
+                start.y + (end.y - start.y) * parameter,
+                start.z + (end.z - start.z) * parameter + 0.05f
+            };
+        };
+        const std::vector<skin_physics::asset::vec3> dynamic_edge_positions = {
+            make_offset_edge_point(collider_edge_start, collider_edge_end, 0.4f),
+            make_offset_edge_point(collider_edge_start, collider_edge_end, 0.6f)
+        };
+        const std::vector<skin_physics::asset::vec3> dynamic_edge_velocities = {
+            { 0.0f, 0.0f, -1.0f },
+            { 0.0f, 0.0f, -1.0f }
+        };
+        const std::vector<std::array<uint32_t, 2>> dynamic_edges = {
+            { 1u, 0u },
+            { 0u, 1u }
+        };
+        const auto generated_edge_contacts =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                1u);
+        require(generated_edge_contacts.success &&
+            !generated_edge_contacts.overflow &&
+            generated_edge_contacts.required_contacts == 1u &&
+            generated_edge_contacts.contacts.size() == 1u &&
+            generated_edge_contacts.contacts[0u].dynamic_edge_index == 0u &&
+            generated_edge_contacts.contacts[0u].collider_edge_index == 0u &&
+            generated_edge_contacts.contacts[0u].value.contact.hit &&
+            std::abs(generated_edge_contacts.contacts[0u].value.relative_velocity.z +
+                1.0f) <= 2.0e-5f,
+            "Moving Collider EE generation must deduplicate and sort shared triangle edges, preserve the source Dynamic Edge index and return analytic relative velocity.");
+
+        const auto generated_edge_overflow =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                0u);
+        require(!generated_edge_overflow.success &&
+            generated_edge_overflow.overflow &&
+            generated_edge_overflow.error ==
+                skin_physics::physics::collision_error::candidate_capacity_overflow &&
+            generated_edge_overflow.required_contacts == 1u &&
+            generated_edge_overflow.contacts.empty(),
+            "Moving Collider EE capacity overflow must reject the complete contact set without partial publication.");
+
+        const std::vector<std::array<uint32_t, 2>> invalid_dynamic_edges = {
+            { 0u, 9u }
+        };
+        const auto rejected_dynamic_edge =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                invalid_dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                1u);
+        require(!rejected_dynamic_edge.success &&
+            rejected_dynamic_edge.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_dynamic_edge.contacts.empty(),
+            "Moving Collider EE generation must reject out-of-range Dynamic Edge indices atomically.");
+
+        const std::vector<std::array<uint32_t, 2>> degenerate_dynamic_edges = {
+            { 0u, 1u }
+        };
+        const std::vector<skin_physics::asset::vec3> coincident_dynamic_positions = {
+            dynamic_edge_positions[0u],
+            dynamic_edge_positions[0u]
+        };
+        const auto rejected_degenerate_dynamic_edge =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                coincident_dynamic_positions,
+                dynamic_edge_velocities,
+                degenerate_dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                1u);
+        require(!rejected_degenerate_dynamic_edge.success &&
+            rejected_degenerate_dynamic_edge.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_degenerate_dynamic_edge.contacts.empty(),
+            "Moving Collider EE generation must reject coincident Dynamic Edge endpoint positions.");
+
+        mesh degenerate_collider_triangle = collision_mesh;
+        degenerate_collider_triangle.vertices[2u].position =
+            collision_mesh.vertices[0u].position;
+        const auto degenerate_collider_geometry =
+            evaluate_kinematic_collider_geometry(
+                degenerate_collider_triangle, span.value, 0.5);
+        const auto rejected_degenerate_collider =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                degenerate_dynamic_edges,
+                degenerate_collider_triangle,
+                degenerate_collider_geometry,
+                0.1f,
+                1u);
+        require(degenerate_collider_geometry.success &&
+            !rejected_degenerate_collider.success &&
+            rejected_degenerate_collider.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_degenerate_collider.contacts.empty(),
+            "Moving Collider EE generation must reject a degenerate Collider Triangle without publishing partial contacts.");
+
+        mesh invalid_indices = collision_mesh;
+        invalid_indices.indices[2u] = 99u;
+        const auto rejected_index = evaluate_kinematic_collider_geometry(
+            invalid_indices, span.value, 0.5);
+        require(!rejected_index.success &&
+            rejected_index.error ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "Kinematic Collider geometry evaluation must reject out-of-range triangle indices.");
+
+        skin_physics::physics::kinematic_collider_gpu_record invalid_homogeneous =
+            span.value;
+        invalid_homogeneous.translation_end.w = 0.0f;
+        const auto rejected_homogeneous = evaluate_kinematic_collider_geometry(
+            collision_mesh, invalid_homogeneous, 0.5);
+        require(!rejected_homogeneous.success &&
+            rejected_homogeneous.error ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "CPU Kinematic Collider geometry evaluation must reject non-homogeneous Translation endpoints consistently with the GPU evaluator.");
+
+        skin_physics::physics::kinematic_collider_gpu_record underbounded =
+            span.value;
+        underbounded.maximum_local_radius = 0.5f;
+        const auto rejected_radius = evaluate_kinematic_collider_geometry(
+            collision_mesh, underbounded, 0.5);
+        require(!rejected_radius.success &&
+            rejected_radius.world_vertices.empty(),
+            "Kinematic Collider geometry evaluation must reject a Mesh outside its certified local radius without publishing partial vertices.");
+    }
+
+    void test_phase09_physics_mesh_skinning_cpu_reference()
+    {
+        using skin_physics::asset::mat4;
+        using skin_physics::physics::animation_skin_pose;
+        using skin_physics::physics::evaluate_physics_mesh_skinning;
+        using skin_physics::physics::physics_mesh;
+
+        physics_mesh mesh;
+        mesh.rest_positions = { { 1.0f, 2.0f, 3.0f }, { 0.0f, 1.0f, 0.0f } };
+        mesh.has_skin_weights = true;
+        mesh.skin_weights.resize(2u);
+        mesh.skin_weights[0u].joints[0u] = 0u;
+        mesh.skin_weights[0u].weights[0u] = 0.25f;
+        mesh.skin_weights[0u].joints[1u] = 1u;
+        mesh.skin_weights[0u].weights[1u] = 0.75f;
+        mesh.skin_weights[1u].joints[0u] = 1u;
+        mesh.skin_weights[1u].weights[0u] = 1.0f;
+
+        animation_skin_pose pose;
+        pose.mesh_node_index = 7u;
+        pose.skin_index = 3u;
+        mat4 joint0;
+        joint0.value[12u] = 2.0f;
+        mat4 joint1;
+        joint1.value[12u] = -1.0f;
+        pose.skin_matrices = { joint0, joint1 };
+        mat4 joint0_derivative;
+        joint0_derivative.value.fill(0.0f);
+        joint0_derivative.value[12u] = 2.0f;
+        mat4 joint1_derivative;
+        joint1_derivative.value.fill(0.0f);
+        joint1_derivative.value[12u] = -1.0f;
+        pose.skin_matrix_derivatives = { joint0_derivative, joint1_derivative };
+
+        const auto evaluated = evaluate_physics_mesh_skinning(mesh, 7u, 3u, pose);
+        require(evaluated.success &&
+            evaluated.target_positions.size() == 2u &&
+            evaluated.target_velocities.size() == 2u,
+            "Physics Mesh LBS reference must evaluate one Target Position / Velocity per Physics Vertex.");
+        require(std::abs(evaluated.target_positions[0u].x - 0.75f) <= 1.0e-6f &&
+            std::abs(evaluated.target_positions[0u].y - 2.0f) <= 1.0e-6f &&
+            std::abs(evaluated.target_positions[0u].z - 3.0f) <= 1.0e-6f &&
+            std::abs(evaluated.target_velocities[0u].x + 0.25f) <= 1.0e-6f,
+            "Two-influence LBS must combine Skin Matrix position and analytic matrix derivative with identical normalized weights.");
+        require(std::abs(evaluated.target_positions[1u].x + 1.0f) <= 1.0e-6f &&
+            std::abs(evaluated.target_velocities[1u].x + 1.0f) <= 1.0e-6f,
+            "A single-influence Physics Vertex must follow its ordered Skin Joint target and velocity.");
+
+        const auto rejected_node = evaluate_physics_mesh_skinning(mesh, 8u, 3u, pose);
+        require(!rejected_node.success &&
+            rejected_node.error == skin_physics::physics::physics_mesh_skinning_error::invalid_binding,
+            "Physics Mesh LBS must reject a Skin Pose from another Mesh Node.");
+        const auto rejected_skin = evaluate_physics_mesh_skinning(mesh, 7u, 4u, pose);
+        require(!rejected_skin.success &&
+            rejected_skin.error == skin_physics::physics::physics_mesh_skinning_error::invalid_binding,
+            "Physics Mesh LBS must reject a Skin Pose from another Skin index.");
+
+        physics_mesh invalid_joint_mesh = mesh;
+        invalid_joint_mesh.skin_weights[0u].joints[0u] = 2u;
+        const auto rejected_joint = evaluate_physics_mesh_skinning(
+            invalid_joint_mesh, 7u, 3u, pose);
+        require(!rejected_joint.success &&
+            rejected_joint.error == skin_physics::physics::physics_mesh_skinning_error::invalid_skin_weights,
+            "Physics Mesh LBS must reject an influence outside the Skin Pose Joint range.");
+
+        physics_mesh invalid_sum_mesh = mesh;
+        invalid_sum_mesh.skin_weights[0u].weights[0u] = 0.5f;
+        const auto rejected_sum = evaluate_physics_mesh_skinning(
+            invalid_sum_mesh, 7u, 3u, pose);
+        require(!rejected_sum.success &&
+            rejected_sum.error == skin_physics::physics::physics_mesh_skinning_error::invalid_skin_weights,
+            "Physics Mesh LBS must reject non-normalized influence sums.");
+    }
+
     void test_phase10_attribute_paint_and_serialization()
     {
         const test_json::value input = test_json::load(
@@ -1427,6 +4337,1666 @@ namespace
             controller.accumulator() == accumulator_before_failure,
             "A rejected physics step must not commit time or consume the accumulator.");
     }
+
+    void test_phase04_pause_stop_and_reconfigure_preserve_accumulator()
+    {
+        skin_physics::simulation::fixed_step_settings settings;
+        settings.fixed_delta_time = 0.01;
+        settings.time_scale = 1.0;
+        settings.maximum_steps_per_advance = 1;
+        fixed_step_controller controller(settings);
+
+        uint32_t callback_count = 0;
+        const skin_physics::simulation::fixed_step_callback callback =
+            [&callback_count](double delta_time)
+            {
+                ++callback_count;
+                return std::isfinite(delta_time) && delta_time > 0.0;
+            };
+
+        controller.play();
+        const auto first = controller.advance(0.025, callback);
+        require(first.completed_steps == 1 &&
+            std::abs(first.accumulator - 0.015) <= 1.0e-9,
+            "Step admission must retain the unconsumed fixed-step time.");
+
+        controller.pause();
+        const auto paused = controller.advance(0.5, callback);
+        require(paused.completed_steps == 0 &&
+            std::abs(paused.accumulator - 0.015) <= 1.0e-9,
+            "Pause must stop wall-clock ingestion and preserve the accumulator.");
+
+        controller.stop();
+        require(controller.state() == skin_physics::simulation::playback_state::stopped &&
+            std::abs(controller.accumulator() - 0.015) <= 1.0e-9,
+            "Stop must preserve unassigned accumulator time; only Reset discards it.");
+
+        require(controller.set_fixed_delta_time(0.005) &&
+            std::abs(controller.accumulator() - 0.015) <= 1.0e-9,
+            "Changing the fixed interval must preserve already requested simulation time.");
+
+        settings = controller.settings();
+        settings.maximum_steps_per_advance = 1;
+        require(controller.configure(settings) &&
+            std::abs(controller.accumulator() - 0.015) <= 1.0e-9,
+            "Reconfiguration must preserve unassigned time instead of silently dropping it.");
+
+        controller.play();
+        const auto resumed = controller.advance(0.0, callback);
+        require(resumed.completed_steps == 1 &&
+            std::abs(resumed.simulation_time - 0.015) <= 1.0e-9 &&
+            std::abs(resumed.accumulator - 0.010) <= 1.0e-9,
+            "Resuming must process preserved backlog using the current fixed interval.");
+
+        controller.reset();
+        require(controller.state() == skin_physics::simulation::playback_state::stopped &&
+            controller.simulation_time() == 0.0 &&
+            controller.accumulator() == 0.0,
+            "Reset must explicitly discard the accumulator and restore time zero.");
+        require(callback_count == 2,
+            "Paused ingestion must not invoke the solver callback.");
+    }
+
+    const test_json::value& find_correction_fixture_case(
+        const test_json::value& fixture,
+        const std::string& case_id)
+    {
+        for (const test_json::value& item : fixture.at("cases").as_array())
+        {
+            if (item.at("id").as_string() == case_id)
+            {
+                return item;
+            }
+        }
+        throw std::runtime_error("Missing correction CCD fixture case: " + case_id);
+    }
+
+    std::array<skin_physics::asset::vec3, 3> read_vec3_triplet(
+        const test_json::value& value)
+    {
+        std::array<skin_physics::asset::vec3, 3> result = {};
+        for (std::size_t index = 0; index < result.size(); ++index)
+        {
+            result[index] = read_vec3(value.at(index));
+        }
+        return result;
+    }
+
+    std::array<skin_physics::asset::vec3, 2> read_vec3_pair(
+        const test_json::value& value)
+    {
+        return { read_vec3(value.at(0)), read_vec3(value.at(1)) };
+    }
+
+    skin_physics::physics::vertex_triangle_correction_motion make_vt_correction_motion(
+        const test_json::value& input)
+    {
+        using skin_physics::physics::vertex_triangle_correction_motion;
+
+        vertex_triangle_correction_motion motion;
+        motion.point.before = read_vec3(input.at("point_before"));
+        motion.point.after = read_vec3(input.at("point_after"));
+        const auto triangle_before = read_vec3_triplet(
+            input.at("triangle_vertices_before"));
+        const auto triangle_after = read_vec3_triplet(
+            input.at("triangle_vertices_after"));
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            motion.triangle[index].before = triangle_before[index];
+            motion.triangle[index].after = triangle_after[index];
+        }
+
+        const auto& fields = input.as_object();
+        const auto segment_point = fields.find("segment_start_point");
+        motion.segment_start_point = segment_point != fields.end()
+            ? read_vec3(segment_point->second) : motion.point.before;
+        const auto segment_triangle = fields.find("triangle_vertices_segment_start");
+        motion.segment_start_triangle = segment_triangle != fields.end()
+            ? read_vec3_triplet(segment_triangle->second) : triangle_before;
+
+        const auto cache_flag = fields.find("has_valid_persistent_contact_cache");
+        motion.has_valid_persistent_contact_cache = cache_flag != fields.end() &&
+            cache_flag->second.as_bool();
+        const auto cache_normal = fields.find("persistent_contact_normal");
+        if (cache_normal != fields.end())
+        {
+            motion.persistent_contact_normal = read_vec3(cache_normal->second);
+        }
+        return motion;
+    }
+
+    skin_physics::physics::edge_edge_correction_motion make_ee_correction_motion(
+        const test_json::value& input)
+    {
+        using skin_physics::physics::edge_edge_correction_motion;
+
+        edge_edge_correction_motion motion;
+        const auto edge_a_before = read_vec3_pair(input.at("edge_a_before"));
+        const auto edge_a_after = read_vec3_pair(input.at("edge_a_after"));
+        const auto edge_b_before = read_vec3_pair(input.at("edge_b_before"));
+        const auto edge_b_after = read_vec3_pair(input.at("edge_b_after"));
+        for (std::size_t index = 0; index < 2; ++index)
+        {
+            motion.edge_a[index].before = edge_a_before[index];
+            motion.edge_a[index].after = edge_a_after[index];
+            motion.edge_b[index].before = edge_b_before[index];
+            motion.edge_b[index].after = edge_b_after[index];
+        }
+        motion.segment_start_edge_a = edge_a_before;
+        motion.segment_start_edge_b = edge_b_before;
+        const auto& fields = input.as_object();
+        const auto cache_flag = fields.find("has_valid_persistent_contact_cache");
+        motion.has_valid_persistent_contact_cache = cache_flag != fields.end() &&
+            cache_flag->second.as_bool();
+        const auto cache_normal = fields.find("persistent_contact_normal");
+        if (cache_normal != fields.end())
+        {
+            motion.persistent_contact_normal = read_vec3(cache_normal->second);
+        }
+        return motion;
+    }
+
+    skin_physics::physics::correction_ccd_settings read_correction_ccd_settings(
+        const test_json::value& input)
+    {
+        skin_physics::physics::correction_ccd_settings settings;
+        settings.contact_thickness = static_cast<float>(
+            input.at("contact_thickness_m").as_number());
+        return settings;
+    }
+
+    std::vector<skin_physics::physics::correction_primitive_epoch_input>
+    make_vt_position_writer_epoch_primitives(const test_json::value& input)
+    {
+        using namespace skin_physics::physics;
+        const vertex_triangle_correction_motion motion =
+            make_vt_correction_motion(input);
+
+        correction_primitive_epoch_input point;
+        point.stable_id = 101;
+        point.mesh_id = 1;
+        point.primitive_id = 0;
+        point.role = correction_primitive_role::vertex;
+        point.vertex_stable_ids = { 1001 };
+        point.vertex_motions = { motion.point };
+        point.segment_start_positions = { motion.segment_start_point };
+
+        correction_primitive_epoch_input triangle;
+        triangle.stable_id = 102;
+        triangle.mesh_id = 1;
+        triangle.primitive_id = 1;
+        triangle.role = correction_primitive_role::triangle;
+        triangle.vertex_stable_ids = { 1002, 1003, 1004 };
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            triangle.vertex_motions.push_back(motion.triangle[index]);
+            triangle.segment_start_positions.push_back(
+                motion.segment_start_triangle[index]);
+        }
+        return { point, triangle };
+    }
+
+    std::vector<skin_physics::physics::correction_primitive_epoch_input>
+    make_ee_position_writer_epoch_primitives(const test_json::value& input)
+    {
+        using namespace skin_physics::physics;
+        const edge_edge_correction_motion motion =
+            make_ee_correction_motion(input);
+
+        correction_primitive_epoch_input edge_a;
+        edge_a.stable_id = 201;
+        edge_a.mesh_id = 1;
+        edge_a.primitive_id = 2;
+        edge_a.role = correction_primitive_role::edge;
+        edge_a.vertex_stable_ids = { 2001, 2002 };
+        correction_primitive_epoch_input edge_b;
+        edge_b.stable_id = 202;
+        edge_b.mesh_id = 1;
+        edge_b.primitive_id = 3;
+        edge_b.role = correction_primitive_role::edge;
+        edge_b.vertex_stable_ids = { 2003, 2004 };
+        for (std::size_t endpoint = 0; endpoint < 2; ++endpoint)
+        {
+            edge_a.vertex_motions.push_back(motion.edge_a[endpoint]);
+            edge_a.segment_start_positions.push_back(
+                motion.segment_start_edge_a[endpoint]);
+            edge_b.vertex_motions.push_back(motion.edge_b[endpoint]);
+            edge_b.segment_start_positions.push_back(
+                motion.segment_start_edge_b[endpoint]);
+        }
+        return { edge_a, edge_b };
+    }
+
+    skin_physics::physics::broadphase_settings make_correction_epoch_broadphase_settings()
+    {
+        skin_physics::physics::broadphase_settings settings;
+        settings.cell_size = 0.25f;
+        settings.contact_thickness = 0.0f;
+        settings.cell_record_capacity = 4096;
+        settings.candidate_capacity = 16;
+        settings.max_cells_per_primitive = 4096;
+        settings.self_collision_enabled = true;
+        return settings;
+    }
+
+    void test_phase12_correction_motion_ccd_reference()
+    {
+        using skin_physics::physics::correction_ccd_status;
+
+        const test_json::value fixture = test_json::load(
+            test_support::fixture_path(
+                "design_review/correction_sweep_broadphase.json"));
+
+        const auto& vt_crossing = find_correction_fixture_case(
+            fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE");
+        const auto vt_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_crossing.at("input")),
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(vt_result.status == correction_ccd_status::path_crossing &&
+            vt_result.hit_witness_valid,
+            "Correction VT path crossing must produce a hit witness and REJECTED crossing status.");
+
+        const auto& vt_negative = find_correction_fixture_case(
+            fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE");
+        const auto vt_negative_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_negative.at("input")),
+                read_correction_ccd_settings(vt_negative.at("input")));
+        require(vt_negative_result.status == correction_ccd_status::path_crossing &&
+            vt_negative_result.allowed_side_sign == -1,
+            "Negative initial separation must latch sigma=-1 and detect the reverse crossing.");
+
+        const auto& ee_crossing = find_correction_fixture_case(
+            fixture, "DCR_49_EE_EDGE_THROUGH_EDGE");
+        const auto ee_result =
+            skin_physics::physics::detect_edge_edge_correction_motion(
+                make_ee_correction_motion(ee_crossing.at("input")),
+                read_correction_ccd_settings(ee_crossing.at("input")));
+        require(ee_result.status == correction_ccd_status::path_crossing &&
+            ee_result.hit_witness_valid,
+            std::string(
+                "Correction EE crossing must produce a hit witness and REJECTED crossing status. status=") +
+                std::to_string(static_cast<int>(ee_result.status)) +
+                " witness=" + (ee_result.hit_witness_valid ? "true" : "false") +
+                " interval_evaluations=" +
+                std::to_string(ee_result.interval_evaluations) +
+                " diagnostic=" + ee_result.diagnostic);
+
+        auto endpoint_clamped_ee = make_ee_correction_motion(
+            ee_crossing.at("input"));
+        endpoint_clamped_ee.segment_start_edge_a = {
+            skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 2.0f, 0.0f, 0.0f }
+        };
+        endpoint_clamped_ee.segment_start_edge_b = {
+            skin_physics::asset::vec3{ 0.0f, 1.0f, -1.0f },
+            skin_physics::asset::vec3{ 0.0f, 2.0f, -1.0f }
+        };
+        const auto endpoint_clamped_result =
+            skin_physics::physics::detect_edge_edge_correction_motion(
+                endpoint_clamped_ee,
+                read_correction_ccd_settings(ee_crossing.at("input")));
+        require(endpoint_clamped_result.status == correction_ccd_status::unresolved,
+            "Endpoint-clamped EE features must remain unresolved until a certified endpoint normal is implemented.");
+
+        const auto& transient = find_correction_fixture_case(
+            fixture, "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY");
+        const auto transient_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(transient.at("input")),
+                read_correction_ccd_settings(transient.at("input")));
+        require(transient_result.status == correction_ccd_status::hit &&
+            transient_result.hit_witness_valid,
+            "Same-side transient proximity must be detected as a hit without crossing.");
+
+        const auto& endpoint = find_correction_fixture_case(
+            fixture, "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT");
+        const auto endpoint_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(endpoint.at("input")),
+                read_correction_ccd_settings(endpoint.at("input")));
+        require(endpoint_result.status == correction_ccd_status::hit &&
+            endpoint_result.hit_witness_valid &&
+            endpoint_result.witness_s > 0.0f &&
+            endpoint_result.witness_s <= 1.0f,
+            "An endpoint-active VT contact must be discovered along the correction path.");
+
+        const auto& miss = find_correction_fixture_case(
+            fixture, "DCR_49_VT_CERTIFIED_MISS");
+        const auto miss_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(miss.at("input")),
+                read_correction_ccd_settings(miss.at("input")));
+        require(miss_result.status == correction_ccd_status::no_hit &&
+            !miss_result.hit_witness_valid,
+            "A certified VT miss must be returned only after all intervals are clear.");
+
+        const auto& side_latch = find_correction_fixture_case(
+            fixture, "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE");
+        const auto& side_input = side_latch.at("input");
+        const auto& epoch = side_input.at("position_writer_epochs").at(0);
+        const auto side_triangle = read_vec3_triplet(
+            side_input.at("triangle_vertices_segment_start"));
+        skin_physics::physics::vertex_triangle_correction_motion side_motion;
+        side_motion.point.before = read_vec3(epoch.at("point_before"));
+        side_motion.point.after = read_vec3(epoch.at("point_after"));
+        side_motion.segment_start_point = read_vec3(
+            side_input.at("segment_start_point"));
+        side_motion.segment_start_triangle = side_triangle;
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            side_motion.triangle[index].before = side_triangle[index];
+            side_motion.triangle[index].after = side_triangle[index];
+        }
+        skin_physics::physics::correction_ccd_settings side_settings;
+        side_settings.contact_thickness = static_cast<float>(
+            side_input.at("contact_thickness_m").as_number());
+        const auto side_latch_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                side_motion, side_settings);
+        require(side_latch_result.status == correction_ccd_status::path_crossing &&
+            side_latch_result.allowed_side_sign == 1,
+            "A later Position-Writer Epoch must retain the Integration Segment-start side latch.");
+
+        auto invalid_motion = make_vt_correction_motion(vt_crossing.at("input"));
+        invalid_motion.point.after.x = std::numeric_limits<float>::infinity();
+        const auto invalid_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                invalid_motion, read_correction_ccd_settings(vt_crossing.at("input")));
+        require(invalid_result.status == correction_ccd_status::invalid_input,
+            "Non-finite correction displacements must never be classified as No-Hit.");
+
+        skin_physics::physics::correction_ccd_settings invalid_settings;
+        invalid_settings.maximum_interval_evaluations = 33;
+        const auto settings_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_crossing.at("input")), invalid_settings);
+        require(settings_result.status == correction_ccd_status::invalid_input,
+            "Correction CCD must enforce the specified maximum 32 interval evaluations.");
+
+        std::vector<skin_physics::physics::correction_vertex_motion> point_sweep = {{
+            read_vec3(vt_crossing.at("input").at("point_before")),
+            read_vec3(vt_crossing.at("input").at("point_after"))
+        }};
+        const auto swept_triangle_before = read_vec3_triplet(
+            vt_crossing.at("input").at("triangle_vertices_before"));
+        const auto swept_triangle_after = read_vec3_triplet(
+            vt_crossing.at("input").at("triangle_vertices_after"));
+        std::vector<skin_physics::physics::correction_vertex_motion> triangle_sweep(3);
+        for (std::size_t index = 0; index < 3; ++index)
+        {
+            triangle_sweep[index] = {
+                swept_triangle_before[index], swept_triangle_after[index]
+            };
+        }
+        skin_physics::physics::collision_aabb point_bounds;
+        skin_physics::physics::collision_aabb triangle_bounds;
+        require(skin_physics::physics::build_correction_swept_aabb(
+            point_sweep, 0.02f, point_bounds) &&
+            skin_physics::physics::build_correction_swept_aabb(
+                triangle_sweep, 0.02f, triangle_bounds),
+            "Correction Swept AABB generation must accept finite per-primitive vertex motions.");
+        require(point_bounds.minimum.x <= 0.25f &&
+            point_bounds.maximum.x >= 0.25f &&
+            point_bounds.minimum.y <= 0.25f &&
+            point_bounds.maximum.y >= 0.25f &&
+            point_bounds.minimum.z < -1.0f &&
+            point_bounds.maximum.z > 1.0f &&
+            triangle_bounds.minimum.x < 0.0f &&
+            triangle_bounds.maximum.x > 1.0f &&
+            triangle_bounds.minimum.y < 0.0f &&
+            triangle_bounds.maximum.y > 1.0f,
+            "Per-primitive Correction Swept AABBs must enclose all paths and half-thickness expansion.");
+
+        const skin_physics::physics::collision_aabb physical_bounds = {
+            { -0.5f, -0.5f, -0.5f },
+            { 0.5f, 0.5f, 0.5f }
+        };
+        skin_physics::physics::collision_aabb segment_envelope;
+        require(skin_physics::physics::union_correction_envelope_aabb(
+            physical_bounds, point_bounds, segment_envelope),
+            "Physical and correction per-primitive AABBs must form a valid Segment envelope.");
+        require(segment_envelope.minimum.x <= physical_bounds.minimum.x &&
+            segment_envelope.minimum.x <= point_bounds.minimum.x &&
+            segment_envelope.maximum.z >= physical_bounds.maximum.z &&
+            segment_envelope.maximum.z >= point_bounds.maximum.z,
+            "Segment envelope union must enclose both physical and correction sweeps.");
+
+        using skin_physics::physics::correction_primitive_role;
+        std::vector<skin_physics::physics::correction_broadphase_primitive>
+            correction_primitives(7);
+        correction_primitives[0].stable_id = 100;
+        correction_primitives[0].mesh_id = 1;
+        correction_primitives[0].primitive_id = 0;
+        correction_primitives[0].role = correction_primitive_role::vertex;
+        correction_primitives[0].envelope_bounds = point_bounds;
+        correction_primitives[0].vertex_stable_ids = { 11 };
+
+        correction_primitives[1].stable_id = 200;
+        correction_primitives[1].mesh_id = 1;
+        correction_primitives[1].primitive_id = 1;
+        correction_primitives[1].role = correction_primitive_role::triangle;
+        correction_primitives[1].envelope_bounds = triangle_bounds;
+        correction_primitives[1].vertex_stable_ids = { 21, 22, 23 };
+
+        correction_primitives[2].stable_id = 300;
+        correction_primitives[2].mesh_id = 1;
+        correction_primitives[2].primitive_id = 2;
+        correction_primitives[2].role = correction_primitive_role::edge;
+        correction_primitives[2].envelope_bounds = point_bounds;
+        correction_primitives[2].vertex_stable_ids = { 31, 32 };
+
+        correction_primitives[3].stable_id = 400;
+        correction_primitives[3].mesh_id = 1;
+        correction_primitives[3].primitive_id = 3;
+        correction_primitives[3].role = correction_primitive_role::edge;
+        correction_primitives[3].envelope_bounds = triangle_bounds;
+        correction_primitives[3].vertex_stable_ids = { 41, 42 };
+
+        // This Vertex overlaps the Triangle AABB but shares a topology Vertex,
+        // so it must be excluded before Candidate capacity is evaluated.
+        correction_primitives[4].stable_id = 500;
+        correction_primitives[4].mesh_id = 1;
+        correction_primitives[4].primitive_id = 4;
+        correction_primitives[4].role = correction_primitive_role::vertex;
+        correction_primitives[4].envelope_bounds = point_bounds;
+        correction_primitives[4].vertex_stable_ids = { 21 };
+
+        // The pair overlaps geometrically but is explicitly excluded by the
+        // topology owner's one-ring adjacency policy.
+        const skin_physics::physics::collision_aabb one_ring_exclusion_bounds = {
+            { 4.0f, 4.0f, 4.0f },
+            { 4.25f, 4.25f, 4.25f }
+        };
+        correction_primitives[5].stable_id = 600;
+        correction_primitives[5].mesh_id = 1;
+        correction_primitives[5].primitive_id = 5;
+        correction_primitives[5].role = correction_primitive_role::edge;
+        correction_primitives[5].envelope_bounds = one_ring_exclusion_bounds;
+        correction_primitives[5].vertex_stable_ids = { 51, 52 };
+        correction_primitives[5].excluded_primitive_ids = { { 700, 1, 6 } };
+
+        correction_primitives[6].stable_id = 700;
+        correction_primitives[6].mesh_id = 1;
+        correction_primitives[6].primitive_id = 6;
+        correction_primitives[6].role = correction_primitive_role::edge;
+        correction_primitives[6].envelope_bounds = one_ring_exclusion_bounds;
+        correction_primitives[6].vertex_stable_ids = { 61, 62 };
+        skin_physics::physics::broadphase_settings correction_broadphase_settings;
+        correction_broadphase_settings.cell_size = 0.25f;
+        correction_broadphase_settings.contact_thickness = 0.0f;
+        correction_broadphase_settings.cell_record_capacity = 4096;
+        correction_broadphase_settings.candidate_capacity = 2;
+        correction_broadphase_settings.max_cells_per_primitive = 4096;
+        correction_broadphase_settings.self_collision_enabled = true;
+        const auto correction_broadphase =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                correction_primitives, {}, correction_broadphase_settings);
+        require(correction_broadphase.success &&
+            correction_broadphase.required_candidates == 2 &&
+            correction_broadphase.candidates.size() == 2,
+            "Correction Broadphase must map Spatial Hash pairs to VT / EE and remove topology-adjacent pairs before capacity counting.");
+        require(correction_broadphase.broadphase_candidate_count == 2 &&
+            correction_broadphase.required_candidates == 2,
+            "Topology filtering must happen before Candidate Capacity accounting, matching the GPU Count pass.");
+        require(std::any_of(
+            correction_broadphase.candidates.begin(),
+            correction_broadphase.candidates.end(),
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+            {
+                return key.contact_type ==
+                    skin_physics::physics::correction_contact_type::vertex_triangle &&
+                    key.stable_id_a == 100 && key.stable_id_b == 200;
+            }),
+            "Correction Broadphase must preserve the canonical VT stable-ID pair.");
+        require(std::any_of(
+            correction_broadphase.candidates.begin(),
+            correction_broadphase.candidates.end(),
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+            {
+                return key.contact_type ==
+                    skin_physics::physics::correction_contact_type::edge_edge &&
+                    key.stable_id_a == 300 && key.stable_id_b == 400;
+            }),
+            "Correction Broadphase must preserve the canonical EE stable-ID pair.");
+
+        require(std::none_of(
+            correction_broadphase.candidates.begin(),
+            correction_broadphase.candidates.end(),
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+            {
+                return (key.stable_id_a == 200 && key.stable_id_b == 500) ||
+                    (key.stable_id_a == 500 && key.stable_id_b == 200) ||
+                    (key.stable_id_a == 600 && key.stable_id_b == 700);
+            }),
+            "Shared-vertex and explicit one-ring topology pairs must be excluded before Canonical Candidate output.");
+
+        auto duplicate_primitive_identity =
+            correction_primitives;
+        duplicate_primitive_identity[4].stable_id =
+            correction_primitives[1].stable_id;
+        duplicate_primitive_identity[4].mesh_id =
+            correction_primitives[1].mesh_id;
+        duplicate_primitive_identity[4].primitive_id =
+            correction_primitives[1].primitive_id;
+        const auto duplicate_identity_broadphase =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                duplicate_primitive_identity, {},
+                correction_broadphase_settings);
+        require(!duplicate_identity_broadphase.success &&
+            !duplicate_identity_broadphase.diagnostics.empty() &&
+            duplicate_identity_broadphase.diagnostics[0].code ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "Standalone Correction Broadphase must reject duplicate Stable / Mesh / Primitive identities.");
+
+        skin_physics::physics::broadphase_settings double_expansion_settings =
+            correction_broadphase_settings;
+        double_expansion_settings.contact_thickness = 0.02f;
+        const auto double_expansion_result =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                correction_primitives, {}, double_expansion_settings);
+        require(!double_expansion_result.success &&
+            !double_expansion_result.diagnostics.empty() &&
+            double_expansion_result.diagnostics[0].code ==
+                skin_physics::physics::collision_error::invalid_settings,
+            "Correction Broadphase must reject a non-zero second thickness expansion.");
+
+        skin_physics::physics::broadphase_settings correction_overflow_settings =
+            correction_broadphase_settings;
+        correction_overflow_settings.candidate_capacity = 0;
+        const auto correction_overflow =
+            skin_physics::physics::generate_correction_broadphase_candidates(
+                correction_primitives, {}, correction_overflow_settings);
+        require(!correction_overflow.success && correction_overflow.overflow &&
+            correction_overflow.candidates.empty(),
+            "Correction Broadphase overflow must not return a partial typed Candidate Set.");
+
+        std::vector<skin_physics::physics::correction_vertex_motion> empty_sweep;
+        require(!skin_physics::physics::build_correction_swept_aabb(
+            empty_sweep, 0.02f, point_bounds),
+            "An empty correction primitive must not produce an AABB.");
+
+        auto non_finite_sweep = triangle_sweep;
+        non_finite_sweep[2].after.y =
+            std::numeric_limits<float>::quiet_NaN();
+        skin_physics::physics::collision_aabb correction_bounds;
+        require(!skin_physics::physics::build_correction_swept_aabb(
+            non_finite_sweep, 0.02f, correction_bounds),
+            "A non-finite correction vertex must fail AABB construction.");
+
+        using skin_physics::physics::correction_contact_type;
+        const auto candidate_vt = skin_physics::physics::make_canonical_correction_candidate_key(
+            correction_contact_type::vertex_triangle, 700, 7, 12, 200, 2, 4);
+        const auto candidate_vt_reversed =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::vertex_triangle, 200, 2, 4, 700, 7, 12);
+        const auto candidate_ee =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::edge_edge, 700, 7, 12, 200, 2, 4);
+        const auto candidate_union =
+            skin_physics::physics::merge_correction_candidate_union(
+                {}, { candidate_vt, candidate_vt_reversed, candidate_ee }, 2);
+        require(candidate_union.success && !candidate_union.overflow &&
+            candidate_union.required_count == 2 &&
+            candidate_union.candidates.size() == 2,
+            "Canonical Candidate Union must sort, deduplicate reversed pairs, and preserve contact type.");
+
+        const auto segment_candidate_union =
+            skin_physics::physics::merge_correction_candidate_union(
+                { candidate_ee }, { candidate_vt, candidate_vt_reversed }, 2);
+        require(segment_candidate_union.success &&
+            segment_candidate_union.required_count == 2 &&
+            segment_candidate_union.candidates[0] == candidate_vt &&
+            segment_candidate_union.candidates[1] == candidate_ee,
+            "Each correction epoch must retain existing physical candidates and append canonical new candidates.");
+
+        auto segment_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                1001, { candidate_vt }, 2);
+        require(segment_state_result.success &&
+            segment_state_result.state.candidate_generation == 1 &&
+            segment_state_result.state.position_writer_epoch_generation == 0 &&
+            segment_state_result.state.candidates.size() == 1 &&
+            !segment_state_result.state.contact_set_current &&
+            !segment_state_result.state.vertex_contact_csr_current,
+            "A new Integration Segment must begin with its physical candidates and unbuilt Contact/CSR generations.");
+
+        const auto make_vt_discrete_input =
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+        {
+            skin_physics::physics::correction_discrete_contact_input input;
+            input.key = key;
+            input.vertex_stable_ids = { 11, 12, 13, 14 };
+            input.positions = {
+                skin_physics::asset::vec3{ 0.25f, 0.25f, 0.005f },
+                skin_physics::asset::vec3{ 0.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 0.0f, 1.0f, 0.0f }
+            };
+            input.contact_thickness = 0.01f;
+            return input;
+        };
+        const auto make_ee_discrete_input =
+            [](const skin_physics::physics::correction_candidate_pair_key& key)
+        {
+            skin_physics::physics::correction_discrete_contact_input input;
+            input.key = key;
+            input.vertex_stable_ids = { 21, 22, 23, 24 };
+            input.positions = {
+                skin_physics::asset::vec3{ 0.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+                skin_physics::asset::vec3{ 0.5f, -0.5f, 0.0f },
+                skin_physics::asset::vec3{ 0.5f, 0.5f, 0.0f }
+            };
+            input.contact_thickness = 0.02f;
+            return input;
+        };
+
+        auto segment_state = segment_state_result.state;
+        const std::vector<skin_physics::physics::correction_segment_vertex_snapshot>
+            segment_start_vertices = {
+                { 11u, { 0.25f, 0.25f, 0.0f } },
+                { 12u, { 0.0f, 0.0f, 0.0f } },
+                { 13u, { 1.0f, 0.0f, 0.0f } },
+                { 14u, { 0.0f, 1.0f, 0.0f } },
+                { 21u, { 0.0f, 0.0f, 0.0f } },
+                { 22u, { 1.0f, 0.0f, 0.0f } },
+                { 23u, { 0.5f, -0.5f, 0.0f } },
+                { 24u, { 0.5f, 0.5f, 0.0f } }
+            };
+        require(skin_physics::physics::initialize_correction_segment_geometry(
+                segment_state, 1001u, segment_start_vertices, physical_bounds),
+            "Segment Commit Gate fixtures must initialize the immutable Segment-start Vertex Snapshot and cumulative broadphase envelope.");
+        std::vector<skin_physics::physics::correction_discrete_contact_input>
+            vt_discrete_inputs = { make_vt_discrete_input(candidate_vt) };
+        const auto initial_contact_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs);
+        require(initial_contact_refresh.success &&
+            initial_contact_refresh.candidate_count == 1 &&
+            initial_contact_refresh.active_contact_count == 1 &&
+            segment_state.contact_set_current &&
+            segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 1 &&
+            segment_state.vertex_contact_csr.vertex_stable_ids.size() == 4 &&
+            segment_state.vertex_contact_csr.offsets.size() == 5 &&
+            segment_state.vertex_contact_csr.contact_indices.size() == 4,
+            "Final Discrete VT Narrowphase must build the active Contact Set and four-participant Vertex-to-Contact CSR for the current generations.");
+
+        const auto contact_capacity_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs, 1.0e-7f, 0, 16);
+        require(!contact_capacity_refresh.success &&
+            contact_capacity_refresh.capacity_overflow &&
+            contact_capacity_refresh.required_contact_count == 1 &&
+            segment_state.contact_set_current &&
+            segment_state.contact_set.size() == 1 &&
+            segment_state.vertex_contact_csr.current,
+            "Contact Set Capacity overflow must report the required count and preserve the prior published Contact Set / CSR atomically.");
+
+        const auto csr_capacity_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs, 1.0e-7f, 16, 0);
+        require(!csr_capacity_refresh.success &&
+            csr_capacity_refresh.capacity_overflow &&
+            csr_capacity_refresh.required_vertex_contact_indices == 4 &&
+            segment_state.contact_set_current &&
+            segment_state.contact_set.size() == 1 &&
+            segment_state.vertex_contact_csr.current &&
+            segment_state.vertex_contact_csr.contact_indices.size() == 4,
+            "Vertex-to-Contact CSR Capacity overflow must preserve both prior published structures atomically.");
+
+        const auto stale_initial_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 0, 0, vt_discrete_inputs);
+        require(!stale_initial_refresh.success &&
+            stale_initial_refresh.generation_mismatch &&
+            segment_state.contact_set_current &&
+            segment_state.contact_set.size() == 1,
+            "A stale Candidate Generation refresh must not overwrite a previously valid Contact Set.");
+
+        const auto begin_epoch_1 =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 1);
+        require(begin_epoch_1.success && begin_epoch_1.changed &&
+            segment_state.last_position_writer_epoch_id == 1 &&
+            segment_state.position_writer_epoch_generation == 1 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
+            "Every Position-Writer Epoch must invalidate Contact Set and CSR freshness even when its candidate set is unchanged.");
+
+        const auto duplicate_epoch_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, 1, { candidate_vt_reversed }, 2);
+        require(duplicate_epoch_update.success &&
+            !duplicate_epoch_update.changed &&
+            segment_state.candidate_generation == 1 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
+            "An Epoch that adds only duplicate canonical pairs must not advance Candidate Generation or falsely mark geometry-dependent data current.");
+
+        const auto stale_epoch_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 0, vt_discrete_inputs);
+        require(!stale_epoch_refresh.success &&
+            stale_epoch_refresh.generation_mismatch &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "A Contact Set / CSR completion from the pre-Epoch Position Generation must be rejected.");
+        const auto epoch_1_contact_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 1, vt_discrete_inputs);
+        require(epoch_1_contact_refresh.success &&
+            segment_state.contact_set_current &&
+            segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 1,
+            "Contact Set and CSR refresh must run Final Discrete Narrowphase for the latest Position-Writer Epoch.");
+
+        const auto begin_epoch_2 =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 2);
+        require(begin_epoch_2.success &&
+            segment_state.position_writer_epoch_generation == 2 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
+            "A later position write must invalidate Contact Set / CSR even when no new broadphase pair is emitted.");
+
+        const auto stale_epoch_refresh_2 =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 1, 1, vt_discrete_inputs);
+        require(!stale_epoch_refresh_2.success &&
+            stale_epoch_refresh_2.generation_mismatch &&
+            !segment_state.contact_set_current,
+            "A stale Position-Writer Epoch rebuild completion must not clear a newer geometry generation.");
+
+        const auto stale_epoch_candidate_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, 1, { candidate_ee }, 2);
+        require(!stale_epoch_candidate_update.success &&
+            stale_epoch_candidate_update.invalid_epoch_order &&
+            segment_state.candidate_generation == 1 &&
+            segment_state.candidates.size() == 1,
+            "A delayed Candidate result from a previous Position-Writer Epoch must not mutate the active Segment Candidate Set.");
+
+        const auto new_epoch_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, 2, { candidate_ee }, 2);
+        require(new_epoch_update.success && new_epoch_update.changed &&
+            segment_state.candidate_generation == 2 &&
+            segment_state.candidates.size() == 2 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current &&
+            !segment_state.vertex_contact_csr.current,
+            "A newly discovered Epoch candidate must advance the Candidate Generation and invalidate Contact Set / CSR.");
+
+        std::vector<skin_physics::physics::correction_discrete_contact_input>
+            complete_discrete_inputs = {
+                make_ee_discrete_input(candidate_ee),
+                make_vt_discrete_input(candidate_vt)
+            };
+        const auto missing_candidate_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 2, 2, { make_vt_discrete_input(candidate_vt) });
+        require(!missing_candidate_refresh.success &&
+            missing_candidate_refresh.invalid_input &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 1,
+            "Final Discrete Narrowphase must cover every Candidate Pair and preserve prior data on incomplete input.");
+        const auto latest_contact_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                segment_state, 2, 2, complete_discrete_inputs);
+        require(latest_contact_refresh.success &&
+            latest_contact_refresh.candidate_count == 2 &&
+            latest_contact_refresh.active_contact_count == 2 &&
+            segment_state.contact_set_current &&
+            segment_state.vertex_contact_csr_current &&
+            segment_state.contact_set.size() == 2 &&
+            segment_state.vertex_contact_csr.vertex_stable_ids.size() == 8 &&
+            segment_state.vertex_contact_csr.offsets.size() == 9 &&
+            segment_state.vertex_contact_csr.contact_indices.size() == 8,
+            "Final Discrete Narrowphase must refresh all active VT / EE Contacts and build the complete Vertex-to-Contact CSR.");
+
+        const auto valid_segment_commit_gate =
+            skin_physics::physics::validate_correction_segment_commit_gate(
+                segment_state);
+        require(valid_segment_commit_gate.commit_allowed &&
+            valid_segment_commit_gate.status ==
+                skin_physics::physics::correction_segment_commit_gate_status::ready &&
+            valid_segment_commit_gate.candidate_generation == 2 &&
+            valid_segment_commit_gate.position_writer_epoch_generation == 2,
+            "The Segment Commit Gate must allow publication only after Candidate, Active Contact Set and CSR generations are mutually current.");
+
+        auto stale_csr_payload_state = segment_state;
+        stale_csr_payload_state.vertex_contact_csr.current = false;
+        const auto stale_csr_commit_gate =
+            skin_physics::physics::validate_correction_segment_commit_gate(
+                stale_csr_payload_state);
+        require(!stale_csr_commit_gate.commit_allowed &&
+            stale_csr_commit_gate.status ==
+                skin_physics::physics::correction_segment_commit_gate_status::rejected,
+            "The Segment Commit Gate must inspect the CSR payload freshness flag as well as its outer Generation state.");
+
+        auto invalid_csr_index_state = segment_state;
+        invalid_csr_index_state.vertex_contact_csr.contact_indices[0] =
+            std::numeric_limits<uint32_t>::max();
+        const auto invalid_csr_commit_gate =
+            skin_physics::physics::validate_correction_segment_commit_gate(
+                invalid_csr_index_state);
+        require(!invalid_csr_commit_gate.commit_allowed &&
+            invalid_csr_commit_gate.status ==
+                skin_physics::physics::correction_segment_commit_gate_status::rejected,
+            "The Segment Commit Gate must reject CSR indices outside the Active Contact Set.");
+
+        const auto transient_candidate =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::vertex_triangle, 1500, 15, 150,
+                1600, 16, 160);
+        auto transient_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                2001, { transient_candidate }, 4);
+        require(transient_state_result.success &&
+            transient_state_result.state.candidate_generation == 1,
+            "An initialized Segment Candidate Set must have a non-zero generation even when its input set is empty or non-empty.");
+        auto transient_state = transient_state_result.state;
+        auto transient_input = make_vt_discrete_input(transient_candidate);
+        transient_input.positions[0].z = 0.5f;
+        const auto transient_refresh =
+            skin_physics::physics::refresh_correction_segment_contact_set_and_csr(
+                transient_state, 1, 0, { transient_input });
+        require(transient_refresh.success &&
+            transient_refresh.candidate_count == 1 &&
+            transient_refresh.active_contact_count == 0 &&
+            transient_state.candidates.size() == 1 &&
+            transient_state.contact_set.empty() &&
+            transient_state.vertex_contact_csr.vertex_stable_ids.empty() &&
+            transient_state.vertex_contact_csr.offsets.size() == 1 &&
+            transient_state.vertex_contact_csr.offsets[0] == 0,
+            "A same-side or transient Candidate must remain in the Candidate Union while staying out of the Active Contact Set and Vertex CSR.");
+
+        auto empty_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                2002, {}, 0);
+        require(empty_state_result.success &&
+            empty_state_result.state.candidate_generation == 1 &&
+            empty_state_result.state.candidates.empty(),
+            "An empty initial Candidate Set must still carry a valid non-zero generation.");
+
+        const auto wrong_segment_begin =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1002, 3);
+        const auto wrong_segment_update =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1002, 3, {}, 2);
+        require(!wrong_segment_begin.success && wrong_segment_begin.wrong_segment &&
+            !wrong_segment_update.success && wrong_segment_update.wrong_segment &&
+            segment_state.base_integration_segment_id == 1001 &&
+            segment_state.candidate_generation == 2 &&
+            segment_state.position_writer_epoch_generation == 2,
+            "Position-Writer Epochs and Candidate Pairs from another base_integration_segment_id must be rejected.");
+
+        const auto duplicate_epoch_id =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 2);
+        require(!duplicate_epoch_id.success && duplicate_epoch_id.invalid_epoch_order &&
+            segment_state.position_writer_epoch_generation == 2,
+            "A repeated or out-of-order Position-Writer Epoch ID must not mutate Segment State.");
+
+        const auto begin_epoch_3 =
+            skin_physics::physics::begin_correction_position_writer_epoch(
+                segment_state, 1001, 3);
+        require(begin_epoch_3.success &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "Starting the next Position-Writer Epoch must mark prior Contact Set / CSR data stale.");
+
+        const auto new_capacity_candidate =
+            skin_physics::physics::make_canonical_correction_candidate_key(
+                correction_contact_type::vertex_triangle, 900, 9, 90, 800, 8, 80);
+        const auto state_capacity_overflow =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                segment_state, 1001, 3, { new_capacity_candidate }, 2);
+        require(!state_capacity_overflow.success &&
+            state_capacity_overflow.capacity_overflow &&
+            segment_state.candidates.size() == 2 &&
+            segment_state.candidate_generation == 2 &&
+            segment_state.position_writer_epoch_generation == 3 &&
+            !segment_state.contact_set_current &&
+            !segment_state.vertex_contact_csr_current,
+            "Candidate Capacity Retry must preserve the previous Candidate Set while keeping geometry-dependent Contact/CSR data stale for the active Epoch.");
+
+        auto generation_exhausted_state = segment_state;
+        generation_exhausted_state.candidate_generation =
+            std::numeric_limits<uint64_t>::max();
+        const auto generation_overflow =
+            skin_physics::physics::merge_correction_position_writer_epoch_candidates(
+                generation_exhausted_state, 1001, 3, { new_capacity_candidate }, 4);
+        require(!generation_overflow.success &&
+            generation_overflow.generation_overflow &&
+            generation_exhausted_state.candidates.size() == 2 &&
+            generation_exhausted_state.position_writer_epoch_generation == 3,
+            "Candidate Generation overflow must fail without replacing the prior Segment Candidate Set.");
+
+        const auto candidate_overflow =
+            skin_physics::physics::merge_correction_candidate_union(
+                { candidate_vt }, { candidate_ee }, 1);
+        require(!candidate_overflow.success && candidate_overflow.overflow &&
+            candidate_overflow.required_count == 2 &&
+            candidate_overflow.candidates.empty(),
+            "Candidate Union capacity overflow must return no partial replacement set.");
+
+        const auto make_vt_epoch_primitives =
+            [](const test_json::value& input,
+                uint64_t point_stable_id,
+                uint64_t triangle_stable_id)
+                -> std::vector<skin_physics::physics::correction_primitive_epoch_input>
+        {
+            std::vector<skin_physics::physics::correction_primitive_epoch_input> result;
+            skin_physics::physics::correction_primitive_epoch_input point;
+            point.stable_id = point_stable_id;
+            point.mesh_id = 1;
+            point.primitive_id = 0;
+            point.role = skin_physics::physics::correction_primitive_role::vertex;
+            point.vertex_stable_ids.push_back(point_stable_id * 10u + 1u);
+            point.vertex_motions.push_back({
+                read_vec3(input.at("point_before")),
+                read_vec3(input.at("point_after"))
+            });
+            point.segment_start_positions.push_back(
+                read_vec3(input.at("point_before")));
+            result.push_back(point);
+
+            const auto triangle_before = read_vec3_triplet(
+                input.at("triangle_vertices_before"));
+            const auto triangle_after = read_vec3_triplet(
+                input.at("triangle_vertices_after"));
+            skin_physics::physics::correction_primitive_epoch_input triangle;
+            triangle.stable_id = triangle_stable_id;
+            triangle.mesh_id = 2;
+            triangle.primitive_id = 0;
+            triangle.role = skin_physics::physics::correction_primitive_role::triangle;
+            for (std::size_t index = 0; index < 3; ++index)
+            {
+                triangle.vertex_stable_ids.push_back(
+                    triangle_stable_id * 10u + static_cast<uint64_t>(index) + 1u);
+                triangle.vertex_motions.push_back({
+                    triangle_before[index], triangle_after[index]
+                });
+                triangle.segment_start_positions.push_back(triangle_before[index]);
+            }
+            result.push_back(triangle);
+            return result;
+        };
+
+        const std::vector<skin_physics::physics::broadphase_mesh_pair>
+            epoch_mesh_pairs = { { 1, 2, true } };
+        skin_physics::physics::broadphase_settings epoch_broadphase_settings;
+        epoch_broadphase_settings.cell_size = 0.25f;
+        epoch_broadphase_settings.contact_thickness = 0.0f;
+        epoch_broadphase_settings.max_cells_per_primitive = 4096;
+        epoch_broadphase_settings.cell_record_capacity = 4096;
+        epoch_broadphase_settings.candidate_capacity = 16;
+        epoch_broadphase_settings.self_collision_enabled = false;
+
+        auto crossing_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3001, {}, 16);
+        require(crossing_epoch_state_result.success,
+            "CPU Position-Writer Epoch integration test must initialize an empty Segment Candidate State.");
+        auto crossing_epoch_state = crossing_epoch_state_result.state;
+        const auto crossing_epoch_primitives = make_vt_epoch_primitives(
+            vt_crossing.at("input"), 3100, 3200);
+        require(initialize_test_correction_segment_geometry(
+            crossing_epoch_state, 3001, crossing_epoch_primitives,
+            static_cast<float>(vt_crossing.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Crossing Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
+        const auto crossing_epoch = 
+            skin_physics::physics::process_correction_position_writer_epoch(
+                crossing_epoch_state, 3001, 1, crossing_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(crossing_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::rejected &&
+            !crossing_epoch.state_committed &&
+            crossing_epoch.correction_ccd_results.size() == 1 &&
+            crossing_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::path_crossing &&
+            crossing_epoch_state.position_writer_epoch_generation == 0 &&
+            crossing_epoch_state.candidates.empty(),
+            "A Position-Writer Epoch that crosses the latched side must reject atomically without appending Candidates or advancing Segment state.");
+
+        const auto transient_epoch_primitives = make_vt_epoch_primitives(
+            transient.at("input"), 3300, 3400);
+        auto transient_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3002, {}, 16);
+        auto transient_epoch_state = transient_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            transient_epoch_state, 3002, transient_epoch_primitives,
+            static_cast<float>(transient.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Transient Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
+        const auto transient_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                transient_epoch_state, 3002, 1, transient_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(transient.at("input")));
+        require(transient_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::accepted &&
+            transient_epoch.state_committed &&
+            transient_epoch.correction_ccd_results.size() == 1 &&
+            transient_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::hit &&
+            transient_epoch.active_contacts.empty() &&
+            transient_epoch_state.candidates.size() == 1 &&
+            transient_epoch_state.candidate_generation == 2 &&
+            transient_epoch_state.position_writer_epoch_generation == 1 &&
+            transient_epoch_state.contact_set_current &&
+            transient_epoch_state.vertex_contact_csr_current &&
+            transient_epoch_state.contact_set.empty() &&
+            transient_epoch_state.vertex_contact_csr.offsets ==
+                std::vector<uint32_t>{ 0u },
+            "A same-side transient proximity must remain in the Segment Candidate Union without becoming an endpoint Active Contact.");
+
+        const auto endpoint_epoch_primitives = make_vt_epoch_primitives(
+            endpoint.at("input"), 3500, 3600);
+        auto endpoint_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3003, {}, 16);
+        auto endpoint_epoch_state = endpoint_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            endpoint_epoch_state, 3003, endpoint_epoch_primitives,
+            static_cast<float>(endpoint.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Endpoint Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
+        const auto endpoint_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                endpoint_epoch_state, 3003, 1, endpoint_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(endpoint.at("input")));
+        require(endpoint_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::accepted &&
+            endpoint_epoch.state_committed &&
+            endpoint_epoch.active_contacts.size() == 1 &&
+            endpoint_epoch_state.candidates.size() == 1,
+            "A Correction Hit that remains active at s=1 must be returned as an endpoint Contact candidate.");
+
+        const auto miss_epoch_primitives = make_vt_epoch_primitives(
+            miss.at("input"), 3700, 3800);
+        auto miss_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3004, {}, 16);
+        auto miss_epoch_state = miss_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            miss_epoch_state, 3004, miss_epoch_primitives,
+            static_cast<float>(miss.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Certified-miss Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
+        const auto miss_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                miss_epoch_state, 3004, 1, miss_epoch_primitives,
+                epoch_mesh_pairs, epoch_broadphase_settings,
+                read_correction_ccd_settings(miss.at("input")));
+        require(miss_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::accepted &&
+            miss_epoch.state_committed &&
+            miss_epoch.correction_ccd_results.empty() &&
+            miss_epoch_state.candidates.empty() &&
+            miss_epoch_state.position_writer_epoch_generation == 1 &&
+            miss_epoch_state.contact_set_current &&
+            miss_epoch_state.vertex_contact_csr_current &&
+            miss_epoch_state.vertex_contact_csr.offsets ==
+                std::vector<uint32_t>{ 0u },
+            "A certified Broadphase miss must still advance the Position-Writer Epoch while leaving the Candidate Union empty.");
+
+        skin_physics::physics::broadphase_settings epoch_capacity_settings =
+            epoch_broadphase_settings;
+        epoch_capacity_settings.candidate_capacity = 0;
+        auto blocked_epoch_state_result =
+            skin_physics::physics::create_correction_segment_candidate_state(
+                3005, {}, 16);
+        auto blocked_epoch_state = blocked_epoch_state_result.state;
+        require(initialize_test_correction_segment_geometry(
+            blocked_epoch_state, 3005, crossing_epoch_primitives,
+            static_cast<float>(vt_crossing.at("input").at(
+                "contact_thickness_m").as_number())),
+            "Capacity-blocked Epoch must retain an initialized immutable Segment-start and Physical Sweep snapshot.");
+        const auto blocked_epoch =
+            skin_physics::physics::process_correction_position_writer_epoch(
+                blocked_epoch_state, 3005, 1, crossing_epoch_primitives,
+                epoch_mesh_pairs, epoch_capacity_settings,
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(blocked_epoch.status ==
+                skin_physics::physics::correction_writer_epoch_status::blocked &&
+            !blocked_epoch.state_committed &&
+            blocked_epoch.capacity_overflow &&
+            blocked_epoch_state.position_writer_epoch_generation == 0 &&
+            blocked_epoch_state.candidates.empty(),
+            "Correction Broadphase Capacity exhaustion must BLOCK the same Epoch without partial Candidate or Generation mutation.");
+
+        skin_physics::physics::correction_ccd_settings limited_settings =
+            read_correction_ccd_settings(vt_crossing.at("input"));
+        limited_settings.maximum_interval_evaluations = 2;
+        const auto limited_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                make_vt_correction_motion(vt_crossing.at("input")), limited_settings);
+        require(limited_result.status == correction_ccd_status::unresolved,
+            "Interval budget exhaustion must fail closed as Unresolved.");
+
+        auto ambiguous_side_motion = make_vt_correction_motion(vt_crossing.at("input"));
+        ambiguous_side_motion.segment_start_point = { 0.25f, 0.25f, 0.0f };
+        const auto ambiguous_side_result =
+            skin_physics::physics::detect_vertex_triangle_correction_motion(
+                ambiguous_side_motion,
+                read_correction_ccd_settings(vt_crossing.at("input")));
+        require(ambiguous_side_result.status == correction_ccd_status::unresolved,
+            "A Segment-start Pair exactly on the separating plane must not invent an allowed side.");
+    }
+
+    void test_phase12_correction_position_writer_epoch_pipeline()
+    {
+        using namespace skin_physics::physics;
+        const test_json::value fixture = test_json::load(
+            test_support::fixture_path(
+                "design_review/correction_sweep_broadphase.json"));
+
+        const test_json::value& endpoint_case = find_correction_fixture_case(
+            fixture, "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT");
+        correction_ccd_settings endpoint_settings =
+            read_correction_ccd_settings(endpoint_case.at("input"));
+        auto endpoint_state_result =
+            create_correction_segment_candidate_state(7001, {}, 16);
+        require(endpoint_state_result.success,
+            "Position-Writer Epoch endpoint test must initialize its Segment Candidate State.");
+        auto endpoint_state = endpoint_state_result.state;
+        const auto endpoint_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            endpoint_state, 7001, endpoint_epoch_primitives,
+            endpoint_settings.contact_thickness),
+            "Endpoint-active Epoch must initialize its immutable Segment-start and Physical Sweep snapshots.");
+        const correction_writer_epoch_result endpoint_epoch =
+            process_correction_position_writer_epoch(
+                endpoint_state, 7001, 1, endpoint_epoch_primitives,
+                {}, make_correction_epoch_broadphase_settings(),
+                endpoint_settings);
+        const std::string endpoint_epoch_ccd_diagnostic =
+            endpoint_epoch.correction_ccd_results.empty()
+                ? "none"
+                : endpoint_epoch.correction_ccd_results[0].result.diagnostic;
+        require(endpoint_epoch.status == correction_writer_epoch_status::accepted &&
+            endpoint_epoch.state_committed &&
+            endpoint_state.last_position_writer_epoch_id == 1 &&
+            endpoint_state.position_writer_epoch_generation == 1 &&
+            endpoint_state.candidate_generation == 2 &&
+            endpoint_state.candidates.size() == 1,
+            std::string(
+                "A valid VT Position-Writer Epoch must atomically commit its correction and endpoint candidate union. status=") +
+                std::to_string(static_cast<int>(endpoint_epoch.status)) +
+                " committed=" + (endpoint_epoch.state_committed ? "true" : "false") +
+                " diagnostic=" + endpoint_epoch.diagnostic +
+                " ccd_diagnostic=" + endpoint_epoch_ccd_diagnostic +
+                " candidates=" + std::to_string(endpoint_epoch.required_candidates) +
+                " contacts=" + std::to_string(endpoint_epoch.required_contacts));
+        require(endpoint_epoch.correction_ccd_results.size() == 1 &&
+            endpoint_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::hit,
+            "The Epoch pipeline must execute Correction Motion CCD for the correction-swept VT pair.");
+        require(endpoint_epoch.active_contacts.size() == 1 &&
+            endpoint_state.contact_set.size() == 1 &&
+            endpoint_state.contact_set_current &&
+            endpoint_state.vertex_contact_csr_current,
+            "An endpoint-active VT pair must enter the rebuilt Contact Set and Vertex-to-Contact CSR.");
+        require(endpoint_state.vertex_contact_csr.vertex_stable_ids.size() == 4 &&
+            endpoint_state.vertex_contact_csr.offsets.size() == 5 &&
+            endpoint_state.vertex_contact_csr.contact_indices.size() == 4 &&
+            endpoint_state.vertex_contact_csr.current,
+            "The Epoch pipeline must produce a complete CSR for the active VT Contact.");
+
+        const test_json::value& transient_case = find_correction_fixture_case(
+            fixture, "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY");
+        correction_ccd_settings transient_settings =
+            read_correction_ccd_settings(transient_case.at("input"));
+        auto transient_state_result =
+            create_correction_segment_candidate_state(7002, {}, 16);
+        auto transient_state = transient_state_result.state;
+        const auto transient_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            transient_state, 7002, transient_epoch_primitives,
+            transient_settings.contact_thickness),
+            "Transient pipeline Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
+        const correction_writer_epoch_result transient_epoch =
+            process_correction_position_writer_epoch(
+                transient_state, 7002, 1, transient_epoch_primitives,
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(transient_epoch.status == correction_writer_epoch_status::accepted &&
+            transient_epoch.correction_ccd_results.size() == 1 &&
+            transient_epoch.correction_ccd_results[0].result.status ==
+                correction_ccd_status::hit &&
+            transient_epoch.active_contacts.empty() &&
+            transient_state.contact_set.empty() &&
+            transient_state.vertex_contact_csr.current &&
+            transient_state.vertex_contact_csr.offsets ==
+                std::vector<uint32_t>{ 0u },
+            "A same-side transient Correction Hit must remain a Candidate without creating an endpoint Contact.");
+
+        auto latched_state_result =
+            create_correction_segment_candidate_state(7010, {}, 16);
+        auto latched_state = latched_state_result.state;
+        const auto latched_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            latched_state, 7010, latched_epoch_primitives,
+            transient_settings.contact_thickness),
+            "Side-latch pipeline Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
+        const correction_writer_epoch_result latch_epoch_1 =
+            process_correction_position_writer_epoch(
+                latched_state, 7010, 1, latched_epoch_primitives,
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(latch_epoch_1.status == correction_writer_epoch_status::accepted &&
+            latched_state.side_latches.size() == 1 &&
+            latched_state.side_latches[0].allowed_side_sign == 1 &&
+            latched_state.side_latches[0].reference_normal.z > 0.99f,
+            "The first accepted Position-Writer Epoch must latch one positive Segment-side normal for its Canonical Pair.");
+
+        auto latched_side_crossing =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        latched_side_crossing[0].vertex_motions[0].before =
+            { 2.0f, 0.2f, 0.01f };
+        latched_side_crossing[0].vertex_motions[0].after =
+            { 0.25f, 0.2f, -0.01f };
+        const correction_writer_epoch_result latch_epoch_2 =
+            process_correction_position_writer_epoch(
+                latched_state, 7010, 2, latched_side_crossing,
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(latch_epoch_2.status == correction_writer_epoch_status::rejected &&
+            !latch_epoch_2.state_committed &&
+            latch_epoch_2.correction_ccd_results.size() == 1 &&
+            latch_epoch_2.correction_ccd_results[0].result.status ==
+                correction_ccd_status::path_crossing &&
+            latched_state.side_latches.size() == 1 &&
+            latched_state.side_latches[0].allowed_side_sign == 1 &&
+            latched_state.position_writer_epoch_generation == 1,
+            "A later Epoch must reuse the original positive Segment-side latch and reject a path crossing without relatching or committing.");
+
+        auto topology_changed_state = latched_state;
+        auto changed_topology_epoch =
+            make_vt_position_writer_epoch_primitives(transient_case.at("input"));
+        changed_topology_epoch[1].vertex_stable_ids[0] += 100000u;
+        const correction_writer_epoch_result topology_changed_result =
+            process_correction_position_writer_epoch(
+                topology_changed_state, 7010, 2, changed_topology_epoch,
+                {}, make_correction_epoch_broadphase_settings(),
+                transient_settings);
+        require(topology_changed_result.status ==
+                correction_writer_epoch_status::rejected &&
+            !topology_changed_result.state_committed &&
+            topology_changed_result.correction_ccd_results.empty() &&
+            topology_changed_state.side_latches.size() == 1 &&
+            topology_changed_state.position_writer_epoch_generation == 1,
+            "A Segment Side Latch must be invalidated by participant topology identity changes rather than reused across a different feature.");
+
+        const test_json::value& crossing_case = find_correction_fixture_case(
+            fixture, "DCR_49_VT_POINT_THROUGH_TRIANGLE");
+        correction_ccd_settings crossing_settings =
+            read_correction_ccd_settings(crossing_case.at("input"));
+        auto crossing_state_result =
+            create_correction_segment_candidate_state(7003, {}, 16);
+        auto crossing_state = crossing_state_result.state;
+        const auto crossing_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(crossing_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            crossing_state, 7003, crossing_epoch_primitives,
+            crossing_settings.contact_thickness),
+            "Crossing pipeline Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
+        const correction_writer_epoch_result crossing_epoch =
+            process_correction_position_writer_epoch(
+                crossing_state, 7003, 1, crossing_epoch_primitives,
+                {}, make_correction_epoch_broadphase_settings(),
+                crossing_settings);
+        require(crossing_epoch.status == correction_writer_epoch_status::rejected &&
+            !crossing_epoch.state_committed &&
+            crossing_state.candidates.empty() &&
+            crossing_state.position_writer_epoch_generation == 0,
+            "A Correction Path Crossing must reject the entire Epoch without committing Candidate or Contact state.");
+
+        const test_json::value& ee_case = find_correction_fixture_case(
+            fixture, "DCR_49_EE_EDGE_THROUGH_EDGE");
+        correction_ccd_settings ee_settings =
+            read_correction_ccd_settings(ee_case.at("input"));
+        auto ee_state_result =
+            create_correction_segment_candidate_state(7004, {}, 16);
+        auto ee_state = ee_state_result.state;
+        const auto ee_epoch_primitives =
+            make_ee_position_writer_epoch_primitives(ee_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            ee_state, 7004, ee_epoch_primitives,
+            ee_settings.contact_thickness),
+            "EE crossing Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
+        const correction_writer_epoch_result ee_epoch =
+            process_correction_position_writer_epoch(
+                ee_state, 7004, 1, ee_epoch_primitives,
+                {}, make_correction_epoch_broadphase_settings(),
+                ee_settings);
+        require(ee_epoch.status == correction_writer_epoch_status::rejected &&
+            !ee_epoch.state_committed &&
+            ee_state.candidates.empty() &&
+            ee_state.position_writer_epoch_generation == 0,
+            "An EE correction crossing must reject the entire Epoch before Contact Set or CSR publication.");
+
+        correction_ccd_settings contact_capacity_settings = endpoint_settings;
+        contact_capacity_settings.contact_set_capacity = 0;
+        auto contact_capacity_state_result =
+            create_correction_segment_candidate_state(7005, {}, 16);
+        auto contact_capacity_state = contact_capacity_state_result.state;
+        const auto contact_capacity_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            contact_capacity_state, 7005, contact_capacity_primitives,
+            contact_capacity_settings.contact_thickness),
+            "Contact-capacity Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
+        const correction_writer_epoch_result contact_capacity_epoch =
+            process_correction_position_writer_epoch(
+                contact_capacity_state, 7005, 1, contact_capacity_primitives,
+                {}, make_correction_epoch_broadphase_settings(),
+                contact_capacity_settings);
+        require(contact_capacity_epoch.status == correction_writer_epoch_status::blocked &&
+            contact_capacity_epoch.capacity_overflow &&
+            contact_capacity_epoch.required_contacts == 1 &&
+            !contact_capacity_epoch.state_committed &&
+            contact_capacity_state.candidates.empty() &&
+            contact_capacity_state.side_latches.empty() &&
+            contact_capacity_state.position_writer_epoch_generation == 0,
+            "Active Contact Set Capacity overflow must BLOCK the complete Epoch without publishing Candidate or Side-Latch state.");
+
+        correction_ccd_settings csr_capacity_settings = endpoint_settings;
+        csr_capacity_settings.vertex_contact_csr_capacity = 0;
+        auto csr_capacity_state_result =
+            create_correction_segment_candidate_state(7006, {}, 16);
+        auto csr_capacity_state = csr_capacity_state_result.state;
+        const auto csr_capacity_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            csr_capacity_state, 7006, csr_capacity_primitives,
+            csr_capacity_settings.contact_thickness),
+            "CSR-capacity Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
+        const correction_writer_epoch_result csr_capacity_epoch =
+            process_correction_position_writer_epoch(
+                csr_capacity_state, 7006, 1, csr_capacity_primitives,
+                {}, make_correction_epoch_broadphase_settings(),
+                csr_capacity_settings);
+        require(csr_capacity_epoch.status == correction_writer_epoch_status::blocked &&
+            csr_capacity_epoch.capacity_overflow &&
+            csr_capacity_epoch.required_vertex_contact_indices == 4 &&
+            !csr_capacity_epoch.state_committed &&
+            csr_capacity_state.candidates.empty() &&
+            csr_capacity_state.side_latches.empty() &&
+            csr_capacity_state.position_writer_epoch_generation == 0,
+            "Vertex-to-Contact CSR Capacity overflow must BLOCK the complete Epoch without publishing Candidate or Contact state.");
+
+        auto blocked_state_result =
+            create_correction_segment_candidate_state(7005, {}, 16);
+        auto blocked_state = blocked_state_result.state;
+        const auto blocked_epoch_primitives =
+            make_vt_position_writer_epoch_primitives(endpoint_case.at("input"));
+        require(initialize_test_correction_segment_geometry(
+            blocked_state, 7005, blocked_epoch_primitives,
+            endpoint_settings.contact_thickness),
+            "Broadphase-capacity Epoch must initialize its Segment-start Snapshot and Physical Sweep Envelope.");
+        broadphase_settings blocked_broadphase =
+            make_correction_epoch_broadphase_settings();
+        blocked_broadphase.candidate_capacity = 0;
+        const correction_writer_epoch_result blocked_epoch =
+            process_correction_position_writer_epoch(
+                blocked_state, 7005, 1, blocked_epoch_primitives,
+                {}, blocked_broadphase, endpoint_settings);
+        require(blocked_epoch.status == correction_writer_epoch_status::blocked &&
+            blocked_epoch.capacity_overflow &&
+            !blocked_epoch.state_committed &&
+            blocked_state.candidates.empty() &&
+            blocked_state.position_writer_epoch_generation == 0,
+            "Broadphase Capacity overflow must BLOCK the Epoch and preserve the prior Candidate / Contact / CSR State.");
+    }
+
+    void test_runtime_mass_weighted_wendland_c2_reference()
+    {
+        const test_json::value input = test_json::load(
+            test_support::fixture_path(
+                "phase13_force_distribution/wendland_c2.input.json"));
+        const test_json::value expected = test_json::load(
+            test_support::fixture_path(
+                "phase13_force_distribution/wendland_c2.expected.json"));
+
+        const test_json::value::array& mesh_inputs =
+            input.at("meshes").as_array();
+        std::vector<std::vector<skin_physics::asset::vec3>> positions(
+            mesh_inputs.size());
+        std::vector<std::vector<float>> rest_masses(mesh_inputs.size());
+
+        for (std::size_t mesh_index = 0u;
+            mesh_index < mesh_inputs.size(); ++mesh_index)
+        {
+            const test_json::value::array& position_inputs =
+                mesh_inputs[mesh_index].at("positions").as_array();
+            const test_json::value::array& mass_inputs =
+                mesh_inputs[mesh_index].at("rest_lumped_masses").as_array();
+            positions[mesh_index].reserve(position_inputs.size());
+            rest_masses[mesh_index].reserve(mass_inputs.size());
+
+            for (const test_json::value& position_input : position_inputs)
+            {
+                positions[mesh_index].push_back(read_vec3(position_input));
+            }
+            for (const test_json::value& mass_input : mass_inputs)
+            {
+                rest_masses[mesh_index].push_back(
+                    static_cast<float>(mass_input.as_number()));
+            }
+        }
+
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            mesh_views(mesh_inputs.size());
+        for (std::size_t mesh_index = 0u;
+            mesh_index < mesh_inputs.size(); ++mesh_index)
+        {
+            mesh_views[mesh_index].segment_start_positions =
+                &positions[mesh_index];
+            mesh_views[mesh_index].rest_lumped_masses =
+                &rest_masses[mesh_index];
+        }
+
+        skin_physics::runtime::detail::force_distribution_weights result;
+        std::string diagnostic;
+        const bool built =
+            skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                mesh_views,
+                result,
+                diagnostic);
+        require(built, "Mass-weighted Wendland C2 reference must build: " + diagnostic);
+
+        require(std::abs(
+                result.unnormalized_weight_sum -
+                expected.at("unnormalized_weight_sum").as_number()) <= 1.0e-12,
+            "Pooled Rest Lumped Mass / Wendland C2 sum must match the golden.");
+        const test_json::value::array& expected_mesh_weights =
+            expected.at("weights").as_array();
+        require(result.mesh_weights.size() == expected_mesh_weights.size(),
+            "Pooled Wendland C2 result must preserve the selected Mesh ranges.");
+
+        double normalized_weight_sum = 0.0;
+        for (std::size_t mesh_index = 0u;
+            mesh_index < result.mesh_weights.size(); ++mesh_index)
+        {
+            const test_json::value::array& expected_vertex_weights =
+                expected_mesh_weights[mesh_index].as_array();
+            require(result.mesh_weights[mesh_index].size() ==
+                    expected_vertex_weights.size(),
+                "Wendland C2 result must preserve the Physics Vertex count.");
+
+            for (std::size_t vertex_index = 0u;
+                vertex_index < result.mesh_weights[mesh_index].size();
+                ++vertex_index)
+            {
+                const double actual = result.mesh_weights[mesh_index][vertex_index];
+                const double golden =
+                    expected_vertex_weights[vertex_index].as_number();
+                require(std::abs(actual - golden) <= 1.0e-12,
+                    "Mass-weighted Wendland C2 vertex weight must match the golden.");
+                normalized_weight_sum += actual;
+            }
+        }
+
+        require(std::abs(
+                normalized_weight_sum -
+                expected.at("normalized_weight_sum").as_number()) <= 1.0e-12,
+            "The independently normalized Event weights must sum to one across all selected Meshes.");
+
+        const test_json::value::array& fixed_vertices =
+            input.at("fixed_vertices").as_array();
+        const uint32_t fixed_mesh_index = static_cast<uint32_t>(
+            fixed_vertices[0].at("mesh_index").as_number());
+        const uint32_t fixed_vertex_index = static_cast<uint32_t>(
+            fixed_vertices[0].at("vertex_index").as_number());
+        require(result.mesh_weights[fixed_mesh_index][fixed_vertex_index] > 0.0,
+            "A Fixed Physics Vertex inside the support must still receive its Rest-Mass share.");
+
+        require(result.mesh_weights[0u][2u] == 0.0,
+            "A Physics Vertex exactly on the compact-support radius must receive zero weight.");
+
+        const skin_physics::asset::vec3 direction =
+            read_vec3(input.at("force_direction"));
+        const double force_magnitude =
+            input.at("force_magnitude").as_number();
+        const double impulse_magnitude =
+            input.at("impulse_magnitude").as_number();
+        double distributed_force_y = 0.0;
+        double distributed_impulse_y = 0.0;
+        for (const std::vector<double>& mesh_weights : result.mesh_weights)
+        {
+            for (double weight : mesh_weights)
+            {
+                distributed_force_y +=
+                    weight * force_magnitude * static_cast<double>(direction.y);
+                distributed_impulse_y +=
+                    weight * impulse_magnitude * static_cast<double>(direction.y);
+            }
+        }
+        require(std::abs(distributed_force_y - force_magnitude) <= 1.0e-10,
+            "Mass-weighted Force distribution must conserve the descriptor magnitude.");
+        require(std::abs(distributed_impulse_y - impulse_magnitude) <= 1.0e-10,
+            "Mass-weighted Impulse distribution must conserve the descriptor magnitude.");
+
+        std::vector<std::vector<skin_physics::asset::vec3>> moved_positions = positions;
+        moved_positions[0u][0u].x = 0.25f;
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            moved_mesh_views(mesh_views.size());
+        for (std::size_t mesh_index = 0u;
+            mesh_index < moved_mesh_views.size(); ++mesh_index)
+        {
+            moved_mesh_views[mesh_index].segment_start_positions =
+                &moved_positions[mesh_index];
+            moved_mesh_views[mesh_index].rest_lumped_masses =
+                &rest_masses[mesh_index];
+        }
+
+        skin_physics::runtime::detail::force_distribution_weights moved_result;
+        require(
+            skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                moved_mesh_views,
+                moved_result,
+                diagnostic),
+            "Wendland C2 distribution must be recomputable from the next Segment-start positions.");
+        require(std::abs(
+                moved_result.mesh_weights[0u][0u] - result.mesh_weights[0u][0u]) > 1.0e-6,
+            "Moving a Physics Vertex between Segments must refresh its spatial Falloff weight.");
+
+        std::vector<skin_physics::asset::vec3> outside_positions = {
+            { 3.0f, 0.0f, 0.0f }
+        };
+        std::vector<float> outside_masses = { 1.0f };
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            outside_mesh_views(1u);
+        outside_mesh_views[0u].segment_start_positions = &outside_positions;
+        outside_mesh_views[0u].rest_lumped_masses = &outside_masses;
+
+        skin_physics::runtime::detail::force_distribution_weights preserved_output;
+        preserved_output.mesh_weights = { { 0.25 } };
+        preserved_output.unnormalized_weight_sum = 7.0;
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                outside_mesh_views,
+                preserved_output,
+                diagnostic),
+            "No-support input must be rejected and reported.");
+        require(diagnostic.find("NO_FORCE_TARGET") != std::string::npos,
+            "No-support input must use the documented NO_FORCE_TARGET diagnostic.");
+        require(preserved_output.mesh_weights.size() == 1u &&
+            preserved_output.mesh_weights[0u].size() == 1u &&
+            preserved_output.mesh_weights[0u][0u] == 0.25 &&
+            preserved_output.unnormalized_weight_sum == 7.0,
+            "A failed distribution must leave the caller's previous output unchanged.");
+
+        std::vector<skin_physics::asset::vec3> tiny_mass_positions = {
+            { 0.0f, 0.0f, 0.0f }
+        };
+        std::vector<float> tiny_masses = { 1.0e-30f };
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            tiny_mass_views(1u);
+        tiny_mass_views[0u].segment_start_positions = &tiny_mass_positions;
+        tiny_mass_views[0u].rest_lumped_masses = &tiny_masses;
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                tiny_mass_views,
+                preserved_output,
+                diagnostic),
+            "A positive but sub-threshold SI mass support must be rejected consistently with the GPU minimum weight sum.");
+        require(diagnostic.find("NO_FORCE_TARGET") != std::string::npos &&
+            preserved_output.mesh_weights[0u][0u] == 0.25,
+            "A sub-threshold normalization sum must preserve output and report NO_FORCE_TARGET.");
+
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                0.0f,
+                mesh_views,
+                preserved_output,
+                diagnostic),
+            "A zero-radius Force / Impulse must be rejected.");
+        require(preserved_output.mesh_weights[0u][0u] == 0.25,
+            "Invalid radius must not partially overwrite a prior distribution.");
+
+        std::vector<float> mismatched_masses = { 1.0f };
+        std::vector<skin_physics::runtime::detail::force_distribution_mesh_view>
+            mismatched_views(1u);
+        mismatched_views[0u].segment_start_positions = &outside_positions;
+        mismatched_views[0u].rest_lumped_masses = &mismatched_masses;
+        require(
+            !skin_physics::runtime::detail::build_mass_weighted_wendland_c2_weights(
+                read_vec3(input.at("action_position")),
+                static_cast<float>(input.at("radius").as_number()),
+                mismatched_views,
+                preserved_output,
+                diagnostic),
+            "Position / Rest Mass count mismatch must be rejected.");
+    }
+
 }
 
 int run_simulation_tests()
@@ -1441,8 +6011,14 @@ int run_simulation_tests()
     std::cout << "[PASS] P03_WARP_RENDER_FEEDBACK\n";
     test_phase04_overload_and_callback_failure();
     std::cout << "[PASS] P04_FIXED_STEP_OVERLOAD\n";
+    test_phase04_pause_stop_and_reconfigure_preserve_accumulator();
+    std::cout << "[PASS] P04_STOP_PRESERVES_ACCUMULATOR\n";
     test_phase05_cloth_fixture_and_bend_gradient();
     std::cout << "[PASS] P05_CLOTH_GOLDEN_AND_BEND_GRADIENT\n";
+    test_phase05_cloth_stretch_color_reference();
+    std::cout << "[PASS] P05_CLOTH_STRETCH_COLOR_REFERENCE\n";
+    test_phase05_cloth_gpu_topology_packet();
+    std::cout << "[PASS] P05_CLOTH_GPU_TOPOLOGY_PACKET\n";
     test_phase05_cloth_compliance_monotonicity();
     std::cout << "[PASS] P05_CLOTH_COMPLIANCE\n";
     test_phase06_corotational_fem_golden();
@@ -1457,10 +6033,28 @@ int run_simulation_tests()
     std::cout << "[PASS] P08_CCD_INITIAL_REPAIR\n";
     test_phase09_animation_target_sampling();
     std::cout << "[PASS] P09_ANIMATION_TARGET\n";
+    test_phase09_animation_channel_span_coefficients();
+    std::cout << "[PASS] P09_ANIMATION_CHANNEL_SPAN_COEFFICIENTS\n";
+    test_phase09_animation_node_hierarchy_and_skin_matrix_derivatives();
+    std::cout << "[PASS] P09_ANIMATION_NODE_HIERARCHY_SKIN_MATRIX_DERIVATIVES\n";
+    test_phase09_immutable_gpu_trajectory_packet_builder();
+    std::cout << "[PASS] P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER\n";
+    test_phase09_kinematic_collider_trajectory();
+    std::cout << "[PASS] P09_KINEMATIC_COLLIDER_TRAJECTORY\n";
+    test_phase09_kinematic_collider_geometry_reference();
+    std::cout << "[PASS] P09_KINEMATIC_COLLIDER_GEOMETRY_REFERENCE\n";
+    test_phase09_physics_mesh_skinning_cpu_reference();
+    std::cout << "[PASS] P09_PHYSICS_MESH_SKINNING_CPU_REFERENCE\n";
     test_phase10_attribute_paint_and_serialization();
     std::cout << "[PASS] P10_ATTRIBUTE_PAINT\n";
     test_phase11_performance_profile_and_invariant_collector();
     std::cout << "[PASS] P11_PERFORMANCE_PROFILE\n";
+    test_phase12_correction_motion_ccd_reference();
+    std::cout << "[PASS] P12_CORRECTION_MOTION_CCD_REFERENCE\n";
+    test_phase12_correction_position_writer_epoch_pipeline();
+    std::cout << "[PASS] P12_CORRECTION_POSITION_WRITER_EPOCH\n";
+    test_runtime_mass_weighted_wendland_c2_reference();
+    std::cout << "[PASS] R1_FORCE_WENDLAND_C2_CPU_REFERENCE\n";
     require(run_environment_tests() == 0, "Environment tests failed.");
     require(run_gpu_solver_tests() == 0, "GPU solver tests failed.");
     std::cout << "SimulationCoreTests passed.\n";

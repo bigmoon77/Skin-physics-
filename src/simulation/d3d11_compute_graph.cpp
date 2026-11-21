@@ -9,6 +9,23 @@ namespace skin_physics::simulation
 {
     namespace
     {
+        bool same_resource(ID3D11Resource* left, ID3D11Resource* right)
+        {
+            if (left == nullptr || right == nullptr)
+            {
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<IUnknown> left_identity;
+            Microsoft::WRL::ComPtr<IUnknown> right_identity;
+            if (FAILED(left->QueryInterface(IID_PPV_ARGS(left_identity.GetAddressOf()))) ||
+                FAILED(right->QueryInterface(IID_PPV_ARGS(right_identity.GetAddressOf()))))
+            {
+                return false;
+            }
+            return left_identity.Get() == right_identity.Get();
+        }
+
         bool same_resource(ID3D11View* left, ID3D11View* right)
         {
             if (left == nullptr || right == nullptr)
@@ -20,19 +37,19 @@ namespace skin_physics::simulation
             Microsoft::WRL::ComPtr<ID3D11Resource> right_resource;
             left->GetResource(left_resource.GetAddressOf());
             right->GetResource(right_resource.GetAddressOf());
-            if (left_resource.Get() == nullptr || right_resource.Get() == nullptr)
+            return same_resource(left_resource.Get(), right_resource.Get());
+        }
+
+        bool same_resource(ID3D11Buffer* buffer, ID3D11View* view)
+        {
+            if (buffer == nullptr || view == nullptr)
             {
                 return false;
             }
 
-            Microsoft::WRL::ComPtr<IUnknown> left_identity;
-            Microsoft::WRL::ComPtr<IUnknown> right_identity;
-            if (FAILED(left_resource.As(&left_identity)) ||
-                FAILED(right_resource.As(&right_identity)))
-            {
-                return false;
-            }
-            return left_identity.Get() == right_identity.Get();
+            Microsoft::WRL::ComPtr<ID3D11Resource> view_resource;
+            view->GetResource(view_resource.GetAddressOf());
+            return same_resource(buffer, view_resource.Get());
         }
 
         void unbind_compute_resources(ID3D11DeviceContext* context)
@@ -69,12 +86,38 @@ namespace skin_physics::simulation
             diagnostic = "Compute pass requires a non-null shader.";
             return false;
         }
-        if (description.group_count_x == 0 ||
-            description.group_count_y == 0 ||
-            description.group_count_z == 0 ||
-            description.group_count_x > D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION ||
-            description.group_count_y > D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION ||
-            description.group_count_z > D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
+        if (description.indirect_arguments == nullptr &&
+            description.indirect_argument_offset != 0)
+        {
+            diagnostic = "A DispatchIndirect argument offset requires an argument buffer.";
+            return false;
+        }
+        if (description.indirect_arguments != nullptr)
+        {
+            D3D11_BUFFER_DESC argument_description = {};
+            description.indirect_arguments->GetDesc(&argument_description);
+            const UINT argument_size = sizeof(UINT) * 3u;
+            if ((argument_description.MiscFlags &
+                    D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS) == 0)
+            {
+                diagnostic = "DispatchIndirect argument buffer must use D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.";
+                return false;
+            }
+            if ((description.indirect_argument_offset & 3u) != 0u ||
+                description.indirect_argument_offset > argument_description.ByteWidth ||
+                argument_description.ByteWidth - description.indirect_argument_offset < argument_size)
+            {
+                diagnostic = "DispatchIndirect requires a DWORD-aligned offset with twelve readable argument bytes.";
+                return false;
+            }
+        }
+        if (description.indirect_arguments == nullptr &&
+            (description.group_count_x == 0 ||
+                description.group_count_y == 0 ||
+                description.group_count_z == 0 ||
+                description.group_count_x > D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION ||
+                description.group_count_y > D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION ||
+                description.group_count_z > D3D11_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION))
         {
             diagnostic = "Compute dispatch group counts are outside the D3D11 limits.";
             return false;
@@ -143,9 +186,40 @@ namespace skin_physics::simulation
             }
         }
 
+        if (description.indirect_arguments != nullptr)
+        {
+            for (ID3D11View* view : srv_views)
+            {
+                if (same_resource(description.indirect_arguments, view))
+                {
+                    diagnostic = "DispatchIndirect arguments cannot alias a resource bound as SRV in the same pass.";
+                    return false;
+                }
+            }
+            for (ID3D11View* view : uav_views)
+            {
+                if (same_resource(description.indirect_arguments, view))
+                {
+                    diagnostic = "DispatchIndirect arguments must be unbound from UAV before DispatchIndirect.";
+                    return false;
+                }
+            }
+            for (const compute_constant_buffer_binding& binding : description.constant_buffers)
+            {
+                if (same_resource(description.indirect_arguments,
+                        static_cast<ID3D11Resource*>(binding.buffer)))
+                {
+                    diagnostic = "DispatchIndirect arguments cannot alias a constant buffer in the same pass.";
+                    return false;
+                }
+            }
+        }
+
         stored_pass pass;
         pass.name = description.name;
         pass.shader = description.shader;
+        pass.indirect_arguments = description.indirect_arguments;
+        pass.indirect_argument_offset = description.indirect_argument_offset;
         pass.group_count_x = description.group_count_x;
         pass.group_count_y = description.group_count_y;
         pass.group_count_z = description.group_count_z;
@@ -220,8 +294,19 @@ namespace skin_physics::simulation
             }
 
             immediate_context->CSSetShader(pass.shader.Get(), nullptr, 0);
-            immediate_context->Dispatch(
-                pass.group_count_x, pass.group_count_y, pass.group_count_z);
+            if (pass.indirect_arguments)
+            {
+                // The pass preamble unbinds every CS SRV / UAV slot, including a
+                // DispatchIndirect buffer written by the immediately preceding pass.
+                immediate_context->DispatchIndirect(
+                    pass.indirect_arguments.Get(),
+                    pass.indirect_argument_offset);
+            }
+            else
+            {
+                immediate_context->Dispatch(
+                    pass.group_count_x, pass.group_count_y, pass.group_count_z);
+            }
             ++result.executed_pass_count;
             unbind_compute_resources(immediate_context);
         }

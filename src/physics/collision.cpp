@@ -71,6 +71,32 @@ namespace skin_physics::physics
             return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
         }
 
+        vec3 rotate_vector(const asset::vec4& rotation, const vec3& value)
+        {
+            const vec3 quaternion_vector = {
+                rotation.x, rotation.y, rotation.z
+            };
+            const vec3 twice_cross = multiply(
+                cross(quaternion_vector, value), 2.0f);
+            return add(
+                add(value, multiply(twice_cross, rotation.w)),
+                cross(quaternion_vector, twice_cross));
+        }
+
+        float outward_lower_bound(double value)
+        {
+            const float rounded = static_cast<float>(value);
+            return std::nextafter(
+                rounded, -std::numeric_limits<float>::infinity());
+        }
+
+        float outward_upper_bound(double value)
+        {
+            const float rounded = static_cast<float>(value);
+            return std::nextafter(
+                rounded, std::numeric_limits<float>::infinity());
+        }
+
         bool closest_point_triangle(
             const vec3& point,
             const std::array<vec3, 3>& triangle,
@@ -294,6 +320,151 @@ namespace skin_physics::physics
         }
     }
 
+
+    kinematic_collider_geometry_result evaluate_kinematic_collider_geometry(
+        const asset::mesh& collision_mesh,
+        const kinematic_collider_gpu_record& span,
+        double span_local_u)
+    {
+        kinematic_collider_geometry_result result;
+        if (collision_mesh.vertices.empty() ||
+            collision_mesh.indices.empty() ||
+            collision_mesh.indices.size() % 3u != 0u)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider Mesh requires finite vertices and a non-empty triangle index list.";
+            return result;
+        }
+
+        for (uint32_t index : collision_mesh.indices)
+        {
+            if (index >= collision_mesh.vertices.size())
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider Mesh contains an out-of-range triangle index.";
+                return result;
+            }
+        }
+
+        if (span.translation_start.w != 1.0f ||
+            span.translation_end.w != 1.0f)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider Translation endpoints must use homogeneous w = 1.";
+            return result;
+        }
+
+        const kinematic_collider_sample_result start =
+            evaluate_kinematic_collider_span(span, 0.0, {});
+        const kinematic_collider_sample_result end =
+            evaluate_kinematic_collider_span(span, 1.0, {});
+        if (!start.success || !end.success)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic = !start.success
+                ? "Kinematic Collider Span start is invalid: " + start.message
+                : "Kinematic Collider Span end is invalid: " + end.message;
+            return result;
+        }
+
+        const double radius = span.maximum_local_radius;
+        const double lower_x =
+            std::min<double>(span.translation_start.x, span.translation_end.x) - radius;
+        const double lower_y =
+            std::min<double>(span.translation_start.y, span.translation_end.y) - radius;
+        const double lower_z =
+            std::min<double>(span.translation_start.z, span.translation_end.z) - radius;
+        const double upper_x =
+            std::max<double>(span.translation_start.x, span.translation_end.x) + radius;
+        const double upper_y =
+            std::max<double>(span.translation_start.y, span.translation_end.y) + radius;
+        const double upper_z =
+            std::max<double>(span.translation_start.z, span.translation_end.z) + radius;
+        const double float_limit =
+            static_cast<double>(std::numeric_limits<float>::max());
+        if (!std::isfinite(lower_x) || !std::isfinite(lower_y) ||
+            !std::isfinite(lower_z) || !std::isfinite(upper_x) ||
+            !std::isfinite(upper_y) || !std::isfinite(upper_z) ||
+            lower_x < -float_limit || lower_y < -float_limit ||
+            lower_z < -float_limit || upper_x > float_limit ||
+            upper_y > float_limit || upper_z > float_limit)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider swept bounds exceed the finite float AABB range.";
+            return result;
+        }
+
+        result.swept_bounds.minimum = {
+            outward_lower_bound(lower_x),
+            outward_lower_bound(lower_y),
+            outward_lower_bound(lower_z)
+        };
+        result.swept_bounds.maximum = {
+            outward_upper_bound(upper_x),
+            outward_upper_bound(upper_y),
+            outward_upper_bound(upper_z)
+        };
+        if (!aabb_valid(result.swept_bounds))
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider swept AABB could not be represented conservatively.";
+            return result;
+        }
+
+        result.world_vertices.reserve(collision_mesh.vertices.size());
+        result.world_vertex_velocities.reserve(collision_mesh.vertices.size());
+        for (const asset::vertex& vertex : collision_mesh.vertices)
+        {
+            if (!finite(vertex.position))
+            {
+                result.world_vertices.clear();
+                result.world_vertex_velocities.clear();
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider Mesh contains a non-finite local vertex.";
+                return result;
+            }
+
+            const kinematic_collider_sample_result sample =
+                evaluate_kinematic_collider_span(
+                    span, span_local_u, vertex.position);
+            if (!sample.success)
+            {
+                result.world_vertices.clear();
+                result.world_vertex_velocities.clear();
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider vertex exceeds its certified trajectory domain: " +
+                    sample.message;
+                return result;
+            }
+
+            const vec3 world_position = add(
+                sample.value.translation,
+                rotate_vector(sample.value.rotation, vertex.position));
+            if (!finite(world_position))
+            {
+                result.world_vertices.clear();
+                result.world_vertex_velocities.clear();
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Kinematic Collider Mesh evaluation produced a non-finite world vertex.";
+                return result;
+            }
+            result.world_vertices.push_back(world_position);
+            result.world_vertex_velocities.push_back(
+                sample.value.contact_point_velocity);
+        }
+
+        result.success = true;
+        return result;
+    }
+
     vertex_triangle_contact find_vertex_triangle_contact(
         const vec3& point,
         const std::array<vec3, 3>& triangle,
@@ -332,6 +503,54 @@ namespace skin_physics::physics
         result.penetration_depth = std::max(0.0f, point_radius - result.distance);
         result.hit = result.penetration_depth > 0.0f;
         result.valid = finite(result.normal) && length_squared(result.normal) > minimum_length_squared;
+        return result;
+    }
+
+
+    moving_vertex_triangle_contact_result find_moving_vertex_triangle_contact(
+        const vec3& point,
+        const vec3& point_velocity,
+        const std::array<vec3, 3>& triangle,
+        const std::array<vec3, 3>& triangle_vertex_velocities,
+        float point_radius)
+    {
+        moving_vertex_triangle_contact_result result;
+        if (!finite(point_velocity) ||
+            !finite(triangle_vertex_velocities[0]) ||
+            !finite(triangle_vertex_velocities[1]) ||
+            !finite(triangle_vertex_velocities[2]))
+        {
+            return result;
+        }
+
+        result.contact = find_vertex_triangle_contact(
+            point, triangle, point_radius);
+        if (!result.contact.valid)
+        {
+            return result;
+        }
+
+        result.point_velocity = point_velocity;
+        result.triangle_velocity = add(
+            add(
+                multiply(
+                    triangle_vertex_velocities[0],
+                    result.contact.barycentric[0]),
+                multiply(
+                    triangle_vertex_velocities[1],
+                    result.contact.barycentric[1])),
+            multiply(
+                triangle_vertex_velocities[2],
+                result.contact.barycentric[2]));
+        result.relative_velocity = subtract(
+            result.point_velocity, result.triangle_velocity);
+        if (!finite(result.triangle_velocity) ||
+            !finite(result.relative_velocity))
+        {
+            return moving_vertex_triangle_contact_result{};
+        }
+
+        result.success = true;
         return result;
     }
 
@@ -457,10 +676,500 @@ namespace skin_physics::physics
         return result;
     }
 
+
+    moving_edge_edge_contact_result find_moving_edge_edge_contact(
+        const std::array<vec3, 2>& edge_a,
+        const std::array<vec3, 2>& edge_a_velocities,
+        const std::array<vec3, 2>& edge_b,
+        const std::array<vec3, 2>& edge_b_velocities,
+        float combined_thickness)
+    {
+        moving_edge_edge_contact_result result;
+        if (!finite(edge_a_velocities[0]) ||
+            !finite(edge_a_velocities[1]) ||
+            !finite(edge_b_velocities[0]) ||
+            !finite(edge_b_velocities[1]))
+        {
+            return result;
+        }
+
+        result.contact = find_edge_edge_contact(
+            edge_a, edge_b, combined_thickness);
+        if (!result.contact.valid)
+        {
+            return result;
+        }
+
+        const float parameter_a = result.contact.parameter_a;
+        const float parameter_b = result.contact.parameter_b;
+        result.edge_a_velocity = add(
+            multiply(edge_a_velocities[0], 1.0f - parameter_a),
+            multiply(edge_a_velocities[1], parameter_a));
+        result.edge_b_velocity = add(
+            multiply(edge_b_velocities[0], 1.0f - parameter_b),
+            multiply(edge_b_velocities[1], parameter_b));
+        result.relative_velocity = subtract(
+            result.edge_a_velocity, result.edge_b_velocity);
+        if (!finite(result.edge_a_velocity) ||
+            !finite(result.edge_b_velocity) ||
+            !finite(result.relative_velocity))
+        {
+            return moving_edge_edge_contact_result{};
+        }
+
+        result.success = true;
+        return result;
+    }
+
+
+    kinematic_collider_contact_set_result
+    generate_kinematic_collider_vertex_triangle_contacts(
+        const std::vector<vec3>& vertex_positions,
+        const std::vector<vec3>& vertex_velocities,
+        const std::vector<float>& vertex_radii,
+        const asset::mesh& collider_mesh,
+        const kinematic_collider_geometry_result& collider_geometry,
+        float collider_thickness,
+        std::size_t contact_capacity)
+    {
+        kinematic_collider_contact_set_result result;
+        const std::size_t maximum_index =
+            static_cast<std::size_t>(std::numeric_limits<uint32_t>::max());
+        if (vertex_positions.size() != vertex_velocities.size() ||
+            vertex_positions.size() != vertex_radii.size() ||
+            vertex_positions.size() > maximum_index ||
+            collider_mesh.vertices.empty() ||
+            collider_mesh.indices.empty() ||
+            collider_mesh.indices.size() % 3u != 0u ||
+            collider_mesh.indices.size() / 3u > maximum_index ||
+            collider_geometry.world_vertices.size() !=
+                collider_mesh.vertices.size() ||
+            collider_geometry.world_vertex_velocities.size() !=
+                collider_mesh.vertices.size() ||
+            !collider_geometry.success ||
+            !std::isfinite(collider_thickness) ||
+            collider_thickness < 0.0f)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Moving Collider VT contact generation requires matching finite vertex arrays, a valid indexed Collider Mesh / geometry sample and non-negative thickness.";
+            return result;
+        }
+
+        for (std::size_t index = 0u; index < vertex_positions.size(); ++index)
+        {
+            if (!finite(vertex_positions[index]) ||
+                !finite(vertex_velocities[index]) ||
+                !std::isfinite(vertex_radii[index]) ||
+                vertex_radii[index] < 0.0f)
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact input contains a non-finite Vertex Position / Velocity or invalid radius.";
+                return result;
+            }
+        }
+
+        for (uint32_t index : collider_mesh.indices)
+        {
+            if (index >= collider_geometry.world_vertices.size() ||
+                index >= collider_geometry.world_vertex_velocities.size())
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact input contains an out-of-range Collider Mesh index.";
+                return result;
+            }
+        }
+
+        for (const vec3& position : collider_geometry.world_vertices)
+        {
+            if (!finite(position))
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact geometry contains a non-finite world Vertex.";
+                return result;
+            }
+        }
+        for (const vec3& velocity : collider_geometry.world_vertex_velocities)
+        {
+            if (!finite(velocity))
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider VT contact geometry contains a non-finite world Vertex Velocity.";
+                return result;
+            }
+        }
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < vertex_positions.size(); ++vertex_index)
+        {
+            for (std::size_t triangle_index = 0u;
+                triangle_index < collider_mesh.indices.size() / 3u;
+                ++triangle_index)
+            {
+                const std::size_t first_index = triangle_index * 3u;
+                const uint32_t index0 = collider_mesh.indices[first_index];
+                const uint32_t index1 = collider_mesh.indices[first_index + 1u];
+                const uint32_t index2 = collider_mesh.indices[first_index + 2u];
+                const std::array<vec3, 3> triangle = {
+                    collider_geometry.world_vertices[index0],
+                    collider_geometry.world_vertices[index1],
+                    collider_geometry.world_vertices[index2]
+                };
+                const std::array<vec3, 3> triangle_velocities = {
+                    collider_geometry.world_vertex_velocities[index0],
+                    collider_geometry.world_vertex_velocities[index1],
+                    collider_geometry.world_vertex_velocities[index2]
+                };
+                const float combined_radius =
+                    vertex_radii[vertex_index] + collider_thickness;
+                if (!std::isfinite(combined_radius))
+                {
+                    result.error = collision_error::invalid_geometry;
+                    result.diagnostic =
+                        "Moving Collider VT combined contact radius overflowed float range.";
+                    return result;
+                }
+
+                const moving_vertex_triangle_contact_result contact =
+                    find_moving_vertex_triangle_contact(
+                        vertex_positions[vertex_index],
+                        vertex_velocities[vertex_index],
+                        triangle,
+                        triangle_velocities,
+                        combined_radius);
+                if (!contact.success)
+                {
+                    result.error = collision_error::invalid_geometry;
+                    result.diagnostic =
+                        "Moving Collider VT narrowphase encountered a degenerate Triangle or invalid contact velocity.";
+                    result.contacts.clear();
+                    return result;
+                }
+                if (!contact.contact.hit)
+                {
+                    continue;
+                }
+
+                if (result.required_contacts ==
+                    std::numeric_limits<std::size_t>::max())
+                {
+                    result.error = collision_error::candidate_capacity_overflow;
+                    result.diagnostic =
+                        "Moving Collider VT contact count overflowed size_t.";
+                    result.contacts.clear();
+                    return result;
+                }
+                ++result.required_contacts;
+                if (result.required_contacts > contact_capacity)
+                {
+                    result.overflow = true;
+                    result.error = collision_error::candidate_capacity_overflow;
+                    result.diagnostic =
+                        "Moving Collider VT contact capacity is insufficient; the contact set was rejected atomically.";
+                    result.contacts.clear();
+                    return result;
+                }
+
+                kinematic_collider_vertex_triangle_contact candidate;
+                candidate.vertex_index =
+                    static_cast<uint32_t>(vertex_index);
+                candidate.triangle_index =
+                    static_cast<uint32_t>(triangle_index);
+                candidate.value = contact;
+                result.contacts.push_back(std::move(candidate));
+            }
+        }
+
+        result.success = true;
+        return result;
+    }
+
+
+    kinematic_collider_edge_edge_contact_set_result
+    generate_kinematic_collider_edge_edge_contacts(
+        const std::vector<vec3>& vertex_positions,
+        const std::vector<vec3>& vertex_velocities,
+        const std::vector<std::array<uint32_t, 2>>& dynamic_edges,
+        const asset::mesh& collider_mesh,
+        const kinematic_collider_geometry_result& collider_geometry,
+        float combined_thickness,
+        std::size_t contact_capacity)
+    {
+        kinematic_collider_edge_edge_contact_set_result result;
+        const std::size_t maximum_index =
+            static_cast<std::size_t>(std::numeric_limits<uint32_t>::max());
+        if (vertex_positions.size() != vertex_velocities.size() ||
+            vertex_positions.size() > maximum_index ||
+            dynamic_edges.size() > maximum_index ||
+            collider_mesh.vertices.empty() ||
+            collider_mesh.indices.empty() ||
+            collider_mesh.indices.size() % 3u != 0u ||
+            collider_mesh.indices.size() / 3u > maximum_index ||
+            collider_geometry.world_vertices.size() !=
+                collider_mesh.vertices.size() ||
+            collider_geometry.world_vertex_velocities.size() !=
+                collider_mesh.vertices.size() ||
+            !collider_geometry.success ||
+            !std::isfinite(combined_thickness) ||
+            combined_thickness < 0.0f)
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Moving Collider EE contact generation requires matching finite vertex arrays, valid indexed Collider geometry and non-negative thickness.";
+            return result;
+        }
+
+        for (std::size_t index = 0u; index < vertex_positions.size(); ++index)
+        {
+            if (!finite(vertex_positions[index]) ||
+                !finite(vertex_velocities[index]))
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE input contains a non-finite Dynamic Vertex Position or Velocity.";
+                return result;
+            }
+        }
+        for (std::size_t index = 0u;
+            index < collider_geometry.world_vertices.size(); ++index)
+        {
+            if (!finite(collider_geometry.world_vertices[index]) ||
+                !finite(collider_geometry.world_vertex_velocities[index]))
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE geometry contains a non-finite world Vertex or Velocity.";
+                return result;
+            }
+        }
+
+        using edge_key = std::array<uint32_t, 2>;
+        struct indexed_edge
+        {
+            edge_key key = {};
+            uint32_t source_index = asset::invalid_index;
+        };
+
+        std::vector<indexed_edge> ordered_dynamic_edges;
+        ordered_dynamic_edges.reserve(dynamic_edges.size());
+        for (std::size_t edge_index = 0u;
+            edge_index < dynamic_edges.size(); ++edge_index)
+        {
+            const uint32_t index_a = dynamic_edges[edge_index][0u];
+            const uint32_t index_b = dynamic_edges[edge_index][1u];
+            if (index_a >= vertex_positions.size() ||
+                index_b >= vertex_positions.size() ||
+                index_a == index_b)
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE Dynamic Edge contains an out-of-range or degenerate endpoint pair.";
+                return result;
+            }
+
+            if (length_squared(subtract(
+                    vertex_positions[index_b], vertex_positions[index_a])) <=
+                minimum_length_squared)
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE Dynamic Edge has coincident endpoint positions.";
+                return result;
+            }
+
+            const edge_key key = {
+                std::min(index_a, index_b),
+                std::max(index_a, index_b)
+            };
+            ordered_dynamic_edges.push_back({
+                key, static_cast<uint32_t>(edge_index)
+            });
+        }
+
+        std::sort(
+            ordered_dynamic_edges.begin(),
+            ordered_dynamic_edges.end(),
+            [](const indexed_edge& left, const indexed_edge& right)
+            {
+                if (left.key != right.key)
+                {
+                    return left.key < right.key;
+                }
+                return left.source_index < right.source_index;
+            });
+        ordered_dynamic_edges.erase(
+            std::unique(
+                ordered_dynamic_edges.begin(),
+                ordered_dynamic_edges.end(),
+                [](const indexed_edge& left, const indexed_edge& right)
+                {
+                    return left.key == right.key;
+                }),
+            ordered_dynamic_edges.end());
+
+        std::set<edge_key> collider_edge_keys;
+        for (uint32_t index : collider_mesh.indices)
+        {
+            if (index >= collider_geometry.world_vertices.size())
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE Mesh contains an out-of-range indexed Vertex.";
+                return result;
+            }
+        }
+        for (std::size_t triangle_index = 0u;
+            triangle_index < collider_mesh.indices.size() / 3u;
+            ++triangle_index)
+        {
+            const std::size_t first = triangle_index * 3u;
+            const uint32_t triangle_indices[3] = {
+                collider_mesh.indices[first],
+                collider_mesh.indices[first + 1u],
+                collider_mesh.indices[first + 2u]
+            };
+            const vec3 triangle_edge_a = subtract(
+                collider_geometry.world_vertices[triangle_indices[1u]],
+                collider_geometry.world_vertices[triangle_indices[0u]]);
+            const vec3 triangle_edge_b = subtract(
+                collider_geometry.world_vertices[triangle_indices[2u]],
+                collider_geometry.world_vertices[triangle_indices[0u]]);
+            if (length_squared(cross(triangle_edge_a, triangle_edge_b)) <=
+                minimum_length_squared)
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE Mesh contains a degenerate Triangle.";
+                return result;
+            }
+            for (std::size_t edge = 0u; edge < 3u; ++edge)
+            {
+                const uint32_t index_a = triangle_indices[edge];
+                const uint32_t index_b = triangle_indices[(edge + 1u) % 3u];
+                if (index_a == index_b)
+                {
+                    result.error = collision_error::invalid_geometry;
+                    result.diagnostic =
+                        "Moving Collider EE Mesh contains a degenerate Triangle edge.";
+                    return result;
+                }
+                collider_edge_keys.insert({
+                    std::min(index_a, index_b),
+                    std::max(index_a, index_b)
+                });
+            }
+        }
+
+        std::vector<edge_key> collider_edges(
+            collider_edge_keys.begin(), collider_edge_keys.end());
+        for (const indexed_edge& dynamic_edge : ordered_dynamic_edges)
+        {
+            const std::array<vec3, 2> positions = {
+                vertex_positions[dynamic_edge.key[0u]],
+                vertex_positions[dynamic_edge.key[1u]]
+            };
+            const std::array<vec3, 2> velocities = {
+                vertex_velocities[dynamic_edge.key[0u]],
+                vertex_velocities[dynamic_edge.key[1u]]
+            };
+
+            for (std::size_t collider_edge_index = 0u;
+                collider_edge_index < collider_edges.size();
+                ++collider_edge_index)
+            {
+                const edge_key& collider_edge = collider_edges[collider_edge_index];
+                const std::array<vec3, 2> collider_positions = {
+                    collider_geometry.world_vertices[collider_edge[0u]],
+                    collider_geometry.world_vertices[collider_edge[1u]]
+                };
+                const std::array<vec3, 2> collider_velocities = {
+                    collider_geometry.world_vertex_velocities[collider_edge[0u]],
+                    collider_geometry.world_vertex_velocities[collider_edge[1u]]
+                };
+
+                const moving_edge_edge_contact_result contact =
+                    find_moving_edge_edge_contact(
+                        positions, velocities,
+                        collider_positions, collider_velocities,
+                        combined_thickness);
+                if (!contact.success)
+                {
+                    result.error = collision_error::invalid_geometry;
+                    result.diagnostic =
+                        "Moving Collider EE narrowphase encountered a degenerate Edge or invalid contact velocity.";
+                    result.contacts.clear();
+                    return result;
+                }
+                if (!contact.contact.hit)
+                {
+                    continue;
+                }
+
+                if (result.required_contacts ==
+                    std::numeric_limits<std::size_t>::max())
+                {
+                    result.error = collision_error::candidate_capacity_overflow;
+                    result.diagnostic =
+                        "Moving Collider EE contact count overflowed size_t.";
+                    result.contacts.clear();
+                    return result;
+                }
+                ++result.required_contacts;
+                if (result.required_contacts > contact_capacity)
+                {
+                    result.overflow = true;
+                    result.error = collision_error::candidate_capacity_overflow;
+                    result.diagnostic =
+                        "Moving Collider EE contact capacity is insufficient; the contact set was rejected atomically.";
+                    result.contacts.clear();
+                    return result;
+                }
+
+                kinematic_collider_edge_edge_contact candidate;
+                candidate.dynamic_edge_index = dynamic_edge.source_index;
+                candidate.collider_edge_index =
+                    static_cast<uint32_t>(collider_edge_index);
+                candidate.value = contact;
+                result.contacts.push_back(std::move(candidate));
+            }
+        }
+
+        result.success = true;
+        return result;
+    }
+
+
+    kinematic_collider_broadphase_primitive_result
+    make_kinematic_collider_broadphase_primitive(
+        uint32_t collider_mesh_id,
+        const kinematic_collider_geometry_result& geometry)
+    {
+        kinematic_collider_broadphase_primitive_result result;
+        if (collider_mesh_id == asset::invalid_index ||
+            !geometry.success ||
+            !aabb_valid(geometry.swept_bounds))
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider Broadphase Primitive requires a valid Mesh ID and a successful finite swept-geometry result.";
+            return result;
+        }
+
+        result.value.mesh_id = collider_mesh_id;
+        result.value.bounds = geometry.swept_bounds;
+        result.success = true;
+        return result;
+    }
+
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
-        const broadphase_settings& settings)
+        const broadphase_settings& settings,
+        const broadphase_candidate_filter& candidate_filter)
     {
         broadphase_result result;
         if (!std::isfinite(settings.cell_size) || settings.cell_size <= 0.0f ||
@@ -570,6 +1279,11 @@ namespace skin_physics::physics
 
                     const broadphase_primitive& first = primitives[first_id];
                     const broadphase_primitive& second = primitives[second_id];
+                    if (candidate_filter &&
+                        !candidate_filter(first_id, second_id))
+                    {
+                        continue;
+                    }
                     if (!mesh_pair_allowed(first.mesh_id, second.mesh_id,
                         mesh_pairs, settings.self_collision_enabled))
                     {

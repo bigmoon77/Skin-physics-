@@ -3,13 +3,24 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "skin_physics/asset/types.hpp"
+#include "skin_physics/physics/animation_track.hpp"
 
 namespace skin_physics::physics
 {
+    enum class collision_error : uint8_t
+    {
+        none,
+        invalid_geometry,
+        invalid_settings,
+        cell_capacity_overflow,
+        candidate_capacity_overflow
+    };
+
     struct vertex_triangle_contact
     {
         asset::vec3 closest_point;
@@ -29,6 +40,15 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    struct moving_vertex_triangle_contact_result
+    {
+        vertex_triangle_contact contact;
+        asset::vec3 point_velocity;
+        asset::vec3 triangle_velocity;
+        asset::vec3 relative_velocity;
+        bool success = false;
+    };
+
     struct edge_edge_contact
     {
         asset::vec3 closest_point_a;
@@ -42,13 +62,47 @@ namespace skin_physics::physics
         bool valid = false;
     };
 
-    enum class collision_error : uint8_t
+    struct moving_edge_edge_contact_result
     {
-        none,
-        invalid_geometry,
-        invalid_settings,
-        cell_capacity_overflow,
-        candidate_capacity_overflow
+        edge_edge_contact contact;
+        asset::vec3 edge_a_velocity;
+        asset::vec3 edge_b_velocity;
+        asset::vec3 relative_velocity;
+        bool success = false;
+    };
+
+    struct kinematic_collider_vertex_triangle_contact
+    {
+        uint32_t vertex_index = asset::invalid_index;
+        uint32_t triangle_index = asset::invalid_index;
+        moving_vertex_triangle_contact_result value;
+    };
+
+    struct kinematic_collider_contact_set_result
+    {
+        std::vector<kinematic_collider_vertex_triangle_contact> contacts;
+        std::size_t required_contacts = 0u;
+        collision_error error = collision_error::none;
+        std::string diagnostic;
+        bool overflow = false;
+        bool success = false;
+    };
+
+    struct kinematic_collider_edge_edge_contact
+    {
+        uint32_t dynamic_edge_index = asset::invalid_index;
+        uint32_t collider_edge_index = asset::invalid_index;
+        moving_edge_edge_contact_result value;
+    };
+
+    struct kinematic_collider_edge_edge_contact_set_result
+    {
+        std::vector<kinematic_collider_edge_edge_contact> contacts;
+        std::size_t required_contacts = 0u;
+        collision_error error = collision_error::none;
+        std::string diagnostic;
+        bool overflow = false;
+        bool success = false;
     };
 
     struct collision_diagnostic
@@ -64,10 +118,37 @@ namespace skin_physics::physics
         asset::vec3 maximum;
     };
 
+    struct kinematic_collider_geometry_result
+    {
+        std::vector<asset::vec3> world_vertices;
+        std::vector<asset::vec3> world_vertex_velocities;
+        collision_aabb swept_bounds;
+        collision_error error = collision_error::none;
+        std::string diagnostic;
+        bool success = false;
+    };
+
+    // CPU collision oracle for one immutable Kinematic Collider Span. The
+    // swept AABB uses the certified local bounding sphere and the complete
+    // endpoint translation segment, so it remains conservative for arbitrary
+    // rotation throughout the Span. World vertices are evaluated at u.
+    kinematic_collider_geometry_result evaluate_kinematic_collider_geometry(
+        const asset::mesh& collision_mesh,
+        const kinematic_collider_gpu_record& span,
+        double span_local_u);
+
     struct broadphase_primitive
     {
         uint32_t mesh_id = 0;
         collision_aabb bounds;
+    };
+
+    struct kinematic_collider_broadphase_primitive_result
+    {
+        broadphase_primitive value;
+        collision_error error = collision_error::none;
+        std::string diagnostic;
+        bool success = false;
     };
 
     struct broadphase_mesh_pair
@@ -128,6 +209,16 @@ namespace skin_physics::physics
         const std::array<asset::vec3, 3>& triangle,
         float point_radius);
 
+    // Evaluates a discrete VT contact against a moving triangle. The triangle
+    // contact velocity is interpolated with the exact contact barycentrics;
+    // relative_velocity is point_velocity - triangle_velocity.
+    moving_vertex_triangle_contact_result find_moving_vertex_triangle_contact(
+        const asset::vec3& point,
+        const asset::vec3& point_velocity,
+        const std::array<asset::vec3, 3>& triangle,
+        const std::array<asset::vec3, 3>& triangle_vertex_velocities,
+        float point_radius);
+
     vertex_triangle_solve_result solve_vertex_triangle_contact(
         const vertex_triangle_contact& contact,
         const std::array<asset::vec3, 4>& positions,
@@ -140,10 +231,51 @@ namespace skin_physics::physics
         const std::array<asset::vec3, 2>& edge_b,
         float combined_thickness);
 
+    // Evaluates an EE contact between two moving edges. Endpoint velocities
+    // are interpolated at the closest-segment parameters from the contact.
+    moving_edge_edge_contact_result find_moving_edge_edge_contact(
+        const std::array<asset::vec3, 2>& edge_a,
+        const std::array<asset::vec3, 2>& edge_a_velocities,
+        const std::array<asset::vec3, 2>& edge_b,
+        const std::array<asset::vec3, 2>& edge_b_velocities,
+        float combined_thickness);
+
+    // Deterministic CPU reference for Dynamic Vertex vs moving Kinematic
+    // Collider Triangle contacts. Capacity overflow is atomic: no partial
+    // contact list is returned.
+    kinematic_collider_contact_set_result generate_kinematic_collider_vertex_triangle_contacts(
+        const std::vector<asset::vec3>& vertex_positions,
+        const std::vector<asset::vec3>& vertex_velocities,
+        const std::vector<float>& vertex_radii,
+        const asset::mesh& collider_mesh,
+        const kinematic_collider_geometry_result& collider_geometry,
+        float collider_thickness,
+        std::size_t contact_capacity);
+
+    // Deterministic CPU reference for Dynamic Edge vs moving Kinematic
+    // Collider Edge contacts. Collider triangle edges are deduplicated and
+    // sorted by endpoint indices before candidate generation.
+    kinematic_collider_edge_edge_contact_set_result generate_kinematic_collider_edge_edge_contacts(
+        const std::vector<asset::vec3>& vertex_positions,
+        const std::vector<asset::vec3>& vertex_velocities,
+        const std::vector<std::array<uint32_t, 2>>& dynamic_edges,
+        const asset::mesh& collider_mesh,
+        const kinematic_collider_geometry_result& collider_geometry,
+        float combined_thickness,
+        std::size_t contact_capacity);
+
+    using broadphase_candidate_filter =
+        std::function<bool(uint32_t, uint32_t)>;
+
+    kinematic_collider_broadphase_primitive_result make_kinematic_collider_broadphase_primitive(
+        uint32_t collider_mesh_id,
+        const kinematic_collider_geometry_result& geometry);
+
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
-        const broadphase_settings& settings = {});
+        const broadphase_settings& settings = {},
+        const broadphase_candidate_filter& candidate_filter = {});
 
     capacity_check_result check_candidate_capacity(
         std::size_t required_count,

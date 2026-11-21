@@ -130,12 +130,14 @@
         "P02_TWO_TET",
         "P02_CENTER_STAR",
         "P02_CACHE",
-        "P02_TETRAHEDRALIZATION_RESOLUTION"
+        "P02_TETRAHEDRALIZATION_RESOLUTION",
+        "P02_PHYSICS_ATTRIBUTE_HARMONIC"
       ],
       "unimplemented": [
         "Running a version-pinned fTetWild executable against representative production surfaces in CI",
         "Target count is converted into a deterministic characteristic edge length; actual generated count remains fTetWild-version dependent and is recorded",
-        "External binary version detection and production-scale generator calibration"
+        "External binary version detection and production-scale generator calibration",
+        "Persisting transferred Physics Attribute Paint channels inside the binary physics asset cache"
       ],
       "automated_acceptance_tests": [
         "T13",
@@ -233,6 +235,7 @@
       "automated_cases": [
         "P04_FIXED_STEP",
         "P04_FIXED_STEP_OVERLOAD",
+        "P04_STOP_PRESERVES_ACCUMULATOR",
         "P04_SCENARIO_JSON_ROUND_TRIP",
         "P04_RUN_RESULT_JSON",
         "SIM_PIPELINE_ORDER_AND_COMMIT",
@@ -271,6 +274,62 @@
             "shear response",
             "signed dihedral and analytical gradient",
             "finite-difference relative error <= 1e-3"
+          ]
+        },
+        {
+          "id": "P05_WARP_COLORED_STRETCH_XPBD",
+          "checks": [
+            "Cloth topology construction produces deterministic Stretch graph colors with contiguous flattened constraint ranges",
+            "Every Stretch constraint appears exactly once and no two constraints in one color share a vertex",
+            "The production Shader Model 5 Stretch pass updates only the disjoint vertices of its active color",
+            "XPBD Lambda is stored per Stretch constraint and persists across color sweeps / iterations within one Segment",
+            "The production WARP positions and Segment-local Lambda values match the CPU colored XPBD reference across repeated iterations",
+            "Invalid color ownership, mismatched state arrays, degenerate edges and non-finite solver coefficients fail closed"
+          ]
+        },
+        {
+          "id": "P05_WARP_CLOTH_JACOBI_CONTRIBUTION_GATHER",
+          "checks": [
+            "Production Shear / Bend contribution shader evaluates the same immutable Segment-start Position Snapshot and writes one 64-byte four-vertex correction record per constraint",
+            "Per-constraint Segment-local Lambda is updated with XPBD Compliance / delta-time / relaxation while zero-effective-mass constraints remain finite and produce zero correction",
+            "Production Vertex-to-Constraint CSR gather reads deterministic incident references, skips already-colored Stretch corrections, and gathers Shear / Bend corrections without inter-thread write conflicts",
+            "CSR offsets, type tags, constraint indices, local vertex indices, reserved fields and source vertex mappings are validated before correction publication",
+            "Non-finite contributions or invalid CSR references set a terminal solver diagnostic and preserve the affected source Position",
+            "WARP output Positions match the CPU simultaneous Shear / Bend XPBD reference for the same Segment duration, Compliance and relaxation",
+            "Zero inverse-mass pinned vertices receive no Shear / Bend correction while the surrounding movable vertices retain CPU / GPU parity"
+          ]
+        },
+        {
+          "id": "P05_CLOTH_GPU_TOPOLOGY_PACKET",
+          "checks": [
+            "CPU Cloth topology is packed into explicit 16-byte Stretch and 32-byte Shear / Bend StructuredBuffer records matching the production Shader Model 5 layouts",
+            "Deterministic Stretch color ranges / flattened indices and Vertex-to-Constraint CSR offsets / references preserve exact CPU ordering",
+            "Shear / Bend records preserve local Vertex mapping, Rest values, normalization and their configured Compliance coefficients",
+            "Stretch / Shear / Bend Lambda arrays are independently allocated and initialized to zero for a new Segment",
+            "Invalid Compliance, non-finite Rest data, invalid Stretch coloring or malformed CSR reject packet construction transactionally",
+            "GPU topology packet contains source-ordered triangle primitives and canonical sorted unique undirected edge primitives, with zeroed unused indices and invalid topology rejection"
+          ]
+        },
+        {
+          "id": "R2_RUNTIME_CLOTH_TOPOLOGY_RESOURCE_UPLOAD",
+          "checks": [
+            "A Runtime Model accepts a Cloth Mesh Asset only when the Source Mesh is configured as Cloth and the CPU topology matches its Vertex / Triangle layout",
+            "Runtime Model registration transactionally uploads immutable Rest Position, Stretch / Shear / Bend, graph-color, Vertex-to-Constraint CSR and Segment-local Lambda buffers",
+            "Runtime creates two SRV / UAV Position State Banks and two Velocity State Banks plus a validated inverse-mass SRV",
+            "Malformed inverse-mass counts, duplicate or cross-mode Mesh Assets, topology mismatches and invalid Cloth solver settings fail before publishing the Model Handle",
+            "GPU resources remain owned by the Model and are released on successful Model destruction; Cloth solver dispatch and Position-Writer Epoch integration remain explicitly pending",
+            "A Cloth-only World remains BLOCKED_BY_INPUT with zero GPU Commit until Cloth prediction / XPBD / Position-Writer Epoch integration is complete; Reset releases the pending Reservation"
+          ]
+        },
+        {
+          "id": "P05_WARP_CLOTH_SEGMENT_STATE_PASSES",
+          "checks": [
+            "Cloth Segment prediction applies the exact Segment delta time and World gravity to dynamic Vertices while preserving zero-inverse-mass Vertex positions and zeroing their velocities",
+            "Cloth Segment velocity reconstruction derives dynamic velocity from the solved Position delta divided by the same Segment duration and keeps pinned Vertices at zero velocity",
+            "All Stretch / Shear / Bend XPBD Lambda arrays are explicitly zeroed at every new Integration Segment, then retained across that Segment's solver iterations",
+            "Prediction and Velocity reconstruction reject a non-positive Segment duration through the solver diagnostic buffer",
+            "A Position-Writer Epoch snapshots the exact pre-dispatch Position and produces per-Vertex after-minus-before displacement vectors",
+            "Per-primitive triangle and edge swept AABBs conservatively enclose all before / after Vertex endpoints with outward-rounded contact-thickness expansion"
           ]
         }
       ],
@@ -324,17 +383,164 @@
           "checks": [
             "inversion diagnostic and finite penalty path"
           ]
+        },
+        {
+          "id": "R1_FORCE_WENDLAND_C2_CPU_REFERENCE",
+          "input": "phase13_force_distribution/wendland_c2.input.json",
+          "expected": "phase13_force_distribution/wendland_c2.expected.json",
+          "checks": [
+            "Rest Lumped Mass multiplied by the Wendland C2 compact-support kernel",
+            "One normalization denominator pooled across the selected Mesh scope",
+            "Fixed Physics Vertices remain in the distribution set",
+            "Exact support-radius boundary receives zero weight",
+            "Force and Impulse descriptor magnitudes are conserved",
+            "Segment-start Position changes refresh the spatial weight",
+            "Zero support reports NO_FORCE_TARGET without partial output mutation",
+            "Sub-threshold normalization sum reports NO_FORCE_TARGET and preserves the previous result"
+          ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT",
+          "input": "phase13_force_distribution/wendland_c2.input.json",
+          "expected": "phase13_force_distribution/wendland_c2.expected.json",
+          "checks": [
+            "Exact selected Soft Body Mesh GPU reduction matches the CPU Wendland C2 reference",
+            "Force contribution is composed with FEM force before Segment integration",
+            "Impulse is applied once at Segment start before exponential damping",
+            "Sibling Mesh is unaffected by an exact-Mesh target",
+            "Zero-support Event rejects the Tick with NO_FORCE_TARGET and no Commit"
+          ]
+        },
+        {
+          "id": "R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY",
+          "input": "phase13_force_distribution/warp_130.input.json",
+          "expected": "phase13_force_distribution/warp_130.expected.json",
+          "checks": [
+            "Production Weight, Reduction, Finalize and Apply entry points compile and dispatch on WARP",
+            "GPU per-vertex unnormalized q values and normalization sum match the CPU double-precision reference",
+            "GPU per-vertex normalized weights match the CPU reference across three 64-thread groups with a 130-vertex input",
+            "Three distinct CPU target Mesh arrays share one normalization denominator; flattened production-shader WARP dispatch preserves the same global per-vertex weights across Mesh partition boundaries",
+            "Each Mesh receives only its proportional share of the descriptor magnitude; weights are not normalized independently per Mesh",
+            "A later NO_FORCE_TARGET call over an empty Mesh preserves the previously valid multi-Mesh output and publishes no partial weights"
+          ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_CROSS_MESH_FORCE_TARGET_SCOPES",
+          "checks": [
+            "A Model-scope Force / Impulse target selects every Soft Body Mesh in the Model and shares one normalization denominator across the selected Meshes",
+            "A World-scope Force / Impulse target selects every registered Soft Body Mesh across all Models and shares one normalization denominator across the World",
+            "Identical Meshes receive 1/N of the exact-Mesh response when N selected Meshes share one event magnitude",
+            "Force and Impulse event-ID accumulation order, per-Segment start-position sampling, FEM composition, one-shot Impulse timing and atomic Tick Commit remain unchanged",
+            "A sibling Mesh receives no event response for an exact-Mesh target"
+          ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_ANIMATION_TRACKING_STABILITY_PREFLIGHT",
+          "checks": [
+            "High Tracking stiffness without any Playback / Blend / Root Transform trajectory input does not alter the FEM-only World Substep count",
+            "Mesh Physics Parameters accept finite non-negative Kelvin-Voigt tracking stiffness / damping and reject NaN / negative coefficients",
+            "For an active Animation Trajectory, per-vertex tracking frequency uses tracking_stiffness multiplied by Animation Tracking Paint and attribute multiplier, divided by density-remapped lumped mass",
+            "World common Substep scheduling includes dt_tracking_limit = 0.2 / omega_max alongside the FEM CFL limit",
+            "Zero Animation Tracking Paint and fixed / zero-mass vertices contribute no tracking frequency restriction",
+            "A tracking-driven CPU Preflight budget block retains the same Reservation and reports its planned common Substep count",
+            "Painted-out tracking remains BLOCKED_BY_INPUT until the immutable trajectory / solver path is connected; the stability term is removed without silently submitting the unsupported trajectory"
+          ]
+        },
+        {
+          "id": "R1_WARP_SOFT_BODY_SKIN_WEIGHT_TRANSFER_UPLOAD",
+          "checks": [
+            "A Soft Body Physics Mesh with one unique Skinned Mesh Node resolves and retains its Mesh Node Index and Asset Skin Index",
+            "If Physics Vertex Skin Weights are not pre-supplied, Runtime transfers the Render Mesh's normalized 8-influence skin weights to Physics boundary vertices and harmonically extends them to the Tet interior",
+            "The transferred Physics Vertex influence set is validated for finite non-negative weights, Skin Joint range and unit sum before GPU upload",
+            "Physics Vertex skinning weights are uploaded as one 64-byte-per-vertex uint32 joint / float weight StructuredBuffer and exposed as an SRV",
+            "A Soft Body Asset Mesh referenced by multiple Skinned Mesh Node instances is rejected until the Runtime provides separate Physics State Banks per instance",
+            "A Skinned Mesh Node with incomplete Render Vertex Skin Attributes is rejected before GPU resources are committed"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
+          "checks": [
+            "A Model containing one skinned Soft Body Mesh and an immutable one-joint LINEAR Translation Clip is accepted for Runtime Playback",
+            "The CPU Playback Span Scheduler creates Key-bounded immutable spans and the World Integration Schedule includes Animation Span boundaries",
+            "Each Integration Segment evaluates the matching Node Hierarchy / Skin Matrix and analytic derivative at the Segment start",
+            "The production GPU Skinning shader writes Physics Vertex Animation Target Position and analytic Target Velocity using the per-Skin Joint mapping",
+            "Segment-owned Animation Target Status remains alive and is read by the matching Soft Body Integration pass before Commit",
+            "Kelvin-Voigt Tracking uses per-vertex animation_tracking Paint, stiffness and damping; implicit exponential damping moves the simulated Physics Vertex toward the animated target",
+            "The Runtime Tick commits and publishes Render Candidates only after Skinning validation and Soft Body Integration succeed; Host Render Lease releases after readback",
+            "A synchronized two-Clip Playback / Blend descriptor is accepted and both Clip Tracks share the same World-Time Span boundaries with the Hermite Weight Curve",
+            "The Blend Weight selects the Target Clip; CPU blended Local Pose / analytic derivative rebuilds Node Hierarchy and per-Skin Joint matrices for the selected Mesh Node",
+            "The production GPU LBS and Kelvin-Voigt Tracking passes execute for the blended Target Pose, commit the second Runtime Tick, and move the Physics Vertex farther than the Source-only Playback reference",
+            "The blended Render Candidate Host Lease releases and the World Stop / Reset / Model / World destruction lifecycle succeeds after two committed animated Ticks",
+            "A non-constant Hermite Weight with different Source / Target starting translations contributes w_dot * (target_position - source_position) to the analytic Target Velocity consumed by GPU Tracking"
+          ]
         }
       ],
       "automated_cases": [
         "P06_COROTATIONAL_FEM_GOLDEN",
         "P06_INVERSION_ROLLBACK",
-        "P06_WARP_COROTATIONAL_FEM"
+        "P06_WARP_COROTATIONAL_FEM",
+        "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
+        "R1_RUNTIME_SOFT_BODY_ASSET_AND_CSR_VALIDATION",
+        "R1_WARP_RUNTIME_SOFT_BODY_FEM_SVD_AND_INVERSION_PARITY",
+        "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
+        "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE",
+        "R1_RUNTIME_ANIMATION_INPUT_DEFERRED",
+        "R1_FORCE_WENDLAND_C2_CPU_REFERENCE",
+        "R1_WARP_SOFT_BODY_FORCE_IMPULSE_AND_NO_SUPPORT",
+        "R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY"
       ],
       "unimplemented": [
-        "GPU nodal force accumulation, mass integration and substep scheduling",
-        "GPU inverted-element proper-rotation/SVD fallback; inversion remains CPU-reference validated",
-        "CFL/substep controller and animation-tracking coupling"
+        "Physical / WARP numerical parity and SVD near-singular stress regression for the production Runtime path",
+        "Animation Tracking stiffness / damping CFL limit and immutable animation trajectory packets",
+        "Full World collision, Cloth constraint and Contact solver integration",
+        "Physics Attribute Paint cache serialization and topology-change remapping",
+        "Production GPU cross-Mesh World / Model target reduction and Cloth Force / Impulse support"
+      ],
+      "runtime_gpu_source_files": [
+        "shaders/runtime/soft_body_fem.cs.hlsl",
+        "shaders/runtime/soft_body_force_gather.cs.hlsl",
+        "shaders/runtime/soft_body_integrate.cs.hlsl",
+        "shaders/runtime/tick_transaction_control.cs.hlsl",
+        "shaders/runtime/soft_body_render_feedback.cs.hlsl",
+        "shaders/runtime/soft_body_force_distribution.cs.hlsl"
+      ],
+      "status_note": "Production Soft Body GPU Runtime supports mass-weighted Wendland C2 Force / Impulse events for an exact single-Mesh target. World / Model-wide cross-Mesh normalization and Cloth event application remain blocked. The Runtime WARP regression checks selected-Mesh response, unaffected sibling Mesh state, one-shot Impulse integration, and NO_FORCE_TARGET rejection. A dedicated WARP regression now compiles and dispatches the production Weight, Reduction, Finalize and Apply shader entry points and reads back per-vertex q, the normalization sum, and normalized per-vertex weights against the CPU double-precision reference. Hosted Windows execution remains unverified. CPU reference and GPU finalizer use the same 1.0e-20 SI-mass normalization threshold.",
+      "warp_runtime_assertions": [
+        "production_Force_distribution_Weight_Reduction_Finalize_and_Apply_entrypoints_compile_and_dispatch_on_WARP",
+        "GPU_per_vertex_unnormalized_q_and_normalization_sum_match_CPU_double_reference",
+        "GPU_normalized_per_vertex_weights_match_CPU_double_reference_across_multiple_thread_groups",
+        "production_Runtime_soft_body_fem_shader_compiles_and_dispatches_on_WARP",
+        "production_Runtime_deformation_stress_and_nodal_force_match_CPU_reference",
+        "positive_near_singular_deformation_selects_Proper_Rotation_Jacobi_SVD_fallback",
+        "finite_inverted_deformation_publishes_CPU_parity_diagnostics_but_sets_terminal_failure",
+        "inverted_deformation_never_becomes_a_committed_Tick",
+        "production_FEM_WARP_test_uses_the_80_byte_Render_Candidate_aware_Tick_Control_ABI",
+        "GPU_output_finite_gate_checks_deformation_rotation_both_stresses_all_forces_and_both_energy_terms"
+      ],
+      "implemented_runtime_contracts": [
+        "render_mesh_shape_recovery_and_volume_paint_transfers_to_boundary_physics_vertices",
+        "interior_physics_vertex_paint_uses_double_precision_dirichlet_harmonic_extension",
+        "ambiguous_coincident_surface_paint_fails_model_registration",
+        "tet_shape_recovery_and_volume_coefficients_use_four_vertex_arithmetic_mean",
+        "vertex_damping_rate_uses_global_material_and_per_vertex_damping_paint",
+        "Soft Body Tet CFL limit contributes to the common World Substep Preflight",
+        "CFL budget block retains the same Reservation and plan through admission-budget recovery",
+        "gpu_render_feedback_evaluates_offline_vertex_bindings_from_inactive_state_bank",
+        "gpu_render_feedback_recomputes_normal_and_tangent_streams_before_commit",
+        "per_world_render_candidate_ring_has_one_spare_slot_beyond_maximum_in_flight_ticks",
+        "gpu_status_publishes_full_width_slot_identity_and_cpu_observation_publishes_candidate",
+        "host_render_lease_pins_cpu_observed_slot_and_blocks_ring_reuse",
+        "host_render_lease_release_resubmits_the_same_pending_tick_reservation_without_new_frame_time",
+        "latest_render_candidate_resource_generation_is_monotonic_per_world_slot_lifetime",
+        "degenerate_deformed_render_triangles_fail_the_candidate_and_prevent_tick_commit",
+        "model_root_translation_and_rotation_are_inverted_before_render_candidate_publication",
+        "accepted_near_unit_quaternions_are_normalized_before_initial_state_and_render_feedback",
+        "finite_inverted_FEM_intermediates_match_CPU_reference_for_deformation_rotation_stress_force_and_energy",
+        "inverted_FEM_output_is_diagnostic_only_and_forces_terminal_failure_before_tick_commit",
+        "production_fem_warp_test_control_buffer_stride_matches_80_byte_runtime_shader_abi",
+        "FEM_nonfinite_gate_covers_all_stress_energy_and_nodal_force_outputs_before_publication",
+        "unintegrated_model_root_transform_samples_defer_gpu_submission_and_preserve_reservation",
+        "force_and_impulse_events_are_blocked_by_input_until_segment_scheduler_is_connected"
       ]
     },
     {
@@ -381,6 +587,17 @@
           "expected": "phase07_collision/overflow.expected.json",
           "checks": [
             "overflow blocks step; no candidates silently dropped"
+          ]
+        },
+        {
+          "id": "P09_KINEMATIC_COLLIDER_EDGE_EDGE_CONTACT_SET",
+          "checks": [
+            "Dynamic Edge versus moving Kinematic Collider Edge contact generation uses exact closest-segment parameters to interpolate both endpoint velocities and returns relative velocity",
+            "Collider triangle edges are canonicalized, deduplicated across adjacent triangles and sorted by endpoint indices before contact indexing",
+            "Dynamic Edge inputs are canonicalized and duplicate undirected edges collapse deterministically while preserving the lowest original source index",
+            "Contact output ordering is deterministic by canonical Dynamic Edge then canonical Collider Edge identity",
+            "Invalid Dynamic Edge indices, degenerate edges, non-finite positions / velocities and invalid Collider geometry fail closed without partial contacts",
+            "Contact capacity overflow clears the complete output and reports the first required count beyond capacity"
           ]
         }
       ],
@@ -462,16 +679,305 @@
             "rotation target",
             "clip blend and teleport velocity policy"
           ]
+        },
+        {
+          "id": "P09_ANIMATION_CHANNEL_SPAN_COEFFICIENTS",
+          "checks": [
+            "An immutable Animation Channel Span maps one signed Clip-Time interval within one key segment into Span-local c0..c3 coefficients",
+            "LINEAR Translation / Scale coefficients are reparameterized for partial-key spans and negative playback speed; World-Time velocity is the analytic derivative divided by span duration",
+            "CUBICSPLINE Hermite tangents are scaled by key interval duration, transformed into Span-local coefficients, and preserve both values and analytic derivatives",
+            "STEP spans remain constant with zero target velocity, and paused Tracks sample the exact current Clip Time without generating velocity",
+            "LINEAR Quaternion spans pre-evaluate their signed Clip-Time endpoints, use shortest-arc Slerp, and return a normalized quaternion with analytic tangent-space derivative",
+            "CUBICSPLINE Quaternion raw component polynomials normalize at evaluation and project derivatives onto the quaternion tangent space",
+            "Spans crossing an interior Key boundary, malformed tangent arrays, invalid quaternion values and non-positive World-Time durations fail closed",
+            "The Channel Span Scheduler splits every signed Clip-Time interval at all interior Keys in forward or reverse playback order",
+            "Adjacent forward and reverse LINEAR Span records produce matching channel values at their shared Key boundaries",
+            "Paused Tracks produce one zero-Clip-Time Span; duplicate / non-monotonic Keys fail atomically without partial Span records",
+            "CUBICSPLINE Quaternion evaluation normalizes the raw Hermite polynomial and projects its analytic derivative into the quaternion tangent space",
+            "A single-key Animation Track remains one constant Span across its only key and returns zero target velocity",
+            "CUBICSPLINE Quaternion component polynomials normalize to unit quaternions and return tangent-space analytic derivatives",
+            "One-key animation samplers remain a single constant Span even when the requested Clip-Time range crosses the only key",
+            "STEP spans preserve directional one-sided values at a shared Key boundary for forward and reverse Playback",
+            "Signed Clip-Time spans map to positive World-Time partitions that remain ordered from the Logical Tick start to end",
+            "A paused Clip Track retains the full World-Time Tick as one zero-Clip-Time Span",
+            "Non-zero Clip-Time or World-Time deltas that cannot advance at their absolute start under double precision fail closed",
+            "An Asset Animation Clip merges Key times across all Node / Path Tracks and emits synchronized Clip Spans in original Track order",
+            "Forward and reverse Clip scheduling emits identical boundary sets in the corresponding playback order; every channel shares the same Clip-Time start / delta",
+            "Duplicate Node / Path channels, Node Indices outside the Model, Clip ranges crossing loop duration, and malformed Track data fail without publishing partial Clip Spans",
+            "One-key constant Channels remain present in every Clip Span but do not introduce extra shared interpolation boundaries",
+            "Synchronized multi-Track Clip Span records map into monotonically increasing positive World-Time intervals in forward and reverse playback",
+            "Every channel in a scheduled Clip Span retains the shared World-Time interval and the original Asset Track ordering",
+            "A paused synchronized Clip emits one Clip Span with all channels and retains the complete Logical Tick World-Time duration",
+            "A multi-Track Clip interval that cannot advance at its requested double-precision magnitude fails before publishing any Span",
+            "Forward Loop Playback emits an explicit Clip-duration boundary and resumes from Clip time zero while preserving continuous positive World-Time order",
+            "Reverse Loop Playback emits an explicit zero boundary and resumes from Clip duration with a negative Clip-Time delta and positive World-Time durations",
+            "Non-looping forward and reverse Playback hold the terminal Clip Pose for the unconsumed Logical Tick interval",
+            "Speed-zero Playback retains the complete Logical Tick as one paused zero-Clip-Time Span",
+            "A Logical Tick ending exactly at a Loop boundary does not publish an empty post-wrap Span",
+            "Playback scheduling rejects an out-of-range initial Clip cursor and fails atomically when the configured immutable Span count limit is exceeded"
+          ]
+        },
+        {
+          "id": "P09_ANIMATION_BLEND_WEIGHT_SPAN",
+          "checks": [
+            "Blend Weight Hermite descriptors validate finite ordered times and weights in [0, 1] over the complete cubic domain, including interior extrema",
+            "Logical Tick scheduling inserts blend_start_time and blend_end_time as explicit World-Time Span boundaries",
+            "Outside the blend interval, endpoint weights are held constant with zero derivative",
+            "Inside the blend interval, Span-local cubic coefficients preserve the original Hermite Weight and analytic World-Time derivative",
+            "A Span crossing either Blend Curve boundary is rejected until the World Scheduler splits it",
+            "A Hermite curve with an interior overshoot outside [0, 1] is rejected before Span construction",
+            "Source and Target Clip Playback schedules and the Hermite Blend Weight schedule merge their Key, Loop Wrap and Blend Start / End boundaries into one monotonic World-Time partition",
+            "Every merged Blend Span rebuilds Source / Target Channel coefficients over the same World-Time start and duration while preserving each Clip's independent signed Clip-Time delta and original Track ordering",
+            "The Blend Weight cubic coefficients are reparameterized to the same merged interval and return finite in-range Weight with analytic World-Time derivative",
+            "Invalid Source / Target Clip schedules, invalid Blend Weight curves, unrepresentable boundary intervals and merged Span-count overflow fail atomically without partial Source / Target / Weight records"
+          ]
+        },
+        {
+          "id": "P09_ANIMATION_NODE_HIERARCHY_SKIN_MATRIX_DERIVATIVES",
+          "checks": [
+            "Every Node Local TRS / static affine Matrix is evaluated from Asset Rest Transform plus the synchronized Span channel for its Node / Path",
+            "Parent-before-child topological hierarchy construction produces Global Matrix = Parent Global * Local Matrix and analytic Global Matrix Derivative by the Product Rule",
+            "A skinned Mesh Node emits Skin Matrix = inverse(Mesh Node Global) * Joint Global * Inverse Bind Matrix, using identity when Inverse Bind Matrices are omitted",
+            "Skin Matrix derivatives include inverse_mesh_global_dot = -inverse_mesh_global * mesh_node_global_dot * inverse_mesh_global and the Joint Global derivative",
+            "Shared animated Root motion cancels in Mesh Node-relative Skin Matrices while Joint-relative motion remains in the analytic Skin Matrix derivative",
+            "Cyclic / inconsistent Node hierarchies, invalid animated channels, non-positive animated Scale, malformed Skin arrays and singular Mesh Node Global Matrices fail atomically",
+            "The synchronized Source / Target / Hermite Weight span evaluates both local Poses at the same World-Time coordinate before building the blended Node hierarchy",
+            "Translation / Scale Blend derivatives include the analytic weight term w_dot * (Target - Source)",
+            "Quaternion Blend hemisphere-aligns Target value and derivative, normalizes the weighted result, and projects the analytic derivative into the quaternion tangent space",
+            "The blended local Pose is propagated through Parent * Local matrices and rebuilt Skin Matrices / derivatives, preserving Root-motion cancellation",
+            "Source / Target / Weight World-Time interval mismatch fails atomically without publishing a blended hierarchy"
+          ]
+        },
+        {
+          "id": "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER",
+          "checks": [
+            "An immutable Packet requires a non-zero Animation Input Version and a bounded non-empty Span sequence",
+            "Span Records retain version low / high words, contiguous positive World-Time ranges, unique Span IDs, absolute Track / Channel / Blend / Collider Buffer Ranges and certified Bounds",
+            "Track Records preserve Clip Index, Clip-Time start, signed Clip-Time delta, World-Time Playback Speed, Loop / Reverse flags and the complete per-Node Channel Range",
+            "Channel Records are emitted in parent-before-child order and preserve every Asset Node, Parent Record Index, Node Role, per-Path mask, interpolation flags, Rest TRS, static affine Matrix and Span coefficient",
+            "Skin Joint Nodes map to immutable Inverse Bind Matrix records; non-Joint Nodes use UINT32_MAX; conflicting per-Skin Inverse Bind layouts fail closed",
+            "A skinned Mesh Node and every Joint / Mesh Node ancestor are represented in the dense Node Channel payload",
+            "Blend Packet Records reference the local Source / Target Track indices and retain finite Hermite coefficients / normalized time metadata",
+            "Segment Cursor maps positive World Time into the selected immutable Span normalized coordinate and copies the exact Animation Input Version",
+            "Invalid Version, malformed Track Channel Range, invalid certified Bounds, duplicate Span IDs, non-contiguous Span intervals and out-of-Span Cursor requests fail atomically without replacing prior output"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI",
+          "checks": [
+            "C++ span / cursor / Track / Channel / Blend / Matrix / Kinematic Collider records are uploaded with their declared StructuredBuffer Strides",
+            "Shader Model 5 HLSL StructuredBuffer fields read every CPU record field at the same 4-byte offsets and UAV copy preserves the complete record byte-for-byte",
+            "WARP Readback covers all 8 record payload types, including the independent mutable Segment Cursor and both Matrix record arrays"
+          ]
+        },
+        {
+          "id": "P09_ANIMATION_SKIN_JOINT_MAPPING",
+          "checks": [
+            "Every Skinned Mesh Node has one immutable Skin Record with its topological Channel offset, Asset Skin Index and contiguous ordered Joint range",
+            "Each Asset Skin's ordered Joint list is uploaded once; multiple Skinned Mesh Nodes referencing the same Skin reuse the same Skin Joint record range",
+            "Each Skin Joint Record references the Track-local topological Joint Channel offset, the Asset Joint Node Index and the absolute Skin-specific Inverse Bind Matrix index",
+            "Two Skinned Mesh Nodes may reference different Skin Joint sets, including overlapping Joint Nodes, without losing either Mesh-to-Skin association",
+            "A shared Joint Node may use a different Inverse Bind Matrix in each Skin; each Skin Joint record resolves its own matrix while the Channel compatibility field retains the first encountered matrix index",
+            "Duplicate Joint Nodes within one Skin, invalid Skin references, out-of-range Joint Nodes, invalid Inverse Bind matrices and uint32 record range overflow fail Packet construction atomically without publishing a partial Skin table"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
+          "checks": [
+            "C++ Animation Skin and Skin Joint records have a fixed 16-byte standard-layout / trivially-copyable ABI with explicit field offsets",
+            "Shader Model 5 StructuredBuffer access reads every Skin / Joint mapping field at the expected offset and UAV copy preserves the entire record byte-for-byte",
+            "WARP Readback covers both Skin Record and Skin Joint Record payloads with distinct mesh offset, Skin Index, Joint Range, Channel offset, per-Skin Inverse Bind Index and Asset Joint Node Index values"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_TRAJECTORY_PACKET_UPLOAD",
+          "checks": [
+            "All non-empty Animation Trajectory record arrays upload as D3D11_USAGE_IMMUTABLE StructuredBuffers with shader-resource-only binding and exact CPU record stride",
+            "The mutable per-World Segment Cursor is a separate D3D11_USAGE_DEFAULT StructuredBuffer with both SRV and UAV views",
+            "Packet Version, per-Span record ranges, Track Channel ranges, Span-local Blend Track indices, Skin Joint ranges and certified Bounds are validated before upload",
+            "An empty optional Blend table remains absent while a nonempty Collider table uploads with its exact count and immutable StructuredBuffer stride",
+            "WARP byte-for-byte readback covers immutable Span / Track / Channel / Skin / Skin Joint / Kinematic Collider records and the independent mutable Cursor",
+            "An invalid Cursor Version or invalid Span-local Blend reference fails without replacing the previously uploaded Packet resources",
+            "The 128-byte Kinematic Collider StructuredBuffer is immutable, its Span first/count range and Has-Kinematic-Collider flag agree, and WARP readback preserves every Collider Record byte",
+            "Every Animation Span has exactly one immutable 96-byte Root Transform Record at the matching Span index; the dense mapping avoids a second range indirection",
+            "Root Transform records preserve endpoint Translation / shortest-arc Quaternion, World-space angular axis / angle, Span duration / inverse duration, exact flags and zero reserved field; invalid quaternion, axis or mismatched duration fails atomically",
+            "WARP byte-for-byte readback verifies the immutable Root Transform StructuredBuffer, exact element count and 96-byte stride alongside the Collider records"
+          ]
+        },
+        {
+          "id": "P09_PHYSICS_MESH_SKINNING_CPU_REFERENCE",
+          "checks": [
+            "CPU Physics Mesh LBS maps Rest Mesh-local Physics Vertices through the ordered Skin Matrices using the transferred 8-influence weights",
+            "The analytic Skin Matrix derivative is applied to the same Rest Position and influence weights to produce Mesh-local Target Velocity",
+            "Expected Mesh Node / Skin identity, Skin Joint ranges, finite matrices and normalized influence sums are validated before publication"
+          ]
+        },
+        {
+          "id": "P09_WARP_PHYSICS_MESH_SKINNING_TARGETS",
+          "checks": [
+            "Production-style GPU LBS computes Physics Vertex Target Position and Target Velocity from Rest Positions, 8-influence Physics Skin Weights, Skin Matrices and Skin Matrix Derivatives",
+            "WARP Target Position / Velocity readback matches the CPU double-precision Physics Mesh LBS oracle for one- and two-influence vertices",
+            "An out-of-range positive-weight Joint index sets the GPU Target Status failure bit and does not publish a valid target stream"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_CHANNEL_EVALUATION",
+          "checks": [
+            "The GPU Channel Evaluator reads the immutable 224-byte animation_channel_gpu_record ABI and emits one 112-byte local TRS / derivative record per Asset Node Channel",
+            "LINEAR Translation and CUBICSPLINE Scale are evaluated in Span-local u and return analytic derivatives per World Simulation second",
+            "LINEAR Quaternion uses shortest-arc Slerp, normalized output and an analytic tangent-space derivative",
+            "STEP and Rest TRS channels remain constant and produce zero target velocity",
+            "Zero-length / non-finite quaternion input fails closed and sets the GPU Animation status bit",
+            "CUBICSPLINE Quaternion raw polynomial normalization and analytic tangent-space derivative match the CPU formula"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_BLEND_LOCAL_TRANSFORMS",
+          "checks": [
+            "The GPU local Blend stage evaluates the Hermite Blend Weight at the same normalized World-Time Span coordinate used by both Source and Target local transforms",
+            "Translation / Scale derivatives include the analytic weight derivative term w_dot * (target - source)",
+            "Quaternion Source / Target values and derivatives are normalized and hemisphere-aligned before Blend; the resulting quaternion derivative is projected into its tangent space",
+            "Source / Target Node, Parent, Role and local transform Status must match; invalid input fails closed through the GPU Animation status bit"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_NODE_HIERARCHY",
+          "checks": [
+            "GPU Local TRS records are composed in parent-before-child order into Asset Node Global Matrices",
+            "Global Matrix Derivatives use the matrix product rule: parent_dot * local + parent * local_dot",
+            "Static affine Matrix nodes are loaded from the dense Asset Node matrix buffer and contribute zero local derivative",
+            "Node depth is dispatched in deterministic hierarchy levels; Parent references must be topological and acyclic",
+            "Invalid Parent references or non-finite Local / Global matrices fail closed through the GPU Hierarchy status bit"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_SKIN_MATRICES",
+          "checks": [
+            "The GPU Skin Matrix stage resolves Mesh Node and Joint Global Matrices through Track-relative Skin / Skin Joint channel offsets",
+            "Each Joint uses its Skin-specific absolute Inverse Bind Matrix record",
+            "Skin Matrix is inverse(Mesh Node Global) * Joint Global * Inverse Bind Matrix",
+            "Skin Matrix derivative includes inverse(Mesh Global) derivative and Joint Global derivative using the analytic matrix product rule",
+            "Singular / non-affine Mesh Node Global Matrix, invalid Skin / Joint / IBM ranges and mismatched Node identities fail closed",
+            "The constant Model Root Transform is applied to Skin Matrices while Skin Matrix Derivatives remain correctly transformed with zero Root Transform derivative",
+            "GPU Skin Matrix fetches the Root Transform Record at the selected Span index and evaluates it at the shared per-World Segment Cursor coordinate; the CPU no longer supplies Root Matrix / derivative constant-buffer values",
+            "Root Translation velocity is derived from immutable Span endpoints / duration; shortest-arc Quaternion interpolation returns a normalized rotation and analytic World Angular Velocity, including the near-linear normalized-lerp derivative path",
+            "WARP Golden validates static Root Transform, linear Root Translation derivative, shortest-arc Quaternion Slerp at an interior Span coordinate and its angular derivative, plus the Skin Matrix product-rule derivative"
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
+          "checks": [
+            "A fully skinned Soft Body Mesh Runtime Tick builds an immutable Animation Trajectory Packet from the retained Tick Snapshot and uploads Span / Track / Channel / Blend / Skin / Skin Joint / IBM / Static Matrix tables plus a separately versioned Segment Cursor",
+            "Each Source / Target Track runs the production GPU Channel Evaluator with Track-local Parent Channel offsets and analytic World-Time Translation / Scale / Quaternion derivatives",
+            "Two-Clip Blend runs the production GPU Hermite Local Transform Blend and includes the analytic Blend Weight derivative at exact Blend Start / End boundaries",
+            "Parent-before-child GPU Hierarchy dispatch composes Global Matrices / derivatives; GPU Skin Matrix dispatch applies the constant Model Root Transform and each Skin-specific Inverse Bind Matrix",
+            "Production GPU LBS consumes GPU Skin Matrices / derivatives and emits Physics Vertex Target Position / Velocity before Kelvin-Voigt Tracking Integration",
+            "Stage-specific Channel / Blend / Hierarchy / Skin Matrix / LBS status bits propagate to Tick failure diagnostics; any invalid stage prevents Commit and preserves the active State Bank",
+            "Immutable Packet and Segment output resources remain retained through In-flight Tick Event Query observation and Render Candidate publication / lease release",
+            "One-joint Translation Playback and synchronized two-Clip Blend both commit and move the Physics Vertex toward the animated target",
+            "Ordered Model Root Transform Samples split Integration Segments at exact sample times, interpolate translation / shortest-arc Quaternion values, and provide analytic World-Time Root Matrix derivatives to GPU Skin Matrix Evaluation; teleport samples reset the derivative at their boundary",
+            "Multiple Skinned Mesh consumers in one Model evaluate the same immutable Packet / mutable Cursor for each Segment; the shared Model Cursor advances exactly once after all Mesh LBS consumers, and the World Render Lease is released once after all Mesh readbacks."
+          ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE",
+          "checks": [
+            "The production Shader Model 5 Cursor Advance shader consumes the frozen 80-byte Span and 16-byte Cursor ABIs without mutating immutable Packet records",
+            "A positive Integration Segment advances normalized Span-local u by World-Time delta divided by the current Span duration",
+            "An exact scheduled Span boundary advances to the next Span at u=0 while preserving the immutable Animation Input Version",
+            "The final Packet Span holds u=1 without reading beyond the Span table",
+            "A Segment that overshoots the current Span and a stale Cursor Packet Version set the stage diagnostic and leave the Cursor unchanged",
+            "GPU Cursor results match the CPU double/float-boundary reference over multiple contiguous Spans",
+            "Runtime GPU Channel and Blend evaluation consume the same immutable Packet Span / mutable Segment Cursor SRVs and validate the Cursor Packet Version",
+            "Runtime graph advances the Cursor once per Mesh / Integration Segment after LBS and before Soft Body Integrate; Cursor diagnostics share the Segment Status consumed by Integrate",
+            "A single immutable multi-Span Packet and one mutable Cursor are retained per Model / Tick and reused across all Integration Segments and Skinned Mesh consumers."
+          ]
+        },
+        {
+          "id": "P09_KINEMATIC_COLLIDER_TRAJECTORY",
+          "checks": [
+            "Kinematic Collider sample-pair input must bracket the complete requested World Span; missing future / past samples fail closed without extrapolation",
+            "The immutable 128-byte Collider Record preserves stable Collider ID and sample-pair ID, Span-local endpoint translations / shortest-arc quaternions, duration and inverse duration",
+            "Translation Speed, World Angular Speed, Maximum Local Radius and rotational Sagitta Bounds are outward-rounded and conservative for the stored float32 trajectory",
+            "Arbitrary Span-local evaluation returns normalized Transform, analytic linear velocity and world-space angular velocity",
+            "Contact-point velocity is evaluated as linear velocity plus world angular velocity cross the rotated local contact radius",
+            "Equivalent positive / negative quaternion hemispheres produce the same shortest-arc trajectory",
+            "A Span ending at a Teleport boundary holds the pre-teleport Pose with zero Linear / Angular Velocity; the following Span starts at the teleported sample and no interpolation crosses the discontinuity",
+            "Immutable GPU Packet Builder appends Collider Records into each owning Span's explicit first/count range and rejects duplicate stable Collider IDs or mismatched durations",
+            "The sample-driven Span builder selects exactly one strictly increasing Transform Sample pair that brackets the entire requested World-Time interval and rejects missing or crossed boundaries",
+            "A Span ending at a Teleport Sample holds the previous Pose with zero analytic velocity; the following Span begins at the Teleport Pose and resumes motion from the next Sample",
+            "Non-monotonic sample times, non-finite transforms and invalid local-radius bounds fail closed before publishing a GPU Record"
+          ]
+        },
+        {
+          "id": "R1_RUNTIME_KINEMATIC_SAMPLE_BOUNDARIES",
+          "checks": [
+            "Kinematic Collider Pose Samples are immutable Tick Input Snapshot data and require finite, strictly increasing times",
+            "The public Kinematic Collider sample API preserves explicit Teleport metadata",
+            "Every in-Tick Kinematic Collider sample time is inserted into the shared World Integration Segment boundary table",
+            "Kinematic Collider sample boundaries are merged with World Substep, Root Transform, Animation, Force and Impulse boundaries without dropping distinct times",
+            "Unsupported Collider submission remains BLOCKED_BY_INPUT after CPU Segment planning; the scheduler must not bypass the unsupported collision path"
+          ]
+        },
+        {
+          "id": "R1_WARP_ROOT_ONLY_SOFT_BODY_TRANSFORM",
+          "checks": [
+            "A fully skinned Soft Body Model with ordered Root Transform Samples but no caller-supplied Animation Clip / Track is admitted through the Runtime-private static-pose Clip adapter",
+            "The root-only adapter reuses the production GPU Channel / Hierarchy / Skin Matrix / LBS / Kelvin–Voigt Tracking path for every Skinned Mesh consumer in the Model",
+            "Root translation and shortest-arc Quaternion samples split exact World Integration Segment boundaries and provide analytic Root Matrix derivatives",
+            "A Teleport sample resets Root derivative at the discontinuity and does not interpolate velocity through the jump",
+            "The Tick commits successfully and every Skinned Mesh Render Candidate reflects the same root-only Transform trajectory",
+            "Root-only input on an unsupported unskinned Soft Body path remains BLOCKED_BY_INPUT without GPU submission or Commit",
+            "Reset restores the initial State Bank and clears Root Transform Sample history"
+          ]
+        },
+        {
+          "id": "P09_WARP_KINEMATIC_COLLIDER_EVALUATION",
+          "checks": [
+            "The production Shader Model 5 evaluator consumes the immutable 128-byte Collider Span Record selected through the active immutable Span and versioned mutable Cursor",
+            "Each GPU sample selects a Collider Record by Span-local index, allowing multiple candidate contact points to evaluate the same Collider at one shared tau",
+            "GPU Translation and shortest-arc Quaternion match the CPU trajectory evaluator at an interior Span coordinate",
+            "GPU Linear Velocity, World Angular Velocity and rotated contact-point velocity match the CPU analytic derivative reference",
+            "The evaluator validates buffer strides / ranges, Cursor and Packet Version, Collider and sample-pair identities, flags, normalized endpoint quaternions, angular axis / angle, duration and certified motion bounds",
+            "A local contact point outside Maximum Local Radius and a Collider Record whose duration differs from its owning Span fail closed",
+            "The evaluator validates homogeneous Translation endpoint w components before publishing a Transform"
+          ]
+        },
+        {
+          "id": "P09_KINEMATIC_COLLIDER_GEOMETRY_REFERENCE",
+          "checks": [
+            "The CPU collision oracle transforms every indexed local Collider Mesh vertex with the same Span-local shortest-arc pose as the analytic trajectory evaluator",
+            "The Collider swept AABB encloses the complete endpoint translation segment expanded by the certified local bounding-sphere radius, independent of rotation",
+            "Swept AABB bounds are rounded outward and remain finite",
+            "Out-of-range triangle indices, non-finite local vertices and a Mesh exceeding the certified local radius fail closed",
+            "A failed vertex evaluation publishes no partial world-vertex array",
+            "Each transformed world vertex also returns analytic contact velocity, including Linear Velocity plus World Angular Velocity cross the rotated local vertex",
+            "CPU geometry evaluation rejects non-homogeneous Translation endpoints consistently with the GPU evaluator",
+            "Moving VT narrowphase interpolates rigid Collider vertex velocities with the contact barycentrics and returns point-minus-triangle relative velocity; non-finite velocities fail closed",
+            "Moving EE narrowphase interpolates both edge endpoint velocities at the closest-segment parameters and returns relative velocity; non-finite endpoint velocities fail closed",
+            "CPU moving Collider VT contact generation uses the transformed Collider Mesh and analytic per-vertex velocities to emit deterministic Vertex / Triangle contacts",
+            "Degenerate Collider triangles and invalid dynamic Vertex input fail closed",
+            "Contact capacity overflow reports the required count and rejects the entire contact set without returning partial contacts",
+            "Kinematic Collider swept AABB adapts to the existing Spatial Hash Broadphase primitive and discovers overlapping Dynamic Mesh candidates"
+          ]
         }
       ],
       "automated_cases": [
         "P09_ANIMATION_TARGET",
-        "P09_WARP_ANIMATION_AND_TELEPORT"
+        "P09_WARP_ANIMATION_AND_TELEPORT",
+        "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER",
+        "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI",
+        "P09_ANIMATION_SKIN_JOINT_MAPPING",
+        "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
+        "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
+        "P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE",
+        "P09_WARP_KINEMATIC_COLLIDER_EVALUATION",
+        "P09_KINEMATIC_COLLIDER_GEOMETRY_REFERENCE"
       ],
       "unimplemented": [
-        "Multi-key runtime clip sampling, cubic curves and node-hierarchy binding in the GPU path",
-        "Quaternion/angular target velocity interface",
-        "Substepped animation-physics coupling"
+        "Quaternion / angular target-velocity interface for Animation Tracking",
+        "Substepped animation-physics coupling and full production Runtime CPU-oracle trajectory parity",
+        "Physical target-GPU numerical qualification, performance profiling and cross-vendor validation"
       ]
     },
     {
@@ -495,11 +1001,13 @@
       ],
       "automated_cases": [
         "P10_ATTRIBUTE_PAINT",
-        "P10_WARP_ATTRIBUTE_PAINT"
+        "P10_WARP_ATTRIBUTE_PAINT",
+        "P02_PHYSICS_ATTRIBUTE_HARMONIC"
       ],
       "unimplemented": [
         "Editor brush falloff/selection UI and asset-editor persistence integration",
-        "Topology-neighbor Laplacian smoothing and multi-channel skin-weight normalization"
+        "Editor brush falloff/selection UI and asset-editor persistence integration",
+        "Runtime paint changes require a committed cache/asset serialization format for Physics Vertex weights"
       ]
     },
     {
@@ -542,9 +1050,9 @@
     "note": "This successful run verifies commit 36dab21 only. Later design-document commits require their own CI verification."
   },
   "design_review_regressions": {
-    "status": "specified_not_implemented",
+    "status": "partially_implemented",
     "source": "docs/testing_strategy.md",
-    "purpose": "Track senior-engineer design-review regression cases. Cases 45-47 cover TOI boundary identity / snap bounds / deployment qualification; Case 48 covers ordered in-flight submissions and two-bank reuse; Case 49 covers XPBD correction-sweep Broadphase completeness, VT / EE Correction Motion CCD, Contact Set refresh, fail-closed unresolved / crossing behavior, signed-side interval arithmetic, and Integration-Segment-latched collision side. Cases 45-49 remain specified_not_implemented until executable assertions consume the corresponding fixtures and CI passes.",
+    "purpose": "Track senior-engineer design-review regression cases. Cases 45-48 remain specification-only. Case 49 now has a CPU Reference transaction for per-Primitive Correction Swept AABBs, Spatial Hash Candidate generation, VT / EE correction-path CCD, atomic per-Segment Candidate Union append, Final Discrete Active Contact Set generation and Vertex-to-Contact CSR freshness. WARP test code now covers per-Primitive correction AABBs plus a separate Candidate Count / Exclusive Scan / Capacity / Fill / Bitonic Sort / Dedup pipeline with CPU pair parity, topology exclusions and no-partial-overflow assertions. Shader compilation / dispatch and production Runtime integration remain unverified.",
     "cases": [
       {
         "id": "DCR_29_CONTACT_PROJECTION_RESTITUTION",
@@ -656,20 +1164,128 @@
       }
     ],
     "fixture_bundle": "design_review/toi_snap_and_profile.json",
-    "fixture_status": "persistent_input_vectors_added; Cases_45_to_49_executable_assertions_not_implemented; positive_and_negative_signed_side_interval_vectors_added; Segment_side_latch_vector_added; missing_correction_interval_certificates_fail_closed",
+    "fixture_status": "persistent_input_vectors_added; Case49_CPU_reference_subset_implemented_for_7_geometry_vectors_plus_AABB_CandidateUnion_SegmentEpoch_transaction_and_FinalDiscreteContactCSR_tests; WARP_correction_swept_aabb_and_candidate_count_scan_capacity_fill_bitonic_sort_dedup_test_code_added_unverified; shared_vertex_and_explicit_one_ring_topology_filter_tests_added; Cases45_to_48_executable_assertions_not_implemented; remaining_Case49_GPU_CCD_ContactPatch_solver_epoch_RuntimeCommit_PseudoTime_assertions_pending",
     "fixture_version": "1.9",
     "additional_fixture_bundles": [
       {
         "path": "design_review/correction_sweep_broadphase.json",
         "fixture_version": "1.2",
-        "fixture_status": "persistent_input_vectors_added; executable_assertions_not_implemented"
+        "fixture_status": "persistent_input_vectors_added; 7_geometry_vectors_consumed_by_CPU_reference_tests; WARP_AABB_kernel_uses_analytical_GPU_fixture; remaining_vectors_and_runtime_integration_assertions_not_implemented"
       }
-    ]
+    ],
+    "executable_subset": {
+      "test_group": "P12_CORRECTION_MOTION_CCD_REFERENCE",
+      "source_files": [
+        "include/skin_physics/physics/correction_ccd.hpp",
+        "src/physics/correction_ccd.cpp",
+        "tests/simulation_tests.cpp"
+      ],
+      "fixture_ids": [
+        "DCR_49_VT_POINT_THROUGH_TRIANGLE",
+        "DCR_49_EE_EDGE_THROUGH_EDGE",
+        "DCR_49_VT_POINT_THROUGH_TRIANGLE_NEGATIVE_START_SIDE",
+        "DCR_49_VT_SAME_SIDE_TRANSIENT_PROXIMITY",
+        "DCR_49_VT_ENDPOINT_ACTIVE_CONTACT",
+        "DCR_49_VT_CERTIFIED_MISS",
+        "DCR_49_SEGMENT_SIDE_LATCH_PRESERVES_START_SIDE"
+      ],
+      "additional_assertions": [
+        "non_finite_correction_input_is_invalid",
+        "maximum_interval_evaluations_above_32_is_invalid",
+        "interval_budget_exhaustion_is_unresolved",
+        "ambiguous_segment_start_side_is_unresolved",
+        "candidate_generation_advances_only_for_new_canonical_pairs",
+        "candidate_generation_invalidates_contact_set_and_vertex_contact_csr",
+        "stale_contact_set_rebuild_generation_is_rejected",
+        "cross_segment_candidate_merge_is_rejected",
+        "candidate_capacity_overflow_preserves_previous_segment_state",
+        "position_writer_epoch_executes_aabb_broadphase_and_correction_ccd_transaction",
+        "correction_path_crossing_rejects_without_mutating_segment_state",
+        "same_side_transient_candidate_is_retained_but_not_activated",
+        "endpoint_active_correction_hit_is_returned_to_contact_solve",
+        "broadphase_capacity_overflow_blocks_without_partial_epoch_commit",
+        "final_discrete_narrowphase_builds_vt_ee_active_contact_set",
+        "vertex_to_contact_csr_is_sorted_and_generation_bound",
+        "incomplete_discrete_candidate_geometry_rejects_atomic_refresh",
+        "empty_initial_candidate_set_uses_nonzero_generation",
+        "segment_side_latch_is_immutable_across_position_writer_epochs",
+        "segment_side_latch_is_bound_to_ordered_topology_vertex_ids",
+        "shared_vertex_and_one_ring_filtering_precedes_candidate_capacity",
+        "active_contact_set_capacity_overflow_blocks_epoch_atomically",
+        "vertex_contact_csr_capacity_overflow_blocks_epoch_atomically",
+        "segment_commit_gate_requires_matching_candidate_contact_and_csr_generations",
+        "segment_commit_gate_validates_csr_contact_indices_and_four_vertex_references",
+        "segment_commit_gate_rejects_non_unit_or_topology_unbound_side_latches"
+      ],
+      "status": "CPU reference includes transactional Position-Writer Epoch, immutable per-pair topology-bound Segment Side Latches, topology-filtered Candidate generation before capacity accounting, Final Discrete Contact Set and Vertex-to-Contact CSR construction, independent Candidate / Contact / CSR capacity rollback, and a fail-closed CPU Segment Commit Gate. WARP AABB and GPU Candidate Count / Scan / Capacity / Fill / Sort / Dedup pass graphs and parity tests added; Windows shader compilation, build and CI remain unverified",
+      "gpu_test_group": "P12_WARP_CORRECTION_SWEPT_AABB",
+      "gpu_source_files": [
+        "tests/fixtures/phase07_collision/collision_gpu.cs.hlsl",
+        "tests/gpu_solver_tests.cpp"
+      ],
+      "gpu_assertions": [
+        "compute_pass_graph_srvs_uavs_and_constant_buffer_slots",
+        "before_after_point_and_triangle_swept_bounds",
+        "outward_rounded_cpu_aabb_enclosure",
+        "invalid_primitive_vertex_index_status"
+      ],
+      "additional_gpu_test_groups": [
+        {
+          "test_group": "P12_WARP_CORRECTION_CANDIDATE_PIPELINE",
+          "gpu_source_files": [
+            "tests/fixtures/phase12_correction/correction_candidate_pipeline.cs.hlsl",
+            "tests/gpu_solver_tests.cpp"
+          ],
+          "gpu_assertions": [
+            "primitive_validation_runs_before_pair_count",
+            "zero_pair_seed_input_still_validates_primitives",
+            "pair_seed_count_fill_use_matching_srv_registers",
+            "duplicate_pair_seeds_do_not_consume_candidate_capacity",
+            "canonical_vt_ee_candidate_pair_cpu_parity",
+            "shared_vertex_and_one_ring_filters_precede_capacity",
+            "candidate_capacity_overflow_publishes_no_partial_set"
+          ],
+          "status": "source and WARP readback test added; Windows shader compilation and execution not verified"
+        },
+        {
+          "test_group": "P12_WARP_GPU_GENERATED_INDIRECT_DISPATCH",
+          "gpu_source_files": [
+            "tests/fixtures/phase12_correction/indirect_dispatch.cs.hlsl",
+            "src/simulation/d3d11_compute_graph.cpp",
+            "tests/gpu_solver_tests.cpp"
+          ],
+          "gpu_assertions": [
+            "gpu_generated_group_count_drives_dispatch_indirect",
+            "producer_uav_is_unbound_before_indirect_consumer",
+            "indirect_argument_flag_alignment_and_size_validation",
+            "indirect_argument_same_pass_resource_alias_rejection",
+            "indirect_execution_has_no_cpu_group_count_readback"
+          ],
+          "status": "executor, shader, and WARP readback test added; Windows build and execution not verified"
+        },
+        {
+          "test_group": "P12_WARP_TICK_TRANSACTION_COMMIT_GATE",
+          "gpu_source_files": [
+            "tests/fixtures/phase12_correction/tick_transaction_control.cs.hlsl",
+            "tests/gpu_solver_tests.cpp"
+          ],
+          "gpu_assertions": [
+            "immutable_dispatch_plan_checked_against_predecessor_and_source_generation",
+            "successful_commit_switches_bank_sequence_and_generation",
+            "stale_predecessor_blocks_before_state_publication",
+            "incomplete_validation_mask_rejects_commit",
+            "blocked_tick_preserves_committed_state",
+            "rejected_tick_preserves_committed_state"
+          ],
+          "status": "GPU control shader and WARP regression source added; production Solver gate wiring and Windows execution remain pending"
+        }
+      ]
+    }
   },
   "latest_ci_attempt": {
-    "commit": "e0d7ed63af4b371f64df2182e0a643138f2e0d37",
-    "workflow_run_id": 44463177125,
-    "job_id": 135354596347,
+    "commit": "5f7deebd5fc174b599996c7f35289d00301f0234",
+    "workflow_run_id": 44661895708,
+    "job_id": 136041843591,
     "configuration": "Windows Build / workflow job build-and-test",
     "workflow_conclusion": "failure",
     "job_conclusion": "failure",
@@ -679,6 +1295,125 @@
     "build": "not_verified",
     "tests": "not_started",
     "classification": "failed_before_any_reported_job_step",
-    "note": "This workflow run targets the latest design-document commit e0d7ed63af4b371f64df2182e0a643138f2e0d37. The job-step endpoint returned an empty steps array; no compiler or test step ran, and runner identity / pre-step cause are unavailable. This is not evidence of a source-code regression. Cases 45-47 remain specified_not_implemented until executable assertions consume their fixtures and pass CI."
+    "note": "This attempt targets the latest implementation HEAD. GitHub reports the job as failed, but the job-step endpoint returns an empty array and no job log artifact is available. No compiler or test step is evidenced; runner allocation and the pre-step failure cause are unknown. This is not evidence of a source-code regression. DispatchIndirect, Tick transaction Commit Gate and fixed-step accumulator preservation WARP/CPU execution remain unverified."
+  },
+  "runtime_boundary_implementation": {
+    "status": "partially_implemented_source_unverified",
+    "source_files": [
+      "include/skin_physics/runtime/physics_runtime.hpp",
+      "src/runtime/physics_runtime.cpp",
+      "include/skin_physics/simulation/d3d11_status_ring.hpp",
+      "src/simulation/d3d11_status_ring.cpp",
+      "tests/runtime_tests.cpp",
+      "tests/environment_tests.cpp",
+      "include/skin_physics/physics/physics_mesh.hpp",
+      "include/skin_physics/physics/render_binding.hpp",
+      "src/physics/render_binding.cpp",
+      "shaders/runtime/soft_body_render_feedback.cs.hlsl"
+    ],
+    "automated_test_groups": [
+      "R0_RUNTIME_INITIALIZATION_AND_HANDLES",
+      "R0_RUNTIME_TIME_BUDGET_AND_PAUSE",
+      "R0_RUNTIME_SUBMISSION_THREAD_GUARD",
+      "R0_RUNTIME_CPU_PREFLIGHT_RESERVATION_RETRY",
+      "R0_RUNTIME_CPU_PREFLIGHT_COUNT_OVERFLOW",
+      "R1_WARP_SOFT_BODY_RUNTIME_STATE_BANKS",
+      "P02_PHYSICS_ATTRIBUTE_HARMONIC",
+      "R1_WARP_SOFT_BODY_CFL_PREFLIGHT",
+      "R1_WARP_SOFT_BODY_RENDER_CANDIDATE_LEASE",
+      "R0_WARP_PREDECESSOR_FAILURE_ORDER",
+      "R1_RUNTIME_ANIMATION_INPUT_DEFERRED",
+      "R1_RUNTIME_FORCE_IMPULSE_INPUT_DEFERRED"
+    ],
+    "covered_contracts": [
+      "host_device_immediate_context_feature_level_and_device_identity_validation",
+      "generation_checked_world_model_and_collider_handle_storage",
+      "aggregate_status_ring_capacity_growth",
+      "fixed_step_accumulator_pause_stop_single_step_reset_accounting",
+      "world_execution_budget_revision_and_hard_limit_validation",
+      "submission_thread_enforcement",
+      "world_drain_shutdown_and_render_lease_busy_guards",
+      "fixed_delta_time_moves_once_from_accumulator_into_head_tick_reservation",
+      "cpu_preflight_blocks_without_dropping_the_same_reservation_or_sequence",
+      "execution_budget_revision_rechecks_the_same_head_reservation",
+      "world_input_mutation_is_rejected_while_a_tick_reservation_or_render_lease_exists",
+      "cpu_preflight_work_count_overflow_transitions_to_terminal_failed_without_gpu_submission",
+      "two_persistent_soft_body_position_and_velocity_state_banks_per_mesh",
+      "gated_soft_body_fem_force_csr_gather_and_damped_integration_passes",
+      "odd_substep_tick_scratch_publication_to_inactive_state_bank",
+      "gpu_commit_status_requires_exact_state_generation_and_bank_transition",
+      "soft_body_asset_upload_rejects_non_finite_rest_inverse_and_shape_gradients",
+      "soft_body_asset_upload_rejects_duplicate_tetrahedron_vertices",
+      "vertex_to_tet_csr_matches_complete_ordered_topology_incidence",
+      "render_surface_paint_transfer_to_boundary_physics_vertices",
+      "deterministic_double_precision_dirichlet_harmonic_extension_to_interior_physics_vertices",
+      "ambiguous_coincident_render_surfaces_with_conflicting_paint_are_rejected",
+      "runtime_paint_edit_refreshes_physics_mesh_attribute_transfer_transactionally",
+      "soft_body_tet_shape_and_volume_paint_average_and_vertex_damping_weight_upload",
+      "render_surface_paint_transfers_to_physics_boundary_and_harmonic_interior",
+      "ambiguous_coincident_render_surface_paint_is_rejected",
+      "paint_edit_updates_render_and_physics_mesh_attribute_state_transactionally",
+      "soft_body_tet_shape_and_volume_paint_uses_four_vertex_arithmetic_mean",
+      "soft_body_vertex_damping_rate_uses_per_vertex_damping_paint",
+      "soft_body_fem_cfl_limit_contributes_to_common_world_substep_preflight",
+      "cfl_budget_recovery_preserves_the_same_tick_reservation_and_substep_plan",
+      "world_render_candidate_ring_uses_maximum_in_flight_plus_one_slots",
+      "render_candidate_position_normal_tangent_feedback_runs_on_gpu_before_tick_commit",
+      "gpu_commit_status_publishes_full_width_render_slot_id_and_generation",
+      "host_render_binding_exposes_only_cpu_observed_committed_candidate",
+      "multiple_mesh_bindings_share_one_world_render_lease_generation",
+      "host_render_lease_blocks_candidate_slot_reuse_and_new_gpu_submission",
+      "render_candidate_slot_is_released_only_by_terminal_non_commit_or_cpu_observed_commit",
+      "active_host_render_lease_keeps_its_original_slot_when_a_later_in_flight_tick_commits",
+      "after_host_lease_release_the_newer_cpu_observed_candidate_becomes_latest",
+      "render_slot_id_and_generation_are_published_and_compared_as_full_32_bit_values",
+      "host_render_lease_release_resubmits_the_same_pending_tick_reservation_without_new_frame_time",
+      "latest_render_candidate_resource_generation_is_monotonic_per_world_slot_lifetime",
+      "degenerate_deformed_render_triangles_fail_the_candidate_and_prevent_tick_commit",
+      "gpu_submitted_render_candidate_is_not_public_until_cpu_observes_event_query_and_committed_status",
+      "host_readback_confirms_committed_position_normal_and_tangent_srvs_contain_valid_model_local_geometry",
+      "render_feedback_inverse_root_translation_restores_model_local_position_space",
+      "mismatched_future_render_lease_generation_is_rejected_without_releasing_active_lease",
+      "render_candidate_readback_validates_normalization_tangent_orthogonality_and_handedness",
+      "advance_report_sets_render_binding_backpressure_while_a_host_lease_blocks_submission",
+      "advance_report_sets_capacity_blocked_when_query_ring_admission_is_full",
+      "successful_submission_clears_previous_render_or_capacity_backpressure_status",
+      "multiple_in_flight_non_commit_reservations_are_restored_in_ascending_sequence_order",
+      "earliest_failed_or_rejected_tick_result_is_not_overwritten_by_later_predecessor_blocks",
+      "later_in_flight_slots_are_released_without_overwriting_terminal_world_status",
+      "terminal_failed_world_retains_all_uncommitted_reservations_until_explicit_reset",
+      "cpu_preflight_budget_retry_requires_target_world_poll_observation",
+      "polling_another_world_does_not_authorize_target_world_budget_retry",
+      "gpu_dynamic_toi_budget_retry_requires_target_world_query_observation_and_zero_in_flight",
+      "idle_budget_change_is_rejected_while_whole_tick_or_step_request_is_pending",
+      "blocked_budget_cannot_decrease_either_admission_limit",
+      "blocked_budget_must_meet_exact_substep_and_segment_lower_bounds",
+      "rejected_budget_update_preserves_revision_reservation_sequence_and_time",
+      "predecessor_blocked_reservation_is_repreflighted_only_after_predecessor_commit_is_observed",
+      "older_committed_tick_does_not_clear_newer_cpu_preflight_budget_block_status",
+      "budget_retry_preserves_gpu_dynamic_toi_minimum_required_segment_lower_bound",
+      "gpu_terminal_blocked_with_gpu_dynamic_toi_origin_maps_to_work_budget_exceeded_retryable_state",
+      "terminal_blocked_without_dynamic_toi_origin_maps_to_blocked_by_predecessor",
+      "gpu_dynamic_toi_required_segment_count_above_runtime_hard_limit_maps_to_work_budget_unsatisfiable",
+      "gpu_dynamic_toi_status_origin_is_preserved_when_later_predecessor_status_is_observed",
+      "accepted_rigid_transform_quaternions_are_canonicalized_before_physics_upload_and_render_feedback",
+      "production_runtime_fem_positive_and_inverted_finite_intermediates_match_cpu_reference",
+      "inverted_fem_publishes_diagnostics_but_tick_commit_is_rejected",
+      "production_fem_warp_test_control_buffer_stride_matches_runtime_hlsl_tick_commit_control_abi",
+      "production_fem_rejects_nonfinite_deformation_rotation_stress_inversion_stress_energy_and_forces",
+      "root_transform_samples_are_not_silently_ignored_before_trajectory_packet_integration",
+      "unsupported_animation_root_inputs_preserve_the_cpu_tick_reservation_until_reset",
+      "unintegrated_animation_root_transform_cloth_collider_or_force_inputs_report_blocked_by_input_without_gpu_submission",
+      "all_model_root_and_kinematic_collider_transform_samples_are_normalized_before_storage",
+      "unintegrated_force_and_impulse_events_report_blocked_by_input_without_gpu_submission",
+      "reset_explicitly_clears_unsupported_force_impulse_events_and_their_reservation"
+    ],
+    "remaining_r0": [
+      "Cloth / Collider solver integration into the World Runtime scheduler",
+      "full boundary-table CPU Preflight for Animation / Force / Impulse / TOI and GPU Dynamic TOI budget observation",
+      "Render Candidate / Host Lease currently covers Soft Body Meshes only; Cloth / Collision output integration remains with the corresponding solver phases",
+      "Immutable per-Tick Input Snapshot / Packet Version ownership and complete Segment Snapshot lifecycle"
+    ],
+    "validation": "WARP runtime / FEM / CPU physics regression sources are registered; execution and C++ / HLSL compilation remain unverified because latest Windows CI jobs fail before reporting any build steps."
   }
 }

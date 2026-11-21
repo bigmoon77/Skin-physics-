@@ -305,7 +305,8 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
                 world_handle world,
                 collider_handle collider,
                 double sample_time,
-                const transform& pose);
+                const transform& pose,
+                bool is_teleport = false);
 
             status advance(
                 world_handle world,
@@ -410,7 +411,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | asset node transform | static scale | Offline BuildでGeometry / Rest Data / Mass / BindingへBake。負・ゼロScaleは禁止 |
 | bone animation | scale channel | 正値かつ特異でないScaleのみ許可。負値・ゼロ・符号反転はImport Error |
 | model transform sample | sample_time / world_transform / is_teleport | 時刻付きRoot Transform履歴。Clip連続移動とTeleportを区別し、Tick / Substep時刻へ補間 |
-| mesh_physics_parameters | material channels | physics_modeに有効な単位付きSoft Body / Cloth Material。無効チャンネルの入力は拒否 |
+| mesh_physics_parameters | material channels / tracking_stiffness / tracking_damping | physics_modeに有効な単位付きSoft Body / Cloth Material。tracking_stiffnessはN/m、tracking_dampingはN*s/m、いずれも有限・非負。tracking_stiffness=0はバネ成分 / 周波数CFL項を無効にするが、正のtracking_dampingは減衰成分として残る。剛性へanimation_tracking Paintとattribute multiplierを乗じる |
 | attribute_edit_desc | operation / channel / brush / target / strength | Paint / Smooth / Average / Erase。Render Mesh側の編集値をCPUで更新し、Runtimeへ不変のversioned editとして反映 |
 | collider_desc | collision_mesh | Collision-only / Render Meshの三角形データ。static / kinematicで共通のTopology入力 |
 | collider_desc | initial_transform | 初期World Transform |
@@ -430,6 +431,7 @@ animation_track_desc / animation_playback_desc / animation_blend_descは標準�
 | advance_report | render_binding_backpressure / capacity_blocked | Render Slot leaseまたはGPU Capacityに起因するSubmission停止理由 |
 | advance_report | first_required_input_tick / required_input_tick_count | Kinematic Pose履歴不足時に必要な時刻範囲 |
 | world_status | submitted_sequence / gpu_committed_sequence / cpu_observed_sequence | GPU CommitとCPU確認済みprefixを別々に保持 |
+| world_status | head_reserved_tick_sequence / head_input_snapshot_version | Head ReservationのTick Sequenceと、そのReservationが所有するImmutable CPU Input Snapshotの単調増加Version。Head Reservationがない場合はVersion 0 |
 | world_status | playback_state / tick_state / terminal_error / simulation_backlog | 状態、最終エラー、遅延・未処理時間を報告 |
 
 
@@ -448,7 +450,7 @@ Animation Playback APIの状態遷移は次の通りとする。set_animation_pl
 
 `model_desc`内のAsset参照はadd_model呼び出し中に検証・Uploadし、Runtimeが必要なCPU Cache / GPU Resourceを所有する。APIは呼び出し元の一時vectorやspanを後続GPU Dispatchまで保持しない。Assetデータのコピーを避ける場合は、明示的なshared immutable asset handleとLifetime契約を別途追加する。
 
-Model / ColliderのCreate / Destroy、Model Transform Sample、Mesh Physics Parameter変更、Attribute EditはTick Reservation作成前のWorld状態へ適用する。GPU Submission直前に入力・構造・Material Snapshotを固定し、既にReservation / Submission済みのTickは変更しない。BLOCKED_BY_INPUT / Render Backpressure中の要求はSnapshotを持たないため、Create / Destroy後の再評価で最新World構成を使う。Paint編集はRender MeshのStable Vertex IDを基準にversioned editとして保持し、既存Physics Mesh Bindingを使ってPhysics Vertexへ転送する。Topology再生成後に対応が一意でない場合は適用を保留して警告する。
+Model / ColliderのCreate / Destroy、Model Transform Sample、Mesh Physics Parameter変更、Attribute EditはTick Reservation作成前のWorld状態へ適用する。Tick Reservation作成時にWorld設定、Force / Impulse、Model Root / Animation / Material、Physics Attribute Weight、Collider Descriptor / Pose Sampleを含むImmutable CPU Input SnapshotをVersion付きで固定する。CPU Preflight、Budget Retry、GPU Submission、Query待ち、非Commit Reservation復元は同じSnapshot Ownerを保持し、別のWorld入力を再読込してはならない。GPU Submission時のDispatch PlanとRender Candidate生成もこのSnapshotを参照する。BLOCKED_BY_INPUT / Render BackpressureのReservationが入力固定後に存在する間は、World input mutationをBUSYで拒否する。Paint編集はRender MeshのStable Vertex IDを基準にversioned editとして保持し、既存Physics Mesh Bindingを使ってPhysics Vertexへ転送する。Topology再生成後に対応が一意でない場合は適用を保留して警告する。
 
 `set_fixed_delta_time`はWorldがPaused、in-flight Tick = 0、pending whole Tick = 0、queued single-step request = 0のときだけ成功する。条件を満たさなければBUSYを返す。fractional remainderは秒単位の実時間として保持し、新しいFixed Delta Timeに対してAccumulatorのwhole tick数を再計算する。旧Fixed Delta Timeのwhole tickは存在しないため、時間を黙って破棄・換算しない。変更時はCloth / Contact / Animation XPBD LambdaとTick ScratchをResetする。
 
@@ -574,6 +576,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 - Kinematic Colliderは連続する時刻付きTransform SampleをTranslation Linear + Shortest-Arc Slerpで評価する。CAの任意tauでTransform / Contact Point Velocityを算出し、Speed / Sagitta Boundを同じPacket Versionで提供する。必要なSample Pairがbracketできない場合はBLOCKED_BY_INPUT。
 - CPUは係数区間から保守的なSpeed / Acceleration Boundを生成し、GPU Trajectory Packetと同一Versionで渡す。BoundsはInterval Arithmetic / 外向き丸めを使い、実軌道の上限を過小評価しない。CPUのdouble絶対時刻をGPU floatへ直接渡さず、GPUではSpan内uとSegment相対tauだけを使用する。
 - Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じimmutable Packetを使って任意tauの姿勢・速度を評価する。通常Substep / Force / Impulse / TOIを含む全Segmentの進行後にWorld Working Cursorのu_segment_startを更新し、TOI prefixではtau、その他はdt_segmentを使う。次SegmentがSpan境界へ到達した場合はspan_record_indexを次Spanへ切り替え、u_segment_start=0とする。正の時間進行でCursorが増加しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。
+- Kinematic Colliderの各Pose Sample時刻もCPU World Integration Segment境界へ追加する。APIの`is_teleport`は明示Discontinuityを表し、Teleport境界を跨ぐ補間を禁止する。境界直前のSpanは旧Poseを保持してVelocityを0とし、境界直後のSpanはTeleport後のPoseから新しい連続Sample Pairで評価する。Sample PairがTick / Spanをbracketできない場合はBLOCKED_BY_INPUTとし、外挿しない。
 - Clip Blendは最大2 Track、非Additiveとする。Blend Weightの時間微分項を必ず含める。
 - Missing Pose / Key / Bound、正規化不能Quaternion、非有限微分はBLOCKED_BY_INPUTまたはInvalid Animation Inputとし、前回Poseや速度の流用・有限差分代用を行わない。
 

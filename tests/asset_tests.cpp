@@ -347,10 +347,13 @@ namespace
             "phase08_ccd/initial_repair.expected.json",
             "phase09_animation/target_motion.input.json",
             "phase09_animation/target_motion.expected.json",
+            "phase09_animation/animation_trajectory_abi.cs.hlsl",
+            "phase09_animation/animation_skin_abi.cs.hlsl",
             "phase10_paint/paint.input.json",
             "phase10_paint/paint.expected.json",
             "phase11_performance/scale_profiles.input.json",
-            "phase11_performance/scale_profiles.expected.json"
+            "phase11_performance/scale_profiles.expected.json",
+            "design_review/correction_sweep_broadphase.json"
         };
 
         for (const char* relative_path : fixture_files)
@@ -388,6 +391,11 @@ namespace
 
 int main()
 {
+    // Keep per-test diagnostics visible even when a WARP driver / device
+    // failure terminates the process before normal stream destruction.
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
+
     try
     {
         run_test_case("P01_OBJ_TEMP_EDGE_CASES", test_obj_negative_indices_and_polygon);

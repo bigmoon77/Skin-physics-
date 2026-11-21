@@ -36,6 +36,10 @@ namespace skin_physics::simulation
         std::vector<compute_srv_binding> shader_resources;
         std::vector<compute_uav_binding> unordered_access_views;
         std::vector<compute_constant_buffer_binding> constant_buffers;
+        // When non-null, DispatchIndirect consumes three GPU-generated UINT group counts.
+        // The argument buffer must carry D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.
+        ID3D11Buffer* indirect_arguments = nullptr;
+        uint32_t indirect_argument_offset = 0;
         uint32_t group_count_x = 1;
         uint32_t group_count_y = 1;
         uint32_t group_count_z = 1;
@@ -84,6 +88,8 @@ namespace skin_physics::simulation
             std::vector<stored_srv_binding> shader_resources;
             std::vector<stored_uav_binding> unordered_access_views;
             std::vector<stored_constant_buffer_binding> constant_buffers;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> indirect_arguments;
+            uint32_t indirect_argument_offset = 0;
             uint32_t group_count_x = 1;
             uint32_t group_count_y = 1;
             uint32_t group_count_z = 1;

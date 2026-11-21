@@ -30,7 +30,6 @@ namespace skin_physics::simulation
             return false;
         }
         _settings = settings;
-        _accumulator = 0.0;
         return true;
     }
 
@@ -49,8 +48,8 @@ namespace skin_physics::simulation
 
     void fixed_step_controller::stop()
     {
+        // Stop pauses wall-clock ingestion; only reset() discards requested time.
         _state = playback_state::stopped;
-        _accumulator = 0.0;
     }
 
     void fixed_step_controller::reset()
@@ -77,7 +76,6 @@ namespace skin_physics::simulation
             return false;
         }
         _settings.fixed_delta_time = value;
-        _accumulator = 0.0;
         return true;
     }
 

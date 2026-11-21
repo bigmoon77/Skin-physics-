@@ -37,6 +37,9 @@ namespace skin_physics::physics
         std::vector<std::array<uint32_t, 4>> tetrahedra;
     };
 
+    using physics_vertex_attribute_weights = std::array<float,
+        static_cast<std::size_t>(asset::physics_attribute_channel::count)>;
+
     struct physics_mesh
     {
         std::vector<asset::vec3> rest_positions;
@@ -49,6 +52,10 @@ namespace skin_physics::physics
 
         std::vector<float> mass;
         std::vector<float> inverse_mass;
+
+        // Optional Physics Attribute Paint channels aligned with rest_positions.
+        // An empty array means values have not yet been transferred from the Render Mesh.
+        std::vector<physics_vertex_attribute_weights> vertex_attribute_weights;
 
         // Optional skinning data aligned with rest_positions.
         bool has_skin_weights = false;

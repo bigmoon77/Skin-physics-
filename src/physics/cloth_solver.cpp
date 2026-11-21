@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 #include <utility>
+#include <unordered_set>
 
 namespace skin_physics::physics
 {
@@ -99,6 +100,160 @@ namespace skin_physics::physics
             std::array<uint32_t, 2> key = {};
             std::vector<edge_occurrence> occurrences;
         };
+
+        void build_vertex_constraint_csr(cloth_mesh& mesh)
+        {
+            const std::size_t vertex_count = mesh.rest_positions.size();
+            mesh.vertex_constraint_offsets.assign(
+                vertex_count + 1u, 0u);
+            mesh.vertex_constraint_refs.clear();
+
+            const auto count_constraint = [&mesh](
+                const uint32_t* vertices,
+                std::size_t vertex_indices_count)
+            {
+                for (std::size_t local_index = 0u;
+                    local_index < vertex_indices_count; ++local_index)
+                {
+                    ++mesh.vertex_constraint_offsets[
+                        static_cast<std::size_t>(vertices[local_index]) + 1u];
+                }
+            };
+
+            for (const cloth_stretch_constraint& constraint :
+                mesh.stretch_constraints)
+            {
+                count_constraint(constraint.vertices.data(), 2u);
+            }
+            for (const cloth_shear_constraint& constraint :
+                mesh.shear_constraints)
+            {
+                count_constraint(constraint.vertices.data(), 3u);
+            }
+            for (const cloth_bend_constraint& constraint :
+                mesh.bend_constraints)
+            {
+                count_constraint(constraint.vertices.data(), 4u);
+            }
+
+            for (std::size_t vertex_index = 1u;
+                vertex_index < mesh.vertex_constraint_offsets.size();
+                ++vertex_index)
+            {
+                mesh.vertex_constraint_offsets[vertex_index] +=
+                    mesh.vertex_constraint_offsets[vertex_index - 1u];
+            }
+
+            mesh.vertex_constraint_refs.resize(
+                mesh.vertex_constraint_offsets.back());
+            std::vector<uint32_t> cursors =
+                mesh.vertex_constraint_offsets;
+            const auto append_constraint = [&mesh, &cursors](
+                cloth_vertex_constraint_type type,
+                uint32_t constraint_index,
+                const uint32_t* vertices,
+                std::size_t vertex_indices_count)
+            {
+                for (uint32_t local_index = 0u;
+                    local_index < vertex_indices_count; ++local_index)
+                {
+                    cloth_vertex_constraint_ref reference;
+                    reference.type = static_cast<uint32_t>(type);
+                    reference.constraint_index = constraint_index;
+                    reference.local_vertex_index = local_index;
+                    const uint32_t vertex_index = vertices[local_index];
+                    mesh.vertex_constraint_refs[
+                        cursors[vertex_index]++] = reference;
+                }
+            };
+
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.stretch_constraints.size();
+                ++constraint_index)
+            {
+                const auto& constraint =
+                    mesh.stretch_constraints[constraint_index];
+                append_constraint(
+                    cloth_vertex_constraint_type::stretch,
+                    constraint_index,
+                    constraint.vertices.data(), 2u);
+            }
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.shear_constraints.size();
+                ++constraint_index)
+            {
+                const auto& constraint =
+                    mesh.shear_constraints[constraint_index];
+                append_constraint(
+                    cloth_vertex_constraint_type::shear,
+                    constraint_index,
+                    constraint.vertices.data(), 3u);
+            }
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.bend_constraints.size();
+                ++constraint_index)
+            {
+                const auto& constraint =
+                    mesh.bend_constraints[constraint_index];
+                append_constraint(
+                    cloth_vertex_constraint_type::bend,
+                    constraint_index,
+                    constraint.vertices.data(), 4u);
+            }
+        }
+
+        void build_stretch_coloring(cloth_mesh& mesh)
+        {
+            std::vector<std::vector<uint32_t>> color_constraints;
+            std::vector<std::vector<uint8_t>> color_vertex_occupancy;
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.stretch_constraints.size();
+                ++constraint_index)
+            {
+                const cloth_stretch_constraint& constraint =
+                    mesh.stretch_constraints[constraint_index];
+                std::size_t selected_color = 0u;
+                for (; selected_color < color_vertex_occupancy.size();
+                    ++selected_color)
+                {
+                    const std::vector<uint8_t>& occupied =
+                        color_vertex_occupancy[selected_color];
+                    if (occupied[constraint.vertices[0]] == 0u &&
+                        occupied[constraint.vertices[1]] == 0u)
+                    {
+                        break;
+                    }
+                }
+                if (selected_color == color_vertex_occupancy.size())
+                {
+                    color_vertex_occupancy.emplace_back(
+                        mesh.rest_positions.size(), static_cast<uint8_t>(0u));
+                    color_constraints.emplace_back();
+                }
+
+                color_vertex_occupancy[selected_color][constraint.vertices[0]] = 1u;
+                color_vertex_occupancy[selected_color][constraint.vertices[1]] = 1u;
+                color_constraints[selected_color].push_back(constraint_index);
+            }
+
+            mesh.stretch_color_ranges.clear();
+            mesh.stretch_color_constraint_indices.clear();
+            mesh.stretch_color_ranges.reserve(color_constraints.size());
+            mesh.stretch_color_constraint_indices.reserve(
+                mesh.stretch_constraints.size());
+            for (const std::vector<uint32_t>& color : color_constraints)
+            {
+                cloth_stretch_color_range range;
+                range.first_constraint_index =
+                    static_cast<uint32_t>(
+                        mesh.stretch_color_constraint_indices.size());
+                range.constraint_count = static_cast<uint32_t>(color.size());
+                mesh.stretch_color_ranges.push_back(range);
+                mesh.stretch_color_constraint_indices.insert(
+                    mesh.stretch_color_constraint_indices.end(),
+                    color.begin(), color.end());
+            }
+        }
 
         bool calculate_dihedral(
             const std::array<vec3, 4>& positions,
@@ -336,6 +491,759 @@ namespace skin_physics::physics
                     return result;
                 }
                 result.value.bend_constraints.push_back(bend);
+            }
+        }
+
+        build_stretch_coloring(result.value);
+        build_vertex_constraint_csr(result.value);
+        std::string coloring_diagnostic;
+        if (!validate_cloth_stretch_coloring(
+                result.value, coloring_diagnostic))
+        {
+            add_diagnostic(
+                result.diagnostics,
+                cloth_error::invalid_settings,
+                asset::invalid_index,
+                coloring_diagnostic);
+            return result;
+        }
+        if (!validate_cloth_vertex_constraint_csr(
+                result.value, coloring_diagnostic))
+        {
+            add_diagnostic(
+                result.diagnostics,
+                cloth_error::invalid_settings,
+                asset::invalid_index,
+                coloring_diagnostic);
+            return result;
+        }
+
+        result.success = true;
+        return result;
+    }
+
+    bool validate_cloth_stretch_coloring(
+        const cloth_mesh& mesh,
+        std::string& diagnostic)
+    {
+        diagnostic.clear();
+        if (mesh.stretch_constraints.empty())
+        {
+            if (!mesh.stretch_color_ranges.empty() ||
+                !mesh.stretch_color_constraint_indices.empty())
+            {
+                diagnostic =
+                    "An empty Stretch constraint set must not contain color ranges or indices.";
+                return false;
+            }
+            return true;
+        }
+        if (mesh.stretch_color_ranges.empty() ||
+            mesh.stretch_color_constraint_indices.size() !=
+                mesh.stretch_constraints.size())
+        {
+            diagnostic =
+                "Stretch coloring must cover every constraint exactly once.";
+            return false;
+        }
+
+        std::vector<uint8_t> visited(mesh.stretch_constraints.size(), static_cast<uint8_t>(0u));
+        std::size_t expected_first = 0u;
+        for (std::size_t color_index = 0u;
+            color_index < mesh.stretch_color_ranges.size();
+            ++color_index)
+        {
+            const cloth_stretch_color_range& range =
+                mesh.stretch_color_ranges[color_index];
+            if (range.first_constraint_index != expected_first ||
+                range.constraint_count == 0u ||
+                static_cast<std::size_t>(range.first_constraint_index) >
+                    mesh.stretch_color_constraint_indices.size() ||
+                static_cast<std::size_t>(range.constraint_count) >
+                    mesh.stretch_color_constraint_indices.size() -
+                        static_cast<std::size_t>(range.first_constraint_index))
+            {
+                diagnostic =
+                    "Stretch color ranges must be non-empty, contiguous and inside the flattened index table.";
+                return false;
+            }
+
+            std::vector<uint8_t> occupied(mesh.rest_positions.size(), static_cast<uint8_t>(0u));
+            for (uint32_t local_index = 0u;
+                local_index < range.constraint_count;
+                ++local_index)
+            {
+                const uint32_t table_index =
+                    range.first_constraint_index + local_index;
+                const uint32_t constraint_index =
+                    mesh.stretch_color_constraint_indices[table_index];
+                if (constraint_index >= mesh.stretch_constraints.size() ||
+                    visited[constraint_index] != 0u)
+                {
+                    diagnostic =
+                        "Stretch coloring contains an out-of-range or duplicate constraint index.";
+                    return false;
+                }
+                visited[constraint_index] = 1u;
+
+                const cloth_stretch_constraint& constraint =
+                    mesh.stretch_constraints[constraint_index];
+                const uint32_t first = constraint.vertices[0];
+                const uint32_t second = constraint.vertices[1];
+                if (first >= mesh.rest_positions.size() ||
+                    second >= mesh.rest_positions.size() ||
+                    first == second ||
+                    occupied[first] != 0u ||
+                    occupied[second] != 0u)
+                {
+                    diagnostic =
+                        "A Stretch color contains invalid constraints or two writes to the same vertex.";
+                    return false;
+                }
+                occupied[first] = 1u;
+                occupied[second] = 1u;
+            }
+            expected_first += range.constraint_count;
+        }
+
+        if (expected_first != mesh.stretch_color_constraint_indices.size() ||
+            std::find(visited.begin(), visited.end(), 0u) != visited.end())
+        {
+            diagnostic =
+                "Stretch coloring does not cover the complete constraint set.";
+            return false;
+        }
+        return true;
+    }
+
+    bool validate_cloth_vertex_constraint_csr(
+        const cloth_mesh& mesh,
+        std::string& diagnostic)
+    {
+        diagnostic.clear();
+        if (mesh.vertex_constraint_offsets.size() !=
+                mesh.rest_positions.size() + 1u ||
+            mesh.vertex_constraint_offsets.empty() ||
+            mesh.vertex_constraint_offsets.front() != 0u ||
+            mesh.vertex_constraint_offsets.back() !=
+                mesh.vertex_constraint_refs.size())
+        {
+            diagnostic =
+                "Vertex-to-Constraint CSR offsets must contain V+1 entries and span the complete reference table.";
+            return false;
+        }
+
+        std::vector<uint8_t> stretch_seen(
+            mesh.stretch_constraints.size() * 2u, static_cast<uint8_t>(0u));
+        std::vector<uint8_t> shear_seen(
+            mesh.shear_constraints.size() * 3u, static_cast<uint8_t>(0u));
+        std::vector<uint8_t> bend_seen(
+            mesh.bend_constraints.size() * 4u, static_cast<uint8_t>(0u));
+        std::size_t expected_reference_count = 0u;
+        for (std::size_t index = 1u;
+            index < mesh.vertex_constraint_offsets.size(); ++index)
+        {
+            if (mesh.vertex_constraint_offsets[index] <
+                mesh.vertex_constraint_offsets[index - 1u])
+            {
+                diagnostic =
+                    "Vertex-to-Constraint CSR offsets must be monotonically increasing.";
+                return false;
+            }
+        }
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < mesh.rest_positions.size(); ++vertex_index)
+        {
+            const uint32_t first =
+                mesh.vertex_constraint_offsets[vertex_index];
+            const uint32_t end =
+                mesh.vertex_constraint_offsets[vertex_index + 1u];
+            expected_reference_count += end - first;
+            for (uint32_t reference_index = first;
+                reference_index < end; ++reference_index)
+            {
+                const cloth_vertex_constraint_ref& reference =
+                    mesh.vertex_constraint_refs[reference_index];
+                if (reference.reserved != 0u)
+                {
+                    diagnostic =
+                        "Vertex-to-Constraint CSR reserved fields must be zero.";
+                    return false;
+                }
+
+                std::vector<uint8_t>* seen = nullptr;
+                std::size_t incidence_index = 0u;
+                if (reference.type == static_cast<uint32_t>(
+                        cloth_vertex_constraint_type::stretch))
+                {
+                    if (reference.constraint_index >=
+                            mesh.stretch_constraints.size() ||
+                        reference.local_vertex_index >= 2u)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Stretch reference is out of range.";
+                        return false;
+                    }
+                    const auto& constraint =
+                        mesh.stretch_constraints[reference.constraint_index];
+                    if (constraint.vertices[reference.local_vertex_index] !=
+                        vertex_index)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Stretch reference targets the wrong vertex.";
+                        return false;
+                    }
+                    seen = &stretch_seen;
+                    incidence_index =
+                        static_cast<std::size_t>(reference.constraint_index) * 2u +
+                        reference.local_vertex_index;
+                }
+                else if (reference.type == static_cast<uint32_t>(
+                        cloth_vertex_constraint_type::shear))
+                {
+                    if (reference.constraint_index >=
+                            mesh.shear_constraints.size() ||
+                        reference.local_vertex_index >= 3u)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Shear reference is out of range.";
+                        return false;
+                    }
+                    const auto& constraint =
+                        mesh.shear_constraints[reference.constraint_index];
+                    if (constraint.vertices[reference.local_vertex_index] !=
+                        vertex_index)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Shear reference targets the wrong vertex.";
+                        return false;
+                    }
+                    seen = &shear_seen;
+                    incidence_index =
+                        static_cast<std::size_t>(reference.constraint_index) * 3u +
+                        reference.local_vertex_index;
+                }
+                else if (reference.type == static_cast<uint32_t>(
+                        cloth_vertex_constraint_type::bend))
+                {
+                    if (reference.constraint_index >=
+                            mesh.bend_constraints.size() ||
+                        reference.local_vertex_index >= 4u)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Bend reference is out of range.";
+                        return false;
+                    }
+                    const auto& constraint =
+                        mesh.bend_constraints[reference.constraint_index];
+                    if (constraint.vertices[reference.local_vertex_index] !=
+                        vertex_index)
+                    {
+                        diagnostic =
+                            "Vertex-to-Constraint CSR Bend reference targets the wrong vertex.";
+                        return false;
+                    }
+                    seen = &bend_seen;
+                    incidence_index =
+                        static_cast<std::size_t>(reference.constraint_index) * 4u +
+                        reference.local_vertex_index;
+                }
+                else
+                {
+                    diagnostic =
+                        "Vertex-to-Constraint CSR contains an unknown constraint type.";
+                    return false;
+                }
+
+                if ((*seen)[incidence_index] != 0u)
+                {
+                    diagnostic =
+                        "Vertex-to-Constraint CSR contains a duplicate constraint incidence.";
+                    return false;
+                }
+                (*seen)[incidence_index] = 1u;
+            }
+        }
+
+        if (expected_reference_count != mesh.vertex_constraint_refs.size() ||
+            std::find(stretch_seen.begin(), stretch_seen.end(), 0u) !=
+                stretch_seen.end() ||
+            std::find(shear_seen.begin(), shear_seen.end(), 0u) !=
+                shear_seen.end() ||
+            std::find(bend_seen.begin(), bend_seen.end(), 0u) !=
+                bend_seen.end())
+        {
+            diagnostic =
+                "Vertex-to-Constraint CSR must contain every topology incidence exactly once.";
+            return false;
+        }
+        return true;
+    }
+
+    cloth_gpu_topology_build_result build_cloth_gpu_topology_packet(
+        const cloth_mesh& mesh,
+        const cloth_solver_settings& settings)
+    {
+        cloth_gpu_topology_build_result result;
+        if (mesh.rest_positions.empty() ||
+            mesh.rest_positions.size() >=
+                static_cast<std::size_t>(asset::invalid_index) ||
+            mesh.vertex_constraint_offsets.size() !=
+                mesh.rest_positions.size() + 1u)
+        {
+            result.error = cloth_gpu_topology_error::invalid_mesh;
+            result.message =
+                "Cloth GPU topology requires a non-empty Vertex array and a V+1 CSR offset table.";
+            return result;
+        }
+
+        if (!std::isfinite(settings.stretch_compliance) ||
+            settings.stretch_compliance < 0.0f ||
+            !std::isfinite(settings.shear_compliance) ||
+            settings.shear_compliance < 0.0f ||
+            !std::isfinite(settings.bend_compliance) ||
+            settings.bend_compliance < 0.0f ||
+            !std::isfinite(settings.fixed_delta_time) ||
+            settings.fixed_delta_time <= 0.0f ||
+            !std::isfinite(settings.relaxation) ||
+            settings.relaxation <= 0.0f ||
+            settings.relaxation > 1.0f ||
+            settings.iterations == 0u)
+        {
+            result.error = cloth_gpu_topology_error::invalid_settings;
+            result.message =
+                "Cloth GPU topology requires finite non-negative Compliance, positive fixed dt / iterations and relaxation in (0, 1].";
+            return result;
+        }
+
+        std::string validation_diagnostic;
+        if (!validate_cloth_stretch_coloring(mesh, validation_diagnostic))
+        {
+            result.error = cloth_gpu_topology_error::invalid_coloring;
+            result.message =
+                "Cloth GPU Stretch topology validation failed: " +
+                validation_diagnostic;
+            return result;
+        }
+        if (!validate_cloth_vertex_constraint_csr(
+                mesh, validation_diagnostic))
+        {
+            result.error = cloth_gpu_topology_error::invalid_csr;
+            result.message =
+                "Cloth GPU Vertex-to-Constraint CSR validation failed: " +
+                validation_diagnostic;
+            return result;
+        }
+
+        const std::size_t maximum_gpu_count =
+            static_cast<std::size_t>(asset::invalid_index);
+        if (mesh.stretch_constraints.size() >= maximum_gpu_count ||
+            mesh.stretch_color_constraint_indices.size() >= maximum_gpu_count ||
+            mesh.shear_constraints.size() >= maximum_gpu_count ||
+            mesh.bend_constraints.size() >= maximum_gpu_count ||
+            mesh.triangles.size() >= maximum_gpu_count ||
+            mesh.vertex_constraint_refs.size() >= maximum_gpu_count)
+        {
+            result.error = cloth_gpu_topology_error::capacity_exceeded;
+            result.message =
+                "Cloth GPU topology count exceeds the 32-bit StructuredBuffer index range.";
+            return result;
+        }
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < mesh.rest_positions.size(); ++vertex_index)
+        {
+            if (!finite(mesh.rest_positions[vertex_index]))
+            {
+                result.error = cloth_gpu_topology_error::invalid_mesh;
+                result.message =
+                    "Cloth GPU topology contains a non-finite Rest Position at Vertex " +
+                    std::to_string(vertex_index) + ".";
+                return result;
+            }
+        }
+
+        if (mesh.triangles.empty())
+        {
+            result.error = cloth_gpu_topology_error::invalid_mesh;
+            result.message =
+                "Cloth GPU topology requires at least one surface Triangle for Position-Writer Epoch bounds.";
+            return result;
+        }
+        std::map<std::pair<uint32_t, uint32_t>, uint8_t> unique_edges;
+        for (std::size_t triangle_index = 0u;
+            triangle_index < mesh.triangles.size(); ++triangle_index)
+        {
+            const std::array<uint32_t, 3>& triangle =
+                mesh.triangles[triangle_index];
+            if (triangle[0] >= mesh.rest_positions.size() ||
+                triangle[1] >= mesh.rest_positions.size() ||
+                triangle[2] >= mesh.rest_positions.size() ||
+                triangle[0] == triangle[1] ||
+                triangle[1] == triangle[2] ||
+                triangle[2] == triangle[0])
+            {
+                result.error = cloth_gpu_topology_error::invalid_mesh;
+                result.message =
+                    "Cloth GPU topology contains an invalid surface Triangle at index " +
+                    std::to_string(triangle_index) + ".";
+                return result;
+            }
+            for (std::size_t edge_index = 0u; edge_index < 3u; ++edge_index)
+            {
+                const uint32_t first = triangle[edge_index];
+                const uint32_t second = triangle[(edge_index + 1u) % 3u];
+                unique_edges[{ std::min(first, second),
+                    std::max(first, second) }] = 1u;
+            }
+        }
+        if (unique_edges.size() >= maximum_gpu_count)
+        {
+            result.error = cloth_gpu_topology_error::capacity_exceeded;
+            result.message =
+                "Cloth GPU unique Edge count exceeds the 32-bit StructuredBuffer index range.";
+            return result;
+        }
+
+        for (std::size_t constraint_index = 0u;
+            constraint_index < mesh.stretch_constraints.size();
+            ++constraint_index)
+        {
+            const cloth_stretch_constraint& constraint =
+                mesh.stretch_constraints[constraint_index];
+            if (!std::isfinite(constraint.rest_length) ||
+                constraint.rest_length <= 1.0e-12f)
+            {
+                result.error = cloth_gpu_topology_error::invalid_mesh;
+                result.message =
+                    "Cloth GPU Stretch constraint has an invalid Rest Length at index " +
+                    std::to_string(constraint_index) + ".";
+                return result;
+            }
+        }
+
+        for (std::size_t constraint_index = 0u;
+            constraint_index < mesh.shear_constraints.size();
+            ++constraint_index)
+        {
+            const cloth_shear_constraint& constraint =
+                mesh.shear_constraints[constraint_index];
+            if (!std::isfinite(constraint.rest_dot) ||
+                !std::isfinite(constraint.normalization_length) ||
+                constraint.normalization_length <= 1.0e-10f ||
+                constraint.vertices[0] >= mesh.rest_positions.size() ||
+                constraint.vertices[1] >= mesh.rest_positions.size() ||
+                constraint.vertices[2] >= mesh.rest_positions.size() ||
+                constraint.vertices[0] == constraint.vertices[1] ||
+                constraint.vertices[1] == constraint.vertices[2] ||
+                constraint.vertices[2] == constraint.vertices[0])
+            {
+                result.error = cloth_gpu_topology_error::invalid_mesh;
+                result.message =
+                    "Cloth GPU Shear constraint contains invalid Rest data or Vertex indices at index " +
+                    std::to_string(constraint_index) + ".";
+                return result;
+            }
+        }
+
+        for (std::size_t constraint_index = 0u;
+            constraint_index < mesh.bend_constraints.size();
+            ++constraint_index)
+        {
+            const cloth_bend_constraint& constraint =
+                mesh.bend_constraints[constraint_index];
+            if (!std::isfinite(constraint.rest_angle))
+            {
+                result.error = cloth_gpu_topology_error::invalid_mesh;
+                result.message =
+                    "Cloth GPU Bend constraint contains a non-finite Rest Angle at index " +
+                    std::to_string(constraint_index) + ".";
+                return result;
+            }
+            for (std::size_t local_index = 0u; local_index < 4u; ++local_index)
+            {
+                if (constraint.vertices[local_index] >= mesh.rest_positions.size())
+                {
+                    result.error = cloth_gpu_topology_error::invalid_mesh;
+                    result.message =
+                        "Cloth GPU Bend constraint contains an out-of-range Vertex index at index " +
+                        std::to_string(constraint_index) + ".";
+                    return result;
+                }
+                for (std::size_t previous_index = 0u;
+                    previous_index < local_index; ++previous_index)
+                {
+                    if (constraint.vertices[local_index] ==
+                        constraint.vertices[previous_index])
+                    {
+                        result.error = cloth_gpu_topology_error::invalid_mesh;
+                        result.message =
+                            "Cloth GPU Bend constraint contains a repeated Vertex index at index " +
+                            std::to_string(constraint_index) + ".";
+                        return result;
+                    }
+                }
+            }
+        }
+
+        cloth_gpu_topology_packet candidate;
+        candidate.vertex_count = static_cast<uint32_t>(
+            mesh.rest_positions.size());
+        candidate.rest_positions.reserve(mesh.rest_positions.size());
+        for (const asset::vec3& position : mesh.rest_positions)
+        {
+            candidate.rest_positions.push_back({
+                position.x, position.y, position.z, 1.0f
+            });
+        }
+        for (const std::array<uint32_t, 3>& triangle : mesh.triangles)
+        {
+            cloth_gpu_epoch_primitive_record record;
+            record.vertices = {
+                triangle[0], triangle[1], triangle[2], 0u
+            };
+            candidate.triangle_primitives.push_back(record);
+        }
+        for (const auto& edge : unique_edges)
+        {
+            cloth_gpu_epoch_primitive_record record;
+            record.vertices = {
+                edge.first.first, edge.first.second, 0u, 0u
+            };
+            candidate.edge_primitives.push_back(record);
+        }
+        candidate.stretch_constraints.reserve(
+            mesh.stretch_constraints.size());
+        candidate.stretch_color_ranges = mesh.stretch_color_ranges;
+        candidate.stretch_color_constraint_indices =
+            mesh.stretch_color_constraint_indices;
+        candidate.shear_constraints.reserve(mesh.shear_constraints.size());
+        candidate.bend_constraints.reserve(mesh.bend_constraints.size());
+        candidate.triangle_primitives.reserve(mesh.triangles.size());
+        candidate.edge_primitives.reserve(unique_edges.size());
+        candidate.vertex_constraint_offsets =
+            mesh.vertex_constraint_offsets;
+        candidate.vertex_constraint_refs = mesh.vertex_constraint_refs;
+        candidate.stretch_lambdas.assign(
+            mesh.stretch_constraints.size(), 0.0f);
+        candidate.shear_lambdas.assign(
+            mesh.shear_constraints.size(), 0.0f);
+        candidate.bend_lambdas.assign(
+            mesh.bend_constraints.size(), 0.0f);
+
+        for (const cloth_stretch_constraint& constraint :
+            mesh.stretch_constraints)
+        {
+            cloth_gpu_stretch_constraint_record record;
+            record.vertices = constraint.vertices;
+            record.rest_length = constraint.rest_length;
+            record.reserved = 0.0f;
+            candidate.stretch_constraints.push_back(record);
+        }
+
+        for (const cloth_shear_constraint& constraint :
+            mesh.shear_constraints)
+        {
+            cloth_gpu_constraint_record record;
+            record.indices = {
+                constraint.vertices[0],
+                constraint.vertices[1],
+                constraint.vertices[2],
+                0u
+            };
+            record.type = static_cast<uint32_t>(
+                cloth_vertex_constraint_type::shear);
+            record.rest_value = constraint.rest_dot;
+            record.normalization = constraint.normalization_length;
+            record.compliance = settings.shear_compliance;
+            candidate.shear_constraints.push_back(record);
+        }
+
+        for (const cloth_bend_constraint& constraint :
+            mesh.bend_constraints)
+        {
+            cloth_gpu_constraint_record record;
+            record.indices = {
+                constraint.vertices[0],
+                constraint.vertices[1],
+                constraint.vertices[2],
+                constraint.vertices[3]
+            };
+            record.type = static_cast<uint32_t>(
+                cloth_vertex_constraint_type::bend);
+            record.rest_value = constraint.rest_angle;
+            record.normalization = 0.0f;
+            record.compliance = settings.bend_compliance;
+            candidate.bend_constraints.push_back(record);
+        }
+
+        result.value = std::move(candidate);
+        result.success = true;
+        return result;
+    }
+
+    cloth_stretch_color_step_result solve_cloth_stretch_color(
+        const cloth_mesh& mesh,
+        uint32_t color_index,
+        const std::vector<vec3>& current_positions,
+        const std::vector<float>& inverse_mass,
+        const std::vector<float>& lambda_values,
+        float delta_time,
+        float compliance,
+        float relaxation)
+    {
+        cloth_stretch_color_step_result result;
+        std::string coloring_diagnostic;
+        if (!validate_cloth_stretch_coloring(mesh, coloring_diagnostic))
+        {
+            add_diagnostic(
+                result.diagnostics, cloth_error::invalid_settings,
+                color_index, coloring_diagnostic);
+            return result;
+        }
+        if (color_index >= mesh.stretch_color_ranges.size() ||
+            current_positions.size() != mesh.rest_positions.size() ||
+            inverse_mass.size() != mesh.rest_positions.size() ||
+            lambda_values.size() != mesh.stretch_constraints.size() ||
+            !std::isfinite(delta_time) || delta_time <= 0.0f ||
+            !std::isfinite(compliance) || compliance < 0.0f ||
+            !std::isfinite(relaxation) ||
+            relaxation <= 0.0f || relaxation > 1.0f)
+        {
+            add_diagnostic(
+                result.diagnostics, cloth_error::invalid_settings,
+                color_index,
+                "Stretch color evaluation requires a valid color, matching state arrays and finite solver coefficients.");
+            return result;
+        }
+        for (std::size_t vertex_index = 0u;
+            vertex_index < current_positions.size(); ++vertex_index)
+        {
+            if (!finite(current_positions[vertex_index]) ||
+                !std::isfinite(inverse_mass[vertex_index]) ||
+                inverse_mass[vertex_index] < 0.0f)
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    static_cast<uint32_t>(vertex_index),
+                    "Stretch color input contains a non-finite Position or invalid inverse mass.");
+                return result;
+            }
+        }
+        for (std::size_t constraint_index = 0u;
+            constraint_index < lambda_values.size(); ++constraint_index)
+        {
+            if (!std::isfinite(lambda_values[constraint_index]))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    static_cast<uint32_t>(constraint_index),
+                    "Stretch color Lambda input must be finite.");
+                return result;
+            }
+        }
+
+        result.positions = current_positions;
+        result.lambda_values = lambda_values;
+        const cloth_stretch_color_range& range =
+            mesh.stretch_color_ranges[color_index];
+        const float alpha = compliance / (delta_time * delta_time);
+        if (!std::isfinite(alpha))
+        {
+            add_diagnostic(
+                result.diagnostics, cloth_error::invalid_settings,
+                color_index,
+                "Stretch color Compliance / dt^2 exceeded finite range.");
+            result.positions.clear();
+            result.lambda_values.clear();
+            return result;
+        }
+
+        for (uint32_t local_index = 0u;
+            local_index < range.constraint_count;
+            ++local_index)
+        {
+            const uint32_t constraint_index =
+                mesh.stretch_color_constraint_indices[
+                    range.first_constraint_index + local_index];
+            const cloth_stretch_constraint& constraint =
+                mesh.stretch_constraints[constraint_index];
+            const uint32_t first = constraint.vertices[0];
+            const uint32_t second = constraint.vertices[1];
+            const vec3 delta = subtract(
+                result.positions[first], result.positions[second]);
+            const float current_length = length(delta);
+            if (!std::isfinite(current_length) ||
+                current_length <= 1.0e-12f ||
+                !std::isfinite(constraint.rest_length) ||
+                constraint.rest_length <= 0.0f)
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::degenerate_constraint,
+                    constraint_index,
+                    "Stretch color encountered a degenerate edge or Rest Length.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
+            }
+
+            const float first_inverse_mass = inverse_mass[first];
+            const float second_inverse_mass = inverse_mass[second];
+            const float denominator =
+                first_inverse_mass + second_inverse_mass + alpha;
+            if (!std::isfinite(denominator))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    constraint_index,
+                    "Stretch color denominator became non-finite.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
+            }
+            if (denominator <= 1.0e-20f)
+            {
+                continue;
+            }
+
+            const vec3 direction = multiply(delta, 1.0f / current_length);
+            const float constraint_value =
+                current_length - constraint.rest_length;
+            const float delta_lambda =
+                (-constraint_value -
+                    alpha * result.lambda_values[constraint_index]) /
+                denominator;
+            const float applied = relaxation * delta_lambda;
+            if (!std::isfinite(applied))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    constraint_index,
+                    "Stretch color Lambda update became non-finite.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
+            }
+
+            result.lambda_values[constraint_index] += applied;
+            result.positions[first] = add(
+                result.positions[first],
+                multiply(direction, first_inverse_mass * applied));
+            result.positions[second] = add(
+                result.positions[second],
+                multiply(direction, -second_inverse_mass * applied));
+            if (!finite(result.positions[first]) ||
+                !finite(result.positions[second]) ||
+                !std::isfinite(result.lambda_values[constraint_index]))
+            {
+                add_diagnostic(
+                    result.diagnostics, cloth_error::non_finite_state,
+                    constraint_index,
+                    "Stretch color produced a non-finite Position or Lambda.");
+                result.positions.clear();
+                result.lambda_values.clear();
+                return result;
             }
         }
 

@@ -94,6 +94,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="tests\environment_tests.cpp" />
+    <ClCompile Include="tests\runtime_tests.cpp" />
     <ClCompile Include="tests\gpu_solver_tests.cpp" />
     <None Include="tests\fixtures\phase03_render_binding\render_feedback.cs.hlsl" />
     <None Include="tests\fixtures\phase05_07_gpu\cloth_constraints.cs.hlsl" />
@@ -101,6 +102,12 @@
     <None Include="tests\fixtures\phase07_collision\collision_gpu.cs.hlsl" />
     <None Include="tests\fixtures\phase08_ccd\point_triangle_ccd.cs.hlsl" />
     <None Include="tests\fixtures\phase09_10_gpu\animation_paint.cs.hlsl" />
+    <None Include="tests\fixtures\phase09_animation\physics_mesh_skinning.cs.hlsl" />
+    <None Include="tests\fixtures\phase12_correction\correction_candidate_pipeline.cs.hlsl" />
+    <None Include="tests\fixtures\phase12_correction\indirect_dispatch.cs.hlsl" />
+    <None Include="tests\\fixtures\\phase12_correction\\tick_transaction_control.cs.hlsl" />
+    <None Include="tests\\fixtures\\phase13_force_distribution\\warp_130.input.json" />
+    <None Include="tests\\fixtures\\phase13_force_distribution\\warp_130.expected.json" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

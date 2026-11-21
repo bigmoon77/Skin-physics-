@@ -1,0 +1,29 @@
+{
+  "action_position": [0.0, 0.0, 0.0],
+  "radius": 2.0,
+  "meshes": [
+    {
+      "positions": [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0]
+      ],
+      "rest_lumped_masses": [1.0, 3.0, 4.0]
+    },
+    {
+      "positions": [
+        [0.5, 0.0, 0.0]
+      ],
+      "rest_lumped_masses": [2.0]
+    }
+  ],
+  "fixed_vertices": [
+    {
+      "mesh_index": 0,
+      "vertex_index": 1
+    }
+  ],
+  "force_direction": [0.0, 1.0, 0.0],
+  "force_magnitude": 12.0,
+  "impulse_magnitude": 3.5
+}
