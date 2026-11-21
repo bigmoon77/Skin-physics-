@@ -3738,17 +3738,14 @@ namespace skin_physics::runtime
                 {
                     return true;
                 }
+                const bool root_transform_only =
+                    !model_snapshot->has_animation_playback &&
+                    !model_snapshot->has_animation_blend &&
+                    !model_snapshot->root_samples.empty();
                 const bool animation_active =
                     model_snapshot->has_animation_playback ||
-                    model_snapshot->has_animation_blend;
-                if (!model_snapshot->root_samples.empty() &&
-                    !animation_active)
-                {
-                    // Root motion is currently evaluated by the GPU Skin
-                    // Matrix path when an Animation Track supplies the
-                    // immutable per-Segment Node / Skin mapping.
-                    return true;
-                }
+                    model_snapshot->has_animation_blend ||
+                    root_transform_only;
 
                 for (uint32_t mesh_index = 0u;
                     mesh_index < model.source_model.meshes.size(); ++mesh_index)
@@ -6291,8 +6288,7 @@ namespace skin_physics::runtime
             for (const model_input_snapshot& model_snapshot :
                 input_snapshot.models)
             {
-                if (!model_snapshot.has_animation_playback &&
-                    !model_snapshot.has_animation_blend)
+                if (model_snapshot.root_samples.empty())
                 {
                     continue;
                 }
@@ -6390,8 +6386,7 @@ namespace skin_physics::runtime
                 for (const model_input_snapshot& model_snapshot :
                     input_snapshot.models)
                 {
-                    if (!model_snapshot.has_animation_playback &&
-                        !model_snapshot.has_animation_blend)
+                    if (model_snapshot.root_samples.empty())
                     {
                         continue;
                     }
@@ -7025,7 +7020,7 @@ namespace skin_physics::runtime
                 world.budget_resolution = work_budget_resolution::none;
                 world.work_budget_block_flags = 0u;
                 world.diagnostic =
-                    "GPU submission is deferred because this World contains an unsupported Force / Impulse target, Root Transform Samples without an active Animation Track, Cloth or Collider input. Force / Impulse scopes now include one exact Mesh, every Soft Body Mesh in a Model, or every Soft Body Mesh in the World.";
+                    "GPU submission is deferred because this World contains an unsupported Force / Impulse target, root-only motion without a valid fully skinned Soft Body path, Cloth or Collider input. Root-only motion requires a static-pose TRS Node and every simulated Soft Body Mesh in the Model to have a valid Skin / Joint mapping. Force / Impulse scopes include one exact Mesh, every Soft Body Mesh in a Model, or every Soft Body Mesh in the World.";
                 return false;
             }
             if (world.render_lease_active)
