@@ -15,6 +15,14 @@ struct ClothContribution
     float4 correction3;
 };
 
+struct ClothContribution
+{
+    float4 correction0;
+    float4 correction1;
+    float4 correction2;
+    float4 correction3;
+};
+
 cbuffer ClothJacobiParameters : register(b0)
 {
     uint constraint_count;
