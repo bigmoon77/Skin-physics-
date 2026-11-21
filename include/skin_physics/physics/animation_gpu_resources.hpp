@@ -21,6 +21,7 @@ namespace skin_physics::physics
         uint32_t skins = 0u;
         uint32_t skin_joints = 0u;
         uint32_t colliders = 0u;
+        uint32_t root_transforms = 0u;
     };
 
     // Owns one immutable Animation Trajectory Packet on the GPU and one
@@ -58,6 +59,7 @@ namespace skin_physics::physics
         ID3D11Buffer* skin_buffer() const noexcept;
         ID3D11Buffer* skin_joint_buffer() const noexcept;
         ID3D11Buffer* collider_buffer() const noexcept;
+        ID3D11Buffer* root_transform_buffer() const noexcept;
 
         ID3D11ShaderResourceView* span_srv() const noexcept;
         ID3D11ShaderResourceView* cursor_srv() const noexcept;
@@ -69,6 +71,7 @@ namespace skin_physics::physics
         ID3D11ShaderResourceView* skin_srv() const noexcept;
         ID3D11ShaderResourceView* skin_joint_srv() const noexcept;
         ID3D11ShaderResourceView* collider_srv() const noexcept;
+        ID3D11ShaderResourceView* root_transform_srv() const noexcept;
 
         ID3D11UnorderedAccessView* cursor_uav() const noexcept;
 
@@ -95,6 +98,7 @@ namespace skin_physics::physics
         Microsoft::WRL::ComPtr<ID3D11Buffer> _skin_buffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> _skin_joint_buffer;
         Microsoft::WRL::ComPtr<ID3D11Buffer> _collider_buffer;
+        Microsoft::WRL::ComPtr<ID3D11Buffer> _root_transform_buffer;
 
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> _span_srv;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> _cursor_srv;
@@ -106,6 +110,7 @@ namespace skin_physics::physics
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> _skin_srv;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> _skin_joint_srv;
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> _collider_srv;
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> _root_transform_srv;
         Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> _cursor_uav;
     };
 
