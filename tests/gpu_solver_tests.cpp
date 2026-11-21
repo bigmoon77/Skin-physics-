@@ -525,6 +525,244 @@ namespace
         }
     }
 
+    void test_phase05_warp_colored_cloth_stretch()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(SUCCEEDED(create_warp_device(
+                device.GetAddressOf(), context.GetAddressOf())),
+            "Colored Cloth Stretch WARP test requires a Feature Level 11_0 device.");
+
+        const skin_physics::physics::cloth_mesh mesh =
+            load_cloth_fixture(test_json::load(
+                test_support::fixture_path("phase05_cloth/cloth_patch.input.json")));
+        std::string coloring_diagnostic;
+        require(skin_physics::physics::validate_cloth_stretch_coloring(
+                mesh, coloring_diagnostic),
+            "Colored Cloth Stretch test requires valid CPU graph coloring: " +
+                coloring_diagnostic);
+
+        const std::filesystem::path shader_path =
+            test_support::fixture_directory().parent_path().parent_path() /
+            "shaders" / "runtime" / "cloth_stretch_solve.cs.hlsl";
+        const ComPtr<ID3D11ComputeShader> shader =
+            compile_compute_shader(device.Get(), shader_path, "main");
+
+        struct gpu_cloth_stretch_constraint
+        {
+            uint32_t vertices[2] = {};
+            float rest_length = 0.0f;
+            float reserved = 0.0f;
+        };
+        static_assert(sizeof(gpu_cloth_stretch_constraint) == 16u,
+            "Production Stretch Constraint ABI must remain 16 bytes.");
+        struct alignas(16) gpu_cloth_stretch_parameters
+        {
+            uint32_t first_color_index = 0u;
+            uint32_t color_constraint_count = 0u;
+            uint32_t vertex_count = 0u;
+            uint32_t constraint_count = 0u;
+            float delta_time = 0.0f;
+            float compliance = 0.0f;
+            float relaxation = 0.0f;
+            uint32_t reserved = 0u;
+        };
+        static_assert(sizeof(gpu_cloth_stretch_parameters) == 32u,
+            "Production Stretch parameter ABI must remain 32 bytes.");
+
+        std::vector<vec3> cpu_positions = mesh.rest_positions;
+        cpu_positions[3].x += 0.2f;
+        cpu_positions[4].z += 0.1f;
+        std::vector<gpu_float4> gpu_positions;
+        gpu_positions.reserve(cpu_positions.size());
+        for (const vec3& position : cpu_positions)
+        {
+            gpu_positions.push_back(
+                { position.x, position.y, position.z, 0.0f });
+        }
+        const std::vector<float> inverse_masses(
+            cpu_positions.size(), 1.0f);
+        std::vector<float> cpu_lambdas(
+            mesh.stretch_constraints.size(), 0.0f);
+        const std::vector<float> initial_lambdas = cpu_lambdas;
+        const std::vector<uint32_t> initial_status = { 0u };
+
+        std::vector<gpu_cloth_stretch_constraint> constraints;
+        constraints.reserve(mesh.stretch_constraints.size());
+        for (const auto& source : mesh.stretch_constraints)
+        {
+            gpu_cloth_stretch_constraint constraint;
+            constraint.vertices[0] = source.vertices[0];
+            constraint.vertices[1] = source.vertices[1];
+            constraint.rest_length = source.rest_length;
+            constraints.push_back(constraint);
+        }
+
+        const ComPtr<ID3D11Buffer> positions_buffer =
+            create_structured_buffer(
+                device.Get(), gpu_positions, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> inverse_mass_buffer =
+            create_structured_buffer(
+                device.Get(), inverse_masses, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> constraint_buffer =
+            create_structured_buffer(
+                device.Get(), constraints, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> color_index_buffer =
+            create_structured_buffer(
+                device.Get(),
+                mesh.stretch_color_constraint_indices,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> lambda_buffer =
+            create_structured_buffer(
+                device.Get(), initial_lambdas, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(
+                device.Get(), initial_status, D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11ShaderResourceView> inverse_mass_srv =
+            create_structured_srv<float>(
+                device.Get(), inverse_mass_buffer.Get(),
+                static_cast<UINT>(inverse_masses.size()));
+        const ComPtr<ID3D11ShaderResourceView> constraint_srv =
+            create_structured_srv<gpu_cloth_stretch_constraint>(
+                device.Get(), constraint_buffer.Get(),
+                static_cast<UINT>(constraints.size()));
+        const ComPtr<ID3D11ShaderResourceView> color_index_srv =
+            create_structured_srv<uint32_t>(
+                device.Get(), color_index_buffer.Get(),
+                static_cast<UINT>(
+                    mesh.stretch_color_constraint_indices.size()));
+        const ComPtr<ID3D11UnorderedAccessView> positions_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), positions_buffer.Get(),
+                static_cast<UINT>(gpu_positions.size()));
+        const ComPtr<ID3D11UnorderedAccessView> lambda_uav =
+            create_structured_uav<float>(
+                device.Get(), lambda_buffer.Get(),
+                static_cast<UINT>(initial_lambdas.size()));
+        const ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), status_buffer.Get(), 1u);
+
+        constexpr float delta_time = 1.0f / 120.0f;
+        constexpr float compliance = 1.0e-5f;
+        constexpr float relaxation = 0.8f;
+        gpu_cloth_stretch_parameters parameters;
+        parameters.vertex_count = static_cast<uint32_t>(gpu_positions.size());
+        parameters.constraint_count =
+            static_cast<uint32_t>(constraints.size());
+        parameters.delta_time = delta_time;
+        parameters.compliance = compliance;
+        parameters.relaxation = relaxation;
+        const ComPtr<ID3D11Buffer> parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &parameters, sizeof(parameters));
+
+        ID3D11ShaderResourceView* shader_resources[] = {
+            inverse_mass_srv.Get(), constraint_srv.Get(),
+            color_index_srv.Get()
+        };
+        ID3D11UnorderedAccessView* unordered_access_views[] = {
+            positions_uav.Get(), lambda_uav.Get(), status_uav.Get()
+        };
+        ID3D11Buffer* constant_buffers[] = { parameter_buffer.Get() };
+
+        for (uint32_t iteration = 0u; iteration < 4u; ++iteration)
+        {
+            for (const auto& color_range : mesh.stretch_color_ranges)
+            {
+                parameters.first_color_index =
+                    color_range.first_constraint_index;
+                parameters.color_constraint_count =
+                    color_range.constraint_count;
+                context->UpdateSubresource(
+                    parameter_buffer.Get(), 0u, nullptr,
+                    &parameters, 0u, 0u);
+
+                ID3D11ShaderResourceView* current_resources[] = {
+                    inverse_mass_srv.Get(), constraint_srv.Get(),
+                    color_index_srv.Get()
+                };
+                context->CSSetShader(shader.Get(), nullptr, 0u);
+                context->CSSetShaderResources(
+                    0u, 3u, current_resources);
+                context->CSSetUnorderedAccessViews(
+                    0u, 3u, unordered_access_views, nullptr);
+                context->CSSetConstantBuffers(
+                    0u, 1u, constant_buffers);
+                context->Dispatch(
+                    (color_range.constraint_count + 63u) / 64u,
+                    1u, 1u);
+
+                const auto cpu_step =
+                    skin_physics::physics::solve_cloth_stretch_color(
+                        mesh,
+                        static_cast<uint32_t>(
+                            &color_range - mesh.stretch_color_ranges.data()),
+                        cpu_positions,
+                        inverse_masses,
+                        cpu_lambdas,
+                        delta_time,
+                        compliance,
+                        relaxation);
+                require(cpu_step.success,
+                    "Colored Stretch CPU reference must accept each scheduled color.");
+                cpu_positions = cpu_step.positions;
+                cpu_lambdas = cpu_step.lambda_values;
+            }
+        }
+
+        ID3D11ShaderResourceView* null_shader_resources[] = {
+            nullptr, nullptr, nullptr
+        };
+        ID3D11UnorderedAccessView* null_unordered_access_views[] = {
+            nullptr, nullptr, nullptr
+        };
+        ID3D11Buffer* null_constant_buffers[] = { nullptr };
+        context->CSSetShaderResources(0u, 3u, null_shader_resources);
+        context->CSSetUnorderedAccessViews(
+            0u, 3u, null_unordered_access_views, nullptr);
+        context->CSSetConstantBuffers(
+            0u, 1u, null_constant_buffers);
+        context->CSSetShader(nullptr, nullptr, 0u);
+        context->Flush();
+
+        const std::vector<gpu_float4> actual_positions =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(),
+                positions_buffer.Get(), gpu_positions.size());
+        const std::vector<float> actual_lambdas =
+            readback_structured_buffer<float>(
+                device.Get(), context.Get(),
+                lambda_buffer.Get(), initial_lambdas.size());
+        const std::vector<uint32_t> actual_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(actual_status[0u] == 0u,
+            "Production colored Stretch shader must complete without diagnostics.");
+
+        for (std::size_t vertex_index = 0u;
+            vertex_index < actual_positions.size(); ++vertex_index)
+        {
+            require(std::abs(actual_positions[vertex_index].x -
+                    cpu_positions[vertex_index].x) <= 2.0e-4f &&
+                std::abs(actual_positions[vertex_index].y -
+                    cpu_positions[vertex_index].y) <= 2.0e-4f &&
+                std::abs(actual_positions[vertex_index].z -
+                    cpu_positions[vertex_index].z) <= 2.0e-4f,
+                "Production colored Stretch GPU positions must match the CPU per-color XPBD reference.");
+        }
+        for (std::size_t constraint_index = 0u;
+            constraint_index < actual_lambdas.size(); ++constraint_index)
+        {
+            require(std::abs(actual_lambdas[constraint_index] -
+                    cpu_lambdas[constraint_index]) <= 2.0e-4f,
+                "Production colored Stretch GPU Lambda must match the Segment-local CPU reference.");
+        }
+
+        std::cout << "[PASS] P05_WARP_COLORED_STRETCH_XPBD\n";
+    }
+
     void test_phase05_warp_cloth_all_constraint_types()
     {
         ComPtr<ID3D11Device> device;
@@ -5204,6 +5442,7 @@ namespace
 
 int run_gpu_solver_tests()
 {
+    test_phase05_warp_colored_cloth_stretch();
     test_phase05_warp_cloth_all_constraint_types();
     test_phase06_warp_corotational_fem();
     test_r1_warp_runtime_soft_body_fem_svd_parity();
