@@ -2,9 +2,9 @@ cbuffer ClothPredictParameters : register(b0)
 {
     uint vertex_count;
     float delta_time;
-    float3 gravity;
     uint reserved0;
     uint reserved1;
+    float3 gravity;
     uint reserved2;
 };
 
