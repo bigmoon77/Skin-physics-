@@ -2999,6 +2999,8 @@ namespace
         using skin_physics::physics::gpu_float4;
         using skin_physics::physics::gpu_matrix4x4;
         using skin_physics::physics::kinematic_collider_gpu_record;
+        using skin_physics::physics::root_transform_gpu_record;
+        using skin_physics::physics::root_transform_flag_valid_mask;
 
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
@@ -3403,12 +3405,14 @@ namespace
         packet.skin_records.resize(1u);
         packet.skin_joint_records.resize(1u);
         packet.collider_records.resize(1u);
+        packet.root_transform_records.resize(1u);
 
         animation_span_gpu_record& span = packet.span_records[0u];
         span.span_id = 0x1234u;
         span.flags =
             animation_span_flag_bounds_certified |
-            animation_span_flag_has_kinematic_collider;
+            animation_span_flag_has_kinematic_collider |
+            skin_physics::physics::animation_span_flag_has_root_motion;
         span.animation_input_version_low =
             static_cast<uint32_t>(packet.animation_input_version & 0xffffffffull);
         span.animation_input_version_high =
@@ -3476,6 +3480,24 @@ namespace
         collider.maximum_local_radius = 1.0f;
         collider.sagitta_bound = 0.0f;
 
+        root_transform_gpu_record& root =
+            packet.root_transform_records[0u];
+        root.translation_start = { 1.0f, 2.0f, 3.0f, 1.0f };
+        root.translation_end = { 2.0f, 2.0f, 3.0f, 1.0f };
+        root.rotation_start = { 0.0f, 0.0f, 0.0f, 1.0f };
+        root.rotation_end = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        root.angular_axis_and_angle = {
+            0.0f, 0.0f, 1.0f,
+            3.14159265358979323846f / 2.0f
+        };
+        root.duration_seconds = 0.5f;
+        root.inverse_duration = 2.0f;
+        root.flags = root_transform_flag_valid_mask;
+
         animation_span_cursor_gpu_record cursor;
         cursor.span_record_index = 0u;
         cursor.animation_input_version_low = span.animation_input_version_low;
@@ -3498,7 +3520,8 @@ namespace
             resources.counts().static_node_matrices == 2u &&
             resources.counts().skins == 1u &&
             resources.counts().skin_joints == 1u &&
-            resources.counts().colliders == 1u,
+            resources.counts().colliders == 1u &&
+            resources.counts().root_transforms == 1u,
             "GPU resource metadata must preserve the Packet Version and every structured record count.");
 
         require_immutable_structured_buffer(
@@ -3517,6 +3540,8 @@ namespace
             resources.skin_joint_buffer(), 1u, sizeof(animation_skin_joint_gpu_record), "Skin Joint");
         require_immutable_structured_buffer(
             resources.collider_buffer(), 1u, sizeof(kinematic_collider_gpu_record), "Kinematic Collider");
+        require_immutable_structured_buffer(
+            resources.root_transform_buffer(), 1u, sizeof(root_transform_gpu_record), "Root Transform");
 
         require_structured_srv_element_count(
             resources.span_srv(), 1u, "Span");
@@ -3534,10 +3559,14 @@ namespace
             resources.skin_joint_srv(), 1u, "Skin Joint");
         require_structured_srv_element_count(
             resources.collider_srv(), 1u, "Kinematic Collider");
+        require_structured_srv_element_count(
+            resources.root_transform_srv(), 1u, "Root Transform");
         require(resources.blend_buffer() == nullptr &&
             resources.blend_srv() == nullptr &&
             resources.collider_buffer() != nullptr &&
-            resources.collider_srv() != nullptr,
+            resources.collider_srv() != nullptr &&
+            resources.root_transform_buffer() != nullptr &&
+            resources.root_transform_srv() != nullptr,
             "Optional Blend resources must remain absent while the immutable Kinematic Collider record is uploaded.");
 
         D3D11_BUFFER_DESC cursor_description = {};
@@ -3580,6 +3609,9 @@ namespace
         const std::vector<kinematic_collider_gpu_record> collider_readback =
             readback_structured_buffer<kinematic_collider_gpu_record>(
                 device.Get(), context.Get(), resources.collider_buffer(), 1u);
+        const std::vector<root_transform_gpu_record> root_transform_readback =
+            readback_structured_buffer<root_transform_gpu_record>(
+                device.Get(), context.Get(), resources.root_transform_buffer(), 1u);
         require(std::memcmp(
                 span_readback.data(), packet.span_records.data(),
                 sizeof(animation_span_gpu_record)) == 0 &&
@@ -3597,7 +3629,11 @@ namespace
                 sizeof(animation_skin_joint_gpu_record)) == 0 &&
             std::memcmp(
                 collider_readback.data(), packet.collider_records.data(),
-                sizeof(kinematic_collider_gpu_record)) == 0,
+                sizeof(kinematic_collider_gpu_record)) == 0 &&
+            std::memcmp(
+                root_transform_readback.data(),
+                packet.root_transform_records.data(),
+                sizeof(root_transform_gpu_record)) == 0,
             "Immutable Packet SRV backing buffers must retain their exact CPU record bytes, including Kinematic Collider trajectories, after GPU upload.");
 
         ID3D11Buffer* const committed_span_buffer = resources.span_buffer();
