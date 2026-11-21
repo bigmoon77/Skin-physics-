@@ -1121,6 +1121,9 @@ namespace
         require((invalid_snapshot_status[0] & (1u << 6u)) != 0u,
             "Cloth Epoch snapshot must fail closed for non-zero reserved ABI fields.");
         epoch_constants.reserved[0] = 0u;
+        context->UpdateSubresource(
+            status_buffer.Get(), 0u, nullptr,
+            clear_status.data(), 0u, 0u);
 
         struct gpu_epoch_primitive
         {
