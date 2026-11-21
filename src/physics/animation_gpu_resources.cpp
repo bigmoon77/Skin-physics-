@@ -207,6 +207,7 @@ namespace skin_physics::physics
             }
             if (packet.span_records.empty() ||
                 packet.span_world_time_starts.size() != packet.span_records.size() ||
+                packet.root_transform_records.size() != packet.span_records.size() ||
                 packet.span_records.size() >
                     static_cast<std::size_t>((std::numeric_limits<uint32_t>::max)()))
             {
@@ -597,6 +598,11 @@ namespace skin_physics::physics
         return _collider_buffer.Get();
     }
 
+    ID3D11Buffer* animation_trajectory_gpu_resources::root_transform_buffer() const noexcept
+    {
+        return _root_transform_buffer.Get();
+    }
+
     ID3D11ShaderResourceView* animation_trajectory_gpu_resources::span_srv() const noexcept
     {
         return _span_srv.Get();
@@ -647,6 +653,11 @@ namespace skin_physics::physics
         return _collider_srv.Get();
     }
 
+    ID3D11ShaderResourceView* animation_trajectory_gpu_resources::root_transform_srv() const noexcept
+    {
+        return _root_transform_srv.Get();
+    }
+
     ID3D11UnorderedAccessView*
         animation_trajectory_gpu_resources::cursor_uav() const noexcept
     {
@@ -668,6 +679,7 @@ namespace skin_physics::physics
         _skin_buffer.Reset();
         _skin_joint_buffer.Reset();
         _collider_buffer.Reset();
+        _root_transform_buffer.Reset();
 
         _span_srv.Reset();
         _cursor_srv.Reset();
@@ -679,6 +691,7 @@ namespace skin_physics::physics
         _skin_srv.Reset();
         _skin_joint_srv.Reset();
         _collider_srv.Reset();
+        _root_transform_srv.Reset();
         _cursor_uav.Reset();
     }
 
@@ -717,7 +730,9 @@ namespace skin_physics::physics
             !valid_structured_buffer_size(
                 packet.skin_joint_records, "Skin Joint", diagnostic) ||
             !valid_structured_buffer_size(
-                packet.collider_records, "Collider", diagnostic))
+                packet.collider_records, "Collider", diagnostic) ||
+            !valid_structured_buffer_size(
+                packet.root_transform_records, "Root Transform", diagnostic))
         {
             return false;
         }
@@ -739,6 +754,9 @@ namespace skin_physics::physics
             packet.skin_joint_records,
             candidate._counts.skin_joints);
         assign_buffer_count(packet.collider_records, candidate._counts.colliders);
+        assign_buffer_count(
+            packet.root_transform_records,
+            candidate._counts.root_transforms);
 
         if (!create_immutable_structured_buffer(
                 device, packet.span_records, "Span",
@@ -769,6 +787,10 @@ namespace skin_physics::physics
             !create_immutable_structured_buffer(
                 device, packet.collider_records, "Collider",
                 candidate._collider_buffer, candidate._collider_srv, diagnostic) ||
+            !create_immutable_structured_buffer(
+                device, packet.root_transform_records, "Root Transform",
+                candidate._root_transform_buffer,
+                candidate._root_transform_srv, diagnostic) ||
             !create_mutable_cursor_buffer(
                 device, initial_cursor,
                 candidate._cursor_buffer,
