@@ -20,6 +20,51 @@ struct animation_node_local_transform_gpu_record
     uint status;
 };
 
+struct animation_span_gpu_record
+{
+    uint span_id;
+    uint animation_input_version_low;
+    uint animation_input_version_high;
+    uint first_track_record;
+    uint track_record_count;
+    uint first_channel_record;
+    uint channel_record_count;
+    uint first_blend_record;
+    uint blend_record_count;
+    uint first_collider_record;
+    uint collider_record_count;
+    uint flags;
+    float span_duration_seconds;
+    float inverse_span_duration;
+    float speed_bound;
+    float acceleration_bound;
+    float chord_deviation_bound;
+    float quaternion_normalization_lower_bound;
+    float reserved0;
+    float reserved1;
+};
+
+struct animation_span_cursor_gpu_record
+{
+    uint span_record_index;
+    uint animation_input_version_low;
+    uint animation_input_version_high;
+    float u_segment_start;
+};
+
+struct root_transform_gpu_record
+{
+    float4 translation_start;
+    float4 translation_end;
+    float4 rotation_start;
+    float4 rotation_end;
+    float4 angular_axis_and_angle;
+    float duration_seconds;
+    float inverse_duration;
+    uint flags;
+    uint reserved;
+};
+
 struct animation_skin_gpu_record
 {
     uint mesh_node_channel_offset;
@@ -44,15 +89,10 @@ cbuffer AnimationSkinMatrixParameters : register(b0)
     uint skin_joint_record_count;
     uint inverse_bind_matrix_count;
     uint expected_mesh_node_index;
-    uint2 reserved;
-    float4 root_transform_column0;
-    float4 root_transform_column1;
-    float4 root_transform_column2;
-    float4 root_transform_column3;
-    float4 root_transform_derivative_column0;
-    float4 root_transform_derivative_column1;
-    float4 root_transform_derivative_column2;
-    float4 root_transform_derivative_column3;
+    uint root_transform_record_index;
+    uint root_transform_record_count;
+    uint expected_span_record_index;
+    uint3 reserved;
 };
 
 StructuredBuffer<gpu_matrix4x4> global_matrices : register(t0);
@@ -61,6 +101,9 @@ StructuredBuffer<animation_skin_gpu_record> skin_records : register(t2);
 StructuredBuffer<animation_skin_joint_gpu_record> skin_joint_records : register(t3);
 StructuredBuffer<gpu_matrix4x4> inverse_bind_matrices : register(t4);
 StructuredBuffer<animation_node_local_transform_gpu_record> local_transforms : register(t5);
+StructuredBuffer<root_transform_gpu_record> root_transform_records : register(t6);
+StructuredBuffer<animation_span_cursor_gpu_record> animation_cursor : register(t7);
+StructuredBuffer<animation_span_gpu_record> animation_spans : register(t8);
 
 RWStructuredBuffer<gpu_matrix4x4> skin_matrices : register(u0);
 RWStructuredBuffer<gpu_matrix4x4> skin_matrix_derivatives : register(u1);
@@ -186,6 +229,154 @@ bool invert_affine_matrix(
     return finite_matrix(inverse_matrix);
 }
 
+bool evaluate_root_transform(
+    root_transform_gpu_record record_value,
+    animation_span_cursor_gpu_record cursor_value,
+    animation_span_gpu_record span_value,
+    out gpu_matrix4x4 root_transform,
+    out gpu_matrix4x4 root_transform_derivative)
+{
+    root_transform = (gpu_matrix4x4)0;
+    root_transform_derivative = (gpu_matrix4x4)0;
+    const uint expected_flags = 3u;
+    if (record_value.flags != expected_flags ||
+        record_value.reserved != 0u ||
+        cursor_value.span_record_index != expected_span_record_index ||
+        cursor_value.animation_input_version_low !=
+            span_value.animation_input_version_low ||
+        cursor_value.animation_input_version_high !=
+            span_value.animation_input_version_high ||
+        !isfinite(cursor_value.u_segment_start) ||
+        cursor_value.u_segment_start < 0.0f ||
+        cursor_value.u_segment_start > 1.0f ||
+        !isfinite(record_value.duration_seconds) ||
+        record_value.duration_seconds <= 0.0f ||
+        !isfinite(record_value.inverse_duration) ||
+        record_value.inverse_duration <= 0.0f ||
+        abs(record_value.duration_seconds -
+            span_value.span_duration_seconds) >
+            1.0e-5f * max(1.0f, span_value.span_duration_seconds) ||
+        abs(record_value.duration_seconds *
+            record_value.inverse_duration - 1.0f) > 1.0e-4f ||
+        !finite4(record_value.translation_start) ||
+        !finite4(record_value.translation_end) ||
+        !finite4(record_value.rotation_start) ||
+        !finite4(record_value.rotation_end) ||
+        !finite4(record_value.angular_axis_and_angle) ||
+        abs(record_value.translation_start.w - 1.0f) > 1.0e-5f ||
+        abs(record_value.translation_end.w - 1.0f) > 1.0e-5f)
+    {
+        return false;
+    }
+
+    const float start_length = length(record_value.rotation_start);
+    const float end_length = length(record_value.rotation_end);
+    const float axis_length = length(record_value.angular_axis_and_angle.xyz);
+    const float angle = record_value.angular_axis_and_angle.w;
+    if (!isfinite(start_length) || !isfinite(end_length) ||
+        abs(start_length - 1.0f) > 1.0e-4f ||
+        abs(end_length - 1.0f) > 1.0e-4f ||
+        !isfinite(axis_length) ||
+        !isfinite(angle) || angle < 0.0f || angle > 3.1416927f ||
+        (angle > 1.0e-6f
+            ? abs(axis_length - 1.0f) > 1.0e-3f
+            : axis_length > 1.0e-3f))
+    {
+        return false;
+    }
+
+    float4 q0 = record_value.rotation_start / start_length;
+    float4 q1 = record_value.rotation_end / end_length;
+    float cosine = dot(q0, q1);
+    if (cosine < 0.0f)
+    {
+        q1 = -q1;
+        cosine = -cosine;
+    }
+    cosine = clamp(cosine, -1.0f, 1.0f);
+
+    const float u = cursor_value.u_segment_start;
+    float4 rotation;
+    if (cosine > 0.9995f)
+    {
+        const float4 raw = lerp(q0, q1, u);
+        const float raw_length = length(raw);
+        if (!isfinite(raw_length) || raw_length <= 1.0e-12f)
+        {
+            return false;
+        }
+        rotation = raw / raw_length;
+    }
+    else
+    {
+        const float interpolation_angle = acos(cosine);
+        const float interpolation_sine = sin(interpolation_angle);
+        if (!isfinite(interpolation_sine) ||
+            abs(interpolation_sine) <= 1.0e-12f)
+        {
+            return false;
+        }
+        const float4 tangent =
+            (q1 - cosine * q0) / interpolation_sine;
+        rotation =
+            q0 * cos(interpolation_angle * u) +
+            tangent * sin(interpolation_angle * u);
+    }
+
+    const float rotation_length = length(rotation);
+    if (!isfinite(rotation_length) || rotation_length <= 1.0e-12f)
+    {
+        return false;
+    }
+    rotation /= rotation_length;
+    const float x = rotation.x;
+    const float y = rotation.y;
+    const float z = rotation.z;
+    const float w = rotation.w;
+
+    root_transform.column0 = float4(
+        1.0f - 2.0f * (y * y + z * z),
+        2.0f * (x * y + z * w),
+        2.0f * (x * z - y * w),
+        0.0f);
+    root_transform.column1 = float4(
+        2.0f * (x * y - z * w),
+        1.0f - 2.0f * (x * x + z * z),
+        2.0f * (y * z + x * w),
+        0.0f);
+    root_transform.column2 = float4(
+        2.0f * (x * z + y * w),
+        2.0f * (y * z - x * w),
+        1.0f - 2.0f * (x * x + y * y),
+        0.0f);
+    root_transform.column3 = float4(
+        lerp(
+            record_value.translation_start.xyz,
+            record_value.translation_end.xyz,
+            u),
+        1.0f);
+
+    const float3 angular_velocity =
+        record_value.angular_axis_and_angle.xyz *
+        (angle * record_value.inverse_duration);
+    const float3 linear_velocity =
+        (record_value.translation_end.xyz -
+            record_value.translation_start.xyz) *
+        record_value.inverse_duration;
+    root_transform_derivative.column0 = float4(
+        cross(angular_velocity, root_transform.column0.xyz), 0.0f);
+    root_transform_derivative.column1 = float4(
+        cross(angular_velocity, root_transform.column1.xyz), 0.0f);
+    root_transform_derivative.column2 = float4(
+        cross(angular_velocity, root_transform.column2.xyz), 0.0f);
+    root_transform_derivative.column3 = float4(linear_velocity, 0.0f);
+
+    return finite_matrix(root_transform) &&
+        affine_matrix(root_transform) &&
+        finite_matrix(root_transform_derivative) &&
+        affine_derivative_matrix(root_transform_derivative);
+}
+
 void fail_joint(uint local_joint_index)
 {
     gpu_matrix4x4 zero_matrix = (gpu_matrix4x4)0;
@@ -300,20 +491,23 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
+    if (root_transform_record_index >= root_transform_record_count ||
+        root_transform_record_index != expected_span_record_index)
+    {
+        fail_joint(local_joint_index);
+        return;
+    }
+    const animation_span_cursor_gpu_record cursor_value =
+        animation_cursor[0u];
+    const animation_span_gpu_record span_value =
+        animation_spans[expected_span_record_index];
+    const root_transform_gpu_record root_record =
+        root_transform_records[root_transform_record_index];
     gpu_matrix4x4 root_transform;
-    root_transform.column0 = root_transform_column0;
-    root_transform.column1 = root_transform_column1;
-    root_transform.column2 = root_transform_column2;
-    root_transform.column3 = root_transform_column3;
     gpu_matrix4x4 root_transform_derivative;
-    root_transform_derivative.column0 = root_transform_derivative_column0;
-    root_transform_derivative.column1 = root_transform_derivative_column1;
-    root_transform_derivative.column2 = root_transform_derivative_column2;
-    root_transform_derivative.column3 = root_transform_derivative_column3;
-    if (!finite_matrix(root_transform) ||
-        !affine_matrix(root_transform) ||
-        !finite_matrix(root_transform_derivative) ||
-        !affine_derivative_matrix(root_transform_derivative))
+    if (!evaluate_root_transform(
+            root_record, cursor_value, span_value,
+            root_transform, root_transform_derivative))
     {
         fail_joint(local_joint_index);
         return;
