@@ -1912,7 +1912,7 @@ namespace
             animation_report.submitted_tick_count == 0u &&
             animation_report.in_flight_tick_count == 0u &&
             animation_report.pending_tick_count == 1u,
-            "A World with unintegrated Root Transform trajectory input must retain its Tick without GPU submission.");
+            "A World with Root Transform Samples but no active Animation Track must retain its Tick without GPU submission.");
         skin_physics::runtime::world_status animation_status;
         require(runtime.poll(world, &animation_status).success() &&
             animation_status.state == skin_physics::runtime::tick_state::blocked &&
@@ -1920,9 +1920,10 @@ namespace
             animation_status.in_flight_tick_count == 0u &&
             animation_status.head_reserved_tick_sequence == 1u &&
             animation_status.head_input_snapshot_version > force_snapshot_version &&
-            animation_status.diagnostic.find("Animation / Root Transform") !=
+            animation_status.diagnostic.find(
+                "Root Transform Samples without an active Animation Track") !=
                 std::string::npos,
-            "Runtime must explicitly report BLOCKED_BY_INPUT for deferred Root Transform trajectory work instead of committing a Tick with the input silently ignored.");
+            "Runtime must explicitly report BLOCKED_BY_INPUT for root-only Transform Samples instead of committing a Tick with the input silently ignored.");
         require(runtime.reset_world(world).success(),
             "Reset must explicitly clear the CPU-only Reservation and unintegrated Root Transform Samples.");
 
