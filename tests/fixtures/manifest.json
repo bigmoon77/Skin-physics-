@@ -786,7 +786,8 @@
             "Each Joint uses its Skin-specific absolute Inverse Bind Matrix record",
             "Skin Matrix is inverse(Mesh Node Global) * Joint Global * Inverse Bind Matrix",
             "Skin Matrix derivative includes inverse(Mesh Global) derivative and Joint Global derivative using the analytic matrix product rule",
-            "Singular / non-affine Mesh Node Global Matrix, invalid Skin / Joint / IBM ranges and mismatched Node identities fail closed"
+            "Singular / non-affine Mesh Node Global Matrix, invalid Skin / Joint / IBM ranges and mismatched Node identities fail closed",
+            "The constant Model Root Transform is applied to Skin Matrices while Skin Matrix Derivatives remain correctly transformed with zero Root Transform derivative"
           ]
         }
       ],
