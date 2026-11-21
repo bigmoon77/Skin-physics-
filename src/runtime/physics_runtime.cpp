@@ -1578,6 +1578,23 @@ namespace skin_physics::runtime
             uint32_t impulse_event_count = 0u;
         };
 
+        struct animation_mesh_cursor_work_state
+        {
+            uint32_t mesh_index = asset::invalid_index;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> cursor_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> cursor_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> cursor_uav;
+        };
+
+        struct animation_packet_work_state
+        {
+            uint32_t model_index = asset::invalid_index;
+            uint32_t model_generation = 0u;
+            physics::animation_trajectory_packet packet;
+            physics::animation_trajectory_gpu_resources resources;
+            std::vector<animation_mesh_cursor_work_state> mesh_cursors;
+        };
+
         struct in_flight_tick
         {
             in_flight_tick() = default;
@@ -1596,7 +1613,7 @@ namespace skin_physics::runtime
                 segment_shader_resource_views;
             std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>
                 segment_unordered_access_views;
-            std::vector<physics::animation_trajectory_gpu_resources>
+            std::vector<animation_packet_work_state>
                 animation_packet_resources;
             force_distribution_global_scratch force_distribution_scratch;
             uint64_t expected_predecessor_sequence = 0u;
@@ -4097,7 +4114,7 @@ namespace skin_physics::runtime
             double world_time,
             double segment_duration_seconds,
             uint64_t animation_input_version,
-            std::vector<physics::animation_trajectory_gpu_resources>&
+            std::vector<animation_packet_work_state>&
                 out_animation_packet_resources,
             simulation::d3d11_compute_graph& graph,
             std::vector<Microsoft::WRL::ComPtr<ID3D11Buffer>>&
@@ -5024,7 +5041,7 @@ namespace skin_physics::runtime
                 out_segment_shader_resource_views,
             std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>&
                 out_segment_unordered_access_views,
-            std::vector<physics::animation_trajectory_gpu_resources>&
+            std::vector<animation_packet_work_state>&
                 out_animation_packet_resources,
             force_distribution_global_scratch& out_force_distribution_scratch,
             std::string& diagnostic)
@@ -6933,7 +6950,7 @@ namespace skin_physics::runtime
             std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>
                 segment_unordered_access_views;
             force_distribution_global_scratch force_distribution_scratch;
-            std::vector<physics::animation_trajectory_gpu_resources>
+            std::vector<animation_packet_work_state>
                 animation_packet_resources;
             std::string diagnostic;
             simulation::compute_pass_desc begin_pass;
