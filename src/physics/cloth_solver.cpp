@@ -947,6 +947,13 @@ namespace skin_physics::physics
         cloth_gpu_topology_packet candidate;
         candidate.vertex_count = static_cast<uint32_t>(
             mesh.rest_positions.size());
+        candidate.rest_positions.reserve(mesh.rest_positions.size());
+        for (const asset::vec3& position : mesh.rest_positions)
+        {
+            candidate.rest_positions.push_back({
+                position.x, position.y, position.z, 1.0f
+            });
+        }
         candidate.stretch_constraints.reserve(
             mesh.stretch_constraints.size());
         candidate.stretch_color_ranges = mesh.stretch_color_ranges;
