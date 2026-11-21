@@ -1049,6 +1049,11 @@ namespace
             std::abs(epoch_displacements[1].z - 0.2f) <= 1.0e-6f &&
             std::abs(epoch_displacements[2].x - 100.0f) <= 1.0e-6f,
             "Cloth Position-Writer Epoch displacement must be the exact after-minus-before vector for every Vertex.");
+        const std::vector<uint32_t> epoch_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(epoch_status[0] == 0u,
+            "Valid Cloth Position-Writer Epoch snapshot / displacement must not raise solver diagnostics.");
 
         struct alignas(16) reconstruct_parameters
         {
