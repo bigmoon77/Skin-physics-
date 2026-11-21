@@ -95,6 +95,14 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     }
 
     const uint4 indices = primitives[primitive_index].vertices;
+    if ((primitive_vertex_count == 2u &&
+            (indices.z != 0u || indices.w != 0u)) ||
+        (primitive_vertex_count == 3u && indices.w != 0u))
+    {
+        fail_epoch_aabb();
+        return;
+    }
+
     float3 minimum_value = 3.402823466e+38f;
     float3 maximum_value = -3.402823466e+38f;
     [unroll]
