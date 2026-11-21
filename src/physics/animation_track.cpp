@@ -4635,10 +4635,28 @@ namespace skin_physics::physics
                         clip.tracks[track_index];
                     const animation_channel_span& channel_span =
                         scheduled.clip.channels[track_index];
+                    const bool constant_coefficients =
+                        channel_span.coefficients[1].x == 0.0f &&
+                        channel_span.coefficients[1].y == 0.0f &&
+                        channel_span.coefficients[1].z == 0.0f &&
+                        channel_span.coefficients[1].w == 0.0f &&
+                        channel_span.coefficients[2].x == 0.0f &&
+                        channel_span.coefficients[2].y == 0.0f &&
+                        channel_span.coefficients[2].z == 0.0f &&
+                        channel_span.coefficients[2].w == 0.0f &&
+                        channel_span.coefficients[3].x == 0.0f &&
+                        channel_span.coefficients[3].y == 0.0f &&
+                        channel_span.coefficients[3].z == 0.0f &&
+                        channel_span.coefficients[3].w == 0.0f;
+                    const bool interpolation_matches =
+                        channel_span.interpolation_mode == asset_track.mode ||
+                        (channel_span.interpolation_mode ==
+                            asset::interpolation::step &&
+                            constant_coefficients);
                     if (channel_span.track_index != track_index ||
                         channel_span.node_index != asset_track.node_index ||
                         channel_span.path != asset_track.path ||
-                        channel_span.interpolation_mode != asset_track.mode ||
+                        !interpolation_matches ||
                         !approximately_equal_double(
                             channel_span.clip_time_start,
                             scheduled.clip.clip_time_start) ||
@@ -4649,20 +4667,7 @@ namespace skin_physics::physics
                     {
                         return fail(
                             animation_trajectory_packet_error::invalid_channel,
-                            "Animation Channel Span mismatch: track=" +
-                                std::to_string(channel_span.track_index) +
-                                "/" + std::to_string(track_index) +
-                                " node=" + std::to_string(channel_span.node_index) +
-                                "/" + std::to_string(asset_track.node_index) +
-                                " path=" + std::to_string(static_cast<uint32_t>(channel_span.path)) +
-                                "/" + std::to_string(static_cast<uint32_t>(asset_track.path)) +
-                                " interpolation=" + std::to_string(static_cast<uint32_t>(channel_span.interpolation_mode)) +
-                                "/" + std::to_string(static_cast<uint32_t>(asset_track.mode)) +
-                                " clip_start=" + std::to_string(channel_span.clip_time_start) +
-                                "/" + std::to_string(scheduled.clip.clip_time_start) +
-                                " clip_delta=" + std::to_string(channel_span.clip_time_delta) +
-                                "/" + std::to_string(scheduled.clip.clip_time_delta) +
-                                " node_count=" + std::to_string(node_count) + ".");
+                            "Animation Channel Span does not match its original Track Index / Node / Path / effective Interpolation / common Clip-Time interval.");
                     }
                     if (model.nodes[channel_span.node_index].uses_matrix)
                     {
