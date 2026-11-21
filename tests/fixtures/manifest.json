@@ -275,6 +275,17 @@
             "signed dihedral and analytical gradient",
             "finite-difference relative error <= 1e-3"
           ]
+        },
+        {
+          "id": "P05_WARP_COLORED_STRETCH_XPBD",
+          "checks": [
+            "Cloth topology construction produces deterministic Stretch graph colors with contiguous flattened constraint ranges",
+            "Every Stretch constraint appears exactly once and no two constraints in one color share a vertex",
+            "The production Shader Model 5 Stretch pass updates only the disjoint vertices of its active color",
+            "XPBD Lambda is stored per Stretch constraint and persists across color sweeps / iterations within one Segment",
+            "The production WARP positions and Segment-local Lambda values match the CPU colored XPBD reference across repeated iterations",
+            "Invalid color ownership, mismatched state arrays, degenerate edges and non-finite solver coefficients fail closed"
+          ]
         }
       ],
       "automated_cases": [
