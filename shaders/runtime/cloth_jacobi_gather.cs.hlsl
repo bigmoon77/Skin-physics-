@@ -192,7 +192,11 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             }
             const ClothStretchConstraint constraint =
                 stretch_constraints[reference.constraint_index];
-            if (constraint.vertices[reference.local_vertex_index] != vertex_index)
+            if (constraint.vertices[reference.local_vertex_index] != vertex_index ||
+                !isfinite(constraint.rest_length) ||
+                constraint.rest_length <= 1.0e-12f ||
+                !isfinite(constraint.reserved) ||
+                constraint.reserved != 0.0f)
             {
                 fail_cloth_csr();
                 next_positions[vertex_index] = source_position;
