@@ -2360,10 +2360,24 @@ namespace skin_physics::physics
         }
 
         // Source, Target and Weight schedules can reach the same Logical Tick
-        // endpoint through different affine mappings. Canonicalize only the
-        // two outer boundaries; interior event / Key boundaries remain exact.
+        // endpoint through different affine mappings. Remove only interior
+        // values that are within double representational tolerance of an outer
+        // endpoint, then canonicalize the endpoints. Interior event / Key
+        // boundaries remain exact.
+        const auto interior_end = std::remove_if(
+            boundaries.begin() + 1,
+            boundaries.end() - 1,
+            [world_time_start, world_time_end](double value)
+            {
+                return approximately_equal_double(value, world_time_start) ||
+                    approximately_equal_double(value, world_time_end);
+            });
+        boundaries.erase(interior_end, boundaries.end() - 1);
         boundaries.front() = world_time_start;
         boundaries.back() = world_time_end;
+        boundaries.erase(
+            std::unique(boundaries.begin(), boundaries.end()),
+            boundaries.end());
 
         if (boundaries.size() - 1u >
             static_cast<std::size_t>(maximum_span_count) ||
