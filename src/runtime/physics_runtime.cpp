@@ -3990,10 +3990,11 @@ namespace skin_physics::runtime
                     playback_span->clip.clip_time_delta < 0.0;
                 span_input.tracks.push_back(std::move(playback_input));
             }
-            span_input.world_time_start =
+            const double selected_span_world_time_start =
                 blend_span != nullptr
                     ? blend_span->world_time_start
                     : playback_span->world_time_start;
+            span_input.world_time_start = selected_span_world_time_start;
             span_input.world_time_duration = span_duration;
 
             physics::animation_trajectory_packet_build_desc packet_desc;
@@ -4044,7 +4045,8 @@ namespace skin_physics::runtime
             if (node_count == 0u ||
                 packet_span.track_record_count == 0u ||
                 packet_span.track_record_count > 2u ||
-                packet_span.channel_record_count != node_count ||
+                packet_span.channel_record_count !=
+                    node_count * packet_span.track_record_count ||
                 packet_build.value.static_node_matrices.size() != node_count)
             {
                 diagnostic =
@@ -4090,7 +4092,7 @@ namespace skin_physics::runtime
             static_assert(sizeof(skin_matrix_evaluation_parameters) == 96u);
 
             const double normalized_span_coordinate =
-                (world_time - span_input.world_time_start) / span_duration;
+                (world_time - selected_span_world_time_start) / span_duration;
             if (!finite_double(normalized_span_coordinate) ||
                 normalized_span_coordinate < 0.0 ||
                 normalized_span_coordinate > 1.0 ||
@@ -4286,8 +4288,6 @@ namespace skin_physics::runtime
 
             ID3D11ShaderResourceView* local_transform_srv =
                 source_local_srv.Get();
-            ID3D11UnorderedAccessView* local_transform_uav =
-                source_local_uav.Get();
             if (packet_span.track_record_count == 2u)
             {
                 blend_evaluation_parameters parameters;
@@ -4343,7 +4343,6 @@ namespace skin_physics::runtime
                 out_segment_parameter_buffers.push_back(
                     std::move(parameter_buffer));
                 local_transform_srv = blended_local_srv.Get();
-                local_transform_uav = blended_local_uav.Get();
             }
 
             std::vector<physics::gpu_matrix4x4> initial_global_matrices(
@@ -4373,11 +4372,14 @@ namespace skin_physics::runtime
             }
 
             uint32_t maximum_hierarchy_depth = 0u;
-            for (const physics::animation_channel_gpu_record& channel :
-                packet_build.value.channel_records)
+            for (uint32_t channel_index = 0u;
+                channel_index < node_count;
+                ++channel_index)
             {
                 uint32_t depth = 0u;
-                uint32_t parent_index = channel.parent_index;
+                uint32_t parent_index =
+                    packet_build.value.channel_records[
+                        packet_span.first_channel_record + channel_index].parent_index;
                 while (parent_index != asset::invalid_index)
                 {
                     if (parent_index >= node_count || depth >= node_count)
@@ -4389,28 +4391,7 @@ namespace skin_physics::runtime
                     ++depth;
                     parent_index =
                         packet_build.value.channel_records[
-                            static_cast<std::size_t>(
-                                channel.parent_index == asset::invalid_index
-                                    ? 0u
-                                    : channel.parent_index)].parent_index;
-                    // The immutable builder guarantees parent-before-child
-                    // ordering; calculate depth through the dense Channel table.
-                    if (depth > node_count)
-                    {
-                        diagnostic =
-                            "GPU Animation hierarchy depth exceeds the Node count.";
-                        return false;
-                    }
-                    uint32_t ancestor_index = channel.parent_index;
-                    for (uint32_t step = 1u; step < depth; ++step)
-                    {
-                        ancestor_index =
-                            packet_build.value.channel_records[ancestor_index].parent_index;
-                    }
-                    parent_index =
-                        depth == 1u
-                            ? asset::invalid_index
-                            : packet_build.value.channel_records[ancestor_index].parent_index;
+                            packet_span.first_channel_record + parent_index].parent_index;
                 }
                 maximum_hierarchy_depth =
                     std::max(maximum_hierarchy_depth, depth);
@@ -4548,6 +4529,8 @@ namespace skin_physics::runtime
                     packet_build.value.inverse_bind_matrices.size());
             skin_parameters.expected_mesh_node_index =
                 gpu_mesh.skin_node_index;
+            const asset::mat4 root_matrix =
+                make_root_transform_matrix(model_snapshot.root_transform);
             skin_parameters.root_transform =
                 to_gpu_matrix(root_matrix);
             Microsoft::WRL::ComPtr<ID3D11Buffer> skin_parameter_buffer;
