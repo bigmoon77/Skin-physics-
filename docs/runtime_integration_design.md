@@ -305,7 +305,8 @@ Host ApplicationがHardware D3D11 DeviceとImmediate Contextを生成する。Sk
                 world_handle world,
                 collider_handle collider,
                 double sample_time,
-                const transform& pose);
+                const transform& pose,
+                bool is_teleport = false);
 
             status advance(
                 world_handle world,
@@ -575,6 +576,7 @@ Immutable GPU Packet ABIはdetailed_design.md §5.3のanimation_span_gpu_record 
 - Kinematic Colliderは連続する時刻付きTransform SampleをTranslation Linear + Shortest-Arc Slerpで評価する。CAの任意tauでTransform / Contact Point Velocityを算出し、Speed / Sagitta Boundを同じPacket Versionで提供する。必要なSample Pairがbracketできない場合はBLOCKED_BY_INPUT。
 - CPUは係数区間から保守的なSpeed / Acceleration Boundを生成し、GPU Trajectory Packetと同一Versionで渡す。BoundsはInterval Arithmetic / 外向き丸めを使い、実軌道の上限を過小評価しない。CPUのdouble絶対時刻をGPU floatへ直接渡さず、GPUではSpan内uとSegment相対tauだけを使用する。
 - Animation Span境界はWorld Integration Segment境界へ追加する。TOIは単一Span内で発生するため、CAは同じimmutable Packetを使って任意tauの姿勢・速度を評価する。通常Substep / Force / Impulse / TOIを含む全Segmentの進行後にWorld Working Cursorのu_segment_startを更新し、TOI prefixではtau、その他はdt_segmentを使う。次SegmentがSpan境界へ到達した場合はspan_record_indexを次Spanへ切り替え、u_segment_start=0とする。正の時間進行でCursorが増加しない場合はANIMATION_TIME_PRECISION_UNRESOLVEDとしてCommitしない。
+- Kinematic Colliderの各Pose Sample時刻もCPU World Integration Segment境界へ追加する。APIの`is_teleport`は明示Discontinuityを表し、Teleport境界を跨ぐ補間を禁止する。境界直前のSpanは旧Poseを保持してVelocityを0とし、境界直後のSpanはTeleport後のPoseから新しい連続Sample Pairで評価する。Sample PairがTick / Spanをbracketできない場合はBLOCKED_BY_INPUTとし、外挿しない。
 - Clip Blendは最大2 Track、非Additiveとする。Blend Weightの時間微分項を必ず含める。
 - Missing Pose / Key / Bound、正規化不能Quaternion、非有限微分はBLOCKED_BY_INPUTまたはInvalid Animation Inputとし、前回Poseや速度の流用・有限差分代用を行わない。
 
