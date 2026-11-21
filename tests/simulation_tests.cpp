@@ -2465,6 +2465,32 @@ namespace
                 std::vector<double>({ 10.0 }),
             "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind payload.");
 
+        const skin_physics::physics::animation_clip_span_schedule_result
+            held_terminal_schedule =
+                skin_physics::physics::schedule_animation_clip_spans(
+                    source_model.animations[0u], 6u,
+                    1.0, 0.0, 20.0, 0.5);
+        require(held_terminal_schedule.success &&
+            held_terminal_schedule.values.size() == 1u &&
+            held_terminal_schedule.values[0u].clip.channels[0u].interpolation_mode ==
+                interpolation::step,
+            "A paused interpolated Track at its final Key must be represented as a constant effective STEP Span.");
+
+        animation_trajectory_packet_build_desc held_terminal_packet = build_desc;
+        held_terminal_packet.animation_input_version += 1u;
+        held_terminal_packet.spans[0u].span_id = 43u;
+        held_terminal_packet.spans[0u].world_time_start = 20.0;
+        held_terminal_packet.spans[0u].world_time_duration = 0.5;
+        held_terminal_packet.spans[0u].tracks[0u].scheduled =
+            held_terminal_schedule.values[0u];
+        const auto held_terminal_built =
+            skin_physics::physics::build_animation_trajectory_packet(
+                source_model, held_terminal_packet);
+        require(held_terminal_built.success &&
+            held_terminal_built.value.span_records.size() == 1u &&
+            held_terminal_built.value.channel_records.size() == 6u,
+            "Packet Builder must accept a constant effective STEP Span produced by a LINEAR Asset Track at its held terminal Key.");
+
         const skin_physics::physics::animation_span_gpu_record& span_record =
             built.value.span_records[0u];
         const skin_physics::physics::animation_track_gpu_record& track_record =
