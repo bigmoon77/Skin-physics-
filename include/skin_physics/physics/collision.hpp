@@ -53,6 +53,15 @@ namespace skin_physics::physics
         bool valid = false;
     };
 
+    struct moving_edge_edge_contact_result
+    {
+        edge_edge_contact contact;
+        asset::vec3 edge_a_velocity;
+        asset::vec3 edge_b_velocity;
+        asset::vec3 relative_velocity;
+        bool success = false;
+    };
+
     enum class collision_error : uint8_t
     {
         none,
@@ -178,6 +187,15 @@ namespace skin_physics::physics
     edge_edge_contact find_edge_edge_contact(
         const std::array<asset::vec3, 2>& edge_a,
         const std::array<asset::vec3, 2>& edge_b,
+        float combined_thickness);
+
+    // Evaluates an EE contact between two moving edges. Endpoint velocities
+    // are interpolated at the closest-segment parameters from the contact.
+    moving_edge_edge_contact_result find_moving_edge_edge_contact(
+        const std::array<asset::vec3, 2>& edge_a,
+        const std::array<asset::vec3, 2>& edge_a_velocities,
+        const std::array<asset::vec3, 2>& edge_b,
+        const std::array<asset::vec3, 2>& edge_b_velocities,
         float combined_thickness);
 
     using broadphase_candidate_filter =
