@@ -333,9 +333,12 @@ namespace skin_physics::physics
                         static_cast<double>(collider.maximum_local_radius) *
                         (1.0 - std::cos(
                             static_cast<double>(collider.angular_axis_and_angle.w) * 0.5));
+                    const double span_duration_for_tolerance =
+                        static_cast<double>(span.span_duration_seconds);
                     const double duration_tolerance =
-                        1.0e-5 * std::max(
-                            1.0, static_cast<double>(span.span_duration_seconds));
+                        1.0e-5 * (span_duration_for_tolerance > 1.0
+                            ? span_duration_for_tolerance
+                            : 1.0);
                     if (stable_id == 0u ||
                         !collider_ids.insert(stable_id).second ||
                         collider.span_sample_pair_id == asset::invalid_index ||
