@@ -9311,6 +9311,8 @@ namespace skin_physics::runtime
         model->source_model = {};
         model->mesh_physics_assets.clear();
         model->gpu_soft_body_meshes.clear();
+        model->cloth_mesh_assets.clear();
+        model->gpu_cloth_meshes.clear();
         model->root_samples.clear();
         model->has_animation_playback = false;
         model->has_animation_blend = false;
