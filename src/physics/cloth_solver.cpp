@@ -507,6 +507,16 @@ namespace skin_physics::physics
                 coloring_diagnostic);
             return result;
         }
+        if (!validate_cloth_vertex_constraint_csr(
+                result.value, coloring_diagnostic))
+        {
+            add_diagnostic(
+                result.diagnostics,
+                cloth_error::invalid_settings,
+                asset::invalid_index,
+                coloring_diagnostic);
+            return result;
+        }
 
         result.success = true;
         return result;
@@ -624,11 +634,11 @@ namespace skin_physics::physics
         }
 
         std::vector<uint8_t> stretch_seen(
-            mesh.stretch_constraints.size() * 2u, 0u);
+            mesh.stretch_constraints.size() * 2u, static_cast<uint8_t>(0u));
         std::vector<uint8_t> shear_seen(
-            mesh.shear_constraints.size() * 3u, 0u);
+            mesh.shear_constraints.size() * 3u, static_cast<uint8_t>(0u));
         std::vector<uint8_t> bend_seen(
-            mesh.bend_constraints.size() * 4u, 0u);
+            mesh.bend_constraints.size() * 4u, static_cast<uint8_t>(0u));
         std::size_t expected_reference_count = 0u;
         for (std::size_t index = 1u;
             index < mesh.vertex_constraint_offsets.size(); ++index)
