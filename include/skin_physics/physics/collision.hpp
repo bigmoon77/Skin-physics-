@@ -126,6 +126,14 @@ namespace skin_physics::physics
         collision_aabb bounds;
     };
 
+    struct kinematic_collider_broadphase_primitive_result
+    {
+        broadphase_primitive value;
+        collision_error error = collision_error::none;
+        std::string diagnostic;
+        bool success = false;
+    };
+
     struct broadphase_mesh_pair
     {
         uint32_t mesh_a = 0;
@@ -229,6 +237,10 @@ namespace skin_physics::physics
 
     using broadphase_candidate_filter =
         std::function<bool(uint32_t, uint32_t)>;
+
+    kinematic_collider_broadphase_primitive_result make_kinematic_collider_broadphase_primitive(
+        uint32_t collider_mesh_id,
+        const kinematic_collider_geometry_result& geometry);
 
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
