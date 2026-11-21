@@ -4497,90 +4497,106 @@ namespace skin_physics::runtime
                 }
                 packet_desc.spans.reserve(scheduled_span_count);
 
+                struct prepared_kinematic_collider
+                {
+                    uint64_t stable_id = 0u;
+                    uint32_t handle_index = asset::invalid_index;
+                    float maximum_local_radius = 0.0f;
+                    std::vector<physics::kinematic_collider_transform_sample>
+                        samples;
+                };
+                std::vector<prepared_kinematic_collider>
+                    prepared_kinematic_colliders;
+                for (const collider_input_snapshot& collider_snapshot :
+                    input_snapshot.colliders)
+                {
+                    if (!collider_snapshot.kinematic)
+                    {
+                        continue;
+                    }
+                    if (collider_snapshot.collider_index == asset::invalid_index ||
+                        collider_snapshot.generation == 0u)
+                    {
+                        diagnostic =
+                            "Immutable Kinematic Collider Packet contains an invalid Handle identity.";
+                        return false;
+                    }
+
+                    prepared_kinematic_collider prepared;
+                    prepared.handle_index = collider_snapshot.collider_index;
+                    prepared.stable_id =
+                        (static_cast<uint64_t>(collider_snapshot.generation) << 32u) |
+                        collider_snapshot.collider_index;
+                    prepared.samples.reserve(collider_snapshot.pose_samples.size());
+                    for (const transform_sample& sample :
+                        collider_snapshot.pose_samples)
+                    {
+                        physics::kinematic_collider_transform_sample converted;
+                        converted.world_time = sample.time;
+                        converted.translation = sample.value.translation;
+                        converted.rotation = sample.value.rotation;
+                        converted.is_teleport = sample.is_teleport;
+                        prepared.samples.push_back(converted);
+                    }
+
+                    double maximum_local_radius_squared = 0.0;
+                    for (const asset::vertex& vertex :
+                        collider_snapshot.description.collision_mesh.vertices)
+                    {
+                        const double x = vertex.position.x;
+                        const double y = vertex.position.y;
+                        const double z = vertex.position.z;
+                        const double radius_squared = x * x + y * y + z * z;
+                        if (!std::isfinite(radius_squared) ||
+                            radius_squared < 0.0)
+                        {
+                            diagnostic =
+                                "Kinematic Collider Mesh contains a non-finite local vertex while deriving its certified rotation radius.";
+                            return false;
+                        }
+                        maximum_local_radius_squared = std::max(
+                            maximum_local_radius_squared, radius_squared);
+                    }
+
+                    const double maximum_local_radius =
+                        std::sqrt(maximum_local_radius_squared);
+                    if (!std::isfinite(maximum_local_radius) ||
+                        maximum_local_radius >
+                            static_cast<double>(
+                                std::numeric_limits<float>::max()))
+                    {
+                        diagnostic =
+                            "Kinematic Collider Mesh local radius exceeds the GPU Float range.";
+                        return false;
+                    }
+                    prepared.maximum_local_radius =
+                        static_cast<float>(maximum_local_radius);
+                    prepared_kinematic_colliders.push_back(std::move(prepared));
+                }
+
                 const auto append_kinematic_collider_records =
-                    [&input_snapshot](
+                    [&prepared_kinematic_colliders](
                         physics::animation_trajectory_span_input& span_input,
                         std::string& out_diagnostic) -> bool
                 {
-                    for (const collider_input_snapshot& collider_snapshot :
-                        input_snapshot.colliders)
+                    span_input.colliders.reserve(
+                        prepared_kinematic_colliders.size());
+                    for (const prepared_kinematic_collider& collider :
+                        prepared_kinematic_colliders)
                     {
-                        if (!collider_snapshot.kinematic)
-                        {
-                            continue;
-                        }
-
-                        if (collider_snapshot.collider_index == asset::invalid_index ||
-                            collider_snapshot.generation == 0u)
-                        {
-                            out_diagnostic =
-                                "Immutable Kinematic Collider Packet contains an invalid Handle identity.";
-                            return false;
-                        }
-
-                        std::vector<physics::kinematic_collider_transform_sample>
-                            samples;
-                        samples.reserve(collider_snapshot.pose_samples.size());
-                        for (const transform_sample& sample :
-                            collider_snapshot.pose_samples)
-                        {
-                            physics::kinematic_collider_transform_sample converted;
-                            converted.world_time = sample.time;
-                            converted.translation = sample.value.translation;
-                            converted.rotation = sample.value.rotation;
-                            converted.is_teleport = sample.is_teleport;
-                            samples.push_back(converted);
-                        }
-
-                        double maximum_local_radius_squared = 0.0;
-                        for (const asset::vertex& vertex :
-                            collider_snapshot.description.collision_mesh.vertices)
-                        {
-                            const double x = vertex.position.x;
-                            const double y = vertex.position.y;
-                            const double z = vertex.position.z;
-                            const double radius_squared =
-                                x * x + y * y + z * z;
-                            if (!std::isfinite(radius_squared) ||
-                                radius_squared < 0.0)
-                            {
-                                out_diagnostic =
-                                    "Kinematic Collider Mesh contains a non-finite local vertex while deriving its certified rotation radius.";
-                                return false;
-                            }
-                            maximum_local_radius_squared = std::max(
-                                maximum_local_radius_squared, radius_squared);
-                        }
-
-                        const double maximum_local_radius =
-                            std::sqrt(maximum_local_radius_squared);
-                        if (!std::isfinite(maximum_local_radius) ||
-                            maximum_local_radius >
-                                static_cast<double>(
-                                    std::numeric_limits<float>::max()))
-                        {
-                            out_diagnostic =
-                                "Kinematic Collider Mesh local radius exceeds the GPU Float range.";
-                            return false;
-                        }
-
-                        const uint64_t stable_collider_id =
-                            (static_cast<uint64_t>(
-                                collider_snapshot.generation) << 32u) |
-                            collider_snapshot.collider_index;
                         const physics::kinematic_collider_span_build_result
                             collider_span =
                                 physics::build_kinematic_collider_span_from_samples(
-                                    stable_collider_id,
-                                    samples,
+                                    collider.stable_id,
+                                    collider.samples,
                                     span_input.world_time_start,
                                     span_input.world_time_duration,
-                                    static_cast<float>(maximum_local_radius));
+                                    collider.maximum_local_radius);
                         if (!collider_span.success)
                         {
                             out_diagnostic =
                                 "Immutable Kinematic Collider Span construction failed for Handle " +
-                                std::to_string(collider_snapshot.collider_index) +
+                                std::to_string(collider.handle_index) +
                                 ": " + collider_span.message;
                             return false;
                         }
