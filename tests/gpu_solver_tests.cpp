@@ -3891,7 +3891,7 @@ namespace
                 "shaders" / "runtime" / "animation_channel_evaluate.cs.hlsl",
             "main");
 
-        std::vector<animation_channel_gpu_record> channels(2u);
+        std::vector<animation_channel_gpu_record> channels(3u);
         animation_channel_gpu_record& linear_cubic = channels[0u];
         linear_cubic.node_index = 0u;
         linear_cubic.parent_index = invalid_index;
@@ -3924,6 +3924,18 @@ namespace
         step.translation_c0 = { 5.0f, 6.0f, 7.0f, 0.0f };
         step.rotation_parameter0 = { 0.0f, 0.0f, 0.0f, 1.0f };
         step.scale_c0 = { 2.0f, 2.0f, 2.0f, 0.0f };
+
+        animation_channel_gpu_record& cubic_rotation = channels[2u];
+        cubic_rotation.node_index = 2u;
+        cubic_rotation.parent_index = 0u;
+        cubic_rotation.channel_mask = animation_channel_mask_rotation;
+        cubic_rotation.interpolation_flags = 2u << 2u;
+        cubic_rotation.rotation_parameter0 = {
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+        cubic_rotation.rotation_parameter1 = {
+            0.0f, 0.0f, 1.0f, 0.0f
+        };
 
         const ComPtr<ID3D11Buffer> channel_buffer =
             create_structured_buffer(
@@ -4016,6 +4028,23 @@ namespace
             std::abs(outputs[1u].scale.x - 2.0f) <= 1.0e-6f &&
             std::abs(outputs[1u].scale_velocity.x) <= 1.0e-6f,
             "GPU STEP / Rest TRS channels must remain constant with zero analytic velocity.");
+
+        const float cubic_rotation_norm = std::sqrt(
+            outputs[2u].rotation.x * outputs[2u].rotation.x +
+            outputs[2u].rotation.y * outputs[2u].rotation.y +
+            outputs[2u].rotation.z * outputs[2u].rotation.z +
+            outputs[2u].rotation.w * outputs[2u].rotation.w);
+        const float cubic_rotation_tangent_dot =
+            outputs[2u].rotation.x * outputs[2u].rotation_velocity.x +
+            outputs[2u].rotation.y * outputs[2u].rotation_velocity.y +
+            outputs[2u].rotation.z * outputs[2u].rotation_velocity.z +
+            outputs[2u].rotation.w * outputs[2u].rotation_velocity.w;
+        require(outputs[2u].node_index == 2u &&
+            std::abs(outputs[2u].rotation.z - 0.4472136f) <= 1.0e-5f &&
+            std::abs(outputs[2u].rotation.w - 0.8944272f) <= 1.0e-5f &&
+            std::abs(cubic_rotation_norm - 1.0f) <= 1.0e-5f &&
+            std::abs(cubic_rotation_tangent_dot) <= 1.0e-5f,
+            "GPU CUBICSPLINE Quaternion evaluation must normalize the raw polynomial and project its analytic derivative into the tangent space.");
 
         std::vector<animation_channel_gpu_record> invalid_channels = channels;
         invalid_channels[0u].rotation_parameter0 = {};
