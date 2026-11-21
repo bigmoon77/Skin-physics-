@@ -69,6 +69,7 @@ namespace skin_physics::physics
     struct kinematic_collider_geometry_result
     {
         std::vector<asset::vec3> world_vertices;
+        std::vector<asset::vec3> world_vertex_velocities;
         collision_aabb swept_bounds;
         collision_error error = collision_error::none;
         std::string diagnostic;
