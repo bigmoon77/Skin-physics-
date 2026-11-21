@@ -898,7 +898,8 @@
             "Moving EE narrowphase interpolates both edge endpoint velocities at the closest-segment parameters and returns relative velocity; non-finite endpoint velocities fail closed",
             "CPU moving Collider VT contact generation uses the transformed Collider Mesh and analytic per-vertex velocities to emit deterministic Vertex / Triangle contacts",
             "Degenerate Collider triangles and invalid dynamic Vertex input fail closed",
-            "Contact capacity overflow reports the required count and rejects the entire contact set without returning partial contacts"
+            "Contact capacity overflow reports the required count and rejects the entire contact set without returning partial contacts",
+            "Kinematic Collider swept AABB adapts to the existing Spatial Hash Broadphase primitive and discovers overlapping Dynamic Mesh candidates"
           ]
         }
       ],
