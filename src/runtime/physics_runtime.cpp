@@ -3931,6 +3931,7 @@ namespace skin_physics::runtime
             }
 
             if (source_clip == nullptr ||
+                (blend_span != nullptr && target_clip == nullptr) ||
                 !finite_double(span_duration) ||
                 span_duration <= 0.0 ||
                 !finite_double(span_local_u) ||
