@@ -188,7 +188,7 @@ void fail_joint(uint local_joint_index)
     skin_matrices[local_joint_index] = zero_matrix;
     skin_matrix_derivatives[local_joint_index] = zero_matrix;
     uint previous_status = 0u;
-    InterlockedOr(skin_matrix_status[0], 1u, previous_status);
+    InterlockedOr(skin_matrix_status[0], 8u, previous_status);
 }
 
 [numthreads(64, 1, 1)]
@@ -197,7 +197,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     if (skin_record_index >= skin_record_count)
     {
         uint previous_status = 0u;
-        InterlockedOr(skin_matrix_status[0], 1u, previous_status);
+        InterlockedOr(skin_matrix_status[0], 8u, previous_status);
         return;
     }
 
@@ -216,7 +216,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             skin_joint_record_count - skin.first_joint_record)
     {
         uint previous_status = 0u;
-        InterlockedOr(skin_matrix_status[0], 1u, previous_status);
+        InterlockedOr(skin_matrix_status[0], 8u, previous_status);
         return;
     }
 
