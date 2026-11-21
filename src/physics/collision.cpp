@@ -971,6 +971,16 @@ namespace skin_physics::physics
                 return result;
             }
 
+            if (length_squared(subtract(
+                    vertex_positions[index_b], vertex_positions[index_a])) <=
+                minimum_length_squared)
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE Dynamic Edge has coincident endpoint positions.";
+                return result;
+            }
+
             const edge_key key = {
                 std::min(index_a, index_b),
                 std::max(index_a, index_b)
@@ -1022,6 +1032,20 @@ namespace skin_physics::physics
                 collider_mesh.indices[first + 1u],
                 collider_mesh.indices[first + 2u]
             };
+            const vec3 triangle_edge_a = subtract(
+                collider_geometry.world_vertices[triangle_indices[1u]],
+                collider_geometry.world_vertices[triangle_indices[0u]]);
+            const vec3 triangle_edge_b = subtract(
+                collider_geometry.world_vertices[triangle_indices[2u]],
+                collider_geometry.world_vertices[triangle_indices[0u]]);
+            if (length_squared(cross(triangle_edge_a, triangle_edge_b)) <=
+                minimum_length_squared)
+            {
+                result.error = collision_error::invalid_geometry;
+                result.diagnostic =
+                    "Moving Collider EE Mesh contains a degenerate Triangle.";
+                return result;
+            }
             for (std::size_t edge = 0u; edge < 3u; ++edge)
             {
                 const uint32_t index_a = triangle_indices[edge];
