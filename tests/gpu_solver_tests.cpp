@@ -4427,6 +4427,202 @@ namespace
         std::cout << "[PASS] P09_WARP_ANIMATION_NODE_HIERARCHY\n";
     }
 
+    void test_phase09_warp_animation_skin_matrices()
+    {
+        using skin_physics::asset::invalid_index;
+        using skin_physics::physics::animation_skin_gpu_record;
+        using skin_physics::physics::animation_skin_joint_gpu_record;
+        using skin_physics::physics::gpu_matrix4x4;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Animation Skin Matrix GPU Evaluator requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_directory().parent_path().parent_path() /
+                "shaders" / "runtime" / "animation_skin_matrix_evaluate.cs.hlsl",
+            "main");
+
+        std::vector<gpu_animation_node_local_transform_record> local_transforms(2u);
+        local_transforms[0u].node_index = 0u;
+        local_transforms[0u].parent_index = invalid_index;
+        local_transforms[1u].node_index = 1u;
+        local_transforms[1u].parent_index = 0u;
+
+        const ComPtr<ID3D11Buffer> local_buffer =
+            create_structured_buffer(
+                device.Get(), local_transforms, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> local_srv =
+            create_structured_srv<gpu_animation_node_local_transform_record>(
+                device.Get(), local_buffer.Get(), 2u);
+
+        std::vector<gpu_matrix4x4> global_matrices(2u);
+        std::vector<gpu_matrix4x4> global_derivatives(2u);
+        for (gpu_matrix4x4& matrix : global_matrices)
+        {
+            matrix.column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
+            matrix.column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
+            matrix.column2 = { 0.0f, 0.0f, 1.0f, 0.0f };
+            matrix.column3 = { 0.0f, 0.0f, 0.0f, 1.0f };
+        }
+        global_matrices[0u].column3.x = 2.0f;
+        global_matrices[1u].column3.x = 5.0f;
+        for (gpu_matrix4x4& matrix : global_derivatives)
+        {
+            matrix.column0 = {};
+            matrix.column1 = {};
+            matrix.column2 = {};
+            matrix.column3 = {};
+        }
+        global_derivatives[0u].column3.x = 1.0f;
+        global_derivatives[1u].column3.x = 3.0f;
+
+        const ComPtr<ID3D11Buffer> global_buffer =
+            create_structured_buffer(
+                device.Get(), global_matrices, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> derivative_buffer =
+            create_structured_buffer(
+                device.Get(), global_derivatives, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> global_srv =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), global_buffer.Get(), 2u);
+        const ComPtr<ID3D11ShaderResourceView> derivative_srv =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), derivative_buffer.Get(), 2u);
+
+        const std::vector<animation_skin_gpu_record> skins = {
+            { 0u, 0u, 0u, 1u }
+        };
+        const std::vector<animation_skin_joint_gpu_record> joints = {
+            { 1u, 0u, 1u, 0u }
+        };
+        const ComPtr<ID3D11Buffer> skin_buffer =
+            create_structured_buffer(
+                device.Get(), skins, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> joint_buffer =
+            create_structured_buffer(
+                device.Get(), joints, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> skin_srv =
+            create_structured_srv<animation_skin_gpu_record>(
+                device.Get(), skin_buffer.Get(), 1u);
+        const ComPtr<ID3D11ShaderResourceView> joint_srv =
+            create_structured_srv<animation_skin_joint_gpu_record>(
+                device.Get(), joint_buffer.Get(), 1u);
+
+        std::vector<gpu_matrix4x4> inverse_bind_matrices(1u);
+        inverse_bind_matrices[0u].column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
+        inverse_bind_matrices[0u].column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
+        inverse_bind_matrices[0u].column2 = { 0.0f, 0.0f, 1.0f, 0.0f };
+        inverse_bind_matrices[0u].column3 = { -1.0f, 0.0f, 0.0f, 1.0f };
+        const ComPtr<ID3D11Buffer> inverse_bind_buffer =
+            create_structured_buffer(
+                device.Get(), inverse_bind_matrices, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> inverse_bind_srv =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), inverse_bind_buffer.Get(), 1u);
+
+        const std::vector<gpu_matrix4x4> empty_output(1u);
+        const std::vector<uint32_t> clear_status(1u, 0u);
+        const ComPtr<ID3D11Buffer> output_buffer =
+            create_structured_buffer(
+                device.Get(), empty_output, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> output_derivative_buffer =
+            create_structured_buffer(
+                device.Get(), empty_output, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> output_uav =
+            create_structured_uav<gpu_matrix4x4>(
+                device.Get(), output_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> output_derivative_uav =
+            create_structured_uav<gpu_matrix4x4>(
+                device.Get(), output_derivative_buffer.Get(), 1u);
+        const ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), status_buffer.Get(), 1u);
+
+        struct alignas(16) skin_matrix_parameters
+        {
+            uint32_t skin_record_index = 0u;
+            uint32_t skin_record_count = 1u;
+            uint32_t track_channel_count = 2u;
+            uint32_t skin_joint_record_count = 1u;
+            uint32_t inverse_bind_matrix_count = 1u;
+            uint32_t expected_mesh_node_index = 0u;
+            uint32_t reserved[2] = {};
+        };
+        const skin_matrix_parameters parameters;
+        const ComPtr<ID3D11Buffer> parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &parameters, sizeof(parameters));
+
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            {
+                global_srv.Get(), derivative_srv.Get(),
+                skin_srv.Get(), joint_srv.Get(),
+                inverse_bind_srv.Get(), local_srv.Get()
+            },
+            { output_uav.Get(), output_derivative_uav.Get(), status_uav.Get() },
+            parameter_buffer.Get(),
+            1u);
+
+        const std::vector<gpu_matrix4x4> skin_matrices =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), output_buffer.Get(), 1u);
+        const std::vector<gpu_matrix4x4> skin_matrix_derivatives =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), output_derivative_buffer.Get(), 1u);
+        const std::vector<uint32_t> status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(status[0u] == 0u,
+            "Valid Mesh / Joint Global Matrices and Skin-specific IBM must not set the GPU Skin Matrix failure bit.");
+        require(std::abs(skin_matrices[0u].column3.x - 2.0f) <= 1.0e-6f &&
+            std::abs(skin_matrices[0u].column3.w - 1.0f) <= 1.0e-6f &&
+            std::abs(skin_matrix_derivatives[0u].column3.x - 2.0f) <= 1.0e-6f &&
+            std::abs(skin_matrix_derivatives[0u].column3.w) <= 1.0e-6f,
+            "GPU Skin Matrix must compute inverse(Mesh Global) * Joint Global * Skin-specific IBM and its analytic product-rule derivative.");
+
+        std::vector<gpu_matrix4x4> singular_global_matrices = global_matrices;
+        singular_global_matrices[0u].column0 = {};
+        const ComPtr<ID3D11Buffer> singular_global_buffer =
+            create_structured_buffer(
+                device.Get(), singular_global_matrices,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> singular_global_srv =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), singular_global_buffer.Get(), 2u);
+        const ComPtr<ID3D11Buffer> invalid_status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> invalid_status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), invalid_status_buffer.Get(), 1u);
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            {
+                singular_global_srv.Get(), derivative_srv.Get(),
+                skin_srv.Get(), joint_srv.Get(),
+                inverse_bind_srv.Get(), local_srv.Get()
+            },
+            { output_uav.Get(), output_derivative_uav.Get(), invalid_status_uav.Get() },
+            parameter_buffer.Get(),
+            1u);
+        const std::vector<uint32_t> invalid_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
+        require(invalid_status[0u] == 1u,
+            "A singular Mesh Node Global Matrix must fail closed instead of publishing an unstable Skin Matrix.");
+
+        std::cout << "[PASS] P09_WARP_ANIMATION_SKIN_MATRICES\n";
+    }
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
@@ -4652,6 +4848,7 @@ int run_gpu_solver_tests()
     test_phase09_warp_animation_channel_evaluation();
     test_phase09_warp_animation_blend_local_transforms();
     test_phase09_warp_animation_node_hierarchy();
+    test_phase09_warp_animation_skin_matrices();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
