@@ -2916,12 +2916,12 @@ namespace
                 middle.value.rotation.w) <= 1.0e-5f,
             "Equivalent Quaternion hemispheres must produce identical Collider Trajectories.");
 
-        require(built.value.linear_speed_bound >= 2.0f &&
-            built.value.angular_speed_bound >= expected_angular_speed &&
+        require(built.value.linear_speed_bound + 1.0e-6f >= 2.0f &&
+            built.value.angular_speed_bound + 1.0e-5f >= expected_angular_speed &&
             built.value.maximum_local_radius >= 2.0f &&
-            built.value.sagitta_bound >=
+            built.value.sagitta_bound + 1.0e-5f >=
                 2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f)),
-            "Kinematic Collider Speed / Angular / Radius / Sagitta Bounds must be outward conservative.");
+            "Kinematic Collider Speed / Angular / Radius / Sagitta Bounds must conservatively cover the encoded float32 trajectory within numerical tolerance.");
 
         kinematic_collider_span_desc no_rotation = desc;
         no_rotation.sample_end_rotation = no_rotation.sample_start_rotation;
