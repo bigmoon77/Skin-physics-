@@ -130,11 +130,23 @@ namespace skin_physics::physics
         float compliance = 0.0f;
     };
 
+    // Four-index primitive record consumed by Position-Writer Epoch AABB
+    // generation. Triangle records use xyz; Edge records use xy. Unused
+    // indices are required to remain zero.
+    struct cloth_gpu_epoch_primitive_record
+    {
+        std::array<uint32_t, 4> vertices = {};
+    };
+
     static_assert(std::is_standard_layout_v<cloth_gpu_stretch_constraint_record>);
     static_assert(std::is_trivially_copyable_v<cloth_gpu_stretch_constraint_record>);
     static_assert(sizeof(cloth_gpu_stretch_constraint_record) == 16u,
         "Cloth Stretch GPU constraint ABI must remain 16 bytes.");
     static_assert(offsetof(cloth_gpu_stretch_constraint_record, rest_length) == 8u);
+    static_assert(std::is_standard_layout_v<cloth_gpu_epoch_primitive_record>);
+    static_assert(std::is_trivially_copyable_v<cloth_gpu_epoch_primitive_record>);
+    static_assert(sizeof(cloth_gpu_epoch_primitive_record) == 16u,
+        "Cloth Epoch primitive GPU ABI must remain 16 bytes.");
     static_assert(std::is_standard_layout_v<cloth_gpu_constraint_record>);
     static_assert(std::is_trivially_copyable_v<cloth_gpu_constraint_record>);
     static_assert(sizeof(cloth_gpu_constraint_record) == 32u,
@@ -156,6 +168,8 @@ namespace skin_physics::physics
         std::vector<uint32_t> stretch_color_constraint_indices;
         std::vector<cloth_gpu_constraint_record> shear_constraints;
         std::vector<cloth_gpu_constraint_record> bend_constraints;
+        std::vector<cloth_gpu_epoch_primitive_record> triangle_primitives;
+        std::vector<cloth_gpu_epoch_primitive_record> edge_primitives;
         std::vector<uint32_t> vertex_constraint_offsets;
         std::vector<cloth_vertex_constraint_ref> vertex_constraint_refs;
         // Lambda is Segment-local. These arrays are initialized to zero and
