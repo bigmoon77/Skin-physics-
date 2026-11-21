@@ -3746,6 +3746,11 @@ namespace skin_physics::runtime
                     model_snapshot->has_animation_playback ||
                     model_snapshot->has_animation_blend ||
                     root_transform_only;
+                if (root_transform_only &&
+                    model.root_only_clip_index == asset::invalid_index)
+                {
+                    return true;
+                }
 
                 for (uint32_t mesh_index = 0u;
                     mesh_index < model.source_model.meshes.size(); ++mesh_index)
@@ -6086,9 +6091,11 @@ namespace skin_physics::runtime
                             schedule.root_only_clip_index >=
                                 model.source_model.animations.size())
                         {
-                            diagnostic =
-                                "Root-only Transform Samples require a valid private static-pose Clip and at least one TRS Node.";
-                            return false;
+                            // Keep the Reservation intact. The Runtime
+                            // submission gate classifies this root-only
+                            // input as BLOCKED_BY_INPUT after checking the
+                            // complete Model / Mesh support boundary.
+                            continue;
                         }
                         const asset::animation_clip& clip =
                             model.source_model.animations[
