@@ -543,6 +543,17 @@
           "checks": [
             "overflow blocks step; no candidates silently dropped"
           ]
+        },
+        {
+          "id": "P09_KINEMATIC_COLLIDER_EDGE_EDGE_CONTACT_SET",
+          "checks": [
+            "Dynamic Edge versus moving Kinematic Collider Edge contact generation uses exact closest-segment parameters to interpolate both endpoint velocities and returns relative velocity",
+            "Collider triangle edges are canonicalized, deduplicated across adjacent triangles and sorted by endpoint indices before contact indexing",
+            "Dynamic Edge inputs are canonicalized and duplicate undirected edges collapse deterministically while preserving the lowest original source index",
+            "Contact output ordering is deterministic by canonical Dynamic Edge then canonical Collider Edge identity",
+            "Invalid Dynamic Edge indices, degenerate edges, non-finite positions / velocities and invalid Collider geometry fail closed without partial contacts",
+            "Contact capacity overflow clears the complete output and reports the first required count beyond capacity"
+          ]
         }
       ],
       "automated_cases": [
