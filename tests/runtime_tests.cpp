@@ -3196,23 +3196,23 @@ namespace
         {
             return gpu.status == 0u &&
                 is_near_value(gpu.translation.x, cpu.value.translation.x, 2.0e-4f) &&
-                near(gpu.translation.y, cpu.value.translation.y, 2.0e-4f) &&
-                near(gpu.translation.z, cpu.value.translation.z, 2.0e-4f) &&
-                near(gpu.rotation.x, cpu.value.rotation.x, 2.0e-4f) &&
-                near(gpu.rotation.y, cpu.value.rotation.y, 2.0e-4f) &&
-                near(gpu.rotation.z, cpu.value.rotation.z, 2.0e-4f) &&
-                near(gpu.rotation.w, cpu.value.rotation.w, 2.0e-4f) &&
-                near(gpu.linear_velocity.x, cpu.value.linear_velocity.x, 2.0e-4f) &&
-                near(gpu.linear_velocity.y, cpu.value.linear_velocity.y, 2.0e-4f) &&
-                near(gpu.linear_velocity.z, cpu.value.linear_velocity.z, 2.0e-4f) &&
-                near(gpu.angular_velocity.x, cpu.value.angular_velocity.x, 2.0e-4f) &&
-                near(gpu.angular_velocity.y, cpu.value.angular_velocity.y, 2.0e-4f) &&
-                near(gpu.angular_velocity.z, cpu.value.angular_velocity.z, 2.0e-4f) &&
-                near(gpu.contact_point_velocity.x,
+                is_near_value(gpu.translation.y, cpu.value.translation.y, 2.0e-4f) &&
+                is_near_value(gpu.translation.z, cpu.value.translation.z, 2.0e-4f) &&
+                is_near_value(gpu.rotation.x, cpu.value.rotation.x, 2.0e-4f) &&
+                is_near_value(gpu.rotation.y, cpu.value.rotation.y, 2.0e-4f) &&
+                is_near_value(gpu.rotation.z, cpu.value.rotation.z, 2.0e-4f) &&
+                is_near_value(gpu.rotation.w, cpu.value.rotation.w, 2.0e-4f) &&
+                is_near_value(gpu.linear_velocity.x, cpu.value.linear_velocity.x, 2.0e-4f) &&
+                is_near_value(gpu.linear_velocity.y, cpu.value.linear_velocity.y, 2.0e-4f) &&
+                is_near_value(gpu.linear_velocity.z, cpu.value.linear_velocity.z, 2.0e-4f) &&
+                is_near_value(gpu.angular_velocity.x, cpu.value.angular_velocity.x, 2.0e-4f) &&
+                is_near_value(gpu.angular_velocity.y, cpu.value.angular_velocity.y, 2.0e-4f) &&
+                is_near_value(gpu.angular_velocity.z, cpu.value.angular_velocity.z, 2.0e-4f) &&
+                is_near_value(gpu.contact_point_velocity.x,
                     cpu.value.contact_point_velocity.x, 3.0e-4f) &&
-                near(gpu.contact_point_velocity.y,
+                is_near_value(gpu.contact_point_velocity.y,
                     cpu.value.contact_point_velocity.y, 3.0e-4f) &&
-                near(gpu.contact_point_velocity.z,
+                is_near_value(gpu.contact_point_velocity.z,
                     cpu.value.contact_point_velocity.z, 3.0e-4f);
         };
 
