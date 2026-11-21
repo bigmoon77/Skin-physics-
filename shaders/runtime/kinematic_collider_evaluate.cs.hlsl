@@ -154,7 +154,8 @@ float3 rotate_vector(float4 rotation, float3 value)
 bool valid_collider_record(
     kinematic_collider_gpu_record record_value,
     float4 local_contact_point,
-    float u)
+    float u,
+    float expected_span_duration)
 {
     const float start_length = dot(
         record_value.rotation_start, record_value.rotation_start);
@@ -193,6 +194,8 @@ bool valid_collider_record(
         record_value.inverse_duration > 0.0f &&
         abs(record_value.duration_seconds *
             record_value.inverse_duration - 1.0f) <= 1.0e-4f &&
+        abs(record_value.duration_seconds - expected_span_duration) <=
+            1.0e-5f * max(1.0f, expected_span_duration) &&
         isfinite(record_value.linear_speed_bound) &&
         record_value.linear_speed_bound + 2.0e-5f *
             max(1.0f, expected_linear_speed) >= expected_linear_speed &&
@@ -306,7 +309,9 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     const kinematic_collider_gpu_record collider = collider_records[
         span.first_collider_record + local_collider_record_index];
     const float4 local_contact_point = local_contact_points[local_index];
-    if (!valid_collider_record(collider, local_contact_point, min(u, 1.0f)))
+    if (!valid_collider_record(
+            collider, local_contact_point, min(u, 1.0f),
+            span.span_duration_seconds))
     {
         output_value.status = STATUS_INVALID_INPUT;
         collider_samples[local_index] = output_value;
