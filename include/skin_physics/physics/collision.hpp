@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "skin_physics/asset/types.hpp"
+#include "skin_physics/physics/animation_track.hpp"
 
 namespace skin_physics::physics
 {
@@ -64,6 +65,24 @@ namespace skin_physics::physics
         asset::vec3 minimum;
         asset::vec3 maximum;
     };
+
+    struct kinematic_collider_geometry_result
+    {
+        std::vector<asset::vec3> world_vertices;
+        collision_aabb swept_bounds;
+        collision_error error = collision_error::none;
+        std::string diagnostic;
+        bool success = false;
+    };
+
+    // CPU collision oracle for one immutable Kinematic Collider Span. The
+    // swept AABB uses the certified local bounding sphere and the complete
+    // endpoint translation segment, so it remains conservative for arbitrary
+    // rotation throughout the Span. World vertices are evaluated at u.
+    kinematic_collider_geometry_result evaluate_kinematic_collider_geometry(
+        const asset::mesh& collision_mesh,
+        const kinematic_collider_gpu_record& span,
+        double span_local_u);
 
     struct broadphase_primitive
     {
