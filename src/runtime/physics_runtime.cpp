@@ -4336,6 +4336,7 @@ namespace skin_physics::runtime
         bool append_soft_body_animation_skinning_pass(
             const model_slot& model,
             const model_input_snapshot& model_snapshot,
+            const tick_input_snapshot& input_snapshot,
             const model_animation_tick_schedule& schedule,
             soft_body_mesh_work_state& work,
             double world_time,
@@ -4496,6 +4497,98 @@ namespace skin_physics::runtime
                 }
                 packet_desc.spans.reserve(scheduled_span_count);
 
+                const auto append_kinematic_collider_records =
+                    [&input_snapshot](
+                        physics::animation_trajectory_span_input& span_input,
+                        std::string& out_diagnostic) -> bool
+                {
+                    for (const collider_input_snapshot& collider_snapshot :
+                        input_snapshot.colliders)
+                    {
+                        if (!collider_snapshot.kinematic)
+                        {
+                            continue;
+                        }
+
+                        if (collider_snapshot.collider_index == asset::invalid_index ||
+                            collider_snapshot.generation == 0u)
+                        {
+                            out_diagnostic =
+                                "Immutable Kinematic Collider Packet contains an invalid Handle identity.";
+                            return false;
+                        }
+
+                        std::vector<physics::kinematic_collider_transform_sample>
+                            samples;
+                        samples.reserve(collider_snapshot.pose_samples.size());
+                        for (const transform_sample& sample :
+                            collider_snapshot.pose_samples)
+                        {
+                            physics::kinematic_collider_transform_sample converted;
+                            converted.world_time = sample.time;
+                            converted.translation = sample.value.translation;
+                            converted.rotation = sample.value.rotation;
+                            converted.is_teleport = sample.is_teleport;
+                            samples.push_back(converted);
+                        }
+
+                        double maximum_local_radius_squared = 0.0;
+                        for (const asset::vertex& vertex :
+                            collider_snapshot.description.collision_mesh.vertices)
+                        {
+                            const double x = vertex.position.x;
+                            const double y = vertex.position.y;
+                            const double z = vertex.position.z;
+                            const double radius_squared =
+                                x * x + y * y + z * z;
+                            if (!std::isfinite(radius_squared) ||
+                                radius_squared < 0.0)
+                            {
+                                out_diagnostic =
+                                    "Kinematic Collider Mesh contains a non-finite local vertex while deriving its certified rotation radius.";
+                                return false;
+                            }
+                            maximum_local_radius_squared = std::max(
+                                maximum_local_radius_squared, radius_squared);
+                        }
+
+                        const double maximum_local_radius =
+                            std::sqrt(maximum_local_radius_squared);
+                        if (!std::isfinite(maximum_local_radius) ||
+                            maximum_local_radius >
+                                static_cast<double>(
+                                    std::numeric_limits<float>::max()))
+                        {
+                            out_diagnostic =
+                                "Kinematic Collider Mesh local radius exceeds the GPU Float range.";
+                            return false;
+                        }
+
+                        const uint64_t stable_collider_id =
+                            (static_cast<uint64_t>(
+                                collider_snapshot.generation) << 32u) |
+                            collider_snapshot.collider_index;
+                        const physics::kinematic_collider_span_build_result
+                            collider_span =
+                                physics::build_kinematic_collider_span_from_samples(
+                                    stable_collider_id,
+                                    samples,
+                                    span_input.world_time_start,
+                                    span_input.world_time_duration,
+                                    static_cast<float>(maximum_local_radius));
+                        if (!collider_span.success)
+                        {
+                            out_diagnostic =
+                                "Immutable Kinematic Collider Span construction failed for Handle " +
+                                std::to_string(collider_snapshot.collider_index) +
+                                ": " + collider_span.message;
+                            return false;
+                        }
+                        span_input.colliders.push_back(collider_span.value);
+                    }
+                    return true;
+                };
+
                 if (schedule.has_blend)
                 {
                     for (std::size_t span_index = 0u;
@@ -4543,6 +4636,11 @@ namespace skin_physics::runtime
                         target_input.reverse_playback =
                             scheduled.target.clip.clip_time_delta < 0.0;
 
+                        if (!append_kinematic_collider_records(
+                                span_input, diagnostic))
+                        {
+                            return false;
+                        }
                         span_input.tracks.push_back(std::move(source_input));
                         span_input.tracks.push_back(std::move(target_input));
                         span_input.has_blend = true;
@@ -4604,6 +4702,11 @@ namespace skin_physics::runtime
                                 : model_snapshot.animation_playback.track.loop;
                         playback_input.reverse_playback =
                             scheduled.clip.clip_time_delta < 0.0;
+                        if (!append_kinematic_collider_records(
+                                span_input, diagnostic))
+                        {
+                            return false;
+                        }
                         span_input.tracks.push_back(std::move(playback_input));
                         packet_desc.spans.push_back(std::move(span_input));
                     }
@@ -5767,6 +5870,7 @@ namespace skin_physics::runtime
                             !append_soft_body_animation_skinning_pass(
                                 *work.model,
                                 *model_snapshot,
+                                input_snapshot,
                                 *animation_schedule_iterator,
                                 work,
                                 segment.start_time,
