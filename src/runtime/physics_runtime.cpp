@@ -6,6 +6,7 @@
 
 #include "skin_physics/asset/importer.hpp"
 #include "skin_physics/physics/animation_track.hpp"
+#include "skin_physics/physics/animation_gpu_resources.hpp"
 #include "skin_physics/physics/skin_weights.hpp"
 #include "skin_physics/simulation/d3d11_status_ring.hpp"
 #include "skin_physics/simulation/d3d11_compute_graph.hpp"
@@ -1329,6 +1330,8 @@ namespace skin_physics::runtime
                 segment_shader_resource_views;
             std::vector<Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>>
                 segment_unordered_access_views;
+            std::vector<physics::animation_trajectory_gpu_resources>
+                animation_packet_resources;
             force_distribution_global_scratch force_distribution_scratch;
             uint64_t expected_predecessor_sequence = 0u;
             uint64_t expected_source_generation = 1u;
@@ -1410,6 +1413,10 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_validate_soft_body_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> tick_commit_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_animation_skinning_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_channel_evaluate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_blend_local_transform_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_node_hierarchy_evaluate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_skin_matrix_evaluate_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_weight_shader;
