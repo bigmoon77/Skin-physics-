@@ -2923,6 +2923,19 @@ namespace
                 2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f)),
             "Kinematic Collider Speed / Angular / Radius / Sagitta Bounds must be outward conservative.");
 
+        kinematic_collider_span_desc no_rotation = desc;
+        no_rotation.sample_end_rotation = no_rotation.sample_start_rotation;
+        const auto no_rotation_record =
+            skin_physics::physics::build_kinematic_collider_span(no_rotation);
+        require(no_rotation_record.success &&
+            no_rotation_record.value.angular_axis_and_angle.x == 0.0f &&
+            no_rotation_record.value.angular_axis_and_angle.y == 0.0f &&
+            no_rotation_record.value.angular_axis_and_angle.z == 0.0f &&
+            no_rotation_record.value.angular_axis_and_angle.w == 0.0f &&
+            no_rotation_record.value.angular_speed_bound == 0.0f &&
+            no_rotation_record.value.sagitta_bound == 0.0f,
+            "A zero-angle Collider Span must encode a zero world angular axis / velocity and zero Sagitta exactly.");
+
         kinematic_collider_span_desc unbracketed = desc;
         unbracketed.world_time_start = 1.5;
         unbracketed.world_time_duration = 1.0;
