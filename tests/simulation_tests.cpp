@@ -2950,10 +2950,15 @@ namespace
         teleport.sample_end_is_teleport = true;
         const auto teleport_result =
             skin_physics::physics::build_kinematic_collider_span(teleport);
-        require(!teleport_result.success &&
-            teleport_result.error ==
-                kinematic_collider_span_error::teleport_crossing,
-            "Kinematic Collider trajectory construction must fail closed across an explicit Teleport boundary.");
+        const auto pre_teleport_sample = teleport_result.success
+            ? skin_physics::physics::evaluate_kinematic_collider_span(
+                teleport_result.value, 0.75)
+            : skin_physics::physics::kinematic_collider_sample_result{};
+        require(teleport_result.success && pre_teleport_sample.success &&
+            pre_teleport_sample.value.translation.x == 0.0f &&
+            pre_teleport_sample.value.linear_velocity.x == 0.0f &&
+            pre_teleport_sample.value.angular_velocity.z == 0.0f,
+            "A Span ending at a Teleport boundary must hold the pre-teleport pose with zero trajectory velocity; the next Span starts from the teleported sample.");
 
         kinematic_collider_span_desc invalid_rotation = desc;
         invalid_rotation.sample_start_rotation = {};
