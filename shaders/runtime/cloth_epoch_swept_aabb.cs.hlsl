@@ -34,13 +34,21 @@ void fail_epoch_aabb()
 
 float outward_lower(float value)
 {
-    uint bits = asuint(value);
+    if (value == 0.0f)
+    {
+        return asfloat(0x80000001u);
+    }
+    const uint bits = asuint(value);
     return asfloat((bits & 0x80000000u) != 0u ? bits + 1u : bits - 1u);
 }
 
 float outward_upper(float value)
 {
-    uint bits = asuint(value);
+    if (value == 0.0f)
+    {
+        return asfloat(0x00000001u);
+    }
+    const uint bits = asuint(value);
     return asfloat((bits & 0x80000000u) != 0u ? bits - 1u : bits + 1u);
 }
 
