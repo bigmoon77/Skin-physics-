@@ -860,13 +860,23 @@ namespace
             "Kinematic Collider boundary Tick must be admitted for CPU scheduling.");
 
         skin_physics::runtime::world_status status;
-        require(runtime.poll(world, &status).success() &&
-            status.state == skin_physics::runtime::tick_state::blocked &&
+        const skin_physics::runtime::status poll_status =
+            runtime.poll(world, &status);
+        require(poll_status.success(),
+            "Kinematic Collider boundary World polling must succeed.");
+        require(status.state == skin_physics::runtime::tick_state::blocked &&
             status.last_tick_status ==
                 skin_physics::runtime::status_code::blocked_by_input &&
             status.planned_substeps == 1u &&
             status.planned_integration_segments == 2u,
-            "Kinematic Collider sample and Teleport boundaries must split the immutable World Segment schedule before unsupported collision submission is blocked.");
+            std::string("Kinematic Collider boundary schedule mismatch: state=") +
+                std::to_string(static_cast<uint32_t>(status.state)) +
+                " last_status=" +
+                std::to_string(static_cast<uint32_t>(status.last_tick_status)) +
+                " substeps=" + std::to_string(status.planned_substeps) +
+                " segments=" +
+                std::to_string(status.planned_integration_segments) +
+                " diagnostic=" + status.diagnostic);
 
         require(runtime.reset_world(world).success(),
             "Kinematic Collider boundary regression must reset its blocked Reservation.");
