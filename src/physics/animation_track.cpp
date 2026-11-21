@@ -4388,11 +4388,13 @@ namespace skin_physics::physics
                 input.bounds.acceleration_bound < 0.0f ||
                 input.bounds.chord_deviation_bound < 0.0f ||
                 !std::isfinite(input.bounds.quaternion_normalization_lower_bound) ||
-                input.bounds.quaternion_normalization_lower_bound <= 1.0e-12f)
+                input.bounds.quaternion_normalization_lower_bound < 0.0f ||
+                (input.bounds_are_certified &&
+                    input.bounds.quaternion_normalization_lower_bound <= 1.0e-12f))
             {
                 return fail(
                     animation_trajectory_packet_error::invalid_bounds,
-                    "Animation Span requires finite non-negative outward-rounded Speed / Acceleration / Chord Bounds and a positive Quaternion Normalization lower bound.");
+                    "Animation Span requires finite non-negative bounds; certified spans also require a positive Quaternion Normalization lower bound.");
             }
 
             animation_span_gpu_record span_record;
@@ -4419,13 +4421,26 @@ namespace skin_physics::physics
                     animation_trajectory_packet_error::invalid_span,
                     "Animation Span inverse duration cannot be represented as a positive GPU float.");
             }
-            span_record.speed_bound = input.bounds.speed_bound;
-            span_record.acceleration_bound =
-                input.bounds.acceleration_bound;
-            span_record.chord_deviation_bound =
-                input.bounds.chord_deviation_bound;
-            span_record.quaternion_normalization_lower_bound =
-                input.bounds.quaternion_normalization_lower_bound;
+            if (input.bounds_are_certified)
+            {
+                span_record.flags |= animation_span_flag_bounds_certified;
+                span_record.speed_bound = input.bounds.speed_bound;
+                span_record.acceleration_bound =
+                    input.bounds.acceleration_bound;
+                span_record.chord_deviation_bound =
+                    input.bounds.chord_deviation_bound;
+                span_record.quaternion_normalization_lower_bound =
+                    input.bounds.quaternion_normalization_lower_bound;
+            }
+            else
+            {
+                // Zero explicitly means "not certified". The Packet may still
+                // drive skinning, but no CCD / no-miss consumer may use its bounds.
+                span_record.speed_bound = 0.0f;
+                span_record.acceleration_bound = 0.0f;
+                span_record.chord_deviation_bound = 0.0f;
+                span_record.quaternion_normalization_lower_bound = 0.0f;
+            }
             span_record.first_track_record =
                 static_cast<uint32_t>(candidate.track_records.size());
             span_record.first_channel_record =
