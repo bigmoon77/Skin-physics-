@@ -756,7 +756,8 @@
             "LINEAR Translation and CUBICSPLINE Scale are evaluated in Span-local u and return analytic derivatives per World Simulation second",
             "LINEAR Quaternion uses shortest-arc Slerp, normalized output and an analytic tangent-space derivative",
             "STEP and Rest TRS channels remain constant and produce zero target velocity",
-            "Zero-length / non-finite quaternion input fails closed and sets the GPU Animation status bit"
+            "Zero-length / non-finite quaternion input fails closed and sets the GPU Animation status bit",
+            "CUBICSPLINE Quaternion raw polynomial normalization and analytic tangent-space derivative match the CPU formula"
           ]
         }
       ],
