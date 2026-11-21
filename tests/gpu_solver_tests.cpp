@@ -4641,8 +4641,20 @@ namespace
         const std::vector<uint32_t> invalid_status =
             readback_structured_buffer<uint32_t>(
                 device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
-        require(invalid_status[0u] == 1u,
-            "A singular Mesh Node Global Matrix must fail closed instead of publishing an unstable Skin Matrix.");
+        const std::vector<gpu_matrix4x4> invalid_skin_matrices =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), output_buffer.Get(), 1u);
+        const std::vector<gpu_matrix4x4> invalid_skin_matrix_derivatives =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), output_derivative_buffer.Get(), 1u);
+        require(invalid_status[0u] == 1u &&
+            std::memcmp(
+                &invalid_skin_matrices[0u], &empty_output[0u],
+                sizeof(gpu_matrix4x4)) == 0 &&
+            std::memcmp(
+                &invalid_skin_matrix_derivatives[0u], &empty_output[0u],
+                sizeof(gpu_matrix4x4)) == 0,
+            "A singular Mesh Node Global Matrix must fail closed, zero the local Joint output slot and avoid indexing the global Skin Joint table.");
 
         std::cout << "[PASS] P09_WARP_ANIMATION_SKIN_MATRICES\n";
     }
