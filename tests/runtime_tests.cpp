@@ -3583,6 +3583,7 @@ int run_runtime_tests()
     std::cout << "[PASS] R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY\n";
     test_runtime_initialization_and_world_handles();
     std::cout << "[PASS] R0_RUNTIME_INITIALIZATION_AND_HANDLES\n";
+    std::cout << "[PASS] R2_RUNTIME_CLOTH_TOPOLOGY_RESOURCE_UPLOAD\n";
     test_runtime_kinematic_sample_boundaries();
     std::cout << "[PASS] R1_RUNTIME_KINEMATIC_SAMPLE_BOUNDARIES\n";
     test_runtime_time_budget_and_pause_contract();
