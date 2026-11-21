@@ -2928,7 +2928,7 @@ namespace
                 " sagitta=" + std::to_string(built.value.sagitta_bound) +
                 " expectedAngular=" + std::to_string(expected_angular_speed) +
                 " expectedSagitta=" + std::to_string(
-                    2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f)));
+                    2.0f * (1.0f - std::cos(expected_angular_speed * 0.5f))));
 
         kinematic_collider_span_desc no_rotation = desc;
         no_rotation.sample_end_rotation = no_rotation.sample_start_rotation;
