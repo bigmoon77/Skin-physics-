@@ -818,6 +818,234 @@ namespace
         std::cout << "[PASS] P05_WARP_COLORED_STRETCH_XPBD\n";
     }
 
+    void test_phase05_warp_cloth_segment_state_passes()
+    {
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(SUCCEEDED(create_warp_device(
+                device.GetAddressOf(), context.GetAddressOf())),
+            "Cloth Segment State WARP test requires Feature Level 11_0.");
+
+        const std::filesystem::path shader_root =
+            test_support::fixture_directory().parent_path().parent_path() /
+            "shaders" / "runtime";
+        const ComPtr<ID3D11ComputeShader> predict_shader =
+            compile_compute_shader(
+                device.Get(), shader_root / "cloth_predict.cs.hlsl", "main");
+        const ComPtr<ID3D11ComputeShader> reconstruct_shader =
+            compile_compute_shader(
+                device.Get(), shader_root / "cloth_reconstruct_velocity.cs.hlsl", "main");
+        const ComPtr<ID3D11ComputeShader> reset_shader =
+            compile_compute_shader(
+                device.Get(), shader_root / "cloth_reset_lambdas.cs.hlsl", "main");
+
+        const std::vector<gpu_float4> start_positions = {
+            { 0.0f, 0.0f, 0.0f, 1.0f },
+            { 2.0f, 3.0f, 4.0f, 1.0f },
+            { 5.0f, 6.0f, 7.0f, 1.0f }
+        };
+        const std::vector<gpu_float4> start_velocities = {
+            { 1.0f, 0.0f, 0.0f, 0.0f },
+            { -2.0f, 0.0f, 1.0f, 0.0f },
+            { 9.0f, 8.0f, 7.0f, 0.0f }
+        };
+        const std::vector<float> inverse_masses = { 1.0f, 2.0f, 0.0f };
+        const std::vector<uint32_t> zero_status = { 0u };
+
+        const ComPtr<ID3D11Buffer> start_position_buffer =
+            create_structured_buffer(device.Get(), start_positions,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> start_velocity_buffer =
+            create_structured_buffer(device.Get(), start_velocities,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> inverse_mass_buffer =
+            create_structured_buffer(device.Get(), inverse_masses,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> predicted_position_buffer =
+            create_structured_buffer(device.Get(), start_positions,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> predicted_velocity_buffer =
+            create_structured_buffer(device.Get(), start_velocities,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(device.Get(), zero_status,
+                D3D11_BIND_UNORDERED_ACCESS);
+
+        const ComPtr<ID3D11ShaderResourceView> start_position_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), start_position_buffer.Get(), 3u);
+        const ComPtr<ID3D11ShaderResourceView> start_velocity_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), start_velocity_buffer.Get(), 3u);
+        const ComPtr<ID3D11ShaderResourceView> inverse_mass_srv =
+            create_structured_srv<float>(
+                device.Get(), inverse_mass_buffer.Get(), 3u);
+        const ComPtr<ID3D11UnorderedAccessView> predicted_position_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), predicted_position_buffer.Get(), 3u);
+        const ComPtr<ID3D11UnorderedAccessView> predicted_velocity_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), predicted_velocity_buffer.Get(), 3u);
+        const ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), status_buffer.Get(), 1u);
+
+        struct alignas(16) predict_parameters
+        {
+            uint32_t vertex_count = 0u;
+            float delta_time = 0.0f;
+            float gravity[3] = {};
+            uint32_t reserved[3] = {};
+        };
+        static_assert(sizeof(predict_parameters) == 32u);
+        predict_parameters predict_constants;
+        predict_constants.vertex_count = 3u;
+        predict_constants.delta_time = 0.25f;
+        predict_constants.gravity[0] = 0.0f;
+        predict_constants.gravity[1] = -4.0f;
+        predict_constants.gravity[2] = 0.0f;
+        const ComPtr<ID3D11Buffer> predict_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &predict_constants,
+                static_cast<UINT>(sizeof(predict_constants)));
+
+        dispatch_compute(
+            context.Get(), predict_shader.Get(),
+            { start_position_srv.Get(), start_velocity_srv.Get(),
+                inverse_mass_srv.Get() },
+            { predicted_position_uav.Get(), predicted_velocity_uav.Get(),
+                status_uav.Get() },
+            predict_constant_buffer.Get(), 1u);
+
+        const std::vector<gpu_float4> predicted_positions =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), predicted_position_buffer.Get(), 3u);
+        const std::vector<gpu_float4> predicted_velocities =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), predicted_velocity_buffer.Get(), 3u);
+        require(std::abs(predicted_positions[0].x - 0.25f) <= 1.0e-6f &&
+            std::abs(predicted_positions[0].y + 0.25f) <= 1.0e-6f &&
+            std::abs(predicted_velocities[0].x - 1.0f) <= 1.0e-6f &&
+            std::abs(predicted_velocities[0].y + 1.0f) <= 1.0e-6f,
+            "Cloth Segment prediction must apply semi-implicit gravity and preserve the exact Segment dt.");
+        require(std::abs(predicted_positions[1].x - 1.5f) <= 1.0e-6f &&
+            std::abs(predicted_positions[1].y - 2.75f) <= 1.0e-6f &&
+            std::abs(predicted_positions[1].z - 4.25f) <= 1.0e-6f &&
+            std::abs(predicted_velocities[1].x + 2.0f) <= 1.0e-6f &&
+            std::abs(predicted_velocities[1].y + 1.0f) <= 1.0e-6f &&
+            std::abs(predicted_velocities[1].z - 1.0f) <= 1.0e-6f,
+            "Cloth Segment prediction must integrate every dynamic Vertex independently.");
+        require(predicted_positions[2].x == start_positions[2].x &&
+            predicted_positions[2].y == start_positions[2].y &&
+            predicted_positions[2].z == start_positions[2].z &&
+            predicted_velocities[2].x == 0.0f &&
+            predicted_velocities[2].y == 0.0f &&
+            predicted_velocities[2].z == 0.0f,
+            "Zero inverse-mass Cloth Vertices must preserve their Position and own zero Velocity.");
+        const std::vector<uint32_t> prediction_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(prediction_status[0] == 0u,
+            "Valid Cloth Segment prediction must not raise solver diagnostics.");
+
+        std::vector<gpu_float4> solved_positions = predicted_positions;
+        solved_positions[0].x += 0.1f;
+        solved_positions[0].y -= 0.05f;
+        solved_positions[1].z += 0.2f;
+        solved_positions[2].x += 100.0f;
+        context->UpdateSubresource(
+            predicted_position_buffer.Get(), 0u, nullptr,
+            solved_positions.data(), 0u, 0u);
+
+        struct alignas(16) reconstruct_parameters
+        {
+            uint32_t vertex_count = 0u;
+            float delta_time = 0.0f;
+            uint32_t reserved[2] = {};
+        };
+        static_assert(sizeof(reconstruct_parameters) == 16u);
+        reconstruct_parameters reconstruct_constants;
+        reconstruct_constants.vertex_count = 3u;
+        reconstruct_constants.delta_time = 0.25f;
+        const ComPtr<ID3D11Buffer> reconstruct_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &reconstruct_constants,
+                static_cast<UINT>(sizeof(reconstruct_constants)));
+        const ComPtr<ID3D11UnorderedAccessView> predicted_velocity_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), predicted_velocity_buffer.Get(), 3u);
+
+        dispatch_compute(
+            context.Get(), reconstruct_shader.Get(),
+            { start_position_srv.Get(),
+                create_structured_srv<gpu_float4>(
+                    device.Get(), predicted_position_buffer.Get(), 3u).Get(),
+                inverse_mass_srv.Get() },
+            { predicted_velocity_uav.Get(), status_uav.Get() },
+            reconstruct_constant_buffer.Get(), 1u);
+
+        const std::vector<gpu_float4> reconstructed_velocities =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(), predicted_velocity_buffer.Get(), 3u);
+        require(std::abs(reconstructed_velocities[0].x - 1.4f) <= 1.0e-5f &&
+            std::abs(reconstructed_velocities[0].y + 1.2f) <= 1.0e-5f &&
+            std::abs(reconstructed_velocities[1].x + 2.0f) <= 1.0e-5f &&
+            std::abs(reconstructed_velocities[1].y - 11.0f) <= 1.0e-5f &&
+            std::abs(reconstructed_velocities[1].z - 1.8f) <= 1.0e-5f,
+            "Cloth Velocity reconstruction must use the final XPBD Position delta over the same Segment duration.");
+        require(reconstructed_velocities[2].x == 0.0f &&
+            reconstructed_velocities[2].y == 0.0f &&
+            reconstructed_velocities[2].z == 0.0f,
+            "Cloth Velocity reconstruction must keep zero inverse-mass Vertices fixed.");
+        const std::vector<uint32_t> reconstruction_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(reconstruction_status[0] == 0u,
+            "Valid Cloth Velocity reconstruction must not raise solver diagnostics.");
+
+        const std::vector<float> dirty_lambdas = { 3.5f, -2.0f, 0.25f, 9.0f };
+        const ComPtr<ID3D11Buffer> lambda_buffer =
+            create_structured_buffer(
+                device.Get(), dirty_lambdas,
+                D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> lambda_uav =
+            create_structured_uav<float>(
+                device.Get(), lambda_buffer.Get(),
+                static_cast<UINT>(dirty_lambdas.size()));
+        struct alignas(16) reset_parameters
+        {
+            uint32_t lambda_count = 0u;
+            uint32_t reserved[3] = {};
+        };
+        static_assert(sizeof(reset_parameters) == 16u);
+        reset_parameters reset_constants;
+        reset_constants.lambda_count =
+            static_cast<uint32_t>(dirty_lambdas.size());
+        const ComPtr<ID3D11Buffer> reset_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &reset_constants,
+                static_cast<UINT>(sizeof(reset_constants)));
+        dispatch_compute(
+            context.Get(), reset_shader.Get(), {},
+            { lambda_uav.Get(), status_uav.Get() },
+            reset_constant_buffer.Get(), 1u);
+        const std::vector<float> reset_lambdas =
+            readback_structured_buffer<float>(
+                device.Get(), context.Get(), lambda_buffer.Get(),
+                dirty_lambdas.size());
+        require(std::all_of(
+                reset_lambdas.begin(), reset_lambdas.end(),
+                [](float value) { return value == 0.0f; }),
+            "Every Cloth XPBD Lambda must be reset at the start of a new Integration Segment.");
+        const std::vector<uint32_t> reset_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(reset_status[0] == 0u,
+            "Valid Cloth Lambda reset must not raise solver diagnostics.");
+
+        std::cout << "[PASS] P05_WARP_CLOTH_SEGMENT_STATE_PASSES\n";
+    }
+
     void test_phase05_warp_cloth_all_constraint_types()
     {
         ComPtr<ID3D11Device> device;
@@ -5873,6 +6101,7 @@ namespace
 int run_gpu_solver_tests()
 {
     test_phase05_warp_colored_cloth_stretch();
+    test_phase05_warp_cloth_segment_state_passes();
     test_phase05_warp_cloth_all_constraint_types();
     test_phase05_warp_cloth_jacobi_contribution_gather();
     test_phase06_warp_corotational_fem();
