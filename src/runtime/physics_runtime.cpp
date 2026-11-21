@@ -265,6 +265,14 @@ namespace skin_physics::runtime
             return std::isfinite(value);
         }
 
+        std::string format_double_round_trip(double value)
+        {
+            std::ostringstream stream;
+            stream.precision(std::numeric_limits<double>::max_digits10);
+            stream << value;
+            return stream.str();
+        }
+
         bool finite_vec3(const asset::vec3& value)
         {
             return finite_float(value.x) &&
@@ -4701,7 +4709,7 @@ namespace skin_physics::runtime
                     std::to_string(schedule.model_index) + "_mesh" +
                     std::to_string(gpu_mesh.mesh_index) + "_track" +
                     std::to_string(track_index) + "_world_time" +
-                    std::to_string(world_time);
+                    format_double_round_trip(world_time);
                 channel_pass.shader = animation_channel_evaluate_shader.Get();
                 channel_pass.shader_resources = {
                     { 0u, packet_resources.channel_srv() },
@@ -4754,7 +4762,7 @@ namespace skin_physics::runtime
                     "animation_blend_local_transform_m" +
                     std::to_string(schedule.model_index) + "_mesh" +
                     std::to_string(gpu_mesh.mesh_index) + "_world_time" +
-                    std::to_string(world_time);
+                    format_double_round_trip(world_time);
                 blend_pass.shader =
                     animation_blend_local_transform_shader.Get();
                 blend_pass.shader_resources = {
@@ -4862,7 +4870,7 @@ namespace skin_physics::runtime
                     std::to_string(schedule.model_index) + "_mesh" +
                     std::to_string(gpu_mesh.mesh_index) + "_depth" +
                     std::to_string(hierarchy_level) + "_world_time" +
-                    std::to_string(world_time);
+                    format_double_round_trip(world_time);
                 hierarchy_pass.shader =
                     animation_node_hierarchy_evaluate_shader.Get();
                 hierarchy_pass.shader_resources = {
@@ -5004,7 +5012,7 @@ namespace skin_physics::runtime
                 "animation_skin_matrix_evaluate_m" +
                 std::to_string(schedule.model_index) + "_mesh" +
                 std::to_string(gpu_mesh.mesh_index) + "_world_time" +
-                std::to_string(world_time);
+                format_double_round_trip(world_time);
             skin_matrix_pass.shader =
                 animation_skin_matrix_evaluate_shader.Get();
             skin_matrix_pass.shader_resources = {
@@ -5050,7 +5058,7 @@ namespace skin_physics::runtime
                 "soft_body_animation_skinning_m" +
                 std::to_string(schedule.model_index) + "_mesh" +
                 std::to_string(gpu_mesh.mesh_index) + "_world_time" +
-                std::to_string(world_time);
+                format_double_round_trip(world_time);
             skinning_pass.shader =
                 soft_body_animation_skinning_shader.Get();
             skinning_pass.shader_resources = {
@@ -5104,7 +5112,7 @@ namespace skin_physics::runtime
                 "animation_span_cursor_advance_m" +
                 std::to_string(schedule.model_index) + "_mesh" +
                 std::to_string(gpu_mesh.mesh_index) + "_world_time" +
-                std::to_string(world_time);
+                format_double_round_trip(world_time);
             cursor_advance_pass.shader =
                 animation_span_cursor_advance_shader.Get();
             cursor_advance_pass.shader_resources = {
