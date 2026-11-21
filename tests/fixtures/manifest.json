@@ -880,7 +880,9 @@
             "GPU Translation and shortest-arc Quaternion match the CPU trajectory evaluator at an interior Span coordinate",
             "GPU Linear Velocity, World Angular Velocity and rotated contact-point velocity match the CPU analytic derivative reference",
             "The evaluator validates buffer strides / ranges, Cursor and Packet Version, Collider and sample-pair identities, flags, normalized endpoint quaternions, angular axis / angle, duration and certified motion bounds",
-            "A local contact point outside Maximum Local Radius and a Collider Record whose duration differs from its owning Span fail closed"
+            "A local contact point outside Maximum Local Radius and a Collider Record whose duration differs from its owning Span fail closed",
+            "The evaluator validates homogeneous Translation endpoint w components before publishing a Transform",
+            "A missing / null Cursor SRV is rejected after resource dimension validation and before any Cursor dereference"
           ]
         }
       ],
@@ -892,11 +894,10 @@
         "P09_ANIMATION_SKIN_JOINT_MAPPING",
         "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
         "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
-        "P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE"
+        "P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE",
+        "P09_WARP_KINEMATIC_COLLIDER_EVALUATION"
       ],
       "unimplemented": [
-        "Root Transform Samples without an active Animation Track, and Root Transform data encoded directly in the immutable GPU Packet ABI",
-        "Kinematic Collider trajectory packet generation and GPU Collider trajectory evaluation",
         "Quaternion / angular target-velocity interface for Animation Tracking",
         "Substepped animation-physics coupling and full production Runtime CPU-oracle trajectory parity",
         "Physical target-GPU numerical qualification, performance profiling and cross-vendor validation"
