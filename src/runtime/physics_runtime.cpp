@@ -4226,12 +4226,17 @@ namespace skin_physics::runtime
                 !finite_double(span_duration) ||
                 span_duration <= 0.0 ||
                 !finite_double(span_local_u) ||
-                span_local_u < 0.0 || span_local_u > 1.0)
+                span_local_u < 0.0 || span_local_u > 1.0 ||
+                selected_span_record_index == asset::invalid_index)
             {
                 diagnostic =
-                    "Animation Segment has an invalid Clip reference, World duration or normalized Span coordinate.";
+                    "Animation Segment has an invalid Clip reference, World duration, normalized Span coordinate or selected Span index.";
                 return false;
             }
+            const double selected_span_world_time_start =
+                blend_span != nullptr
+                    ? blend_span->world_time_start
+                    : playback_span->world_time_start;
 
             auto packet_cache_iterator = std::find_if(
                 out_animation_packet_resources.begin(),
@@ -4473,6 +4478,10 @@ namespace skin_physics::runtime
                 packet_span.track_record_count > 2u ||
                 packet_span.channel_record_count !=
                     node_count * packet_span.track_record_count ||
+                (packet_span.track_record_count == 2u &&
+                    packet_span.blend_record_count != 1u) ||
+                (packet_span.track_record_count == 1u &&
+                    packet_span.blend_record_count != 0u) ||
                 packet_data.static_node_matrices.size() != node_count)
             {
                 diagnostic =
@@ -4491,7 +4500,8 @@ namespace skin_physics::runtime
             {
                 uint32_t node_count = 0u;
                 uint32_t expected_span_record_index = 0u;
-                uint32_t reserved[2] = {};
+                uint32_t blend_record_index = 0u;
+                uint32_t reserved = 0u;
             };
             struct alignas(16) cursor_advance_parameters
             {
@@ -4725,7 +4735,8 @@ namespace skin_physics::runtime
             {
                 blend_evaluation_parameters parameters;
                 parameters.node_count = node_count;
-                parameters.expected_span_record_index = 0u;
+                parameters.expected_span_record_index = selected_span_record_index;
+                parameters.blend_record_index = packet_span.first_blend_record;
                 Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
                 if (!create_constant_buffer(
                         device.Get(),
