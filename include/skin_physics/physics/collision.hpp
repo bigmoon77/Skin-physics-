@@ -12,6 +12,15 @@
 
 namespace skin_physics::physics
 {
+    enum class collision_error : uint8_t
+    {
+        none,
+        invalid_geometry,
+        invalid_settings,
+        cell_capacity_overflow,
+        candidate_capacity_overflow
+    };
+
     struct vertex_triangle_contact
     {
         asset::vec3 closest_point;
@@ -77,15 +86,6 @@ namespace skin_physics::physics
         std::string diagnostic;
         bool overflow = false;
         bool success = false;
-    };
-
-    enum class collision_error : uint8_t
-    {
-        none,
-        invalid_geometry,
-        invalid_settings,
-        cell_capacity_overflow,
-        candidate_capacity_overflow
     };
 
     struct collision_diagnostic
