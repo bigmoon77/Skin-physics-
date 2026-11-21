@@ -308,6 +308,16 @@
             "Stretch / Shear / Bend Lambda arrays are independently allocated and initialized to zero for a new Segment",
             "Invalid Compliance, non-finite Rest data, invalid Stretch coloring or malformed CSR reject packet construction transactionally"
           ]
+        },
+        {
+          "id": "R2_RUNTIME_CLOTH_TOPOLOGY_RESOURCE_UPLOAD",
+          "checks": [
+            "A Runtime Model accepts a Cloth Mesh Asset only when the Source Mesh is configured as Cloth and the CPU topology matches its Vertex / Triangle layout",
+            "Runtime Model registration transactionally uploads immutable Rest Position, Stretch / Shear / Bend, graph-color, Vertex-to-Constraint CSR and Segment-local Lambda buffers",
+            "Runtime creates two SRV / UAV Position State Banks and two Velocity State Banks plus a validated inverse-mass SRV",
+            "Malformed inverse-mass counts, duplicate or cross-mode Mesh Assets, topology mismatches and invalid Cloth solver settings fail before publishing the Model Handle",
+            "GPU resources remain owned by the Model and are released on successful Model destruction; Cloth solver dispatch and Position-Writer Epoch integration remain explicitly pending"
+          ]
         }
       ],
       "automated_cases": [
