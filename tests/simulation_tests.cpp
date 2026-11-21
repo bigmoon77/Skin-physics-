@@ -3218,8 +3218,9 @@ namespace
             collision_mesh, span.value, 0.5);
         const float half_span_rotation_angle = 3.14159265358979323846f / 4.0f;
         require(evaluated.success &&
-            evaluated.world_vertices.size() == 3u,
-            "Kinematic Collider geometry evaluation must transform every indexed local vertex.");
+            evaluated.world_vertices.size() == 3u &&
+            evaluated.world_vertex_velocities.size() == 3u,
+            "Kinematic Collider geometry evaluation must transform every indexed local vertex and return its analytic velocity.");
         require(std::abs(evaluated.world_vertices[0u].x -
                 (2.0f + std::cos(half_span_rotation_angle))) <= 2.0e-5f &&
             std::abs(evaluated.world_vertices[0u].y -
@@ -3229,6 +3230,15 @@ namespace
             std::abs(evaluated.world_vertices[1u].y -
                 std::cos(half_span_rotation_angle)) <= 2.0e-5f,
             "Kinematic Collider world vertices must apply the same shortest-arc pose used by the analytic trajectory evaluator.");
+        const float angular_speed =
+            3.14159265358979323846f / 2.0f;
+        require(std::abs(evaluated.world_vertex_velocities[0u].x -
+                (2.0f - angular_speed *
+                    std::sin(half_span_rotation_angle))) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertex_velocities[0u].y -
+                angular_speed *
+                    std::cos(half_span_rotation_angle)) <= 2.0e-5f,
+            "Kinematic Collider world vertex velocities must include linear translation plus World Angular Velocity cross the rotated local vertex.");
 
         require(evaluated.swept_bounds.minimum.x <= 0.0f &&
             evaluated.swept_bounds.maximum.x >= 4.0f &&
