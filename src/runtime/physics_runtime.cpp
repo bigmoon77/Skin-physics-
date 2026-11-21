@@ -6504,7 +6504,32 @@ namespace skin_physics::runtime
                         return true;
                     };
 
-                    const auto split_playback_spans_at_root_samples =
+                    const auto append_kinematic_collider_sample_boundaries =
+                        [&input_snapshot](
+                            double span_start,
+                            double span_end,
+                            std::vector<double>& boundaries)
+                    {
+                        for (const collider_input_snapshot& collider_snapshot :
+                            input_snapshot.colliders)
+                        {
+                            if (!collider_snapshot.kinematic)
+                            {
+                                continue;
+                            }
+                            for (const transform_sample& sample :
+                                collider_snapshot.pose_samples)
+                            {
+                                if (sample.time > span_start &&
+                                    sample.time < span_end)
+                                {
+                                    boundaries.push_back(sample.time);
+                                }
+                            }
+                        }
+                    };
+
+                    const auto split_playback_spans_at_world_samples =
                         [&](
                             const asset::animation_clip& clip,
                             const std::vector<physics::scheduled_animation_clip_span>& source,
@@ -6518,8 +6543,19 @@ namespace skin_physics::runtime
                             const double span_end =
                                 span_start + original.world_time_duration;
                             std::vector<double> boundaries;
+                            std::size_t collider_sample_count = 0u;
+                            for (const collider_input_snapshot& collider_snapshot :
+                                input_snapshot.colliders)
+                            {
+                                if (collider_snapshot.kinematic)
+                                {
+                                    collider_sample_count +=
+                                        collider_snapshot.pose_samples.size();
+                                }
+                            }
                             boundaries.reserve(
-                                model_snapshot.root_samples.size() + 2u);
+                                model_snapshot.root_samples.size() +
+                                collider_sample_count + 2u);
                             boundaries.push_back(span_start);
                             for (const transform_sample& sample :
                                 model_snapshot.root_samples)
@@ -6530,7 +6566,13 @@ namespace skin_physics::runtime
                                     boundaries.push_back(sample.time);
                                 }
                             }
+                            append_kinematic_collider_sample_boundaries(
+                                span_start, span_end, boundaries);
                             boundaries.push_back(span_end);
+                            std::sort(boundaries.begin(), boundaries.end());
+                            boundaries.erase(
+                                std::unique(boundaries.begin(), boundaries.end()),
+                                boundaries.end());
 
                             for (std::size_t index = 0u;
                                 index + 1u < boundaries.size(); ++index)
@@ -6603,7 +6645,7 @@ namespace skin_physics::runtime
                                 root_only_schedule.message;
                             return false;
                         }
-                        if (!split_playback_spans_at_root_samples(
+                        if (!split_playback_spans_at_world_samples(
                                 clip, root_only_schedule.values,
                                 schedule.playback_spans))
                         {
@@ -6657,7 +6699,7 @@ namespace skin_physics::runtime
                                 playback.message;
                             return false;
                         }
-                        if (!split_playback_spans_at_root_samples(
+                        if (!split_playback_spans_at_world_samples(
                                 clip, playback.values,
                                 schedule.playback_spans))
                         {
@@ -6753,8 +6795,19 @@ namespace skin_physics::runtime
                             const double span_end =
                                 span_start + original.world_time_duration;
                             std::vector<double> boundaries;
+                            std::size_t collider_sample_count = 0u;
+                            for (const collider_input_snapshot& collider_snapshot :
+                                input_snapshot.colliders)
+                            {
+                                if (collider_snapshot.kinematic)
+                                {
+                                    collider_sample_count +=
+                                        collider_snapshot.pose_samples.size();
+                                }
+                            }
                             boundaries.reserve(
-                                model_snapshot.root_samples.size() + 2u);
+                                model_snapshot.root_samples.size() +
+                                collider_sample_count + 2u);
                             boundaries.push_back(span_start);
                             for (const transform_sample& sample :
                                 model_snapshot.root_samples)
@@ -6765,7 +6818,13 @@ namespace skin_physics::runtime
                                     boundaries.push_back(sample.time);
                                 }
                             }
+                            append_kinematic_collider_sample_boundaries(
+                                span_start, span_end, boundaries);
                             boundaries.push_back(span_end);
+                            std::sort(boundaries.begin(), boundaries.end());
+                            boundaries.erase(
+                                std::unique(boundaries.begin(), boundaries.end()),
+                                boundaries.end());
 
                             for (std::size_t boundary_index = 0u;
                                 boundary_index + 1u < boundaries.size();
