@@ -3322,6 +3322,49 @@ namespace
         require(!rejected_velocity.success,
             "Moving VT contact must reject a non-finite Collider vertex velocity.");
 
+        const std::array<skin_physics::asset::vec3, 2> edge_a = {
+            skin_physics::asset::vec3{ 0.0f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f }
+        };
+        const std::array<skin_physics::asset::vec3, 2> edge_a_velocities = {
+            skin_physics::asset::vec3{ 1.0f, 0.0f, 0.0f },
+            skin_physics::asset::vec3{ 1.0f, 2.0f, 0.0f }
+        };
+        const std::array<skin_physics::asset::vec3, 2> edge_b = {
+            skin_physics::asset::vec3{ 0.5f, -0.5f, 0.05f },
+            skin_physics::asset::vec3{ 0.5f, 0.5f, 0.05f }
+        };
+        const std::array<skin_physics::asset::vec3, 2> edge_b_velocities = {
+            skin_physics::asset::vec3{ 0.0f, 0.0f, 1.0f },
+            skin_physics::asset::vec3{ 0.0f, 0.0f, 1.0f }
+        };
+        const auto moving_edge_contact =
+            skin_physics::physics::find_moving_edge_edge_contact(
+                edge_a, edge_a_velocities,
+                edge_b, edge_b_velocities, 0.1f);
+        require(moving_edge_contact.success &&
+            moving_edge_contact.contact.hit &&
+            std::abs(moving_edge_contact.contact.parameter_a - 0.5f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.contact.parameter_b - 0.5f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.edge_a_velocity.x - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.edge_a_velocity.y - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.edge_b_velocity.z - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.relative_velocity.x - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.relative_velocity.y - 1.0f) <= 1.0e-5f &&
+            std::abs(moving_edge_contact.relative_velocity.z + 1.0f) <= 1.0e-5f,
+            "Moving EE contact must interpolate both edge velocities at the closest-segment parameters and return relative velocity.");
+
+        std::array<skin_physics::asset::vec3, 2> invalid_edge_velocities =
+            edge_b_velocities;
+        invalid_edge_velocities[0u].z =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto rejected_edge_velocity =
+            skin_physics::physics::find_moving_edge_edge_contact(
+                edge_a, edge_a_velocities,
+                edge_b, invalid_edge_velocities, 0.1f);
+        require(!rejected_edge_velocity.success,
+            "Moving EE contact must reject non-finite endpoint velocities.");
+
         mesh invalid_indices = collision_mesh;
         invalid_indices.indices[2u] = 99u;
         const auto rejected_index = evaluate_kinematic_collider_geometry(
