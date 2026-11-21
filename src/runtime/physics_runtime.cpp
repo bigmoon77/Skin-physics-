@@ -612,6 +612,11 @@ namespace skin_physics::runtime
             }
 
             const transform_sample& start = *(upper - 1);
+            if (world_time == start.time && start.is_teleport)
+            {
+                out_transform = start.value;
+                return true;
+            }
             if (upper == samples.end() || upper->is_teleport)
             {
                 out_transform = start.value;
