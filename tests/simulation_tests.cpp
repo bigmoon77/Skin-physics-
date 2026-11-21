@@ -3260,6 +3260,68 @@ namespace
                 "Every evaluated Kinematic Collider vertex must lie inside its conservative swept AABB.");
         }
 
+        const std::array<skin_physics::asset::vec3, 3> world_triangle = {
+            evaluated.world_vertices[0u],
+            evaluated.world_vertices[1u],
+            evaluated.world_vertices[2u]
+        };
+        const std::array<skin_physics::asset::vec3, 3> triangle_velocities = {
+            evaluated.world_vertex_velocities[0u],
+            evaluated.world_vertex_velocities[1u],
+            evaluated.world_vertex_velocities[2u]
+        };
+        const skin_physics::asset::vec3 triangle_center = {
+            (world_triangle[0u].x + world_triangle[1u].x +
+                world_triangle[2u].x) / 3.0f,
+            (world_triangle[0u].y + world_triangle[1u].y +
+                world_triangle[2u].y) / 3.0f,
+            (world_triangle[0u].z + world_triangle[1u].z +
+                world_triangle[2u].z) / 3.0f
+        };
+        const skin_physics::asset::vec3 point_position = {
+            triangle_center.x, triangle_center.y,
+            triangle_center.z + 0.05f
+        };
+        const skin_physics::asset::vec3 point_velocity = {
+            0.0f, 0.0f, -1.0f
+        };
+        const auto moving_contact =
+            skin_physics::physics::find_moving_vertex_triangle_contact(
+                point_position, point_velocity,
+                world_triangle, triangle_velocities, 0.1f);
+        const skin_physics::asset::vec3 expected_triangle_velocity = {
+            (triangle_velocities[0u].x + triangle_velocities[1u].x +
+                triangle_velocities[2u].x) / 3.0f,
+            (triangle_velocities[0u].y + triangle_velocities[1u].y +
+                triangle_velocities[2u].y) / 3.0f,
+            (triangle_velocities[0u].z + triangle_velocities[1u].z +
+                triangle_velocities[2u].z) / 3.0f
+        };
+        require(moving_contact.success &&
+            moving_contact.contact.hit &&
+            std::abs(moving_contact.contact.penetration_depth - 0.05f) <= 2.0e-5f &&
+            std::abs(moving_contact.triangle_velocity.x -
+                expected_triangle_velocity.x) <= 2.0e-5f &&
+            std::abs(moving_contact.triangle_velocity.y -
+                expected_triangle_velocity.y) <= 2.0e-5f &&
+            std::abs(moving_contact.relative_velocity.x +
+                expected_triangle_velocity.x) <= 2.0e-5f &&
+            std::abs(moving_contact.relative_velocity.y +
+                expected_triangle_velocity.y) <= 2.0e-5f &&
+            std::abs(moving_contact.relative_velocity.z + 1.0f) <= 2.0e-5f,
+            "Moving VT contact must interpolate rigid Collider vertex velocities with the contact barycentrics and return point-minus-triangle relative velocity.");
+
+        std::array<skin_physics::asset::vec3, 3> invalid_triangle_velocities =
+            triangle_velocities;
+        invalid_triangle_velocities[1u].x =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto rejected_velocity =
+            skin_physics::physics::find_moving_vertex_triangle_contact(
+                point_position, point_velocity,
+                world_triangle, invalid_triangle_velocities, 0.1f);
+        require(!rejected_velocity.success,
+            "Moving VT contact must reject a non-finite Collider vertex velocity.");
+
         mesh invalid_indices = collision_mesh;
         invalid_indices.indices[2u] = 99u;
         const auto rejected_index = evaluate_kinematic_collider_geometry(
