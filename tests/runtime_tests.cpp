@@ -1115,10 +1115,10 @@ namespace
         joint_translation_start.value = { 0.0f, 0.0f, 0.0f };
         skin_physics::asset::animation_key joint_translation_middle;
         joint_translation_middle.time = 0.005f;
-        joint_translation_middle.value = { 0.5f, 0.0f, 0.0f };
+        joint_translation_middle.value = { 0.005f, 0.0f, 0.0f };
         skin_physics::asset::animation_key joint_translation_end;
         joint_translation_end.time = 0.01f;
-        joint_translation_end.value = { 1.0f, 0.0f, 0.0f };
+        joint_translation_end.value = { 0.01f, 0.0f, 0.0f };
         joint_translation_track.keys = {
             joint_translation_start,
             joint_translation_middle,
@@ -1141,9 +1141,9 @@ namespace
         target_animation_clip.tracks[0].keys[0].value =
             { 0.5f, 0.0f, 0.0f };
         target_animation_clip.tracks[0].keys[1].value =
-            { 2.5f, 0.0f, 0.0f };
+            { 0.505f, 0.0f, 0.0f };
         target_animation_clip.tracks[0].keys[2].value =
-            { 3.5f, 0.0f, 0.0f };
+            { 0.51f, 0.0f, 0.0f };
         model_desc.source_model.animations.push_back(target_animation_clip);
 
         skin_physics::runtime::model_mesh_physics_asset mesh_asset;
