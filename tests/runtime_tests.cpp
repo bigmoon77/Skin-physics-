@@ -1395,11 +1395,11 @@ namespace
             "Skinned Soft Body Model must release transferred CPU and GPU Skin Weight resources.");
 
         skin_physics::runtime::model_desc ambiguous_instance_desc = model_desc;
-        skin_physics::asset::node second_skinned_mesh_node = mesh_node;
-        second_skinned_mesh_node.name = "second_skinned_mesh_instance";
-        second_skinned_mesh_node.parent_index = 0u;
+        skin_physics::asset::node second_mesh_node = mesh_node;
+        second_mesh_node.name = "second_skinned_mesh_instance";
+        second_mesh_node.parent_index = 0u;
         ambiguous_instance_desc.source_model.nodes[0u].children = { 1u, 2u };
-        ambiguous_instance_desc.source_model.nodes.push_back(second_skinned_mesh_node);
+        ambiguous_instance_desc.source_model.nodes.push_back(second_mesh_node);
         skin_physics::runtime::model_handle invalid_model;
         require(runtime.add_model(
                 world, ambiguous_instance_desc, &invalid_model).code ==
