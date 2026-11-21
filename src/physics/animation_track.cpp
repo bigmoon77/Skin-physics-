@@ -4569,6 +4569,74 @@ namespace skin_physics::physics
                 candidate.collider_records.push_back(collider);
             }
 
+            root_transform_gpu_record root_record;
+            root_record.duration_seconds = span_record.span_duration_seconds;
+            root_record.inverse_duration = span_record.inverse_span_duration;
+            root_record.flags =
+                root_transform_flag_valid |
+                root_transform_flag_shortest_arc_slerp;
+            if (input.has_root_transform)
+            {
+                root_record = input.root_transform;
+                const auto finite_gpu_vec4 = [](const gpu_float4& value)
+                {
+                    return std::isfinite(value.x) &&
+                        std::isfinite(value.y) &&
+                        std::isfinite(value.z) &&
+                        std::isfinite(value.w);
+                };
+                const double start_rotation_length = std::sqrt(
+                    static_cast<double>(root_record.rotation_start.x) * root_record.rotation_start.x +
+                    static_cast<double>(root_record.rotation_start.y) * root_record.rotation_start.y +
+                    static_cast<double>(root_record.rotation_start.z) * root_record.rotation_start.z +
+                    static_cast<double>(root_record.rotation_start.w) * root_record.rotation_start.w);
+                const double end_rotation_length = std::sqrt(
+                    static_cast<double>(root_record.rotation_end.x) * root_record.rotation_end.x +
+                    static_cast<double>(root_record.rotation_end.y) * root_record.rotation_end.y +
+                    static_cast<double>(root_record.rotation_end.z) * root_record.rotation_end.z +
+                    static_cast<double>(root_record.rotation_end.w) * root_record.rotation_end.w);
+                const double axis_length = std::sqrt(
+                    static_cast<double>(root_record.angular_axis_and_angle.x) * root_record.angular_axis_and_angle.x +
+                    static_cast<double>(root_record.angular_axis_and_angle.y) * root_record.angular_axis_and_angle.y +
+                    static_cast<double>(root_record.angular_axis_and_angle.z) * root_record.angular_axis_and_angle.z);
+                if (!finite_gpu_vec4(root_record.translation_start) ||
+                    !finite_gpu_vec4(root_record.translation_end) ||
+                    !finite_gpu_vec4(root_record.rotation_start) ||
+                    !finite_gpu_vec4(root_record.rotation_end) ||
+                    !finite_gpu_vec4(root_record.angular_axis_and_angle) ||
+                    root_record.translation_start.w != 1.0f ||
+                    root_record.translation_end.w != 1.0f ||
+                    !std::isfinite(start_rotation_length) ||
+                    !std::isfinite(end_rotation_length) ||
+                    std::abs(start_rotation_length - 1.0) > 1.0e-4 ||
+                    std::abs(end_rotation_length - 1.0) > 1.0e-4 ||
+                    !std::isfinite(axis_length) ||
+                    !std::isfinite(root_record.duration_seconds) ||
+                    root_record.duration_seconds <= 0.0f ||
+                    std::abs(static_cast<double>(root_record.duration_seconds) -
+                        input.world_time_duration) >
+                        1.0e-5 * std::max(1.0, input.world_time_duration) ||
+                    !std::isfinite(root_record.inverse_duration) ||
+                    root_record.inverse_duration <= 0.0f ||
+                    std::abs(static_cast<double>(root_record.duration_seconds) *
+                        root_record.inverse_duration - 1.0) > 1.0e-4 ||
+                    !std::isfinite(root_record.angular_axis_and_angle.w) ||
+                    root_record.angular_axis_and_angle.w < 0.0f ||
+                    root_record.angular_axis_and_angle.w > 3.1416927f ||
+                    (root_record.angular_axis_and_angle.w > 1.0e-6f
+                        ? std::abs(axis_length - 1.0) > 1.0e-3
+                        : axis_length > 1.0e-3) ||
+                    root_record.flags != root_transform_flag_valid_mask ||
+                    root_record.reserved != 0u)
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_span,
+                        "Root Transform Record contains an invalid endpoint Transform, quaternion, World Angular Axis / Angle, duration, flags or reserved field.");
+                }
+                span_record.flags |= animation_span_flag_has_root_motion;
+            }
+            candidate.root_transform_records.push_back(root_record);
+
             for (const animation_trajectory_track_span_input& track_input :
                 input.tracks)
             {
