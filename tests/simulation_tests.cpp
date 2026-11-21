@@ -3354,6 +3354,50 @@ namespace
             std::abs(moving_edge_contact.relative_velocity.z + 1.0f) <= 1.0e-5f,
             "Moving EE contact must interpolate both edge velocities at the closest-segment parameters and return relative velocity.");
 
+        const std::vector<skin_physics::asset::vec3> dynamic_positions = {
+            point_position
+        };
+        const std::vector<skin_physics::asset::vec3> dynamic_velocities = {
+            point_velocity
+        };
+        const std::vector<float> dynamic_radii = { 0.1f };
+        const auto generated_contacts =
+            skin_physics::physics::generate_kinematic_collider_vertex_triangle_contacts(
+                dynamic_positions, dynamic_velocities, dynamic_radii,
+                collision_mesh, evaluated, 0.0f, 1u);
+        require(generated_contacts.success &&
+            !generated_contacts.overflow &&
+            generated_contacts.required_contacts == 1u &&
+            generated_contacts.contacts.size() == 1u &&
+            generated_contacts.contacts[0u].vertex_index == 0u &&
+            generated_contacts.contacts[0u].triangle_index == 0u &&
+            generated_contacts.contacts[0u].value.contact.hit,
+            "Moving Collider VT contact generation must produce a deterministic Vertex / Triangle contact set with the interpolated relative velocity.");
+
+        const auto contact_overflow =
+            skin_physics::physics::generate_kinematic_collider_vertex_triangle_contacts(
+                dynamic_positions, dynamic_velocities, dynamic_radii,
+                collision_mesh, evaluated, 0.0f, 0u);
+        require(!contact_overflow.success &&
+            contact_overflow.overflow &&
+            contact_overflow.error ==
+                skin_physics::physics::collision_error::candidate_capacity_overflow &&
+            contact_overflow.required_contacts == 1u &&
+            contact_overflow.contacts.empty(),
+            "Moving Collider VT contact capacity overflow must reject the complete contact set without publishing partial contacts.");
+
+        mesh degenerate_collider = collision_mesh;
+        degenerate_collider.indices = { 0u, 0u, 0u };
+        const auto rejected_degenerate =
+            skin_physics::physics::generate_kinematic_collider_vertex_triangle_contacts(
+                dynamic_positions, dynamic_velocities, dynamic_radii,
+                degenerate_collider, evaluated, 0.0f, 1u);
+        require(!rejected_degenerate.success &&
+            rejected_degenerate.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_degenerate.contacts.empty(),
+            "Moving Collider VT contact generation must fail closed on degenerate Collider triangles.");
+
         std::array<skin_physics::asset::vec3, 2> invalid_edge_velocities =
             edge_b_velocities;
         invalid_edge_velocities[0u].z =
