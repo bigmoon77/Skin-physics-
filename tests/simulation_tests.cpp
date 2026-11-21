@@ -720,6 +720,48 @@ namespace
                 built.value.vertex_constraint_refs.size(),
             "Cloth GPU topology packet must preserve Vertex, colored Stretch, Shear / Bend and CSR counts / ordering.");
 
+        require(packet.value.triangle_primitives.size() ==
+                built.value.triangles.size(),
+            "Cloth Epoch topology packet must preserve every source Triangle.");
+        for (std::size_t index = 0u;
+            index < built.value.triangles.size(); ++index)
+        {
+            const auto& source = built.value.triangles[index];
+            const auto& packed = packet.value.triangle_primitives[index];
+            require(packed.vertices[0] == source[0] &&
+                packed.vertices[1] == source[1] &&
+                packed.vertices[2] == source[2] &&
+                packed.vertices[3] == 0u,
+                "Packed Cloth Triangle Epoch records must preserve source Vertex order and zero the unused index.");
+        }
+
+        std::vector<std::pair<uint32_t, uint32_t>> expected_edges;
+        for (const auto& triangle : built.value.triangles)
+        {
+            for (std::size_t edge_index = 0u; edge_index < 3u; ++edge_index)
+            {
+                const uint32_t first = triangle[edge_index];
+                const uint32_t second = triangle[(edge_index + 1u) % 3u];
+                expected_edges.emplace_back(
+                    std::min(first, second), std::max(first, second));
+            }
+        }
+        std::sort(expected_edges.begin(), expected_edges.end());
+        expected_edges.erase(
+            std::unique(expected_edges.begin(), expected_edges.end()),
+            expected_edges.end());
+        require(packet.value.edge_primitives.size() == expected_edges.size(),
+            "Cloth Epoch topology packet must deduplicate every undirected surface Edge.");
+        for (std::size_t index = 0u; index < expected_edges.size(); ++index)
+        {
+            const auto& packed = packet.value.edge_primitives[index];
+            require(packed.vertices[0] == expected_edges[index].first &&
+                packed.vertices[1] == expected_edges[index].second &&
+                packed.vertices[2] == 0u &&
+                packed.vertices[3] == 0u,
+                "Packed Cloth Edge Epoch records must be canonical, sorted and zero-pad unused indices.");
+        }
+
         for (std::size_t index = 0u;
             index < built.value.stretch_constraints.size(); ++index)
         {
@@ -805,6 +847,17 @@ namespace
             malformed_packet.error ==
                 skin_physics::physics::cloth_gpu_topology_error::invalid_mesh,
             "Cloth GPU topology packing must reject non-finite Rest data.");
+
+        auto malformed_triangle = built.value;
+        malformed_triangle.triangles[0u][0u] =
+            static_cast<uint32_t>(malformed_triangle.rest_positions.size());
+        const auto malformed_triangle_packet =
+            skin_physics::physics::build_cloth_gpu_topology_packet(
+                malformed_triangle, settings);
+        require(!malformed_triangle_packet.success &&
+            malformed_triangle_packet.error ==
+                skin_physics::physics::cloth_gpu_topology_error::invalid_mesh,
+            "Cloth GPU topology packing must reject out-of-range surface Triangle indices before publishing Epoch primitives.");
 
         auto malformed_csr = built.value;
         malformed_csr.vertex_constraint_offsets.back() -= 1u;
