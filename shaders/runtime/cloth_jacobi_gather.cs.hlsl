@@ -37,6 +37,9 @@ cbuffer ClothJacobiGatherParameters : register(b0)
     uint shear_constraint_count;
     uint bend_constraint_count;
     uint reference_count;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
 };
 
 StructuredBuffer<float4> current_positions : register(t0);
@@ -121,7 +124,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     next_positions.GetDimensions(output_count, output_stride);
     solver_status.GetDimensions(status_count, status_stride);
 
-    if (vertex_count == 0u || vertex_count == 0xffffffffu ||
+    if (reserved0 != 0u || reserved1 != 0u || reserved2 != 0u ||
+        vertex_count == 0u || vertex_count == 0xffffffffu ||
         vertex_count != position_count ||
         vertex_count != output_count || position_stride != 16u ||
         output_stride != 16u || offset_count != vertex_count + 1u ||
