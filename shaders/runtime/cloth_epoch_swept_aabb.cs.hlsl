@@ -143,5 +143,11 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         outward_upper(expanded_maximum.z), 0.0f);
     output_value.identity = uint4(
         primitive_index, primitive_vertex_count, 0u, 0u);
+    if (!all(isfinite(output_value.minimum)) ||
+        !all(isfinite(output_value.maximum)))
+    {
+        fail_epoch_aabb();
+        return;
+    }
     swept_aabbs[primitive_index] = output_value;
 }
