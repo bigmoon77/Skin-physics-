@@ -107,6 +107,14 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    struct cloth_stretch_color_step_result
+    {
+        std::vector<asset::vec3> positions;
+        std::vector<float> lambda_values;
+        std::vector<cloth_diagnostic> diagnostics;
+        bool success = false;
+    };
+
     cloth_build_result build_cloth_mesh(const raw_cloth_mesh& input);
 
     // Validates deterministic Stretch graph-color batches before GPU upload.
@@ -115,6 +123,18 @@ namespace skin_physics::physics
     bool validate_cloth_stretch_coloring(
         const cloth_mesh& mesh,
         std::string& diagnostic);
+
+    // CPU reference for one in-place, vertex-disjoint Stretch color dispatch.
+    // Lambda values are Segment-local and must be preserved across iterations.
+    cloth_stretch_color_step_result solve_cloth_stretch_color(
+        const cloth_mesh& mesh,
+        uint32_t color_index,
+        const std::vector<asset::vec3>& current_positions,
+        const std::vector<float>& inverse_mass,
+        const std::vector<float>& lambda_values,
+        float delta_time,
+        float compliance,
+        float relaxation);
 
     cloth_bend_evaluation evaluate_cloth_bend(
         const std::array<asset::vec3, 4>& positions,
