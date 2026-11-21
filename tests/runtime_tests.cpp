@@ -1270,11 +1270,18 @@ namespace
         require(runtime.set_animation_blend(world, model, blend).success(),
             "Runtime must accept a synchronized Source / Target Animation Blend whose Hermite Weight selects the Target Clip.");
         skin_physics::runtime::advance_report blend_report;
-        require(runtime.advance(world, 0.01, &blend_report).success() &&
+        const skin_physics::runtime::status blend_advance_status =
+            runtime.advance(world, 0.01, &blend_report);
+        require(blend_advance_status.success() &&
             blend_report.submitted_tick_count == 1u &&
             blend_report.in_flight_tick_count == 1u &&
             blend_report.pending_tick_count == 0u,
-            "The two-Clip Blend Runtime Tick must schedule its shared Source / Target / Weight Span and submit GPU Skinning / Tracking passes.");
+            "The two-Clip Blend Runtime Tick must schedule its shared Source / Target / Weight Span and submit GPU Skinning / Tracking passes. status=" +
+                std::to_string(static_cast<uint32_t>(blend_advance_status.code)) +
+                " diagnostic=" + blend_advance_status.diagnostic +
+                " submitted=" + std::to_string(blend_report.submitted_tick_count) +
+                " in_flight=" + std::to_string(blend_report.in_flight_tick_count) +
+                " pending=" + std::to_string(blend_report.pending_tick_count));
         skin_physics::runtime::world_status blend_status;
         bool blend_observed = false;
         for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
