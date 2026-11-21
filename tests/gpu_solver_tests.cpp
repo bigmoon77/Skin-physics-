@@ -4879,6 +4879,69 @@ namespace
                 skin_matrix_derivatives[0u].column3.x - 10.0f) <= 1.0e-6f,
             "GPU Skin Matrix derivative must include the Model Root Transform product-rule term root_dot * inverse_mesh_joint.");
 
+        root_transform_gpu_record root_rotation_record = root_record;
+        root_rotation_record.translation_start =
+            { 0.0f, 0.0f, 0.0f, 1.0f };
+        root_rotation_record.translation_end =
+            { 0.0f, 0.0f, 0.0f, 1.0f };
+        root_rotation_record.rotation_end = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        root_rotation_record.angular_axis_and_angle =
+            { 0.0f, 0.0f, 1.0f, 3.14159265358979323846f / 2.0f };
+        const std::vector<root_transform_gpu_record> root_rotation_records = {
+            root_rotation_record
+        };
+        const ComPtr<ID3D11Buffer> root_rotation_buffer =
+            create_structured_buffer(
+                device.Get(), root_rotation_records,
+                D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> root_rotation_srv =
+            create_structured_srv<root_transform_gpu_record>(
+                device.Get(), root_rotation_buffer.Get(), 1u);
+        animation_span_cursor_gpu_record half_cursor = cursor_record;
+        half_cursor.u_segment_start = 0.5f;
+        const std::vector<animation_span_cursor_gpu_record> half_cursors = {
+            half_cursor
+        };
+        const ComPtr<ID3D11Buffer> half_cursor_buffer =
+            create_structured_buffer(
+                device.Get(), half_cursors, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> half_cursor_srv =
+            create_structured_srv<animation_span_cursor_gpu_record>(
+                device.Get(), half_cursor_buffer.Get(), 1u);
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            {
+                global_srv.Get(), derivative_srv.Get(),
+                skin_srv.Get(), joint_srv.Get(),
+                inverse_bind_srv.Get(), local_srv.Get(),
+                root_rotation_srv.Get(), half_cursor_srv.Get(), span_srv.Get()
+            },
+            { output_uav.Get(), output_derivative_uav.Get(), status_uav.Get() },
+            parameter_buffer.Get(),
+            1u);
+        const std::vector<gpu_matrix4x4> root_rotation_matrices =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), output_buffer.Get(), 1u);
+        const std::vector<gpu_matrix4x4> root_rotation_derivatives =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), output_derivative_buffer.Get(), 1u);
+        const float half_sqrt = std::sqrt(0.5f);
+        const float expected_angular_speed =
+            3.14159265358979323846f / 2.0f;
+        require(std::abs(root_rotation_matrices[0u].column0.x -
+                half_sqrt) <= 1.0e-5f &&
+            std::abs(root_rotation_matrices[0u].column0.y -
+                half_sqrt) <= 1.0e-5f &&
+            std::abs(root_rotation_derivatives[0u].column0.x +
+                expected_angular_speed * half_sqrt) <= 1.0e-4f &&
+            std::abs(root_rotation_derivatives[0u].column0.y -
+                expected_angular_speed * half_sqrt) <= 1.0e-4f,
+            "GPU Root Transform Packet must evaluate shortest-arc Quaternion Slerp and its analytic World Angular Velocity from the shared Segment Cursor.");
+
         std::vector<gpu_matrix4x4> singular_global_matrices = global_matrices;
         singular_global_matrices[0u].column0 = {};
         const ComPtr<ID3D11Buffer> singular_global_buffer =
