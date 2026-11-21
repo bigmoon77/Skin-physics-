@@ -2483,6 +2483,8 @@ namespace
             built.value.skin_joint_records.size() == 3u &&
             built.value.collider_records.size() == 1u &&
             built.value.span_records[0u].collider_record_count == 1u &&
+            (built.value.span_records[0u].flags &
+                skin_physics::physics::animation_span_flag_has_kinematic_collider) != 0u &&
             built.value.span_world_time_starts ==
                 std::vector<double>({ 10.0 }),
             "Packet Builder must publish one complete immutable Span / Track / Node Channel / Inverse Bind payload.");
