@@ -61,8 +61,8 @@ cbuffer AnimationBlendParameters : register(b0)
 {
     uint node_count;
     uint expected_span_record_index;
-    uint reserved0;
-    uint reserved1;
+    uint blend_record_index;
+    uint reserved;
 };
 
 StructuredBuffer<animation_node_local_transform_gpu_record> source_local_transforms : register(t0);
@@ -165,7 +165,15 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         source_local_transforms[node_index];
     const animation_node_local_transform_gpu_record target =
         target_local_transforms[node_index];
-    const animation_blend_gpu_record blend = blend_records[0];
+    if (blend_record_index < span.first_blend_record ||
+        blend_record_index - span.first_blend_record >=
+            span.blend_record_count)
+    {
+        fail_node(node_index);
+        return;
+    }
+    const animation_blend_gpu_record blend =
+        blend_records[blend_record_index];
 
     if ((blend.weight_curve_flags & BLEND_ENABLED) == 0u ||
         (blend.weight_curve_flags & ~BLEND_ENABLED) != 0u ||
