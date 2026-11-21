@@ -24,11 +24,13 @@ namespace skin_physics::physics
     };
 
     // Owns one immutable Animation Trajectory Packet on the GPU and one
-    // independent mutable Segment Cursor for a single World.
+    // independent mutable Segment Cursor for a Model within its World. All
+    // Skinned Mesh consumers of that Model share this Cursor for each Segment.
     //
     // The immutable StructuredBuffers use D3D11_USAGE_IMMUTABLE. The Cursor
     // uses D3D11_USAGE_DEFAULT and has both SRV / UAV views so compute passes
-    // can advance it without rewriting the Packet.
+    // can advance it once after all Model Mesh consumers without rewriting
+    // the Packet.
     class animation_trajectory_gpu_resources
     {
     public:
