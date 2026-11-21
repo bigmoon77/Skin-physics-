@@ -1453,6 +1453,8 @@ namespace skin_physics::runtime
             bool occupied = false;
             bool retired = false;
             asset::model source_model;
+            uint32_t source_animation_count = 0u;
+            uint32_t root_only_clip_index = asset::invalid_index;
             std::vector<model_mesh_physics_asset> mesh_physics_assets;
             std::vector<soft_body_gpu_mesh> gpu_soft_body_meshes;
             transform root_transform;
@@ -1530,6 +1532,8 @@ namespace skin_physics::runtime
             uint32_t model_index = asset::invalid_index;
             uint32_t model_generation = 0u;
             bool has_blend = false;
+            bool root_transform_only = false;
+            uint32_t root_only_clip_index = asset::invalid_index;
             std::vector<physics::scheduled_animation_clip_span> playback_spans;
             std::vector<physics::animation_blend_clip_span> blend_spans;
         };
