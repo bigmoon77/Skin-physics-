@@ -10,6 +10,7 @@
 
 #include "skin_physics/asset/types.hpp"
 #include "skin_physics/physics/physics_mesh.hpp"
+#include "skin_physics/physics/cloth_solver.hpp"
 #include "skin_physics/physics/render_binding.hpp"
 
 namespace skin_physics::runtime
@@ -166,10 +167,19 @@ namespace skin_physics::runtime
         uint64_t cache_identity = 0;
     };
 
+    struct model_mesh_cloth_asset
+    {
+        uint32_t mesh_index = asset::invalid_index;
+        physics::cloth_mesh cloth_mesh;
+        physics::cloth_solver_settings solver_settings;
+        std::vector<float> inverse_masses;
+    };
+
     struct model_desc
     {
         asset::model source_model;
         std::vector<model_mesh_physics_asset> mesh_physics_assets;
+        std::vector<model_mesh_cloth_asset> cloth_mesh_assets;
         transform world_transform;
     };
 
