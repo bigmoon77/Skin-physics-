@@ -669,8 +669,12 @@ namespace
 
         for (uint32_t iteration = 0u; iteration < 4u; ++iteration)
         {
-            for (const auto& color_range : mesh.stretch_color_ranges)
+            for (uint32_t color_index = 0u;
+                color_index < mesh.stretch_color_ranges.size();
+                ++color_index)
             {
+                const auto& color_range =
+                    mesh.stretch_color_ranges[color_index];
                 parameters.first_color_index =
                     color_range.first_constraint_index;
                 parameters.color_constraint_count =
@@ -697,8 +701,7 @@ namespace
                 const auto cpu_step =
                     skin_physics::physics::solve_cloth_stretch_color(
                         mesh,
-                        static_cast<uint32_t>(
-                            &color_range - mesh.stretch_color_ranges.data()),
+                        color_index,
                         cpu_positions,
                         inverse_masses,
                         cpu_lambdas,
