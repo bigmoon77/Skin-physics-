@@ -3876,7 +3876,6 @@ namespace
         using skin_physics::physics::animation_channel_mask_rotation;
         using skin_physics::physics::animation_channel_mask_scale;
         using skin_physics::physics::animation_channel_mask_translation;
-        using skin_physics::physics::gpu_float4;
 
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
