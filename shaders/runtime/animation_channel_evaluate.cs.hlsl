@@ -44,15 +44,49 @@ struct animation_node_local_transform_gpu_record
     uint status;
 };
 
+struct animation_span_gpu_record
+{
+    uint span_id;
+    uint animation_input_version_low;
+    uint animation_input_version_high;
+    uint first_track_record;
+    uint track_record_count;
+    uint first_channel_record;
+    uint channel_record_count;
+    uint first_blend_record;
+    uint blend_record_count;
+    uint first_collider_record;
+    uint collider_record_count;
+    uint flags;
+    float span_duration_seconds;
+    float inverse_span_duration;
+    float speed_bound;
+    float acceleration_bound;
+    float chord_deviation_bound;
+    float quaternion_normalization_lower_bound;
+    float reserved0;
+    float reserved1;
+};
+
+struct animation_span_cursor_gpu_record
+{
+    uint span_record_index;
+    uint animation_input_version_low;
+    uint animation_input_version_high;
+    float u_segment_start;
+};
+
 cbuffer AnimationChannelEvaluationParameters : register(b0)
 {
     uint channel_count;
     uint first_channel_record;
-    float span_local_u;
-    float inverse_span_duration;
+    uint expected_span_record_index;
+    uint reserved;
 };
 
 StructuredBuffer<animation_channel_gpu_record> animation_channels : register(t0);
+StructuredBuffer<animation_span_cursor_gpu_record> animation_cursor : register(t1);
+StructuredBuffer<animation_span_gpu_record> animation_spans : register(t2);
 RWStructuredBuffer<animation_node_local_transform_gpu_record> local_transforms : register(u0);
 RWStructuredBuffer<uint> evaluation_status : register(u1);
 
@@ -233,14 +267,42 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
-    if (!isfinite(span_local_u) || span_local_u < 0.0f ||
-        span_local_u > 1.0f ||
-        !isfinite(inverse_span_duration) ||
-        inverse_span_duration <= 0.0f)
+    const animation_span_cursor_gpu_record cursor =
+        animation_cursor[0];
+    if (cursor.span_record_index != expected_span_record_index)
     {
         fail_channel(local_index);
         return;
     }
+    const animation_span_gpu_record span =
+        animation_spans[cursor.span_record_index];
+    const uint version_low = span.animation_input_version_low;
+    const uint version_high = span.animation_input_version_high;
+    const float span_reciprocal_error =
+        span.span_duration_seconds * span.inverse_span_duration - 1.0f;
+    if (cursor.animation_input_version_low != version_low ||
+        cursor.animation_input_version_high != version_high ||
+        !isfinite(cursor.u_segment_start) ||
+        cursor.u_segment_start < 0.0f ||
+        cursor.u_segment_start > 1.0f ||
+        !isfinite(span.span_duration_seconds) ||
+        span.span_duration_seconds <= 0.0f ||
+        !isfinite(span.inverse_span_duration) ||
+        span.inverse_span_duration <= 0.0f ||
+        !isfinite(span_reciprocal_error) ||
+        abs(span_reciprocal_error) > 2.0e-5f ||
+        first_channel_record < span.first_channel_record ||
+        first_channel_record - span.first_channel_record >
+            span.channel_record_count ||
+        channel_count >
+            span.channel_record_count -
+                (first_channel_record - span.first_channel_record))
+    {
+        fail_channel(local_index);
+        return;
+    }
+    const float span_local_u = cursor.u_segment_start;
+    const float inverse_span_duration = span.inverse_span_duration;
 
     const animation_channel_gpu_record channel =
         animation_channels[first_channel_record + local_index];
