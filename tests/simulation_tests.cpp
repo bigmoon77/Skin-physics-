@@ -3447,6 +3447,88 @@ namespace
         require(!rejected_edge_velocity.success,
             "Moving EE contact must reject non-finite endpoint velocities.");
 
+        const skin_physics::asset::vec3 collider_edge_start =
+            evaluated.world_vertices[0u];
+        const skin_physics::asset::vec3 collider_edge_end =
+            evaluated.world_vertices[1u];
+        const auto make_offset_edge_point = [](
+            const skin_physics::asset::vec3& start,
+            const skin_physics::asset::vec3& end,
+            float parameter)
+        {
+            return skin_physics::asset::vec3{
+                start.x + (end.x - start.x) * parameter,
+                start.y + (end.y - start.y) * parameter,
+                start.z + (end.z - start.z) * parameter + 0.05f
+            };
+        };
+        const std::vector<skin_physics::asset::vec3> dynamic_edge_positions = {
+            make_offset_edge_point(collider_edge_start, collider_edge_end, 0.4f),
+            make_offset_edge_point(collider_edge_start, collider_edge_end, 0.6f)
+        };
+        const std::vector<skin_physics::asset::vec3> dynamic_edge_velocities = {
+            { 0.0f, 0.0f, -1.0f },
+            { 0.0f, 0.0f, -1.0f }
+        };
+        const std::vector<std::array<uint32_t, 2>> dynamic_edges = {
+            { 1u, 0u },
+            { 0u, 1u }
+        };
+        const auto generated_edge_contacts =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                1u);
+        require(generated_edge_contacts.success &&
+            !generated_edge_contacts.overflow &&
+            generated_edge_contacts.required_contacts == 1u &&
+            generated_edge_contacts.contacts.size() == 1u &&
+            generated_edge_contacts.contacts[0u].dynamic_edge_index == 0u &&
+            generated_edge_contacts.contacts[0u].collider_edge_index == 0u &&
+            generated_edge_contacts.contacts[0u].value.contact.hit &&
+            std::abs(generated_edge_contacts.contacts[0u].value.relative_velocity.z +
+                1.0f) <= 2.0e-5f,
+            "Moving Collider EE generation must deduplicate and sort shared triangle edges, preserve the source Dynamic Edge index and return analytic relative velocity.");
+
+        const auto generated_edge_overflow =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                0u);
+        require(!generated_edge_overflow.success &&
+            generated_edge_overflow.overflow &&
+            generated_edge_overflow.error ==
+                skin_physics::physics::collision_error::candidate_capacity_overflow &&
+            generated_edge_overflow.required_contacts == 1u &&
+            generated_edge_overflow.contacts.empty(),
+            "Moving Collider EE capacity overflow must reject the complete contact set without partial publication.");
+
+        const std::vector<std::array<uint32_t, 2>> invalid_dynamic_edges = {
+            { 0u, 9u }
+        };
+        const auto rejected_dynamic_edge =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                invalid_dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                1u);
+        require(!rejected_dynamic_edge.success &&
+            rejected_dynamic_edge.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_dynamic_edge.contacts.empty(),
+            "Moving Collider EE generation must reject out-of-range Dynamic Edge indices atomically.");
+
         mesh invalid_indices = collision_mesh;
         invalid_indices.indices[2u] = 99u;
         const auto rejected_index = evaluate_kinematic_collider_geometry(
