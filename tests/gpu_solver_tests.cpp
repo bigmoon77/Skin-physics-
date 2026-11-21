@@ -4597,8 +4597,9 @@ namespace
             uint32_t expected_mesh_node_index = 0u;
             uint32_t reserved[2] = {};
             gpu_matrix4x4 root_transform;
+            gpu_matrix4x4 root_transform_derivative;
         };
-        static_assert(sizeof(skin_matrix_parameters) == 96u);
+        static_assert(sizeof(skin_matrix_parameters) == 160u);
         skin_matrix_parameters parameters;
         parameters.root_transform.column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
         parameters.root_transform.column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
@@ -4635,6 +4636,37 @@ namespace
             std::abs(skin_matrix_derivatives[0u].column3.x - 2.0f) <= 1.0e-6f &&
             std::abs(skin_matrix_derivatives[0u].column3.w) <= 1.0e-6f,
             "GPU Skin Matrix must compute inverse(Mesh Global) * Joint Global * Skin-specific IBM and its analytic product-rule derivative.");
+
+        skin_matrix_parameters root_motion_parameters = parameters;
+        root_motion_parameters.root_transform_derivative.column0 = {};
+        root_motion_parameters.root_transform_derivative.column1 = {};
+        root_motion_parameters.root_transform_derivative.column2 = {};
+        root_motion_parameters.root_transform_derivative.column3 =
+            { 10.0f, 0.0f, 0.0f, 0.0f };
+        const ComPtr<ID3D11Buffer> root_motion_parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &root_motion_parameters,
+                sizeof(root_motion_parameters));
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            {
+                global_srv.Get(), derivative_srv.Get(),
+                skin_srv.Get(), joint_srv.Get(),
+                inverse_bind_srv.Get(), local_srv.Get()
+            },
+            { output_uav.Get(), output_derivative_uav.Get(), status_uav.Get() },
+            root_motion_parameter_buffer.Get(),
+            1u);
+        const std::vector<gpu_matrix4x4> root_motion_derivatives =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), output_derivative_buffer.Get(), 1u);
+        const std::vector<uint32_t> root_motion_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(root_motion_status[0u] == 0u &&
+            std::abs(root_motion_derivatives[0u].column3.x -
+                skin_matrix_derivatives[0u].column3.x - 10.0f) <= 1.0e-6f,
+            "GPU Skin Matrix derivative must include the Model Root Transform product-rule term root_dot * inverse_mesh_joint.");
 
         std::vector<gpu_matrix4x4> singular_global_matrices = global_matrices;
         singular_global_matrices[0u].column0 = {};
