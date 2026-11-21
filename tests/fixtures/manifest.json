@@ -759,6 +759,15 @@
             "Zero-length / non-finite quaternion input fails closed and sets the GPU Animation status bit",
             "CUBICSPLINE Quaternion raw polynomial normalization and analytic tangent-space derivative match the CPU formula"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_BLEND_LOCAL_TRANSFORMS",
+          "checks": [
+            "The GPU local Blend stage evaluates the Hermite Blend Weight at the same normalized World-Time Span coordinate used by both Source and Target local transforms",
+            "Translation / Scale derivatives include the analytic weight derivative term w_dot * (target - source)",
+            "Quaternion Source / Target values and derivatives are normalized and hemisphere-aligned before Blend; the resulting quaternion derivative is projected into its tangent space",
+            "Source / Target Node, Parent, Role and local transform Status must match; invalid input fails closed through the GPU Animation status bit"
+          ]
         }
       ],
       "automated_cases": [
