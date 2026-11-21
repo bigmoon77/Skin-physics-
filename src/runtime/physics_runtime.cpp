@@ -3579,16 +3579,6 @@ namespace skin_physics::runtime
                     continue;
                 }
 
-                // Cloth topology / State Banks are registered, but the
-                // Runtime has no transactional Cloth solver / Position-Writer
-                // Epoch path yet. Gate explicitly from the retained Model
-                // ownership records before inspecting Soft Body snapshots.
-                if (!model.cloth_mesh_assets.empty() ||
-                    !model.gpu_cloth_meshes.empty())
-                {
-                    return true;
-                }
-
                 const model_input_snapshot* model_snapshot =
                     find_model_input_snapshot(
                         input_snapshot, model_index, model.generation);
@@ -4233,6 +4223,16 @@ namespace skin_physics::runtime
                 if (!model.occupied)
                 {
                     continue;
+                }
+
+                // Cloth topology / State Banks are registered, but the
+                // Runtime has no transactional Cloth solver / Position-Writer
+                // Epoch path yet. Gate explicitly from the retained Model
+                // ownership records before inspecting Soft Body snapshots.
+                if (!model.cloth_mesh_assets.empty() ||
+                    !model.gpu_cloth_meshes.empty())
+                {
+                    return true;
                 }
 
                 const model_input_snapshot* model_snapshot =
