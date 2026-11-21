@@ -205,7 +205,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
-    if (skin.mesh_node_channel_offset >= track_channel_count ||
+    if (skin.joint_count == 0u ||
+        skin.mesh_node_channel_offset >= track_channel_count ||
         skin.first_joint_record > skin_joint_record_count ||
         skin.joint_count >
             skin_joint_record_count - skin.first_joint_record)
