@@ -682,7 +682,6 @@ namespace
 
         for (uint32_t family = 0; family < 3; ++family)
         {
-            std::cout << "[TRACE] P05_CLOTH_COMPLIANCE family=" << family << "\n";
             std::vector<skin_physics::asset::vec3> deformed = built.value.rest_positions;
             if (family < 2) deformed[3].x += 0.25f;
             else deformed[3].z += 0.35f;
@@ -700,9 +699,6 @@ namespace
 
             const auto soft_result = skin_physics::physics::solve_cloth(
                 built.value, deformed, inverse_mass, soft_settings);
-            std::cout << "[TRACE] P05_CLOTH_COMPLIANCE soft_success="
-                << soft_result.success << " diagnostics="
-                << soft_result.diagnostics.size() << "\n";
             require(soft_result.success, "High-compliance Cloth solve should succeed.");
 
             skin_physics::physics::cloth_solver_settings stiff_settings = soft_settings;
@@ -711,9 +707,6 @@ namespace
             stiff_settings.bend_compliance = 1.0e-5f;
             const auto stiff_result = skin_physics::physics::solve_cloth(
                 built.value, deformed, inverse_mass, stiff_settings);
-            std::cout << "[TRACE] P05_CLOTH_COMPLIANCE stiff_success="
-                << stiff_result.success << " diagnostics="
-                << stiff_result.diagnostics.size() << "\n";
             require(stiff_result.success, "Low-compliance Cloth solve should succeed.");
 
             float soft_error = 0.0f;
