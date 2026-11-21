@@ -227,15 +227,20 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     const animation_span_cursor_gpu_record cursor = animation_cursor[0];
     uint span_buffer_count = 0u;
     uint span_stride = 0u;
+    uint cursor_buffer_count = 0u;
+    uint cursor_stride = 0u;
     uint collider_buffer_count = 0u;
     uint collider_stride = 0u;
     uint contact_buffer_count = 0u;
     uint contact_stride = 0u;
     animation_spans.GetDimensions(span_buffer_count, span_stride);
+    animation_cursor.GetDimensions(cursor_buffer_count, cursor_stride);
     collider_records.GetDimensions(collider_buffer_count, collider_stride);
     local_contact_points.GetDimensions(contact_buffer_count, contact_stride);
 
-    if (span_count == 0u ||
+    if (span_count == 0u || span_count > span_buffer_count ||
+        cursor_buffer_count != 1u || cursor_stride != 16u ||
+        span_stride != 80u || collider_stride != 128u || contact_stride != 16u ||
         cursor.span_record_index == INVALID_INDEX ||
         cursor.span_record_index >= span_count ||
         cursor.span_record_index >= span_buffer_count ||
