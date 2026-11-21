@@ -2605,6 +2605,47 @@ namespace
             second_skin_extra_joint.joint_node_index == 3u,
             "Skin Joint records must preserve each Skin's ordered Joint set and Skin-specific Inverse Bind index; a shared Joint may use different IBM records in different Skins.");
 
+        source_model.animations.push_back(source_model.animations[0u]);
+        animation_trajectory_span_input blend_span_input = span_input;
+        blend_span_input.span_id = 42u;
+        blend_span_input.tracks.clear();
+        animation_trajectory_track_span_input blend_source_track;
+        blend_source_track.clip_index = 0u;
+        blend_source_track.scheduled = scheduled.values[0u];
+        animation_trajectory_track_span_input blend_target_track;
+        blend_target_track.clip_index = 1u;
+        blend_target_track.scheduled = scheduled.values[0u];
+        blend_span_input.tracks.push_back(blend_source_track);
+        blend_span_input.tracks.push_back(blend_target_track);
+        blend_span_input.has_blend = true;
+        blend_span_input.source_track_index = 0u;
+        blend_span_input.target_track_index = 1u;
+        blend_span_input.blend_curve.blend_start_time = 10.0;
+        blend_span_input.blend_curve.blend_end_time = 11.0;
+        blend_span_input.blend_curve.weight_start = 0.25f;
+        blend_span_input.blend_curve.weight_end = 0.75f;
+        blend_span_input.blend_curve.tangent_start = 0.5f;
+        blend_span_input.blend_curve.tangent_end = 0.5f;
+        animation_trajectory_packet_build_desc blend_build_desc;
+        blend_build_desc.animation_input_version =
+            build_desc.animation_input_version + 1u;
+        blend_build_desc.maximum_span_count = 8u;
+        blend_build_desc.spans.push_back(blend_span_input);
+        const skin_physics::physics::animation_trajectory_packet_build_result
+            blend_built =
+                skin_physics::physics::build_animation_trajectory_packet(
+                    source_model, blend_build_desc);
+        require(blend_built.success &&
+            blend_built.value.track_records.size() == 2u &&
+            blend_built.value.channel_records.size() == 12u &&
+            blend_built.value.span_records[0u].channel_record_count == 12u &&
+            blend_built.value.track_records[0u].first_channel_record == 0u &&
+            blend_built.value.track_records[1u].first_channel_record == 6u &&
+            blend_built.value.channel_records[7u].parent_index == 0u &&
+            blend_built.value.channel_records[8u].parent_index == 0u &&
+            blend_built.value.channel_records[9u].parent_index == 0u,
+            "Every Blend Track must store Parent Channel offsets relative to its own dense Channel range, never absolute Packet offsets.");
+
         skin_physics::physics::animation_span_cursor_gpu_record cursor;
         std::string diagnostic;
         require(skin_physics::physics::initialize_animation_span_cursor(
