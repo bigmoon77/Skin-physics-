@@ -119,6 +119,26 @@ namespace skin_physics::runtime
         static_assert(sizeof(gpu_float4) == 16,
             "GPU float4 ABI must remain 16 bytes.");
 
+        struct gpu_cloth_contribution
+        {
+            gpu_float4 correction0;
+            gpu_float4 correction1;
+            gpu_float4 correction2;
+            gpu_float4 correction3;
+        };
+
+        struct gpu_cloth_epoch_aabb
+        {
+            gpu_float4 minimum;
+            gpu_float4 maximum;
+            uint32_t identity[4] = {};
+        };
+
+        static_assert(sizeof(gpu_cloth_contribution) == 64u,
+            "Cloth Jacobi contribution GPU ABI must remain 64 bytes.");
+        static_assert(sizeof(gpu_cloth_epoch_aabb) == 48u,
+            "Cloth Position-Writer Epoch AABB GPU ABI must remain 48 bytes.");
+
         struct gpu_soft_body_skin_weight_record
         {
             uint32_t joints[asset::max_skin_influences] = {};
@@ -1695,6 +1715,30 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> triangle_primitives_srv;
             Microsoft::WRL::ComPtr<ID3D11Buffer> edge_primitives_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> edge_primitives_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> position_scratch_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> position_scratch_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> position_scratch_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> epoch_before_positions_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> epoch_before_positions_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> epoch_before_positions_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> epoch_displacements_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> epoch_displacements_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> epoch_displacements_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> shear_contributions_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shear_contributions_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> shear_contributions_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> bend_contributions_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> bend_contributions_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> bend_contributions_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> triangle_swept_aabbs_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> triangle_swept_aabbs_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> triangle_swept_aabbs_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> edge_swept_aabbs_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> edge_swept_aabbs_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> edge_swept_aabbs_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> solver_status_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> solver_status_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> solver_status_uav;
             Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_constraint_offsets_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_constraint_offsets_srv;
             Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_constraint_refs_buffer;
@@ -3385,6 +3429,56 @@ namespace skin_physics::runtime
             {
                 diagnostic =
                     "Cloth immutable topology, Position-Writer Epoch primitive, or Segment-local Lambda GPU buffer creation failed.";
+                return false;
+            }
+
+            std::vector<gpu_float4> zero_positions(packet.vertex_count);
+            std::vector<gpu_float4> zero_displacements(packet.vertex_count);
+            std::vector<gpu_cloth_contribution> zero_shear_contributions(
+                std::max<std::size_t>(1u, packet.shear_constraints.size()));
+            std::vector<gpu_cloth_contribution> zero_bend_contributions(
+                std::max<std::size_t>(1u, packet.bend_constraints.size()));
+            std::vector<gpu_cloth_epoch_aabb> zero_triangle_swept_aabbs(
+                packet.triangle_primitives.size());
+            std::vector<gpu_cloth_epoch_aabb> zero_edge_swept_aabbs(
+                packet.edge_primitives.size());
+            const std::vector<uint32_t> zero_solver_status = { 0u };
+
+            if (!upload_rw(zero_positions,
+                    candidate.position_scratch_buffer,
+                    candidate.position_scratch_srv,
+                    candidate.position_scratch_uav) ||
+                !upload_rw(zero_positions,
+                    candidate.epoch_before_positions_buffer,
+                    candidate.epoch_before_positions_srv,
+                    candidate.epoch_before_positions_uav) ||
+                !upload_rw(zero_displacements,
+                    candidate.epoch_displacements_buffer,
+                    candidate.epoch_displacements_srv,
+                    candidate.epoch_displacements_uav) ||
+                !upload_rw(zero_shear_contributions,
+                    candidate.shear_contributions_buffer,
+                    candidate.shear_contributions_srv,
+                    candidate.shear_contributions_uav) ||
+                !upload_rw(zero_bend_contributions,
+                    candidate.bend_contributions_buffer,
+                    candidate.bend_contributions_srv,
+                    candidate.bend_contributions_uav) ||
+                !upload_rw(zero_triangle_swept_aabbs,
+                    candidate.triangle_swept_aabbs_buffer,
+                    candidate.triangle_swept_aabbs_srv,
+                    candidate.triangle_swept_aabbs_uav) ||
+                !upload_rw(zero_edge_swept_aabbs,
+                    candidate.edge_swept_aabbs_buffer,
+                    candidate.edge_swept_aabbs_srv,
+                    candidate.edge_swept_aabbs_uav) ||
+                !upload_rw(zero_solver_status,
+                    candidate.solver_status_buffer,
+                    candidate.solver_status_srv,
+                    candidate.solver_status_uav))
+            {
+                diagnostic =
+                    "Cloth Position-Writer Epoch / Jacobi scratch GPU resource creation failed.";
                 return false;
             }
 
