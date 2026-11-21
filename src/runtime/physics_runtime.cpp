@@ -1578,6 +1578,7 @@ namespace skin_physics::runtime
             ID3D11ShaderResourceView* integrated_force_srv = nullptr;
             ID3D11ShaderResourceView* integrated_impulse_srv = nullptr;
             ID3D11ShaderResourceView* animation_target_status_srv = nullptr;
+            ID3D11UnorderedAccessView* animation_cursor_status_uav = nullptr;
             float tracking_stiffness = 0.0f;
             float tracking_damping = 0.0f;
             float tracking_attribute_multiplier = 1.0f;
@@ -1586,21 +1587,12 @@ namespace skin_physics::runtime
             uint32_t impulse_event_count = 0u;
         };
 
-        struct animation_mesh_cursor_work_state
-        {
-            uint32_t mesh_index = asset::invalid_index;
-            Microsoft::WRL::ComPtr<ID3D11Buffer> cursor_buffer;
-            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> cursor_srv;
-            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> cursor_uav;
-        };
-
         struct animation_packet_work_state
         {
             uint32_t model_index = asset::invalid_index;
             uint32_t model_generation = 0u;
             physics::animation_trajectory_packet packet;
             physics::animation_trajectory_gpu_resources resources;
-            std::vector<animation_mesh_cursor_work_state> mesh_cursors;
         };
 
         struct in_flight_tick
@@ -4421,61 +4413,13 @@ namespace skin_physics::runtime
                 return false;
             }
 
-            auto mesh_cursor_iterator = std::find_if(
-                packet_cache.mesh_cursors.begin(),
-                packet_cache.mesh_cursors.end(),
-                [&gpu_mesh](const animation_mesh_cursor_work_state& value)
-                {
-                    return value.mesh_index == gpu_mesh.mesh_index;
-                });
-            if (mesh_cursor_iterator == packet_cache.mesh_cursors.end())
+            if (packet_resources.cursor_srv() == nullptr ||
+                packet_resources.cursor_uav() == nullptr)
             {
-                physics::animation_span_cursor_gpu_record initial_mesh_cursor;
-                if (!physics::initialize_animation_span_cursor(
-                        packet_data,
-                        selected_span_record_index,
-                        world_time,
-                        initial_mesh_cursor,
-                        diagnostic))
-                {
-                    diagnostic =
-                        "Unable to initialize the per-Mesh Cursor for the immutable multi-Span Packet: " +
-                        diagnostic;
-                    return false;
-                }
-
-                animation_mesh_cursor_work_state cursor_work;
-                cursor_work.mesh_index = gpu_mesh.mesh_index;
-                if (!create_structured_buffer(
-                        device.Get(),
-                        static_cast<uint32_t>(sizeof(initial_mesh_cursor)),
-                        static_cast<uint32_t>(sizeof(initial_mesh_cursor)),
-                        D3D11_BIND_SHADER_RESOURCE |
-                            D3D11_BIND_UNORDERED_ACCESS,
-                        &initial_mesh_cursor,
-                        cursor_work.cursor_buffer.GetAddressOf()) ||
-                    !create_structured_srv(
-                        device.Get(),
-                        cursor_work.cursor_buffer.Get(),
-                        1u,
-                        cursor_work.cursor_srv.GetAddressOf()) ||
-                    !create_structured_uav(
-                        device.Get(),
-                        cursor_work.cursor_buffer.Get(),
-                        1u,
-                        cursor_work.cursor_uav.GetAddressOf()))
-                {
-                    diagnostic =
-                        "Unable to allocate the per-Mesh mutable Animation Span Cursor resources.";
-                    return false;
-                }
-
-                packet_cache.mesh_cursors.push_back(std::move(cursor_work));
-                mesh_cursor_iterator =
-                    std::prev(packet_cache.mesh_cursors.end());
+                diagnostic =
+                    "Immutable Model Animation Packet lost its shared mutable Span Cursor.";
+                return false;
             }
-            animation_mesh_cursor_work_state& mesh_cursor =
-                *mesh_cursor_iterator;
 
             const physics::animation_span_gpu_record& packet_span =
                 packet_data.span_records[selected_span_record_index];
@@ -4511,12 +4455,6 @@ namespace skin_physics::runtime
                 uint32_t blend_record_index = 0u;
                 uint32_t reserved = 0u;
             };
-            struct alignas(16) cursor_advance_parameters
-            {
-                uint32_t span_count = 0u;
-                float segment_duration_seconds = 0.0f;
-                uint32_t reserved[2] = {};
-            };
             struct alignas(16) hierarchy_evaluation_parameters
             {
                 uint32_t node_count = 0u;
@@ -4538,7 +4476,6 @@ namespace skin_physics::runtime
             };
             static_assert(sizeof(channel_evaluation_parameters) == 16u);
             static_assert(sizeof(blend_evaluation_parameters) == 16u);
-            static_assert(sizeof(cursor_advance_parameters) == 16u);
             static_assert(sizeof(hierarchy_evaluation_parameters) == 16u);
             static_assert(sizeof(skin_matrix_evaluation_parameters) == 160u);
 
@@ -4713,7 +4650,7 @@ namespace skin_physics::runtime
                 channel_pass.shader = animation_channel_evaluate_shader.Get();
                 channel_pass.shader_resources = {
                     { 0u, packet_resources.channel_srv() },
-                    { 1u, mesh_cursor.cursor_srv.Get() },
+                    { 1u, packet_resources.cursor_srv() },
                     { 2u, packet_resources.span_srv() }
                 };
                 channel_pass.unordered_access_views = {
@@ -5082,57 +5019,7 @@ namespace skin_physics::runtime
                 return false;
             }
 
-            cursor_advance_parameters cursor_parameters;
-            cursor_parameters.span_count =
-                packet_resources.counts().spans;
-            cursor_parameters.segment_duration_seconds =
-                static_cast<float>(segment_duration_seconds);
-            if (cursor_parameters.span_count == 0u ||
-                !std::isfinite(cursor_parameters.segment_duration_seconds) ||
-                cursor_parameters.segment_duration_seconds <= 0.0f)
-            {
-                diagnostic =
-                    "GPU Animation Cursor Advance requires a valid immutable Span table and finite positive Integration Segment duration.";
-                return false;
-            }
-            Microsoft::WRL::ComPtr<ID3D11Buffer> cursor_parameter_buffer;
-            if (!create_constant_buffer(
-                    device.Get(),
-                    static_cast<uint32_t>(sizeof(cursor_parameters)),
-                    &cursor_parameters,
-                    cursor_parameter_buffer.GetAddressOf()))
-            {
-                diagnostic =
-                    "Unable to allocate GPU Animation Cursor Advance Parameters.";
-                return false;
-            }
 
-            simulation::compute_pass_desc cursor_advance_pass;
-            cursor_advance_pass.name =
-                "animation_span_cursor_advance_m" +
-                std::to_string(schedule.model_index) + "_mesh" +
-                std::to_string(gpu_mesh.mesh_index) + "_world_time" +
-                format_double_round_trip(world_time);
-            cursor_advance_pass.shader =
-                animation_span_cursor_advance_shader.Get();
-            cursor_advance_pass.shader_resources = {
-                { 0u, packet_resources.span_srv() }
-            };
-            cursor_advance_pass.unordered_access_views = {
-                { 0u, mesh_cursor.cursor_uav.Get(), 0xffffffffu },
-                { 1u, segment_status_uav.Get(), 0xffffffffu }
-            };
-            cursor_advance_pass.constant_buffers = {
-                { 0u, cursor_parameter_buffer.Get() }
-            };
-            cursor_advance_pass.group_count_x = 1u;
-            if (!graph.add_pass(cursor_advance_pass, diagnostic))
-            {
-                return false;
-            }
-
-            out_segment_parameter_buffers.push_back(
-                std::move(cursor_parameter_buffer));
             out_segment_parameter_buffers.push_back(
                 std::move(skin_parameter_buffer));
             out_segment_parameter_buffers.push_back(
@@ -5183,6 +5070,8 @@ namespace skin_physics::runtime
                 std::move(segment_status_uav));
             work.animation_target_status_srv =
                 out_segment_shader_resource_views.back().Get();
+            work.animation_cursor_status_uav =
+                out_segment_unordered_access_views.back().Get();
             return true;
         }
 
