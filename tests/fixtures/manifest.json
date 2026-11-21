@@ -319,6 +319,15 @@
             "GPU resources remain owned by the Model and are released on successful Model destruction; Cloth solver dispatch and Position-Writer Epoch integration remain explicitly pending",
             "A Cloth-only World remains BLOCKED_BY_INPUT with zero GPU Commit until Cloth prediction / XPBD / Position-Writer Epoch integration is complete; Reset releases the pending Reservation"
           ]
+        },
+        {
+          "id": "P05_WARP_CLOTH_SEGMENT_STATE_PASSES",
+          "checks": [
+            "Cloth Segment prediction applies the exact Segment delta time and World gravity to dynamic Vertices while preserving zero-inverse-mass Vertex positions and zeroing their velocities",
+            "Cloth Segment velocity reconstruction derives dynamic velocity from the solved Position delta divided by the same Segment duration and keeps pinned Vertices at zero velocity",
+            "All Stretch / Shear / Bend XPBD Lambda arrays are explicitly zeroed at every new Integration Segment, then retained across that Segment's solver iterations",
+            "Invalid dimensions, non-finite input and non-positive Segment duration fail closed through the solver diagnostic buffer"
+          ]
         }
       ],
       "automated_cases": [
