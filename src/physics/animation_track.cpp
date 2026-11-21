@@ -11,6 +11,19 @@ namespace skin_physics::physics
         using asset::vec3;
         constexpr float quaternion_epsilon = 1.0e-12f;
 
+        bool approximately_equal_double(double left, double right)
+        {
+            if (!std::isfinite(left) || !std::isfinite(right))
+            {
+                return false;
+            }
+            const double scale = std::max(
+                1.0, std::max(std::abs(left), std::abs(right)));
+            const double tolerance =
+                32.0 * std::numeric_limits<double>::epsilon() * scale;
+            return std::abs(left - right) <= tolerance;
+        }
+
         vec3 lerp(const vec3& start, const vec3& end, float interpolation)
         {
             return {
@@ -4334,7 +4347,8 @@ namespace skin_physics::physics
                 !std::isfinite(span_end) ||
                 span_end == input.world_time_start ||
                 (has_previous_span &&
-                    input.world_time_start != previous_span_end))
+                    !approximately_equal_double(
+                        input.world_time_start, previous_span_end)))
             {
                 return fail(
                     animation_trajectory_packet_error::invalid_span,
@@ -4465,8 +4479,10 @@ namespace skin_physics::physics
                     track_input.scheduled;
                 if (clip.tracks.empty() ||
                     scheduled.clip.channels.size() != clip.tracks.size() ||
-                    scheduled.world_time_start != input.world_time_start ||
-                    scheduled.world_time_duration != input.world_time_duration ||
+                    !approximately_equal_double(
+                        scheduled.world_time_start, input.world_time_start) ||
+                    !approximately_equal_double(
+                        scheduled.world_time_duration, input.world_time_duration) ||
                     !std::isfinite(scheduled.clip.clip_time_start) ||
                     !std::isfinite(scheduled.clip.clip_time_delta) ||
                     !std::isfinite(
@@ -4623,10 +4639,12 @@ namespace skin_physics::physics
                         channel_span.node_index != asset_track.node_index ||
                         channel_span.path != asset_track.path ||
                         channel_span.interpolation_mode != asset_track.mode ||
-                        channel_span.clip_time_start !=
-                            scheduled.clip.clip_time_start ||
-                        channel_span.clip_time_delta !=
-                            scheduled.clip.clip_time_delta ||
+                        !approximately_equal_double(
+                            channel_span.clip_time_start,
+                            scheduled.clip.clip_time_start) ||
+                        !approximately_equal_double(
+                            channel_span.clip_time_delta,
+                            scheduled.clip.clip_time_delta) ||
                         channel_span.node_index >= node_count)
                     {
                         return fail(
