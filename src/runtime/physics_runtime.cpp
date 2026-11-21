@@ -4342,7 +4342,7 @@ namespace skin_physics::runtime
                     }
                 }
 
-                const physics::animation_trajectory_packet_build_result packet_build =
+                physics::animation_trajectory_packet_build_result packet_build =
                     physics::build_animation_trajectory_packet(
                         model.source_model, packet_desc);
                 if (!packet_build.success)
@@ -4355,7 +4355,7 @@ namespace skin_physics::runtime
 
                 physics::animation_span_cursor_gpu_record initial_cursor;
                 if (!physics::initialize_animation_span_cursor(
-                        packet_data,
+                        packet_build.value,
                         selected_span_record_index,
                         world_time,
                         initial_cursor,
@@ -4373,8 +4373,7 @@ namespace skin_physics::runtime
                 packet_cache_iterator->model_index = schedule.model_index;
                 packet_cache_iterator->model_generation = model.generation;
                 packet_cache_iterator->packet =
-                    std::move(const_cast<physics::animation_trajectory_packet&>(
-                        packet_data));
+                    std::move(packet_build.value);
                 if (!physics::upload_animation_trajectory_packet(
                         device.Get(),
                         packet_cache_iterator->packet,
@@ -4469,8 +4468,6 @@ namespace skin_physics::runtime
                 packet_data.span_records[selected_span_record_index];
             const uint32_t node_count = static_cast<uint32_t>(
                 model.source_model.nodes.size());
-            const physics::animation_span_gpu_record& packet_span =
-                packet_data.span_records[0u];
             if (node_count == 0u ||
                 packet_span.track_record_count == 0u ||
                 packet_span.track_record_count > 2u ||
