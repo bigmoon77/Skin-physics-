@@ -1689,6 +1689,7 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_blend_local_transform_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_node_hierarchy_evaluate_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_skin_matrix_evaluate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_span_cursor_advance_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_weight_shader;
@@ -4094,6 +4095,7 @@ namespace skin_physics::runtime
             const model_animation_tick_schedule& schedule,
             soft_body_mesh_work_state& work,
             double world_time,
+            double segment_duration_seconds,
             uint64_t animation_input_version,
             std::vector<physics::animation_trajectory_gpu_resources>&
                 out_animation_packet_resources,
@@ -4123,7 +4125,9 @@ namespace skin_physics::runtime
                 gpu_mesh.animation_target_velocities_uav == nullptr ||
                 gpu_mesh.animation_target_status_uav == nullptr ||
                 gpu_mesh.animation_target_status_buffer == nullptr ||
-                !finite_double(world_time))
+                !finite_double(world_time) ||
+                !finite_double(segment_duration_seconds) ||
+                segment_duration_seconds <= 0.0)
             {
                 diagnostic =
                     "Animated Soft Body Mesh is missing its Skin / Joint mapping or GPU LBS target resources.";
@@ -4324,15 +4328,20 @@ namespace skin_physics::runtime
             {
                 uint32_t channel_count = 0u;
                 uint32_t first_channel_record = 0u;
-                float span_local_u = 0.0f;
-                float inverse_span_duration = 0.0f;
+                uint32_t expected_span_record_index = 0u;
+                uint32_t reserved = 0u;
             };
             struct alignas(16) blend_evaluation_parameters
             {
                 uint32_t node_count = 0u;
-                float span_duration_seconds = 0.0f;
-                float span_local_u = 0.0f;
-                uint32_t reserved = 0u;
+                uint32_t expected_span_record_index = 0u;
+                uint32_t reserved[2] = {};
+            };
+            struct alignas(16) cursor_advance_parameters
+            {
+                uint32_t span_count = 0u;
+                float segment_duration_seconds = 0.0f;
+                uint32_t reserved[2] = {};
             };
             struct alignas(16) hierarchy_evaluation_parameters
             {
@@ -4355,6 +4364,7 @@ namespace skin_physics::runtime
             };
             static_assert(sizeof(channel_evaluation_parameters) == 16u);
             static_assert(sizeof(blend_evaluation_parameters) == 16u);
+            static_assert(sizeof(cursor_advance_parameters) == 16u);
             static_assert(sizeof(hierarchy_evaluation_parameters) == 16u);
             static_assert(sizeof(skin_matrix_evaluation_parameters) == 160u);
 
@@ -4506,9 +4516,7 @@ namespace skin_physics::runtime
                 parameters.channel_count = track_record.channel_record_count;
                 parameters.first_channel_record =
                     track_record.first_channel_record;
-                parameters.span_local_u = gpu_span_local_u;
-                parameters.inverse_span_duration =
-                    inverse_span_duration;
+                parameters.expected_span_record_index = 0u;
                 Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
                 if (!create_constant_buffer(
                         device.Get(),
@@ -4530,7 +4538,9 @@ namespace skin_physics::runtime
                     std::to_string(world_time);
                 channel_pass.shader = animation_channel_evaluate_shader.Get();
                 channel_pass.shader_resources = {
-                    { 0u, packet_resources.channel_srv() }
+                    { 0u, packet_resources.channel_srv() },
+                    { 1u, packet_resources.cursor_srv() },
+                    { 2u, packet_resources.span_srv() }
                 };
                 channel_pass.unordered_access_views = {
                     { 0u,
@@ -4559,16 +4569,7 @@ namespace skin_physics::runtime
             {
                 blend_evaluation_parameters parameters;
                 parameters.node_count = node_count;
-                parameters.span_duration_seconds =
-                    static_cast<float>(span_duration);
-                parameters.span_local_u = gpu_span_local_u;
-                if (!std::isfinite(parameters.span_duration_seconds) ||
-                    parameters.span_duration_seconds <= 0.0f)
-                {
-                    diagnostic =
-                        "GPU Animation Blend Span duration exceeds finite float range.";
-                    return false;
-                }
+                parameters.expected_span_record_index = 0u;
                 Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
                 if (!create_constant_buffer(
                         device.Get(),
@@ -4592,7 +4593,9 @@ namespace skin_physics::runtime
                 blend_pass.shader_resources = {
                     { 0u, source_local_srv.Get() },
                     { 1u, target_local_srv.Get() },
-                    { 2u, packet_resources.blend_srv() }
+                    { 2u, packet_resources.blend_srv() },
+                    { 3u, packet_resources.cursor_srv() },
+                    { 4u, packet_resources.span_srv() }
                 };
                 blend_pass.unordered_access_views = {
                     { 0u, blended_local_uav.Get(), 0xffffffffu },
@@ -4904,6 +4907,57 @@ namespace skin_physics::runtime
                 return false;
             }
 
+            cursor_advance_parameters cursor_parameters;
+            cursor_parameters.span_count =
+                packet_resources.counts().spans;
+            cursor_parameters.segment_duration_seconds =
+                static_cast<float>(segment_duration_seconds);
+            if (cursor_parameters.span_count == 0u ||
+                !std::isfinite(cursor_parameters.segment_duration_seconds) ||
+                cursor_parameters.segment_duration_seconds <= 0.0f)
+            {
+                diagnostic =
+                    "GPU Animation Cursor Advance requires a valid immutable Span table and finite positive Integration Segment duration.";
+                return false;
+            }
+            Microsoft::WRL::ComPtr<ID3D11Buffer> cursor_parameter_buffer;
+            if (!create_constant_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(cursor_parameters)),
+                    &cursor_parameters,
+                    cursor_parameter_buffer.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate GPU Animation Cursor Advance Parameters.";
+                return false;
+            }
+
+            simulation::compute_pass_desc cursor_advance_pass;
+            cursor_advance_pass.name =
+                "animation_span_cursor_advance_m" +
+                std::to_string(schedule.model_index) + "_mesh" +
+                std::to_string(gpu_mesh.mesh_index) + "_world_time" +
+                std::to_string(world_time);
+            cursor_advance_pass.shader =
+                animation_span_cursor_advance_shader.Get();
+            cursor_advance_pass.shader_resources = {
+                { 0u, packet_resources.span_srv() }
+            };
+            cursor_advance_pass.unordered_access_views = {
+                { 0u, packet_resources.cursor_uav(), 0xffffffffu },
+                { 1u, segment_status_uav.Get(), 0xffffffffu }
+            };
+            cursor_advance_pass.constant_buffers = {
+                { 0u, cursor_parameter_buffer.Get() }
+            };
+            cursor_advance_pass.group_count_x = 1u;
+            if (!graph.add_pass(cursor_advance_pass, diagnostic))
+            {
+                return false;
+            }
+
+            out_segment_parameter_buffers.push_back(
+                std::move(cursor_parameter_buffer));
             out_segment_parameter_buffers.push_back(
                 std::move(skin_parameter_buffer));
             out_segment_parameter_buffers.push_back(
@@ -5373,6 +5427,7 @@ namespace skin_physics::runtime
                                 *animation_schedule_iterator,
                                 work,
                                 segment.start_time,
+                                delta_time,
                                 input_snapshot.version,
                                 out_animation_packet_resources,
                                 graph,
@@ -7315,6 +7370,8 @@ namespace skin_physics::runtime
             shader_root / "animation_node_hierarchy_evaluate.cs.hlsl";
         const std::filesystem::path animation_skin_matrix_evaluate_path =
             shader_root / "animation_skin_matrix_evaluate.cs.hlsl";
+        const std::filesystem::path animation_span_cursor_advance_path =
+            shader_root / "animation_span_cursor_advance.cs.hlsl";
         const std::filesystem::path soft_body_fem_path =
             shader_root / "soft_body_fem.cs.hlsl";
         const std::filesystem::path soft_body_gather_path =
@@ -7335,6 +7392,7 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_blend_local_transform_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_node_hierarchy_evaluate_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_skin_matrix_evaluate_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> animation_span_cursor_advance_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_fem_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> soft_body_force_weight_shader;
@@ -7372,6 +7430,9 @@ namespace skin_physics::runtime
             !compile_runtime_compute_shader(
                 device, animation_skin_matrix_evaluate_path, "main",
                 animation_skin_matrix_evaluate_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, animation_span_cursor_advance_path, "main",
+                animation_span_cursor_advance_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
                 device, soft_body_fem_path, "soft_body_fem",
                 soft_body_fem_shader.GetAddressOf(), diagnostic) ||
@@ -7428,6 +7489,8 @@ namespace skin_physics::runtime
             std::move(animation_node_hierarchy_evaluate_shader);
         runtime.animation_skin_matrix_evaluate_shader =
             std::move(animation_skin_matrix_evaluate_shader);
+        runtime.animation_span_cursor_advance_shader =
+            std::move(animation_span_cursor_advance_shader);
         runtime.soft_body_fem_shader = std::move(soft_body_fem_shader);
         runtime.soft_body_force_gather_shader = std::move(soft_body_gather_shader);
         runtime.soft_body_force_weight_shader = std::move(soft_body_force_weight_shader);
