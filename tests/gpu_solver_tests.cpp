@@ -894,8 +894,9 @@ namespace
         {
             uint32_t vertex_count = 0u;
             float delta_time = 0.0f;
+            uint32_t reserved[2] = {};
             float gravity[3] = {};
-            uint32_t reserved[3] = {};
+            uint32_t reserved2 = 0u;
         };
         static_assert(sizeof(predict_parameters) == 32u);
         predict_parameters predict_constants;
