@@ -5541,19 +5541,27 @@ namespace skin_physics::physics
         double span_local_u,
         const asset::vec3& local_contact_point)
     {
-        if ((span.flags & kinematic_collider_flag_valid) == 0u ||
+        const uint64_t stable_collider_id =
+            (static_cast<uint64_t>(span.stable_collider_id_high) << 32u) |
+            span.stable_collider_id_low;
+        if (stable_collider_id == 0u ||
+            span.span_sample_pair_id == asset::invalid_index ||
+            (span.flags & kinematic_collider_flag_valid) == 0u ||
             !std::isfinite(span_local_u) ||
             span_local_u < 0.0 || span_local_u > 1.0 ||
             !finite(local_contact_point))
         {
             return make_collider_sample_error(
                 kinematic_collider_span_error::invalid_time,
-                "Kinematic Collider evaluation requires a valid record, u in [0,1] and a finite local contact point.");
+                "Kinematic Collider evaluation requires a valid identity / record, u in [0,1] and a finite local contact point.");
         }
         if (!std::isfinite(span.duration_seconds) ||
             span.duration_seconds <= 0.0f ||
             !std::isfinite(span.inverse_duration) ||
             span.inverse_duration <= 0.0f ||
+            std::abs(
+                static_cast<double>(span.duration_seconds) *
+                    span.inverse_duration - 1.0) > 1.0e-4 ||
             !std::isfinite(span.maximum_local_radius) ||
             span.maximum_local_radius < 0.0f ||
             !std::isfinite(span.linear_speed_bound) ||
@@ -5561,11 +5569,17 @@ namespace skin_physics::physics
             !std::isfinite(span.angular_speed_bound) ||
             span.angular_speed_bound < 0.0f ||
             !std::isfinite(span.sagitta_bound) ||
-            span.sagitta_bound < 0.0f)
+            span.sagitta_bound < 0.0f ||
+            !std::isfinite(span.translation_start.x) ||
+            !std::isfinite(span.translation_start.y) ||
+            !std::isfinite(span.translation_start.z) ||
+            !std::isfinite(span.translation_end.x) ||
+            !std::isfinite(span.translation_end.y) ||
+            !std::isfinite(span.translation_end.z))
         {
             return make_collider_sample_error(
                 kinematic_collider_span_error::invalid_bounds,
-                "Kinematic Collider GPU Record contains an invalid duration or conservative Bound.");
+                "Kinematic Collider GPU Record contains an invalid duration, Transform or conservative Bound.");
         }
         const double contact_radius = vector_length(local_contact_point);
         if (!std::isfinite(contact_radius) ||
@@ -5577,29 +5591,66 @@ namespace skin_physics::physics
                 "Kinematic Collider local contact point exceeds the certified Maximum Local Radius.");
         }
 
-        const quaternion start = normalize_quaternion({
+        const quaternion raw_start = {
             span.rotation_start.x,
             span.rotation_start.y,
             span.rotation_start.z,
             span.rotation_start.w
-        });
-        const quaternion end = normalize_quaternion({
+        };
+        const quaternion raw_end = {
             span.rotation_end.x,
             span.rotation_end.y,
             span.rotation_end.z,
             span.rotation_end.w
-        });
-        if (!finite(start) || !finite(end) ||
-            dot(start, start) <= quaternion_epsilon ||
-            dot(end, end) <= quaternion_epsilon ||
-            !std::isfinite(span.angular_axis_and_angle.x) ||
-            !std::isfinite(span.angular_axis_and_angle.y) ||
-            !std::isfinite(span.angular_axis_and_angle.z) ||
-            !std::isfinite(span.angular_axis_and_angle.w))
+        };
+        const float raw_start_squared = dot(raw_start, raw_start);
+        const float raw_end_squared = dot(raw_end, raw_end);
+        const quaternion start = normalize_quaternion(raw_start);
+        const quaternion end = normalize_quaternion(raw_end);
+        const double axis_length = std::sqrt(
+            static_cast<double>(span.angular_axis_and_angle.x) *
+                span.angular_axis_and_angle.x +
+            static_cast<double>(span.angular_axis_and_angle.y) *
+                span.angular_axis_and_angle.y +
+            static_cast<double>(span.angular_axis_and_angle.z) *
+                span.angular_axis_and_angle.z);
+        if (!std::isfinite(raw_start_squared) ||
+            !std::isfinite(raw_end_squared) ||
+            raw_start_squared <= quaternion_epsilon ||
+            raw_end_squared <= quaternion_epsilon ||
+            !finite(start) || !finite(end) ||
+            !std::isfinite(axis_length) ||
+            std::abs(axis_length - 1.0) > 1.0e-3 ||
+            !std::isfinite(span.angular_axis_and_angle.w) ||
+            span.angular_axis_and_angle.w < 0.0f ||
+            span.angular_axis_and_angle.w > 3.1416927f)
         {
             return make_collider_sample_error(
                 kinematic_collider_span_error::invalid_transform,
-                "Kinematic Collider Record contains an invalid endpoint or angular Quaternion.");
+                "Kinematic Collider Record contains an invalid endpoint Quaternion or world angular Axis / Angle.");
+        }
+
+        const double expected_linear_speed = std::sqrt(
+            std::pow(static_cast<double>(span.translation_end.x) -
+                span.translation_start.x, 2.0) +
+            std::pow(static_cast<double>(span.translation_end.y) -
+                span.translation_start.y, 2.0) +
+            std::pow(static_cast<double>(span.translation_end.z) -
+                span.translation_start.z, 2.0)) * span.inverse_duration;
+        const double expected_angular_speed =
+            static_cast<double>(span.angular_axis_and_angle.w) *
+            span.inverse_duration;
+        const double expected_sagitta =
+            static_cast<double>(span.maximum_local_radius) *
+            (1.0 - std::cos(
+                static_cast<double>(span.angular_axis_and_angle.w) * 0.5));
+        if (span.linear_speed_bound < expected_linear_speed ||
+            span.angular_speed_bound < expected_angular_speed ||
+            span.sagitta_bound < expected_sagitta)
+        {
+            return make_collider_sample_error(
+                kinematic_collider_span_error::invalid_bounds,
+                "Kinematic Collider Record motion Bounds under-estimate its stored trajectory coefficients.");
         }
 
         const float u = static_cast<float>(span_local_u);
