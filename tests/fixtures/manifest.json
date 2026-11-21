@@ -295,7 +295,8 @@
             "Production Vertex-to-Constraint CSR gather reads deterministic incident references, skips already-colored Stretch corrections, and gathers Shear / Bend corrections without inter-thread write conflicts",
             "CSR offsets, type tags, constraint indices, local vertex indices, reserved fields and source vertex mappings are validated before correction publication",
             "Non-finite contributions or invalid CSR references set a terminal solver diagnostic and preserve the affected source Position",
-            "WARP output Positions match the CPU simultaneous Shear / Bend XPBD reference for the same Segment duration, Compliance and relaxation"
+            "WARP output Positions match the CPU simultaneous Shear / Bend XPBD reference for the same Segment duration, Compliance and relaxation",
+            "Zero inverse-mass pinned vertices receive no Shear / Bend correction while the surrounding movable vertices retain CPU / GPU parity"
           ]
         }
       ],
