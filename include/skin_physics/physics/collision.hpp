@@ -62,6 +62,23 @@ namespace skin_physics::physics
         bool success = false;
     };
 
+    struct kinematic_collider_vertex_triangle_contact
+    {
+        uint32_t vertex_index = asset::invalid_index;
+        uint32_t triangle_index = asset::invalid_index;
+        moving_vertex_triangle_contact_result value;
+    };
+
+    struct kinematic_collider_contact_set_result
+    {
+        std::vector<kinematic_collider_vertex_triangle_contact> contacts;
+        std::size_t required_contacts = 0u;
+        collision_error error = collision_error::none;
+        std::string diagnostic;
+        bool overflow = false;
+        bool success = false;
+    };
+
     enum class collision_error : uint8_t
     {
         none,
@@ -197,6 +214,18 @@ namespace skin_physics::physics
         const std::array<asset::vec3, 2>& edge_b,
         const std::array<asset::vec3, 2>& edge_b_velocities,
         float combined_thickness);
+
+    // Deterministic CPU reference for Dynamic Vertex vs moving Kinematic
+    // Collider Triangle contacts. Capacity overflow is atomic: no partial
+    // contact list is returned.
+    kinematic_collider_contact_set_result generate_kinematic_collider_vertex_triangle_contacts(
+        const std::vector<asset::vec3>& vertex_positions,
+        const std::vector<asset::vec3>& vertex_velocities,
+        const std::vector<float>& vertex_radii,
+        const asset::mesh& collider_mesh,
+        const kinematic_collider_geometry_result& collider_geometry,
+        float collider_thickness,
+        std::size_t contact_capacity);
 
     using broadphase_candidate_filter =
         std::function<bool(uint32_t, uint32_t)>;
