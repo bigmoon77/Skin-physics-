@@ -153,8 +153,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
             blend_coordinate +
         blend.weight_coefficients.x;
     float weight_derivative = 0.0f;
-    if (blend_coordinate_unclamped > 0.0f &&
-        blend_coordinate_unclamped < 1.0f)
+    if (blend_coordinate_unclamped >= 0.0f &&
+        blend_coordinate_unclamped <= 1.0f)
     {
         weight_derivative =
             (blend.weight_coefficients.y +
