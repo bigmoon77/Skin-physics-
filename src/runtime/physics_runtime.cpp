@@ -4706,7 +4706,7 @@ namespace skin_physics::runtime
                     { 0u, source_local_srv.Get() },
                     { 1u, target_local_srv.Get() },
                     { 2u, packet_resources.blend_srv() },
-                    { 3u, mesh_cursor.cursor_srv.Get() },
+                    { 3u, packet_resources.cursor_srv() },
                     { 4u, packet_resources.span_srv() }
                 };
                 blend_pass.unordered_access_views = {
