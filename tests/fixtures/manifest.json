@@ -778,6 +778,16 @@
             "Node depth is dispatched in deterministic hierarchy levels; Parent references must be topological and acyclic",
             "Invalid Parent references or non-finite Local / Global matrices fail closed through the GPU Hierarchy status bit"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_SKIN_MATRICES",
+          "checks": [
+            "The GPU Skin Matrix stage resolves Mesh Node and Joint Global Matrices through Track-relative Skin / Skin Joint channel offsets",
+            "Each Joint uses its Skin-specific absolute Inverse Bind Matrix record",
+            "Skin Matrix is inverse(Mesh Node Global) * Joint Global * Inverse Bind Matrix",
+            "Skin Matrix derivative includes inverse(Mesh Global) derivative and Joint Global derivative using the analytic matrix product rule",
+            "Singular / non-affine Mesh Node Global Matrix, invalid Skin / Joint / IBM ranges and mismatched Node identities fail closed"
+          ]
         }
       ],
       "automated_cases": [
