@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "skin_physics/asset/types.hpp"
@@ -129,9 +130,13 @@ namespace skin_physics::physics
         float compliance = 0.0f;
     };
 
+    static_assert(std::is_standard_layout_v<cloth_gpu_stretch_constraint_record>);
+    static_assert(std::is_trivially_copyable_v<cloth_gpu_stretch_constraint_record>);
     static_assert(sizeof(cloth_gpu_stretch_constraint_record) == 16u,
         "Cloth Stretch GPU constraint ABI must remain 16 bytes.");
     static_assert(offsetof(cloth_gpu_stretch_constraint_record, rest_length) == 8u);
+    static_assert(std::is_standard_layout_v<cloth_gpu_constraint_record>);
+    static_assert(std::is_trivially_copyable_v<cloth_gpu_constraint_record>);
     static_assert(sizeof(cloth_gpu_constraint_record) == 32u,
         "Cloth Jacobi GPU constraint ABI must remain 32 bytes.");
     static_assert(offsetof(cloth_gpu_constraint_record, type) == 16u);
