@@ -4261,8 +4261,8 @@ namespace
         const std::vector<uint32_t> mismatch_status =
             readback_structured_buffer<uint32_t>(
                 device.Get(), context.Get(), mismatch_status_buffer.Get(), 1u);
-        require(mismatch_status[0u] == 1u,
-            "Source / Target Node or Parent mismatches must fail closed before publishing a blended local transform.");
+        require(mismatch_status[0u] == 2u,
+            "Source / Target Node or Parent mismatches must set the GPU Blend-stage diagnostic bit.");
 
         std::cout << "[PASS] P09_WARP_ANIMATION_BLEND_LOCAL_TRANSFORMS\n";
     }
@@ -4438,8 +4438,8 @@ namespace
         const std::vector<uint32_t> invalid_status =
             readback_structured_buffer<uint32_t>(
                 device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
-        require(invalid_status[0u] == 1u,
-            "Self-parent / non-topological Node references must fail closed before Global Matrix publication.");
+        require(invalid_status[0u] == 4u,
+            "Self-parent / non-topological Node references must set the GPU Hierarchy-stage diagnostic bit.");
 
         std::cout << "[PASS] P09_WARP_ANIMATION_NODE_HIERARCHY\n";
     }
@@ -4647,14 +4647,14 @@ namespace
         const std::vector<gpu_matrix4x4> invalid_skin_matrix_derivatives =
             readback_structured_buffer<gpu_matrix4x4>(
                 device.Get(), context.Get(), output_derivative_buffer.Get(), 1u);
-        require(invalid_status[0u] == 1u &&
+        require(invalid_status[0u] == 8u &&
             std::memcmp(
                 &invalid_skin_matrices[0u], &empty_output[0u],
                 sizeof(gpu_matrix4x4)) == 0 &&
             std::memcmp(
                 &invalid_skin_matrix_derivatives[0u], &empty_output[0u],
                 sizeof(gpu_matrix4x4)) == 0,
-            "A singular Mesh Node Global Matrix must fail closed, zero the local Joint output slot and avoid indexing the global Skin Joint table.");
+            "A singular Mesh Node Global Matrix must set the GPU Skin Matrix-stage diagnostic bit and zero the local Joint output slot.");
 
         std::cout << "[PASS] P09_WARP_ANIMATION_SKIN_MATRICES\n";
     }
