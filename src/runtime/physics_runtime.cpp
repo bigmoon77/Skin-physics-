@@ -6364,7 +6364,69 @@ namespace skin_physics::runtime
                                 root_only_schedule.message;
                             return false;
                         }
-                        schedule.playback_spans = root_only_schedule.values;
+                        schedule.playback_spans.clear();
+                        for (const physics::scheduled_animation_clip_span& root_span :
+                            root_only_schedule.values)
+                        {
+                            const double root_span_start =
+                                root_span.world_time_start;
+                            const double root_span_end =
+                                root_span.world_time_start +
+                                root_span.world_time_duration;
+                            std::vector<double> root_boundaries;
+                            root_boundaries.reserve(
+                                model_snapshot.root_samples.size() + 2u);
+                            root_boundaries.push_back(root_span_start);
+                            for (const transform_sample& sample :
+                                model_snapshot.root_samples)
+                            {
+                                if (sample.time > root_span_start &&
+                                    sample.time < root_span_end)
+                                {
+                                    root_boundaries.push_back(sample.time);
+                                }
+                            }
+                            root_boundaries.push_back(root_span_end);
+
+                            for (std::size_t boundary_index = 0u;
+                                boundary_index + 1u < root_boundaries.size();
+                                ++boundary_index)
+                            {
+                                const double segment_start =
+                                    root_boundaries[boundary_index];
+                                const double segment_end =
+                                    root_boundaries[boundary_index + 1u];
+                                const double segment_duration =
+                                    segment_end - segment_start;
+                                if (!finite_double(segment_start) ||
+                                    !finite_double(segment_duration) ||
+                                    segment_duration <= 0.0 ||
+                                    schedule.playback_spans.size() >=
+                                        maximum_span_count)
+                                {
+                                    diagnostic =
+                                        "Root-only static-pose Packet Span split exceeded its finite time or configured Span capacity.";
+                                    return false;
+                                }
+
+                                physics::scheduled_animation_clip_span split_span =
+                                    root_span;
+                                split_span.clip.span_index =
+                                    static_cast<uint32_t>(
+                                        schedule.playback_spans.size());
+                                split_span.world_time_start = segment_start;
+                                split_span.world_time_duration =
+                                    segment_duration;
+                                schedule.playback_spans.push_back(
+                                    std::move(split_span));
+                            }
+                        }
+                        if (schedule.playback_spans.empty())
+                        {
+                            diagnostic =
+                                "Root-only static-pose Packet Span split produced an empty schedule.";
+                            return false;
+                        }
                     }
                     else if (model_snapshot.has_animation_playback)
                     {
