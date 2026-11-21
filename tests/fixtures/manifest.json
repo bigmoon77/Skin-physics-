@@ -858,7 +858,10 @@
             "Contact-point velocity is evaluated as linear velocity plus world angular velocity cross the rotated local contact radius",
             "Equivalent positive / negative quaternion hemispheres produce the same shortest-arc trajectory",
             "A Span ending at a Teleport boundary holds the pre-teleport Pose with zero Linear / Angular Velocity; the following Span starts at the teleported sample and no interpolation crosses the discontinuity",
-            "Immutable GPU Packet Builder appends Collider Records into each owning Span's explicit first/count range and rejects duplicate stable Collider IDs or mismatched durations"
+            "Immutable GPU Packet Builder appends Collider Records into each owning Span's explicit first/count range and rejects duplicate stable Collider IDs or mismatched durations",
+            "The sample-driven Span builder selects exactly one strictly increasing Transform Sample pair that brackets the entire requested World-Time interval and rejects missing or crossed boundaries",
+            "A Span ending at a Teleport Sample holds the previous Pose with zero analytic velocity; the following Span begins at the Teleport Pose and resumes motion from the next Sample",
+            "Non-monotonic sample times, non-finite transforms and invalid local-radius bounds fail closed before publishing a GPU Record"
           ]
         },
         {
