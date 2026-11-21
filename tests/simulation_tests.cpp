@@ -5158,6 +5158,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P09_ANIMATION_NODE_HIERARCHY_SKIN_MATRIX_DERIVATIVES\n";
     test_phase09_immutable_gpu_trajectory_packet_builder();
     std::cout << "[PASS] P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER\n";
+    test_phase09_kinematic_collider_trajectory();
+    std::cout << "[PASS] P09_KINEMATIC_COLLIDER_TRAJECTORY\n";
     test_phase09_physics_mesh_skinning_cpu_reference();
     std::cout << "[PASS] P09_PHYSICS_MESH_SKINNING_CPU_REFERENCE\n";
     test_phase10_attribute_paint_and_serialization();
