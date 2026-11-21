@@ -972,7 +972,7 @@ namespace
             create_constant_buffer(
                 device.Get(), &reconstruct_constants,
                 static_cast<UINT>(sizeof(reconstruct_constants)));
-        const ComPtr<ID3D11UnorderedAccessView> predicted_velocity_uav =
+        const ComPtr<ID3D11UnorderedAccessView> reconstructed_velocity_uav =
             create_structured_uav<gpu_float4>(
                 device.Get(), predicted_velocity_buffer.Get(), 3u);
 
@@ -982,7 +982,7 @@ namespace
                 create_structured_srv<gpu_float4>(
                     device.Get(), predicted_position_buffer.Get(), 3u).Get(),
                 inverse_mass_srv.Get() },
-            { predicted_velocity_uav.Get(), status_uav.Get() },
+            { reconstructed_velocity_uav.Get(), status_uav.Get() },
             reconstruct_constant_buffer.Get(), 1u);
 
         const std::vector<gpu_float4> reconstructed_velocities =
