@@ -525,6 +525,258 @@ namespace skin_physics::runtime
             return matrix;
         }
 
+        asset::mat4 make_root_transform_derivative_matrix(
+            const transform& root,
+            const asset::vec4& rotation_derivative,
+            const asset::vec3& translation_derivative)
+        {
+            const double x = root.rotation.x;
+            const double y = root.rotation.y;
+            const double z = root.rotation.z;
+            const double w = root.rotation.w;
+            const double dx = rotation_derivative.x;
+            const double dy = rotation_derivative.y;
+            const double dz = rotation_derivative.z;
+            const double dw = rotation_derivative.w;
+
+            asset::mat4 matrix;
+            matrix.value = {
+                static_cast<float>(-4.0 * (y * dy + z * dz)),
+                static_cast<float>(2.0 * (dx * y + x * dy + dz * w + z * dw)),
+                static_cast<float>(2.0 * (dx * z + x * dz - dy * w - y * dw)),
+                0.0f,
+                static_cast<float>(2.0 * (dx * y + x * dy - dz * w - z * dw)),
+                static_cast<float>(-4.0 * (x * dx + z * dz)),
+                static_cast<float>(2.0 * (dy * z + y * dz + dx * w + x * dw)),
+                0.0f,
+                static_cast<float>(2.0 * (dx * z + x * dz + dy * w + y * dw)),
+                static_cast<float>(2.0 * (dy * z + y * dz - dx * w - x * dw)),
+                static_cast<float>(-4.0 * (x * dx + y * dy)),
+                0.0f,
+                translation_derivative.x,
+                translation_derivative.y,
+                translation_derivative.z,
+                0.0f
+            };
+            return matrix;
+        }
+
+        bool evaluate_root_transform_samples(
+            const std::vector<transform_sample>& samples,
+            const transform& fallback_transform,
+            double world_time,
+            transform& out_transform,
+            asset::mat4& out_derivative,
+            std::string& diagnostic)
+        {
+            diagnostic.clear();
+            out_derivative.value.fill(0.0f);
+            if (!finite_double(world_time) ||
+                !valid_transform(fallback_transform))
+            {
+                diagnostic =
+                    "Root Transform evaluation received a non-finite time or invalid fallback Transform.";
+                return false;
+            }
+
+            if (samples.empty())
+            {
+                out_transform = fallback_transform;
+                return true;
+            }
+
+            for (std::size_t index = 0u; index < samples.size(); ++index)
+            {
+                if (!finite_double(samples[index].time) ||
+                    samples[index].time < 0.0 ||
+                    !valid_transform(samples[index].value) ||
+                    (index > 0u &&
+                        samples[index].time <= samples[index - 1u].time))
+                {
+                    diagnostic =
+                        "Immutable Root Transform Samples are not finite, normalized and strictly time ordered.";
+                    return false;
+                }
+            }
+
+            const auto upper = std::upper_bound(
+                samples.begin(), samples.end(), world_time,
+                [](double time, const transform_sample& sample)
+                {
+                    return time < sample.time;
+                });
+            if (upper == samples.begin())
+            {
+                out_transform = samples.front().value;
+                return true;
+            }
+
+            const transform_sample& start = *(upper - 1);
+            if (upper == samples.end() || upper->is_teleport)
+            {
+                out_transform = start.value;
+                return true;
+            }
+
+            const transform_sample& end = *upper;
+            const double duration = end.time - start.time;
+            const double normalized =
+                (world_time - start.time) / duration;
+            if (!finite_double(duration) || duration <= 0.0 ||
+                !finite_double(normalized) ||
+                normalized < 0.0 || normalized > 1.0)
+            {
+                diagnostic =
+                    "Root Transform Sample interval cannot be represented as a finite positive interpolation span.";
+                return false;
+            }
+
+            const double inverse_duration = 1.0 / duration;
+            out_transform.translation = {
+                static_cast<float>(
+                    static_cast<double>(start.value.translation.x) +
+                    (static_cast<double>(end.value.translation.x) -
+                        start.value.translation.x) * normalized),
+                static_cast<float>(
+                    static_cast<double>(start.value.translation.y) +
+                    (static_cast<double>(end.value.translation.y) -
+                        start.value.translation.y) * normalized),
+                static_cast<float>(
+                    static_cast<double>(start.value.translation.z) +
+                    (static_cast<double>(end.value.translation.z) -
+                        start.value.translation.z) * normalized)
+            };
+            const asset::vec3 translation_derivative = {
+                static_cast<float>(
+                    (static_cast<double>(end.value.translation.x) -
+                        start.value.translation.x) * inverse_duration),
+                static_cast<float>(
+                    (static_cast<double>(end.value.translation.y) -
+                        start.value.translation.y) * inverse_duration),
+                static_cast<float>(
+                    (static_cast<double>(end.value.translation.z) -
+                        start.value.translation.z) * inverse_duration)
+            };
+
+            std::array<double, 4> q0 = {
+                start.value.rotation.x, start.value.rotation.y,
+                start.value.rotation.z, start.value.rotation.w
+            };
+            std::array<double, 4> q1 = {
+                end.value.rotation.x, end.value.rotation.y,
+                end.value.rotation.z, end.value.rotation.w
+            };
+            double cosine = 0.0;
+            for (uint32_t component = 0u; component < 4u; ++component)
+            {
+                cosine += q0[component] * q1[component];
+            }
+            if (cosine < 0.0)
+            {
+                cosine = -cosine;
+                for (double& component : q1)
+                {
+                    component = -component;
+                }
+            }
+            cosine = std::max(-1.0, std::min(1.0, cosine));
+
+            std::array<double, 4> q = {};
+            std::array<double, 4> q_derivative = {};
+            if (cosine > 0.9995)
+            {
+                std::array<double, 4> raw = {};
+                std::array<double, 4> raw_derivative = {};
+                double squared_length = 0.0;
+                for (uint32_t component = 0u; component < 4u; ++component)
+                {
+                    raw[component] =
+                        q0[component] * (1.0 - normalized) +
+                        q1[component] * normalized;
+                    raw_derivative[component] =
+                        (q1[component] - q0[component]) * inverse_duration;
+                    squared_length += raw[component] * raw[component];
+                }
+                if (!std::isfinite(squared_length) ||
+                    squared_length <= 1.0e-24)
+                {
+                    diagnostic =
+                        "Root Transform near-linear Quaternion interpolation produced a zero-length value.";
+                    return false;
+                }
+                const double raw_length = std::sqrt(squared_length);
+                double projection = 0.0;
+                for (uint32_t component = 0u; component < 4u; ++component)
+                {
+                    q[component] = raw[component] / raw_length;
+                    projection += q[component] * raw_derivative[component];
+                }
+                for (uint32_t component = 0u; component < 4u; ++component)
+                {
+                    q_derivative[component] =
+                        (raw_derivative[component] -
+                            q[component] * projection) / raw_length;
+                }
+            }
+            else
+            {
+                const double angle = std::acos(cosine);
+                const double sine = std::sin(angle);
+                if (!std::isfinite(sine) || std::abs(sine) <= 1.0e-12)
+                {
+                    diagnostic =
+                        "Root Transform Quaternion Slerp denominator is unresolved.";
+                    return false;
+                }
+                const double angle_u = angle * normalized;
+                const double cosine_u = std::cos(angle_u);
+                const double sine_u = std::sin(angle_u);
+                for (uint32_t component = 0u; component < 4u; ++component)
+                {
+                    const double tangent =
+                        (q1[component] - cosine * q0[component]) / sine;
+                    q[component] =
+                        q0[component] * cosine_u +
+                        tangent * sine_u;
+                    q_derivative[component] =
+                        angle * inverse_duration *
+                        (-q0[component] * sine_u +
+                            tangent * cosine_u);
+                }
+            }
+
+            out_transform.rotation = {
+                static_cast<float>(q[0]),
+                static_cast<float>(q[1]),
+                static_cast<float>(q[2]),
+                static_cast<float>(q[3])
+            };
+            const asset::vec4 rotation_derivative = {
+                static_cast<float>(q_derivative[0]),
+                static_cast<float>(q_derivative[1]),
+                static_cast<float>(q_derivative[2]),
+                static_cast<float>(q_derivative[3])
+            };
+            if (!normalize_transform_rotation(out_transform) ||
+                !finite_vec3(translation_derivative) ||
+                !finite_vec4(rotation_derivative))
+            {
+                diagnostic =
+                    "Root Transform interpolation or analytic derivative exceeded finite float range.";
+                return false;
+            }
+
+            out_derivative = make_root_transform_derivative_matrix(
+                out_transform, rotation_derivative, translation_derivative);
+            if (!finite_asset_matrix(out_derivative))
+            {
+                diagnostic =
+                    "Root Transform analytic derivative matrix is non-finite.";
+                return false;
+            }
+            return true;
+        }
+
         asset::mat4 multiply_asset_matrices(
             const asset::mat4& left,
             const asset::mat4& right)
