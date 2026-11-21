@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 #include <utility>
+#include <unordered_set>
 
 namespace skin_physics::physics
 {
@@ -99,6 +100,59 @@ namespace skin_physics::physics
             std::array<uint32_t, 2> key = {};
             std::vector<edge_occurrence> occurrences;
         };
+
+        void build_stretch_coloring(cloth_mesh& mesh)
+        {
+            std::vector<std::vector<uint32_t>> color_constraints;
+            std::vector<std::vector<uint8_t>> color_vertex_occupancy;
+            for (uint32_t constraint_index = 0u;
+                constraint_index < mesh.stretch_constraints.size();
+                ++constraint_index)
+            {
+                const cloth_stretch_constraint& constraint =
+                    mesh.stretch_constraints[constraint_index];
+                std::size_t selected_color = 0u;
+                for (; selected_color < color_vertex_occupancy.size();
+                    ++selected_color)
+                {
+                    const std::vector<uint8_t>& occupied =
+                        color_vertex_occupancy[selected_color];
+                    if (occupied[constraint.vertices[0]] == 0u &&
+                        occupied[constraint.vertices[1]] == 0u)
+                    {
+                        break;
+                    }
+                }
+                if (selected_color == color_vertex_occupancy.size())
+                {
+                    color_vertex_occupancy.emplace_back(
+                        mesh.rest_positions.size(), 0u);
+                    color_constraints.emplace_back();
+                }
+
+                color_vertex_occupancy[selected_color][constraint.vertices[0]] = 1u;
+                color_vertex_occupancy[selected_color][constraint.vertices[1]] = 1u;
+                color_constraints[selected_color].push_back(constraint_index);
+            }
+
+            mesh.stretch_color_ranges.clear();
+            mesh.stretch_color_constraint_indices.clear();
+            mesh.stretch_color_ranges.reserve(color_constraints.size());
+            mesh.stretch_color_constraint_indices.reserve(
+                mesh.stretch_constraints.size());
+            for (const std::vector<uint32_t>& color : color_constraints)
+            {
+                cloth_stretch_color_range range;
+                range.first_constraint_index =
+                    static_cast<uint32_t>(
+                        mesh.stretch_color_constraint_indices.size());
+                range.constraint_count = static_cast<uint32_t>(color.size());
+                mesh.stretch_color_ranges.push_back(range);
+                mesh.stretch_color_constraint_indices.insert(
+                    mesh.stretch_color_constraint_indices.end(),
+                    color.begin(), color.end());
+            }
+        }
 
         bool calculate_dihedral(
             const std::array<vec3, 4>& positions,
@@ -339,8 +393,115 @@ namespace skin_physics::physics
             }
         }
 
+        build_stretch_coloring(result.value);
+        std::string coloring_diagnostic;
+        if (!validate_cloth_stretch_coloring(
+                result.value, coloring_diagnostic))
+        {
+            add_diagnostic(
+                result.diagnostics,
+                cloth_error::invalid_settings,
+                asset::invalid_index,
+                coloring_diagnostic);
+            return result;
+        }
+
         result.success = true;
         return result;
+    }
+
+    bool validate_cloth_stretch_coloring(
+        const cloth_mesh& mesh,
+        std::string& diagnostic)
+    {
+        diagnostic.clear();
+        if (mesh.stretch_constraints.empty())
+        {
+            if (!mesh.stretch_color_ranges.empty() ||
+                !mesh.stretch_color_constraint_indices.empty())
+            {
+                diagnostic =
+                    "An empty Stretch constraint set must not contain color ranges or indices.";
+                return false;
+            }
+            return true;
+        }
+        if (mesh.stretch_color_ranges.empty() ||
+            mesh.stretch_color_constraint_indices.size() !=
+                mesh.stretch_constraints.size())
+        {
+            diagnostic =
+                "Stretch coloring must cover every constraint exactly once.";
+            return false;
+        }
+
+        std::vector<uint8_t> visited(mesh.stretch_constraints.size(), 0u);
+        std::size_t expected_first = 0u;
+        for (std::size_t color_index = 0u;
+            color_index < mesh.stretch_color_ranges.size();
+            ++color_index)
+        {
+            const cloth_stretch_color_range& range =
+                mesh.stretch_color_ranges[color_index];
+            if (range.first_constraint_index != expected_first ||
+                range.constraint_count == 0u ||
+                static_cast<std::size_t>(range.first_constraint_index) >
+                    mesh.stretch_color_constraint_indices.size() ||
+                static_cast<std::size_t>(range.constraint_count) >
+                    mesh.stretch_color_constraint_indices.size() -
+                        static_cast<std::size_t>(range.first_constraint_index))
+            {
+                diagnostic =
+                    "Stretch color ranges must be non-empty, contiguous and inside the flattened index table.";
+                return false;
+            }
+
+            std::vector<uint8_t> occupied(mesh.rest_positions.size(), 0u);
+            for (uint32_t local_index = 0u;
+                local_index < range.constraint_count;
+                ++local_index)
+            {
+                const uint32_t table_index =
+                    range.first_constraint_index + local_index;
+                const uint32_t constraint_index =
+                    mesh.stretch_color_constraint_indices[table_index];
+                if (constraint_index >= mesh.stretch_constraints.size() ||
+                    visited[constraint_index] != 0u)
+                {
+                    diagnostic =
+                        "Stretch coloring contains an out-of-range or duplicate constraint index.";
+                    return false;
+                }
+                visited[constraint_index] = 1u;
+
+                const cloth_stretch_constraint& constraint =
+                    mesh.stretch_constraints[constraint_index];
+                const uint32_t first = constraint.vertices[0];
+                const uint32_t second = constraint.vertices[1];
+                if (first >= mesh.rest_positions.size() ||
+                    second >= mesh.rest_positions.size() ||
+                    first == second ||
+                    occupied[first] != 0u ||
+                    occupied[second] != 0u)
+                {
+                    diagnostic =
+                        "A Stretch color contains invalid constraints or two writes to the same vertex.";
+                    return false;
+                }
+                occupied[first] = 1u;
+                occupied[second] = 1u;
+            }
+            expected_first += range.constraint_count;
+        }
+
+        if (expected_first != mesh.stretch_color_constraint_indices.size() ||
+            std::find(visited.begin(), visited.end(), 0u) != visited.end())
+        {
+            diagnostic =
+                "Stretch coloring does not cover the complete constraint set.";
+            return false;
+        }
+        return true;
     }
 
     cloth_bend_evaluation evaluate_cloth_bend(
