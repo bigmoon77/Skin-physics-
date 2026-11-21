@@ -40,6 +40,21 @@ namespace skin_physics::physics
         uint32_t constraint_count = 0u;
     };
 
+    enum class cloth_vertex_constraint_type : uint32_t
+    {
+        stretch = 0u,
+        shear = 1u,
+        bend = 2u
+    };
+
+    struct cloth_vertex_constraint_ref
+    {
+        uint32_t type = 0u;
+        uint32_t constraint_index = 0u;
+        uint32_t local_vertex_index = 0u;
+        uint32_t reserved = 0u;
+    };
+
     struct cloth_mesh
     {
         std::vector<asset::vec3> rest_positions;
@@ -48,6 +63,8 @@ namespace skin_physics::physics
         std::vector<cloth_stretch_color_range> stretch_color_ranges;
         // Flattened by color; each color is a vertex-disjoint write batch.
         std::vector<uint32_t> stretch_color_constraint_indices;
+        std::vector<cloth_vertex_constraint_ref> vertex_constraint_refs;
+        std::vector<uint32_t> vertex_constraint_offsets;
         std::vector<cloth_shear_constraint> shear_constraints;
         std::vector<cloth_bend_constraint> bend_constraints;
     };
@@ -121,6 +138,11 @@ namespace skin_physics::physics
     // Every constraint must occur exactly once and no two constraints in one
     // color may write the same vertex.
     bool validate_cloth_stretch_coloring(
+        const cloth_mesh& mesh,
+        std::string& diagnostic);
+
+    // Validates the deterministic Vertex-to-Constraint CSR incidence table.
+    bool validate_cloth_vertex_constraint_csr(
         const cloth_mesh& mesh,
         std::string& diagnostic);
 
