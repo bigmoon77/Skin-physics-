@@ -3855,8 +3855,8 @@ namespace
         const std::vector<uint32_t> invalid_gpu_status =
             readback_structured_buffer<uint32_t>(
                 device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
-        require(invalid_gpu_status[0u] == 1u,
-            "An influence outside the ordered Skin Joint range must set the GPU target failure bit and reject the generated target stream.");
+        require(invalid_gpu_status[0u] == 16u,
+            "An influence outside the ordered Skin Joint range must set the GPU LBS-stage diagnostic bit and reject the generated target stream.");
 
         std::cout << "[PASS] P09_WARP_PHYSICS_MESH_SKINNING_TARGETS\n";
     }
