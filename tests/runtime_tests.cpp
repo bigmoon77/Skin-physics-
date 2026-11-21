@@ -3154,17 +3154,17 @@ namespace
         require(actual.size() == 3u,
             "Kinematic Collider GPU readback must return every dispatched sample.");
 
-        const auto near = [](float left, float right, float tolerance)
+        const auto is_near_value = [](float left, float right, float tolerance)
         {
             return std::isfinite(left) && std::isfinite(right) &&
                 std::abs(left - right) <= tolerance;
         };
-        const auto verify_sample = [&near](
+        const auto verify_sample = [&is_near_value](
             const collider_sample_gpu_record& gpu,
             const kinematic_collider_sample_result& cpu)
         {
             return gpu.status == 0u &&
-                near(gpu.translation.x, cpu.value.translation.x, 2.0e-4f) &&
+                is_near_value(gpu.translation.x, cpu.value.translation.x, 2.0e-4f) &&
                 near(gpu.translation.y, cpu.value.translation.y, 2.0e-4f) &&
                 near(gpu.translation.z, cpu.value.translation.z, 2.0e-4f) &&
                 near(gpu.rotation.x, cpu.value.rotation.x, 2.0e-4f) &&
