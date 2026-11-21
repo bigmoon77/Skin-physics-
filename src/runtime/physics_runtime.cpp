@@ -4157,6 +4157,7 @@ namespace skin_physics::runtime
             const physics::animation_blend_clip_span* blend_span = nullptr;
             double span_local_u = 0.0;
             double span_duration = 0.0;
+            uint32_t selected_span_record_index = asset::invalid_index;
 
             if (schedule.has_blend)
             {
@@ -4180,6 +4181,8 @@ namespace skin_physics::runtime
                     return false;
                 }
                 blend_span = &(*iterator);
+                selected_span_record_index = static_cast<uint32_t>(
+                    std::distance(schedule.blend_spans.begin(), iterator));
                 source_clip = &model.source_model.animations[
                     model_snapshot.animation_blend.source_track.clip_index];
                 target_clip = &model.source_model.animations[
@@ -4209,6 +4212,8 @@ namespace skin_physics::runtime
                     return false;
                 }
                 playback_span = &(*iterator);
+                selected_span_record_index = static_cast<uint32_t>(
+                    std::distance(schedule.playback_spans.begin(), iterator));
                 source_clip = &model.source_model.animations[
                     model_snapshot.animation_playback.track.clip_index];
                 span_duration = playback_span->world_time_duration;
@@ -4228,113 +4233,250 @@ namespace skin_physics::runtime
                 return false;
             }
 
-            physics::animation_trajectory_span_input span_input;
-            span_input.span_id = 0u;
-            span_input.bounds_are_certified = false;
-            if (blend_span != nullptr)
-            {
-                physics::animation_trajectory_track_span_input source_input;
-                source_input.clip_index =
-                    model_snapshot.animation_blend.source_track.clip_index;
-                source_input.scheduled = blend_span->source;
-                source_input.loop = model_snapshot.animation_blend.source_track.loop;
-                source_input.reverse_playback =
-                    blend_span->source.clip.clip_time_delta < 0.0;
-                physics::animation_trajectory_track_span_input target_input;
-                target_input.clip_index =
-                    model_snapshot.animation_blend.target_track.clip_index;
-                target_input.scheduled = blend_span->target;
-                target_input.loop = model_snapshot.animation_blend.target_track.loop;
-                target_input.reverse_playback =
-                    blend_span->target.clip.clip_time_delta < 0.0;
-                span_input.tracks.push_back(std::move(source_input));
-                span_input.tracks.push_back(std::move(target_input));
-                span_input.has_blend = true;
-                span_input.source_track_index = 0u;
-                span_input.target_track_index = 1u;
-                span_input.blend_curve.blend_start_time =
-                    model_snapshot.animation_blend.blend_start_time;
-                span_input.blend_curve.blend_end_time =
-                    model_snapshot.animation_blend.blend_end_time;
-                span_input.blend_curve.weight_start =
-                    model_snapshot.animation_blend.weight_start;
-                span_input.blend_curve.weight_end =
-                    model_snapshot.animation_blend.weight_end;
-                span_input.blend_curve.tangent_start =
-                    model_snapshot.animation_blend.tangent_start;
-                span_input.blend_curve.tangent_end =
-                    model_snapshot.animation_blend.tangent_end;
-            }
-            else
-            {
-                physics::animation_trajectory_track_span_input playback_input;
-                playback_input.clip_index =
-                    model_snapshot.animation_playback.track.clip_index;
-                playback_input.scheduled = *playback_span;
-                playback_input.loop =
-                    model_snapshot.animation_playback.track.loop;
-                playback_input.reverse_playback =
-                    playback_span->clip.clip_time_delta < 0.0;
-                span_input.tracks.push_back(std::move(playback_input));
-            }
-            const double selected_span_world_time_start =
-                blend_span != nullptr
-                    ? blend_span->world_time_start
-                    : playback_span->world_time_start;
-            span_input.world_time_start = selected_span_world_time_start;
-            span_input.world_time_duration = span_duration;
+            auto packet_cache_iterator = std::find_if(
+                out_animation_packet_resources.begin(),
+                out_animation_packet_resources.end(),
+                [&schedule, &model](const animation_packet_work_state& value)
+                {
+                    return value.model_index == schedule.model_index &&
+                        value.model_generation == model.generation;
+                });
 
-            physics::animation_trajectory_packet_build_desc packet_desc;
-            packet_desc.animation_input_version = animation_input_version;
-            packet_desc.spans.push_back(std::move(span_input));
-            const physics::animation_trajectory_packet_build_result packet_build =
-                physics::build_animation_trajectory_packet(
-                    model.source_model, packet_desc);
-            if (!packet_build.success)
+            if (packet_cache_iterator ==
+                out_animation_packet_resources.end())
+            {
+                physics::animation_trajectory_packet_build_desc packet_desc;
+                packet_desc.animation_input_version = animation_input_version;
+                const std::size_t scheduled_span_count =
+                    schedule.has_blend
+                        ? schedule.blend_spans.size()
+                        : schedule.playback_spans.size();
+                if (scheduled_span_count == 0u ||
+                    scheduled_span_count >
+                        static_cast<std::size_t>(packet_desc.maximum_span_count))
+                {
+                    diagnostic =
+                        "Animation Tick Schedule has an empty or over-capacity immutable Span table.";
+                    return false;
+                }
+                packet_desc.spans.reserve(scheduled_span_count);
+
+                if (schedule.has_blend)
+                {
+                    for (std::size_t span_index = 0u;
+                        span_index < schedule.blend_spans.size();
+                        ++span_index)
+                    {
+                        const physics::animation_blend_clip_span& scheduled =
+                            schedule.blend_spans[span_index];
+                        physics::animation_trajectory_span_input span_input;
+                        span_input.span_id = static_cast<uint32_t>(span_index);
+                        span_input.world_time_start = scheduled.world_time_start;
+                        span_input.world_time_duration =
+                            scheduled.world_time_duration;
+                        span_input.bounds_are_certified = false;
+
+                        physics::animation_trajectory_track_span_input source_input;
+                        source_input.clip_index =
+                            model_snapshot.animation_blend.source_track.clip_index;
+                        source_input.scheduled = scheduled.source;
+                        source_input.loop =
+                            model_snapshot.animation_blend.source_track.loop;
+                        source_input.reverse_playback =
+                            scheduled.source.clip.clip_time_delta < 0.0;
+
+                        physics::animation_trajectory_track_span_input target_input;
+                        target_input.clip_index =
+                            model_snapshot.animation_blend.target_track.clip_index;
+                        target_input.scheduled = scheduled.target;
+                        target_input.loop =
+                            model_snapshot.animation_blend.target_track.loop;
+                        target_input.reverse_playback =
+                            scheduled.target.clip.clip_time_delta < 0.0;
+
+                        span_input.tracks.push_back(std::move(source_input));
+                        span_input.tracks.push_back(std::move(target_input));
+                        span_input.has_blend = true;
+                        span_input.source_track_index = 0u;
+                        span_input.target_track_index = 1u;
+                        span_input.blend_curve.blend_start_time =
+                            model_snapshot.animation_blend.blend_start_time;
+                        span_input.blend_curve.blend_end_time =
+                            model_snapshot.animation_blend.blend_end_time;
+                        span_input.blend_curve.weight_start =
+                            model_snapshot.animation_blend.weight_start;
+                        span_input.blend_curve.weight_end =
+                            model_snapshot.animation_blend.weight_end;
+                        span_input.blend_curve.tangent_start =
+                            model_snapshot.animation_blend.tangent_start;
+                        span_input.blend_curve.tangent_end =
+                            model_snapshot.animation_blend.tangent_end;
+                        packet_desc.spans.push_back(std::move(span_input));
+                    }
+                }
+                else
+                {
+                    for (std::size_t span_index = 0u;
+                        span_index < schedule.playback_spans.size();
+                        ++span_index)
+                    {
+                        const physics::scheduled_animation_clip_span& scheduled =
+                            schedule.playback_spans[span_index];
+                        physics::animation_trajectory_span_input span_input;
+                        span_input.span_id = static_cast<uint32_t>(span_index);
+                        span_input.world_time_start = scheduled.world_time_start;
+                        span_input.world_time_duration =
+                            scheduled.world_time_duration;
+                        span_input.bounds_are_certified = false;
+
+                        physics::animation_trajectory_track_span_input playback_input;
+                        playback_input.clip_index =
+                            model_snapshot.animation_playback.track.clip_index;
+                        playback_input.scheduled = scheduled;
+                        playback_input.loop =
+                            model_snapshot.animation_playback.track.loop;
+                        playback_input.reverse_playback =
+                            scheduled.clip.clip_time_delta < 0.0;
+                        span_input.tracks.push_back(std::move(playback_input));
+                        packet_desc.spans.push_back(std::move(span_input));
+                    }
+                }
+
+                const physics::animation_trajectory_packet_build_result packet_build =
+                    physics::build_animation_trajectory_packet(
+                        model.source_model, packet_desc);
+                if (!packet_build.success)
+                {
+                    diagnostic =
+                        "Immutable multi-Span GPU Animation Packet construction failed before Segment Submission: " +
+                        packet_build.message;
+                    return false;
+                }
+
+                physics::animation_span_cursor_gpu_record initial_cursor;
+                if (!physics::initialize_animation_span_cursor(
+                        packet_data,
+                        selected_span_record_index,
+                        world_time,
+                        initial_cursor,
+                        diagnostic))
+                {
+                    diagnostic =
+                        "Unable to initialize the immutable Packet's initial Segment Cursor: " +
+                        diagnostic;
+                    return false;
+                }
+
+                out_animation_packet_resources.emplace_back();
+                packet_cache_iterator =
+                    std::prev(out_animation_packet_resources.end());
+                packet_cache_iterator->model_index = schedule.model_index;
+                packet_cache_iterator->model_generation = model.generation;
+                packet_cache_iterator->packet =
+                    std::move(const_cast<physics::animation_trajectory_packet&>(
+                        packet_data));
+                if (!physics::upload_animation_trajectory_packet(
+                        device.Get(),
+                        packet_cache_iterator->packet,
+                        initial_cursor,
+                        packet_cache_iterator->resources,
+                        diagnostic))
+                {
+                    diagnostic =
+                        "Unable to upload the immutable multi-Span Animation Packet for GPU evaluation: " +
+                        diagnostic;
+                    return false;
+                }
+            }
+            else if (packet_cache_iterator->packet.animation_input_version !=
+                animation_input_version)
             {
                 diagnostic =
-                    "Immutable GPU Animation Packet construction failed before Segment Submission: " +
-                    packet_build.message;
+                    "Animation Packet cache reused a Model across incompatible immutable Input Snapshot Versions.";
                 return false;
             }
 
-            physics::animation_span_cursor_gpu_record initial_cursor;
-            if (!physics::initialize_animation_span_cursor(
-                    packet_build.value, 0u, world_time,
-                    initial_cursor, diagnostic))
-            {
-                diagnostic =
-                    "Unable to initialize the immutable Packet's Segment Cursor: " +
-                    diagnostic;
-                return false;
-            }
-
-            out_animation_packet_resources.emplace_back();
+            animation_packet_work_state& packet_cache =
+                *packet_cache_iterator;
+            const physics::animation_trajectory_packet& packet_data =
+                packet_cache.packet;
             physics::animation_trajectory_gpu_resources& packet_resources =
-                out_animation_packet_resources.back();
-            if (!physics::upload_animation_trajectory_packet(
-                    device.Get(),
-                    packet_build.value,
-                    initial_cursor,
-                    packet_resources,
-                    diagnostic))
+                packet_cache.resources;
+            if (selected_span_record_index >= packet_data.span_records.size())
             {
                 diagnostic =
-                    "Unable to upload the immutable Animation Packet for GPU evaluation: " +
-                    diagnostic;
+                    "Animation Segment selected a Span outside the cached immutable multi-Span Packet.";
                 return false;
             }
 
+            auto mesh_cursor_iterator = std::find_if(
+                packet_cache.mesh_cursors.begin(),
+                packet_cache.mesh_cursors.end(),
+                [&gpu_mesh](const animation_mesh_cursor_work_state& value)
+                {
+                    return value.mesh_index == gpu_mesh.mesh_index;
+                });
+            if (mesh_cursor_iterator == packet_cache.mesh_cursors.end())
+            {
+                physics::animation_span_cursor_gpu_record initial_mesh_cursor;
+                if (!physics::initialize_animation_span_cursor(
+                        packet_data,
+                        selected_span_record_index,
+                        world_time,
+                        initial_mesh_cursor,
+                        diagnostic))
+                {
+                    diagnostic =
+                        "Unable to initialize the per-Mesh Cursor for the immutable multi-Span Packet: " +
+                        diagnostic;
+                    return false;
+                }
+
+                animation_mesh_cursor_work_state cursor_work;
+                cursor_work.mesh_index = gpu_mesh.mesh_index;
+                if (!create_structured_buffer(
+                        device.Get(),
+                        static_cast<uint32_t>(sizeof(initial_mesh_cursor)),
+                        static_cast<uint32_t>(sizeof(initial_mesh_cursor)),
+                        D3D11_BIND_SHADER_RESOURCE |
+                            D3D11_BIND_UNORDERED_ACCESS,
+                        &initial_mesh_cursor,
+                        cursor_work.cursor_buffer.GetAddressOf()) ||
+                    !create_structured_srv(
+                        device.Get(),
+                        cursor_work.cursor_buffer.Get(),
+                        1u,
+                        cursor_work.cursor_srv.GetAddressOf()) ||
+                    !create_structured_uav(
+                        device.Get(),
+                        cursor_work.cursor_buffer.Get(),
+                        1u,
+                        cursor_work.cursor_uav.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate the per-Mesh mutable Animation Span Cursor resources.";
+                    return false;
+                }
+
+                packet_cache.mesh_cursors.push_back(std::move(cursor_work));
+                mesh_cursor_iterator =
+                    std::prev(packet_cache.mesh_cursors.end());
+            }
+            animation_mesh_cursor_work_state& mesh_cursor =
+                *mesh_cursor_iterator;
+
+            const physics::animation_span_gpu_record& packet_span =
+                packet_data.span_records[selected_span_record_index];
             const uint32_t node_count = static_cast<uint32_t>(
                 model.source_model.nodes.size());
             const physics::animation_span_gpu_record& packet_span =
-                packet_build.value.span_records[0u];
+                packet_data.span_records[0u];
             if (node_count == 0u ||
                 packet_span.track_record_count == 0u ||
                 packet_span.track_record_count > 2u ||
                 packet_span.channel_record_count !=
                     node_count * packet_span.track_record_count ||
-                packet_build.value.static_node_matrices.size() != node_count)
+                packet_data.static_node_matrices.size() != node_count)
             {
                 diagnostic =
                     "GPU Animation Packet does not contain one dense topological Channel table for this Model.";
@@ -4515,13 +4657,13 @@ namespace skin_physics::runtime
                 ++track_index)
             {
                 const physics::animation_track_gpu_record& track_record =
-                    packet_build.value.track_records[
+                    packet_data.track_records[
                         packet_span.first_track_record + track_index];
                 if (track_record.channel_record_count != node_count ||
                     track_record.first_channel_record >
-                        packet_build.value.channel_records.size() ||
+                        packet_data.channel_records.size() ||
                     track_record.channel_record_count >
-                        packet_build.value.channel_records.size() -
+                        packet_data.channel_records.size() -
                             track_record.first_channel_record)
                 {
                     diagnostic =
@@ -4533,7 +4675,7 @@ namespace skin_physics::runtime
                 parameters.channel_count = track_record.channel_record_count;
                 parameters.first_channel_record =
                     track_record.first_channel_record;
-                parameters.expected_span_record_index = 0u;
+                parameters.expected_span_record_index = selected_span_record_index;
                 Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
                 if (!create_constant_buffer(
                         device.Get(),
@@ -4556,7 +4698,7 @@ namespace skin_physics::runtime
                 channel_pass.shader = animation_channel_evaluate_shader.Get();
                 channel_pass.shader_resources = {
                     { 0u, packet_resources.channel_srv() },
-                    { 1u, packet_resources.cursor_srv() },
+                    { 1u, mesh_cursor.cursor_srv.Get() },
                     { 2u, packet_resources.span_srv() }
                 };
                 channel_pass.unordered_access_views = {
@@ -4611,7 +4753,7 @@ namespace skin_physics::runtime
                     { 0u, source_local_srv.Get() },
                     { 1u, target_local_srv.Get() },
                     { 2u, packet_resources.blend_srv() },
-                    { 3u, packet_resources.cursor_srv() },
+                    { 3u, mesh_cursor.cursor_srv.Get() },
                     { 4u, packet_resources.span_srv() }
                 };
                 blend_pass.unordered_access_views = {
@@ -4665,7 +4807,7 @@ namespace skin_physics::runtime
             {
                 uint32_t depth = 0u;
                 uint32_t parent_index =
-                    packet_build.value.channel_records[
+                    packet_data.channel_records[
                         packet_span.first_channel_record + channel_index].parent_index;
                 while (parent_index != asset::invalid_index)
                 {
@@ -4677,7 +4819,7 @@ namespace skin_physics::runtime
                     }
                     ++depth;
                     parent_index =
-                        packet_build.value.channel_records[
+                        packet_data.channel_records[
                             packet_span.first_channel_record + parent_index].parent_index;
                 }
                 maximum_hierarchy_depth =
@@ -4692,7 +4834,7 @@ namespace skin_physics::runtime
                 parameters.node_count = node_count;
                 parameters.static_node_matrix_count =
                     static_cast<uint32_t>(
-                        packet_build.value.static_node_matrices.size());
+                        packet_data.static_node_matrices.size());
                 parameters.hierarchy_level = hierarchy_level;
                 Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
                 if (!create_constant_buffer(
@@ -4739,25 +4881,25 @@ namespace skin_physics::runtime
 
             uint32_t skin_record_index = asset::invalid_index;
             for (uint32_t skin_index = 0u;
-                skin_index < packet_build.value.skin_records.size();
+                skin_index < packet_data.skin_records.size();
                 ++skin_index)
             {
                 const physics::animation_skin_gpu_record& skin_record =
-                    packet_build.value.skin_records[skin_index];
+                    packet_data.skin_records[skin_index];
                 if (skin_record.skin_index != gpu_mesh.skin_index ||
                     skin_record.mesh_node_channel_offset >= node_count)
                 {
                     continue;
                 }
                 const uint32_t track_channel_start =
-                    packet_build.value.track_records[
+                    packet_data.track_records[
                         packet_span.first_track_record].first_channel_record;
                 const uint32_t mesh_channel_record =
                     track_channel_start +
                     skin_record.mesh_node_channel_offset;
                 if (mesh_channel_record <
-                        packet_build.value.channel_records.size() &&
-                    packet_build.value.channel_records[
+                        packet_data.channel_records.size() &&
+                    packet_data.channel_records[
                         mesh_channel_record].node_index ==
                         gpu_mesh.skin_node_index)
                 {
@@ -4766,7 +4908,7 @@ namespace skin_physics::runtime
                 }
             }
             if (skin_record_index == asset::invalid_index ||
-                packet_build.value.skin_records[skin_record_index].joint_count !=
+                packet_data.skin_records[skin_record_index].joint_count !=
                     gpu_mesh.skin_joint_count)
             {
                 diagnostic =
@@ -4806,14 +4948,14 @@ namespace skin_physics::runtime
             skin_parameters.skin_record_index = skin_record_index;
             skin_parameters.skin_record_count =
                 static_cast<uint32_t>(
-                    packet_build.value.skin_records.size());
+                    packet_data.skin_records.size());
             skin_parameters.track_channel_count = node_count;
             skin_parameters.skin_joint_record_count =
                 static_cast<uint32_t>(
-                    packet_build.value.skin_joint_records.size());
+                    packet_data.skin_joint_records.size());
             skin_parameters.inverse_bind_matrix_count =
                 static_cast<uint32_t>(
-                    packet_build.value.inverse_bind_matrices.size());
+                    packet_data.inverse_bind_matrices.size());
             skin_parameters.expected_mesh_node_index =
                 gpu_mesh.skin_node_index;
             transform segment_root_transform;
@@ -4961,7 +5103,7 @@ namespace skin_physics::runtime
                 { 0u, packet_resources.span_srv() }
             };
             cursor_advance_pass.unordered_access_views = {
-                { 0u, packet_resources.cursor_uav(), 0xffffffffu },
+                { 0u, mesh_cursor.cursor_uav.Get(), 0xffffffffu },
                 { 1u, segment_status_uav.Get(), 0xffffffffu }
             };
             cursor_advance_pass.constant_buffers = {
