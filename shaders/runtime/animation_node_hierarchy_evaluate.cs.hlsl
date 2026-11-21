@@ -89,7 +89,7 @@ void fail_node(uint node_index)
     global_matrices[node_index] = zero_matrix;
     global_matrix_derivatives[node_index] = zero_matrix;
     uint previous_status = 0u;
-    InterlockedOr(hierarchy_status[0], 1u, previous_status);
+    InterlockedOr(hierarchy_status[0], 4u, previous_status);
 }
 
 bool build_local_trs_matrices(
