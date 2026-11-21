@@ -489,6 +489,16 @@ QuaternionはSource / Targetの値とDerivativeを正規化・Tangent-Space投�
 
 WARP Golden Regression `P09_WARP_ANIMATION_BLEND_LOCAL_TRANSFORMS`はHermite Weightの時間微分がTranslation / Scaleへ寄与すること、Quaternion正規化 / 接空間微分、Node不一致のFail-Closedを検証する。GPU BlendはLocal Transform段階であり、GPU Hierarchy / Skin Matrix / Runtime Packet Dispatchは後続Stageで接続する。
 
+#### GPU Node Hierarchy / Global Matrix Derivative Evaluation
+
+`shaders/runtime/animation_node_hierarchy_evaluate.cs.hlsl`はLocal Transform Working Recordsを親子順にGlobal Matrixへ合成する。t0=Local Transform、t1=Asset Node IndexでDenseなStatic Matrix Buffer、u0=Global Matrix、u1=Global Matrix Derivative、u2=Hierarchy Statusとする。b0はNode Count、Static Matrix Count、現在のHierarchy Levelを保持する。
+
+Channel RecordのParent IndexはTrack Channel Range内の相対Indexであり、RootはUINT32_MAX。Packet Builderが保証するParent-before-Child順をGPU側でも検証し、各NodeのRootからのDepthを求める。Runtime / Dispatch GraphはDepth 0から最大Depthまで順番にDispatchし、各DepthのGlobal Matrixを同じWorking Bufferへ書き込む。Parentは必ず前のDepthで確定済みのため、同一Dispatch内でParent / Childの書込み競合を起こさない。
+
+TRS NodeのLocal MatrixはQuaternion / Scale / Translationから構築する。Local Matrix DerivativeはRotation Matrix Derivative、Scale Derivative、Translation Velocityを解析的に合成する。Static Matrix NodeはDense Static Matrix BufferからLocal Matrixを読み、Local Derivativeを0とする。Globalは`G_parent * L_local`、DerivativeはProduct Rule `Gdot_parent * L_local + G_parent * Ldot_local`で計算する。Root NodeはLocalをそのままGlobalとして扱う。
+
+Non-finite Transform / Matrix、非正Scale、Zero Quaternion、Self-Parent、非Topological Parent、Cycle、Static Matrix Index不正はHierarchy StatusへFailure Bitを立てる。WARP Golden `P09_WARP_ANIMATION_NODE_HIERARCHY`は3階層TRS、Static Matrix Child、Global Translation / Derivativeの親子合成と不正Parent拒否を検証する。Model Root Transform、Mesh Node Inverse、Skin-specific IBMの合成は別Stageで扱う。
+
 #### Channel補間と時間微分
 
 Span内正規化時間をu=(t-t0)/(t1-t0)、u in [0,1]とする。Translation / Scaleの各Componentは次の多項式で表す。
