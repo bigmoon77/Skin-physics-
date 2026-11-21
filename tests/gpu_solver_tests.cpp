@@ -3374,6 +3374,7 @@ namespace
         using skin_physics::physics::animation_skin_gpu_record;
         using skin_physics::physics::animation_skin_joint_gpu_record;
         using skin_physics::physics::animation_span_cursor_gpu_record;
+        using skin_physics::physics::animation_span_flag_bounds_certified;
         using skin_physics::physics::animation_span_gpu_record;
         using skin_physics::physics::animation_track_gpu_record;
         using skin_physics::physics::animation_trajectory_gpu_resources;
