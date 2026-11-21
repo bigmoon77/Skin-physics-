@@ -4437,7 +4437,17 @@ namespace skin_physics::runtime
                 packet_data.static_node_matrices.size() != node_count)
             {
                 diagnostic =
-                    "GPU Animation Packet does not contain one dense topological Channel table for this Model.";
+                    "GPU Animation Packet does not contain one dense topological Channel table for this Model. " +
+                    "node_count=" + std::to_string(node_count) +
+                    " span_index=" + std::to_string(selected_span_record_index) +
+                    " span_count=" + std::to_string(packet_data.span_records.size()) +
+                    " track_count=" + std::to_string(packet_span.track_record_count) +
+                    " channel_count=" + std::to_string(packet_span.channel_record_count) +
+                    " blend_count=" + std::to_string(packet_span.blend_record_count) +
+                    " static_matrix_count=" + std::to_string(packet_data.static_node_matrices.size()) +
+                    " first_track=" + std::to_string(packet_span.first_track_record) +
+                    " first_channel=" + std::to_string(packet_span.first_channel_record) +
+                    " first_blend=" + std::to_string(packet_span.first_blend_record);
                 return false;
             }
 
