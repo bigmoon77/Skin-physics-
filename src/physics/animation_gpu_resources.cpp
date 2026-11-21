@@ -230,6 +230,22 @@ namespace skin_physics::physics
                 const double world_time_start =
                     packet.span_world_time_starts[span_index];
 
+                const bool bounds_certified =
+                    (span.flags & animation_span_flag_bounds_certified) != 0u;
+                const bool bounds_valid =
+                    std::isfinite(span.speed_bound) &&
+                    span.speed_bound >= 0.0f &&
+                    std::isfinite(span.acceleration_bound) &&
+                    span.acceleration_bound >= 0.0f &&
+                    std::isfinite(span.chord_deviation_bound) &&
+                    span.chord_deviation_bound >= 0.0f &&
+                    std::isfinite(span.quaternion_normalization_lower_bound) &&
+                    (bounds_certified
+                        ? span.quaternion_normalization_lower_bound > 1.0e-12f
+                        : span.quaternion_normalization_lower_bound == 0.0f &&
+                            span.speed_bound == 0.0f &&
+                            span.acceleration_bound == 0.0f &&
+                            span.chord_deviation_bound == 0.0f);
                 if (span.animation_input_version_low != version_low ||
                     span.animation_input_version_high != version_high ||
                     !span_ids.insert(span.span_id).second ||
@@ -238,14 +254,7 @@ namespace skin_physics::physics
                     span.span_duration_seconds <= 0.0f ||
                     !std::isfinite(span.inverse_span_duration) ||
                     span.inverse_span_duration <= 0.0f ||
-                    !std::isfinite(span.speed_bound) ||
-                    span.speed_bound < 0.0f ||
-                    !std::isfinite(span.acceleration_bound) ||
-                    span.acceleration_bound < 0.0f ||
-                    !std::isfinite(span.chord_deviation_bound) ||
-                    span.chord_deviation_bound < 0.0f ||
-                    !std::isfinite(span.quaternion_normalization_lower_bound) ||
-                    span.quaternion_normalization_lower_bound <= 0.0f ||
+                    !bounds_valid ||
                     !valid_record_range(
                         span.first_track_record,
                         span.track_record_count,
