@@ -3865,8 +3865,8 @@ namespace
     {
         uint32_t channel_count = 0u;
         uint32_t first_channel_record = 0u;
-        float span_local_u = 0.0f;
-        float inverse_span_duration = 0.0f;
+        uint32_t expected_span_record_index = 0u;
+        uint32_t reserved = 0u;
     };
 
     struct alignas(16) gpu_animation_node_local_transform_record
@@ -3890,6 +3890,8 @@ namespace
     {
         using skin_physics::asset::invalid_index;
         using skin_physics::physics::animation_channel_gpu_record;
+        using skin_physics::physics::animation_span_gpu_record;
+        using skin_physics::physics::animation_span_cursor_gpu_record;
         using skin_physics::physics::animation_channel_mask_rotation;
         using skin_physics::physics::animation_channel_mask_scale;
         using skin_physics::physics::animation_channel_mask_translation;
@@ -3961,6 +3963,41 @@ namespace
                 device.Get(), channel_buffer.Get(),
                 static_cast<uint32_t>(channels.size()));
 
+        animation_span_gpu_record span_record;
+        span_record.span_id = 1u;
+        span_record.animation_input_version_low = 0x13579bdfu;
+        span_record.animation_input_version_high = 0x2468ace0u;
+        span_record.first_channel_record = 0u;
+        span_record.channel_record_count =
+            static_cast<uint32_t>(channels.size());
+        span_record.span_duration_seconds = 0.5f;
+        span_record.inverse_span_duration = 2.0f;
+        const std::vector<animation_span_gpu_record> span_values = {
+            span_record
+        };
+        const ComPtr<ID3D11Buffer> span_buffer =
+            create_structured_buffer(
+                device.Get(), span_values, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> span_srv =
+            create_structured_srv<animation_span_gpu_record>(
+                device.Get(), span_buffer.Get(), 1u);
+        animation_span_cursor_gpu_record cursor_record;
+        cursor_record.span_record_index = 0u;
+        cursor_record.animation_input_version_low =
+            span_record.animation_input_version_low;
+        cursor_record.animation_input_version_high =
+            span_record.animation_input_version_high;
+        cursor_record.u_segment_start = 0.5f;
+        const std::vector<animation_span_cursor_gpu_record> cursor_values = {
+            cursor_record
+        };
+        const ComPtr<ID3D11Buffer> cursor_buffer =
+            create_structured_buffer(
+                device.Get(), cursor_values, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> cursor_srv =
+            create_structured_srv<animation_span_cursor_gpu_record>(
+                device.Get(), cursor_buffer.Get(), 1u);
+
         const std::vector<gpu_animation_node_local_transform_record> empty_outputs(
             channels.size());
         const std::vector<uint32_t> clear_status(1u, 0u);
@@ -3981,15 +4018,14 @@ namespace
         gpu_animation_channel_evaluation_parameters parameters;
         parameters.channel_count = static_cast<uint32_t>(channels.size());
         parameters.first_channel_record = 0u;
-        parameters.span_local_u = 0.5f;
-        parameters.inverse_span_duration = 2.0f;
+        parameters.expected_span_record_index = 0u;
         const ComPtr<ID3D11Buffer> parameter_buffer =
             create_constant_buffer(
                 device.Get(), &parameters, sizeof(parameters));
 
         dispatch_compute(
             context.Get(), shader.Get(),
-            { channel_srv.Get() },
+            { channel_srv.Get(), cursor_srv.Get(), span_srv.Get() },
             { output_uav.Get(), status_uav.Get() },
             parameter_buffer.Get(),
             1u);
@@ -4079,7 +4115,7 @@ namespace
                 device.Get(), invalid_status_buffer.Get(), 1u);
         dispatch_compute(
             context.Get(), shader.Get(),
-            { invalid_channel_srv.Get() },
+            { invalid_channel_srv.Get(), cursor_srv.Get(), span_srv.Get() },
             { output_uav.Get(), invalid_status_uav.Get() },
             parameter_buffer.Get(),
             1u);
@@ -4096,6 +4132,8 @@ namespace
     {
         using skin_physics::physics::animation_blend_flag_enabled;
         using skin_physics::physics::animation_blend_gpu_record;
+        using skin_physics::physics::animation_span_gpu_record;
+        using skin_physics::physics::animation_span_cursor_gpu_record;
 
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
@@ -4166,6 +4204,38 @@ namespace
             create_structured_srv<animation_blend_gpu_record>(
                 device.Get(), blend_buffer.Get(), 1u);
 
+        animation_span_gpu_record span_record;
+        span_record.span_id = 2u;
+        span_record.animation_input_version_low = 0x89abcdefu;
+        span_record.animation_input_version_high = 0x01234567u;
+        span_record.span_duration_seconds = 1.0f;
+        span_record.inverse_span_duration = 1.0f;
+        const std::vector<animation_span_gpu_record> span_values = {
+            span_record
+        };
+        const ComPtr<ID3D11Buffer> span_buffer =
+            create_structured_buffer(
+                device.Get(), span_values, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> span_srv =
+            create_structured_srv<animation_span_gpu_record>(
+                device.Get(), span_buffer.Get(), 1u);
+        animation_span_cursor_gpu_record cursor_record;
+        cursor_record.span_record_index = 0u;
+        cursor_record.animation_input_version_low =
+            span_record.animation_input_version_low;
+        cursor_record.animation_input_version_high =
+            span_record.animation_input_version_high;
+        cursor_record.u_segment_start = 0.5f;
+        const std::vector<animation_span_cursor_gpu_record> cursor_values = {
+            cursor_record
+        };
+        const ComPtr<ID3D11Buffer> cursor_buffer =
+            create_structured_buffer(
+                device.Get(), cursor_values, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> cursor_srv =
+            create_structured_srv<animation_span_cursor_gpu_record>(
+                device.Get(), cursor_buffer.Get(), 1u);
+
         const std::vector<gpu_animation_node_local_transform_record> empty_output(1u);
         const std::vector<uint32_t> clear_status(1u, 0u);
         const ComPtr<ID3D11Buffer> output_buffer =
@@ -4184,9 +4254,8 @@ namespace
         struct alignas(16) blend_parameters
         {
             uint32_t node_count = 1u;
-            float span_duration_seconds = 1.0f;
-            float span_local_u = 0.5f;
-            uint32_t reserved = 0u;
+            uint32_t expected_span_record_index = 0u;
+            uint32_t reserved[2] = {};
         };
         const blend_parameters parameters;
         const ComPtr<ID3D11Buffer> parameter_buffer =
@@ -4195,7 +4264,8 @@ namespace
 
         dispatch_compute(
             context.Get(), shader.Get(),
-            { source_srv.Get(), target_srv.Get(), blend_srv.Get() },
+            { source_srv.Get(), target_srv.Get(), blend_srv.Get(),
+                cursor_srv.Get(), span_srv.Get() },
             { output_uav.Get(), status_uav.Get() },
             parameter_buffer.Get(),
             1u);
@@ -4236,14 +4306,17 @@ namespace
             std::abs(rotation_tangent_dot) <= 1.0e-5f,
             "GPU Quaternion Blend must hemisphere-align, normalize and return its analytic tangent-space derivative.");
 
+        cursor_record.u_segment_start = 0.0f;
+        context->UpdateSubresource(
+            cursor_buffer.Get(), 0u, nullptr, &cursor_record, 0u, 0u);
         blend_parameters start_parameters = parameters;
-        start_parameters.span_local_u = 0.0f;
         const ComPtr<ID3D11Buffer> start_parameter_buffer =
             create_constant_buffer(
                 device.Get(), &start_parameters, sizeof(start_parameters));
         dispatch_compute(
             context.Get(), shader.Get(),
-            { source_srv.Get(), target_srv.Get(), blend_srv.Get() },
+            { source_srv.Get(), target_srv.Get(), blend_srv.Get(),
+                cursor_srv.Get(), span_srv.Get() },
             { output_uav.Get(), status_uav.Get() },
             start_parameter_buffer.Get(),
             1u);
@@ -4277,7 +4350,8 @@ namespace
                 device.Get(), mismatch_status_buffer.Get(), 1u);
         dispatch_compute(
             context.Get(), shader.Get(),
-            { source_srv.Get(), mismatched_target_srv.Get(), blend_srv.Get() },
+            { source_srv.Get(), mismatched_target_srv.Get(), blend_srv.Get(),
+                cursor_srv.Get(), span_srv.Get() },
             { output_uav.Get(), mismatch_status_uav.Get() },
             parameter_buffer.Get(),
             1u);
