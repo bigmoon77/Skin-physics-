@@ -811,7 +811,7 @@ namespace
         const skin_physics::runtime::status cloth_registration =
             runtime.add_model(first_world, cloth_model_desc, &cloth_model);
         require(cloth_registration.success(),
-            std::string("Runtime must validate and upload immutable Cloth topology, Position-Writer Epoch Triangle / Edge primitive SRVs, CSR and Segment-local Lambda resources. diagnostic=") +
+            std::string("Runtime must validate and upload immutable Cloth topology, Position-Writer Epoch Triangle / Edge primitive SRVs, Jacobi / Epoch scratch, CSR and Segment-local Lambda resources. diagnostic=") +
                 cloth_registration.diagnostic);
         skin_physics::runtime::model_desc invalid_cloth_model_desc =
             cloth_model_desc;
