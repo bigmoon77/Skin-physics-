@@ -2006,6 +2006,8 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_jacobi_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reconstruct_velocity_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reset_lambdas_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_snapshot_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_displacement_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_swept_aabb_shader;
         std::vector<world_slot> worlds;
         std::thread::id submission_thread;
@@ -8522,6 +8524,10 @@ namespace skin_physics::runtime
             shader_root / "cloth_reconstruct_velocity.cs.hlsl";
         const std::filesystem::path cloth_reset_lambdas_path =
             shader_root / "cloth_reset_lambdas.cs.hlsl";
+        const std::filesystem::path cloth_epoch_snapshot_path =
+            shader_root / "cloth_epoch_snapshot.cs.hlsl";
+        const std::filesystem::path cloth_epoch_displacement_path =
+            shader_root / "cloth_epoch_displacement.cs.hlsl";
         const std::filesystem::path cloth_epoch_swept_aabb_path =
             shader_root / "cloth_epoch_swept_aabb.cs.hlsl";
 
@@ -8551,6 +8557,8 @@ namespace skin_physics::runtime
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_jacobi_gather_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reconstruct_velocity_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_reset_lambdas_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_snapshot_shader;
+        Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_displacement_shader;
         Microsoft::WRL::ComPtr<ID3D11ComputeShader> cloth_epoch_swept_aabb_shader;
         if (!compile_runtime_compute_shader(
                 device, tick_shader_path, "tick_begin_control",
@@ -8635,6 +8643,12 @@ namespace skin_physics::runtime
                 device, cloth_reset_lambdas_path, "main",
                 cloth_reset_lambdas_shader.GetAddressOf(), diagnostic) ||
             !compile_runtime_compute_shader(
+                device, cloth_epoch_snapshot_path, "main",
+                cloth_epoch_snapshot_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
+                device, cloth_epoch_displacement_path, "main",
+                cloth_epoch_displacement_shader.GetAddressOf(), diagnostic) ||
+            !compile_runtime_compute_shader(
                 device, cloth_epoch_swept_aabb_path, "main",
                 cloth_epoch_swept_aabb_shader.GetAddressOf(), diagnostic))
         {
@@ -8681,6 +8695,10 @@ namespace skin_physics::runtime
         runtime.cloth_reconstruct_velocity_shader =
             std::move(cloth_reconstruct_velocity_shader);
         runtime.cloth_reset_lambdas_shader = std::move(cloth_reset_lambdas_shader);
+        runtime.cloth_epoch_snapshot_shader =
+            std::move(cloth_epoch_snapshot_shader);
+        runtime.cloth_epoch_displacement_shader =
+            std::move(cloth_epoch_displacement_shader);
         runtime.cloth_epoch_swept_aabb_shader =
             std::move(cloth_epoch_swept_aabb_shader);
         runtime.submission_thread = std::this_thread::get_id();
