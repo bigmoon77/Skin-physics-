@@ -1138,6 +1138,83 @@ namespace
                 "Production Cloth Jacobi contribution / CSR gather positions must match the CPU simultaneous XPBD reference.");
         }
 
+        std::vector<gpu_cloth_vertex_constraint_ref> invalid_references =
+            references;
+        uint32_t invalid_reference_vertex = 0xffffffffu;
+        for (uint32_t vertex_index = 0u;
+            vertex_index < mesh.rest_positions.size() &&
+                invalid_reference_vertex == 0xffffffffu;
+            ++vertex_index)
+        {
+            const uint32_t first =
+                mesh.vertex_constraint_offsets[vertex_index];
+            const uint32_t end =
+                mesh.vertex_constraint_offsets[vertex_index + 1u];
+            for (uint32_t reference_index = first;
+                reference_index < end; ++reference_index)
+            {
+                if (invalid_references[reference_index].type == 1u ||
+                    invalid_references[reference_index].type == 2u)
+                {
+                    invalid_references[reference_index].constraint_index =
+                        0xffffffffu;
+                    invalid_reference_vertex = vertex_index;
+                    break;
+                }
+            }
+        }
+        require(invalid_reference_vertex != 0xffffffffu,
+            "Cloth Jacobi invalid-CSR regression requires a Shear / Bend reference.");
+
+        const ComPtr<ID3D11Buffer> invalid_references_buffer =
+            create_structured_buffer(
+                device.Get(), invalid_references, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> invalid_output_buffer =
+            create_structured_buffer(
+                device.Get(), gpu_positions, D3D11_BIND_UNORDERED_ACCESS);
+        const std::vector<uint32_t> zero_status = { 0u };
+        const ComPtr<ID3D11Buffer> invalid_status_buffer =
+            create_structured_buffer(
+                device.Get(), zero_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11ShaderResourceView> invalid_references_srv =
+            create_structured_srv<gpu_cloth_vertex_constraint_ref>(
+                device.Get(), invalid_references_buffer.Get(),
+                static_cast<UINT>(invalid_references.size()));
+        const ComPtr<ID3D11UnorderedAccessView> invalid_output_uav =
+            create_structured_uav<gpu_float4>(
+                device.Get(), invalid_output_buffer.Get(),
+                static_cast<UINT>(gpu_positions.size()));
+        const ComPtr<ID3D11UnorderedAccessView> invalid_status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), invalid_status_buffer.Get(), 1u);
+        dispatch_compute(
+            context.Get(), gather_shader.Get(),
+            { positions_srv.Get(), offsets_srv.Get(),
+                invalid_references_srv.Get(), stretch_constraints_srv.Get(),
+                shear_constraints_srv.Get(), bend_constraints_srv.Get(),
+                shear_contributions_srv.Get(), bend_contributions_srv.Get() },
+            { invalid_output_uav.Get(), invalid_status_uav.Get() },
+            gather_parameter_buffer.Get(),
+            static_cast<UINT>((gpu_positions.size() + 63u) / 64u));
+
+        const std::vector<uint32_t> invalid_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
+        const std::vector<gpu_float4> invalid_output =
+            readback_structured_buffer<gpu_float4>(
+                device.Get(), context.Get(),
+                invalid_output_buffer.Get(), gpu_positions.size());
+        const gpu_float4& rejected_vertex =
+            invalid_output[invalid_reference_vertex];
+        require((invalid_status[0u] & (1u << 2u)) != 0u &&
+            std::abs(rejected_vertex.x -
+                gpu_positions[invalid_reference_vertex].x) <= 1.0e-7f &&
+            std::abs(rejected_vertex.y -
+                gpu_positions[invalid_reference_vertex].y) <= 1.0e-7f &&
+            std::abs(rejected_vertex.z -
+                gpu_positions[invalid_reference_vertex].z) <= 1.0e-7f,
+            "Production Cloth Jacobi gather must flag an invalid CSR reference and preserve the affected source Position.");
+
         std::cout << "[PASS] P05_WARP_CLOTH_JACOBI_CONTRIBUTION_GATHER\n";
     }
 
