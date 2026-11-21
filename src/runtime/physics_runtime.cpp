@@ -4103,11 +4103,11 @@ namespace skin_physics::runtime
                     "GPU Animation Segment normalized coordinate or inverse duration is invalid.";
                 return false;
             }
-            const float span_local_u =
+            const float gpu_span_local_u =
                 static_cast<float>(normalized_span_coordinate);
             const float inverse_span_duration =
                 static_cast<float>(1.0 / span_duration);
-            if (!std::isfinite(span_local_u) ||
+            if (!std::isfinite(gpu_span_local_u) ||
                 !std::isfinite(inverse_span_duration) ||
                 inverse_span_duration <= 0.0f)
             {
@@ -4240,7 +4240,7 @@ namespace skin_physics::runtime
                 parameters.channel_count = track_record.channel_record_count;
                 parameters.first_channel_record =
                     track_record.first_channel_record;
-                parameters.span_local_u = span_local_u;
+                parameters.span_local_u = gpu_span_local_u;
                 parameters.inverse_span_duration =
                     inverse_span_duration;
                 Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
@@ -4295,7 +4295,7 @@ namespace skin_physics::runtime
                 parameters.node_count = node_count;
                 parameters.span_duration_seconds =
                     static_cast<float>(span_duration);
-                parameters.span_local_u = span_local_u;
+                parameters.span_local_u = gpu_span_local_u;
                 if (!std::isfinite(parameters.span_duration_seconds) ||
                     parameters.span_duration_seconds <= 0.0f)
                 {
