@@ -676,6 +676,51 @@ namespace skin_physics::physics
         return result;
     }
 
+
+    moving_edge_edge_contact_result find_moving_edge_edge_contact(
+        const std::array<vec3, 2>& edge_a,
+        const std::array<vec3, 2>& edge_a_velocities,
+        const std::array<vec3, 2>& edge_b,
+        const std::array<vec3, 2>& edge_b_velocities,
+        float combined_thickness)
+    {
+        moving_edge_edge_contact_result result;
+        if (!finite(edge_a_velocities[0]) ||
+            !finite(edge_a_velocities[1]) ||
+            !finite(edge_b_velocities[0]) ||
+            !finite(edge_b_velocities[1]))
+        {
+            return result;
+        }
+
+        result.contact = find_edge_edge_contact(
+            edge_a, edge_b, combined_thickness);
+        if (!result.contact.valid)
+        {
+            return result;
+        }
+
+        const float parameter_a = result.contact.parameter_a;
+        const float parameter_b = result.contact.parameter_b;
+        result.edge_a_velocity = add(
+            multiply(edge_a_velocities[0], 1.0f - parameter_a),
+            multiply(edge_a_velocities[1], parameter_a));
+        result.edge_b_velocity = add(
+            multiply(edge_b_velocities[0], 1.0f - parameter_b),
+            multiply(edge_b_velocities[1], parameter_b));
+        result.relative_velocity = subtract(
+            result.edge_a_velocity, result.edge_b_velocity);
+        if (!finite(result.edge_a_velocity) ||
+            !finite(result.edge_b_velocity) ||
+            !finite(result.relative_velocity))
+        {
+            return moving_edge_edge_contact_result{};
+        }
+
+        result.success = true;
+        return result;
+    }
+
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
