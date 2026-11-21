@@ -339,6 +339,10 @@ bool evaluate_root_transform(
     {
         return false;
     }
+    rotation_derivative =
+        (rotation_derivative -
+            rotation * dot(rotation, rotation_derivative)) /
+        rotation_length;
     rotation /= rotation_length;
     const float x = rotation.x;
     const float y = rotation.y;
