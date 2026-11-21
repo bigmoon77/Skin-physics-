@@ -232,6 +232,11 @@ namespace skin_physics::physics
 
                 const bool bounds_certified =
                     (span.flags & animation_span_flag_bounds_certified) != 0u;
+                const uint32_t known_span_flags =
+                    animation_span_flag_has_blend |
+                    animation_span_flag_has_kinematic_collider |
+                    animation_span_flag_has_root_motion |
+                    animation_span_flag_bounds_certified;
                 const bool bounds_valid =
                     std::isfinite(span.speed_bound) &&
                     span.speed_bound >= 0.0f &&
@@ -248,6 +253,11 @@ namespace skin_physics::physics
                             span.chord_deviation_bound == 0.0f);
                 if (span.animation_input_version_low != version_low ||
                     span.animation_input_version_high != version_high ||
+                    (span.flags & ~known_span_flags) != 0u ||
+                    (((span.flags & animation_span_flag_has_blend) != 0u) !=
+                        (span.blend_record_count > 0u)) ||
+                    (((span.flags & animation_span_flag_has_kinematic_collider) != 0u) !=
+                        (span.collider_record_count > 0u)) ||
                     !span_ids.insert(span.span_id).second ||
                     !std::isfinite(world_time_start) ||
                     !std::isfinite(span.span_duration_seconds) ||
@@ -368,6 +378,11 @@ namespace skin_physics::physics
                             span.span_duration_seconds) > duration_tolerance ||
                         !std::isfinite(collider.inverse_duration) ||
                         collider.inverse_duration <= 0.0f ||
+                        std::abs(
+                            static_cast<double>(collider.duration_seconds) *
+                                collider.inverse_duration - 1.0) > 1.0e-4 ||
+                        collider.translation_start.w != 1.0f ||
+                        collider.translation_end.w != 1.0f ||
                         !std::isfinite(collider.linear_speed_bound) ||
                         collider.linear_speed_bound < expected_linear_speed ||
                         !std::isfinite(collider.angular_speed_bound) ||
