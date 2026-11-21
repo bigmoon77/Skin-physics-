@@ -226,11 +226,14 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         (kinematic_collider_sample_gpu_record)0;
     const animation_span_cursor_gpu_record cursor = animation_cursor[0];
     uint span_buffer_count = 0u;
+    uint span_stride = 0u;
     uint collider_buffer_count = 0u;
+    uint collider_stride = 0u;
     uint contact_buffer_count = 0u;
-    animation_spans.GetDimensions(span_buffer_count);
-    collider_records.GetDimensions(collider_buffer_count);
-    local_contact_points.GetDimensions(contact_buffer_count);
+    uint contact_stride = 0u;
+    animation_spans.GetDimensions(span_buffer_count, span_stride);
+    collider_records.GetDimensions(collider_buffer_count, collider_stride);
+    local_contact_points.GetDimensions(contact_buffer_count, contact_stride);
 
     if (span_count == 0u ||
         cursor.span_record_index == INVALID_INDEX ||
