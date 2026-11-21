@@ -1,3 +1,35 @@
+struct animation_span_gpu_record
+{
+    uint span_id;
+    uint animation_input_version_low;
+    uint animation_input_version_high;
+    uint first_track_record;
+    uint track_record_count;
+    uint first_channel_record;
+    uint channel_record_count;
+    uint first_blend_record;
+    uint blend_record_count;
+    uint first_collider_record;
+    uint collider_record_count;
+    uint flags;
+    float span_duration_seconds;
+    float inverse_span_duration;
+    float speed_bound;
+    float acceleration_bound;
+    float chord_deviation_bound;
+    float quaternion_normalization_lower_bound;
+    float reserved0;
+    float reserved1;
+};
+
+struct animation_span_cursor_gpu_record
+{
+    uint span_record_index;
+    uint animation_input_version_low;
+    uint animation_input_version_high;
+    float u_segment_start;
+};
+
 struct kinematic_collider_gpu_record
 {
     uint stable_collider_id_low;
@@ -34,21 +66,24 @@ struct kinematic_collider_sample_gpu_record
 
 cbuffer KinematicColliderEvaluateParameters : register(b0)
 {
+    uint span_count;
     uint collider_count;
+    float tau_seconds;
     uint reserved0;
-    uint reserved1;
-    uint reserved2;
 };
 
-StructuredBuffer<kinematic_collider_gpu_record> collider_spans : register(t0);
-StructuredBuffer<float4> local_contact_points : register(t1);
-StructuredBuffer<float> span_local_coordinates : register(t2);
+StructuredBuffer<animation_span_gpu_record> animation_spans : register(t0);
+StructuredBuffer<animation_span_cursor_gpu_record> animation_cursor : register(t1);
+StructuredBuffer<kinematic_collider_gpu_record> collider_records : register(t2);
+StructuredBuffer<float4> local_contact_points : register(t3);
 RWStructuredBuffer<kinematic_collider_sample_gpu_record> collider_samples : register(u0);
 
 static const uint INVALID_INDEX = 0xffffffffu;
+static const uint SPAN_FLAG_HAS_KINEMATIC_COLLIDER = 1u << 1u;
 static const uint COLLIDER_FLAGS_VALID = 3u;
 static const uint STATUS_INVALID_INPUT = 1u;
 static const float QUATERNION_EPSILON = 1.0e-12f;
+static const float SPAN_BOUNDARY_EPSILON = 9.5367431640625e-7f;
 
 bool finite3(float3 value)
 {
@@ -158,13 +193,16 @@ bool valid_collider_record(
         abs(record_value.duration_seconds *
             record_value.inverse_duration - 1.0f) <= 1.0e-4f &&
         isfinite(record_value.linear_speed_bound) &&
-        record_value.linear_speed_bound + 2.0e-5f * max(1.0f, expected_linear_speed) >= expected_linear_speed &&
+        record_value.linear_speed_bound + 2.0e-5f *
+            max(1.0f, expected_linear_speed) >= expected_linear_speed &&
         isfinite(record_value.angular_speed_bound) &&
-        record_value.angular_speed_bound + 2.0e-5f * max(1.0f, expected_angular_speed) >= expected_angular_speed &&
+        record_value.angular_speed_bound + 2.0e-5f *
+            max(1.0f, expected_angular_speed) >= expected_angular_speed &&
         isfinite(record_value.maximum_local_radius) &&
         record_value.maximum_local_radius >= 0.0f &&
         isfinite(record_value.sagitta_bound) &&
-        record_value.sagitta_bound + 2.0e-5f * max(1.0f, expected_sagitta) >= expected_sagitta &&
+        record_value.sagitta_bound + 2.0e-5f *
+            max(1.0f, expected_sagitta) >= expected_sagitta &&
         isfinite(record_value.reserved0) &&
         record_value.reserved0 == 0.0f &&
         isfinite(record_value.reserved1) &&
@@ -178,35 +216,88 @@ bool valid_collider_record(
 [numthreads(64, 1, 1)]
 void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
 {
-    const uint index = dispatch_thread_id.x;
-    if (index >= collider_count)
+    const uint local_index = dispatch_thread_id.x;
+    if (local_index >= collider_count)
     {
         return;
     }
 
     kinematic_collider_sample_gpu_record output_value =
         (kinematic_collider_sample_gpu_record)0;
-    const kinematic_collider_gpu_record span = collider_spans[index];
-    const float4 local_contact_point = local_contact_points[index];
-    const float u = span_local_coordinates[index];
+    const animation_span_cursor_gpu_record cursor = animation_cursor[0];
+    uint span_buffer_count = 0u;
+    uint collider_buffer_count = 0u;
+    uint contact_buffer_count = 0u;
+    animation_spans.GetDimensions(span_buffer_count);
+    collider_records.GetDimensions(collider_buffer_count);
+    local_contact_points.GetDimensions(contact_buffer_count);
 
-    if (!valid_collider_record(span, local_contact_point, u))
+    if (span_count == 0u ||
+        cursor.span_record_index == INVALID_INDEX ||
+        cursor.span_record_index >= span_count ||
+        cursor.span_record_index >= span_buffer_count ||
+        !isfinite(tau_seconds) || tau_seconds < 0.0f ||
+        !isfinite(cursor.u_segment_start) ||
+        cursor.u_segment_start < 0.0f ||
+        cursor.u_segment_start > 1.0f)
     {
         output_value.status = STATUS_INVALID_INPUT;
-        collider_samples[index] = output_value;
+        collider_samples[local_index] = output_value;
         return;
     }
 
+    const animation_span_gpu_record span =
+        animation_spans[cursor.span_record_index];
+    const float u = cursor.u_segment_start +
+        tau_seconds * span.inverse_span_duration;
+    const uint collider_end = span.first_collider_record +
+        span.collider_record_count;
+    if (span.animation_input_version_low !=
+            cursor.animation_input_version_low ||
+        span.animation_input_version_high !=
+            cursor.animation_input_version_high ||
+        (span.flags & SPAN_FLAG_HAS_KINEMATIC_COLLIDER) == 0u ||
+        span.collider_record_count != collider_count ||
+        span.first_collider_record > collider_buffer_count ||
+        span.collider_record_count >
+            collider_buffer_count - span.first_collider_record ||
+        collider_end < span.first_collider_record ||
+        local_index >= contact_buffer_count ||
+        !isfinite(span.span_duration_seconds) ||
+        span.span_duration_seconds <= 0.0f ||
+        !isfinite(span.inverse_span_duration) ||
+        span.inverse_span_duration <= 0.0f ||
+        abs(span.span_duration_seconds *
+            span.inverse_span_duration - 1.0f) > 2.0e-5f ||
+        !isfinite(u) || u < 0.0f ||
+        u > 1.0f + SPAN_BOUNDARY_EPSILON)
+    {
+        output_value.status = STATUS_INVALID_INPUT;
+        collider_samples[local_index] = output_value;
+        return;
+    }
+
+    const kinematic_collider_gpu_record collider =
+        collider_records[span.first_collider_record + local_index];
+    const float4 local_contact_point = local_contact_points[local_index];
+    if (!valid_collider_record(collider, local_contact_point, min(u, 1.0f)))
+    {
+        output_value.status = STATUS_INVALID_INPUT;
+        collider_samples[local_index] = output_value;
+        return;
+    }
+
+    const float sample_u = min(u, 1.0f);
     const float4 rotation = slerp_shortest_arc(
-        span.rotation_start, span.rotation_end, u);
+        collider.rotation_start, collider.rotation_end, sample_u);
     const float3 translation = lerp(
-        span.translation_start.xyz, span.translation_end.xyz, u);
+        collider.translation_start.xyz, collider.translation_end.xyz, sample_u);
     const float3 linear_velocity =
-        (span.translation_end.xyz - span.translation_start.xyz) *
-        span.inverse_duration;
+        (collider.translation_end.xyz - collider.translation_start.xyz) *
+        collider.inverse_duration;
     const float3 angular_velocity =
-        span.angular_axis_and_angle.xyz *
-        (span.angular_axis_and_angle.w * span.inverse_duration);
+        collider.angular_axis_and_angle.xyz *
+        (collider.angular_axis_and_angle.w * collider.inverse_duration);
     const float3 world_contact_radius =
         rotate_vector(rotation, local_contact_point.xyz);
     const float3 contact_point_velocity =
@@ -217,7 +308,7 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         !finite3(contact_point_velocity))
     {
         output_value.status = STATUS_INVALID_INPUT;
-        collider_samples[index] = output_value;
+        collider_samples[local_index] = output_value;
         return;
     }
 
@@ -227,5 +318,5 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     output_value.angular_velocity = float4(angular_velocity, 0.0f);
     output_value.contact_point_velocity = float4(contact_point_velocity, 0.0f);
     output_value.status = 0u;
-    collider_samples[index] = output_value;
+    collider_samples[local_index] = output_value;
 }
