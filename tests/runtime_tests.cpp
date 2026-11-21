@@ -1301,11 +1301,11 @@ namespace
             second_animated_positions[0u].x > 1.0e-5f,
             "Both Skinned Mesh consumers must evaluate the same Segment Cursor before it advances once per Model.");
         const float playback_position_x = animated_positions[0u].x;
-        require(runtime.release_render_bindings(
-                world, animated_binding.lease_generation).success() &&
+        require(animated_binding.lease_generation ==
+                second_animated_binding.lease_generation &&
             runtime.release_render_bindings(
-                world, second_animated_binding.lease_generation).success(),
-            "Both Skinned Mesh Render Candidate Host Leases must release after readback.");
+                world, animated_binding.lease_generation).success(),
+            "Both Skinned Mesh Render Candidates share one World Host Lease, which must release once after all Mesh readbacks.");
 
         skin_physics::runtime::animation_blend_desc blend;
         blend.source_track.clip_index = 0u;
