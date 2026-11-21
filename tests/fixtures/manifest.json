@@ -801,7 +801,8 @@
             "Stage-specific Channel / Blend / Hierarchy / Skin Matrix / LBS status bits propagate to Tick failure diagnostics; any invalid stage prevents Commit and preserves the active State Bank",
             "Immutable Packet and Segment output resources remain retained through In-flight Tick Event Query observation and Render Candidate publication / lease release",
             "One-joint Translation Playback and synchronized two-Clip Blend both commit and move the Physics Vertex toward the animated target",
-            "Ordered Model Root Transform Samples split Integration Segments at exact sample times, interpolate translation / shortest-arc Quaternion values, and provide analytic World-Time Root Matrix derivatives to GPU Skin Matrix Evaluation; teleport samples reset the derivative at their boundary"
+            "Ordered Model Root Transform Samples split Integration Segments at exact sample times, interpolate translation / shortest-arc Quaternion values, and provide analytic World-Time Root Matrix derivatives to GPU Skin Matrix Evaluation; teleport samples reset the derivative at their boundary",
+            "Multiple Skinned Mesh consumers in one Model evaluate the same immutable Packet / mutable Cursor for each Segment; the shared Model Cursor advances exactly once after all Mesh LBS consumers, and the World Render Lease is released once after all Mesh readbacks."
           ]
         },
         {
@@ -814,7 +815,8 @@
             "A Segment that overshoots the current Span and a stale Cursor Packet Version set the stage diagnostic and leave the Cursor unchanged",
             "GPU Cursor results match the CPU double/float-boundary reference over multiple contiguous Spans",
             "Runtime GPU Channel and Blend evaluation consume the same immutable Packet Span / mutable Segment Cursor SRVs and validate the Cursor Packet Version",
-            "Runtime graph advances the Cursor once per Mesh / Integration Segment after LBS and before Soft Body Integrate; Cursor diagnostics share the Segment Status consumed by Integrate"
+            "Runtime graph advances the Cursor once per Mesh / Integration Segment after LBS and before Soft Body Integrate; Cursor diagnostics share the Segment Status consumed by Integrate",
+            "A single immutable multi-Span Packet and one mutable Cursor are retained per Model / Tick and reused across all Integration Segments and Skinned Mesh consumers."
           ]
         }
       ],
@@ -825,10 +827,10 @@
         "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI",
         "P09_ANIMATION_SKIN_JOINT_MAPPING",
         "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
-        "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING"
+        "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
+        "P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE"
       ],
       "unimplemented": [
-        "Shader-side mutable Segment Cursor advancement and multi-Span packet reuse across multiple Integration Segments / Mesh consumers",
         "Root Transform Samples without an active Animation Track, and Root Transform data encoded directly in the immutable GPU Packet ABI",
         "Kinematic Collider trajectory packet generation and GPU Collider trajectory evaluation",
         "Quaternion / angular target-velocity interface for Animation Tracking",
