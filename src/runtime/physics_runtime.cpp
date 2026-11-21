@@ -1668,6 +1668,43 @@ namespace skin_physics::runtime
             std::vector<gpu_float4> initial_velocities;
         };
 
+        struct cloth_gpu_mesh
+        {
+            uint32_t mesh_index = asset::invalid_index;
+            uint32_t vertex_count = 0u;
+            uint32_t stretch_constraint_count = 0u;
+            uint32_t shear_constraint_count = 0u;
+            uint32_t bend_constraint_count = 0u;
+            uint32_t stretch_color_count = 0u;
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> rest_positions_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> rest_positions_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> stretch_constraints_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> stretch_constraints_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> stretch_color_ranges_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> stretch_color_ranges_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> stretch_color_indices_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> stretch_color_indices_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> shear_constraints_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shear_constraints_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> bend_constraints_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> bend_constraints_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_constraint_offsets_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_constraint_offsets_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_constraint_refs_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_constraint_refs_srv;
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> stretch_lambdas_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> stretch_lambdas_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> stretch_lambdas_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> shear_lambdas_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shear_lambdas_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> shear_lambdas_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> bend_lambdas_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> bend_lambdas_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> bend_lambdas_uav;
+        };
+
         struct model_slot
         {
             uint32_t generation = 1u;
@@ -1678,6 +1715,8 @@ namespace skin_physics::runtime
             uint32_t root_only_clip_index = asset::invalid_index;
             std::vector<model_mesh_physics_asset> mesh_physics_assets;
             std::vector<soft_body_gpu_mesh> gpu_soft_body_meshes;
+            std::vector<model_mesh_cloth_asset> cloth_mesh_assets;
+            std::vector<cloth_gpu_mesh> gpu_cloth_meshes;
             transform root_transform;
             std::vector<transform_sample> root_samples;
             bool has_animation_playback = false;
