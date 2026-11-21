@@ -4886,6 +4886,12 @@ namespace skin_physics::physics
                 candidate.blend_records.push_back(blend_record);
                 span_record.flags |= animation_span_flag_has_blend;
             }
+            // Blend records are appended after Track / Channel construction;
+            // finalize this range only after the optional record is present.
+            span_record.blend_record_count =
+                static_cast<uint32_t>(
+                    candidate.blend_records.size()) -
+                span_record.first_blend_record;
             candidate.span_world_time_starts.push_back(
                 input.world_time_start);
             candidate.span_records.push_back(span_record);
