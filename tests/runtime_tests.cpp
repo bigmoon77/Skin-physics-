@@ -1159,6 +1159,23 @@ namespace
         require(runtime.add_model(world, model_desc, &model).success(),
             "Runtime must transfer boundary Render Mesh Skin Weights to Physics Vertices and upload the normalized 8-influence GPU record buffer.");
 
+        skin_physics::runtime::transform root_sample_start;
+        root_sample_start.translation = { 0.0f, 0.0f, 0.0f };
+        root_sample_start.rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        skin_physics::runtime::transform root_sample_middle;
+        root_sample_middle.translation = { 0.05f, 0.0f, 0.0f };
+        root_sample_middle.rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        skin_physics::runtime::transform root_sample_end;
+        root_sample_end.translation = { 0.1f, 0.0f, 0.0f };
+        root_sample_end.rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        require(runtime.set_model_transform_sample(
+                world, model, 0.0, root_sample_start, false).success() &&
+            runtime.set_model_transform_sample(
+                world, model, 0.005, root_sample_middle, false).success() &&
+            runtime.set_model_transform_sample(
+                world, model, 0.01, root_sample_end, false).success(),
+            "Animated Model Root Transform samples must accept ordered finite translation / quaternion keys.");
+
         skin_physics::runtime::mesh_physics_parameters tracking_parameters;
         tracking_parameters.young_modulus = 1.0f;
         tracking_parameters.damping = 0.0f;
@@ -1201,8 +1218,10 @@ namespace
         }
         require(animation_observed &&
             animation_status.state == skin_physics::runtime::tick_state::committed &&
-            animation_status.gpu_committed_sequence == 1u,
-            "Skinned Animation Runtime Tick must Commit only after GPU LBS target validation and Kelvin-Voigt integration.");
+            animation_status.gpu_committed_sequence == 1u &&
+            animation_status.planned_integration_segments == 2u &&
+            animation_status.executed_integration_segments == 2u,
+            "Skinned Animation Runtime Tick must split at Root Transform sample boundaries, evaluate analytic root motion on GPU Skin Matrices and Commit only after LBS / Tracking validation.");
 
         skin_physics::runtime::render_binding animated_binding;
         require(runtime.get_render_binding(
