@@ -3401,6 +3401,7 @@ namespace
 
         animation_span_gpu_record& span = packet.span_records[0u];
         span.span_id = 0x1234u;
+        span.flags = animation_span_flag_bounds_certified;
         span.animation_input_version_low =
             static_cast<uint32_t>(packet.animation_input_version & 0xffffffffull);
         span.animation_input_version_high =
