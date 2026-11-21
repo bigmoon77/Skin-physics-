@@ -990,7 +990,7 @@ namespace
         require(std::abs(reconstructed_velocities[0].x - 1.4f) <= 1.0e-5f &&
             std::abs(reconstructed_velocities[0].y + 1.2f) <= 1.0e-5f &&
             std::abs(reconstructed_velocities[1].x + 2.0f) <= 1.0e-5f &&
-            std::abs(reconstructed_velocities[1].y - 11.0f) <= 1.0e-5f &&
+            std::abs(reconstructed_velocities[1].y + 1.0f) <= 1.0e-5f &&
             std::abs(reconstructed_velocities[1].z - 1.8f) <= 1.0e-5f,
             "Cloth Velocity reconstruction must use the final XPBD Position delta over the same Segment duration.");
         require(reconstructed_velocities[2].x == 0.0f &&
