@@ -4486,6 +4486,86 @@ namespace skin_physics::physics
             span_record.first_collider_record =
                 static_cast<uint32_t>(candidate.collider_records.size());
 
+            std::unordered_set<uint64_t> collider_ids_in_span;
+            std::unordered_set<uint32_t> collider_pair_ids_in_span;
+            for (const kinematic_collider_gpu_record& collider :
+                input.colliders)
+            {
+                const uint64_t stable_id =
+                    (static_cast<uint64_t>(collider.stable_collider_id_high) << 32u) |
+                    collider.stable_collider_id_low;
+                const double rotation_start_length = std::sqrt(
+                    static_cast<double>(collider.rotation_start.x) * collider.rotation_start.x +
+                    static_cast<double>(collider.rotation_start.y) * collider.rotation_start.y +
+                    static_cast<double>(collider.rotation_start.z) * collider.rotation_start.z +
+                    static_cast<double>(collider.rotation_start.w) * collider.rotation_start.w);
+                const double rotation_end_length = std::sqrt(
+                    static_cast<double>(collider.rotation_end.x) * collider.rotation_end.x +
+                    static_cast<double>(collider.rotation_end.y) * collider.rotation_end.y +
+                    static_cast<double>(collider.rotation_end.z) * collider.rotation_end.z +
+                    static_cast<double>(collider.rotation_end.w) * collider.rotation_end.w);
+                const double angular_axis_length = std::sqrt(
+                    static_cast<double>(collider.angular_axis_and_angle.x) * collider.angular_axis_and_angle.x +
+                    static_cast<double>(collider.angular_axis_and_angle.y) * collider.angular_axis_and_angle.y +
+                    static_cast<double>(collider.angular_axis_and_angle.z) * collider.angular_axis_and_angle.z);
+                const double expected_linear_speed = std::sqrt(
+                    std::pow(static_cast<double>(collider.translation_end.x) - collider.translation_start.x, 2.0) +
+                    std::pow(static_cast<double>(collider.translation_end.y) - collider.translation_start.y, 2.0) +
+                    std::pow(static_cast<double>(collider.translation_end.z) - collider.translation_start.z, 2.0)) *
+                    static_cast<double>(collider.inverse_duration);
+                const double expected_angular_speed =
+                    static_cast<double>(collider.angular_axis_and_angle.w) *
+                    static_cast<double>(collider.inverse_duration);
+                const double expected_sagitta =
+                    static_cast<double>(collider.maximum_local_radius) *
+                    (1.0 - std::cos(
+                        static_cast<double>(collider.angular_axis_and_angle.w) * 0.5));
+                if (stable_id == 0u ||
+                    collider.span_sample_pair_id == asset::invalid_index ||
+                    !collider_ids_in_span.insert(stable_id).second ||
+                    !collider_pair_ids_in_span.insert(
+                        collider.span_sample_pair_id).second ||
+                    (collider.flags & kinematic_collider_flag_valid) == 0u ||
+                    !std::isfinite(collider.translation_start.x) ||
+                    !std::isfinite(collider.translation_start.y) ||
+                    !std::isfinite(collider.translation_start.z) ||
+                    !std::isfinite(collider.translation_end.x) ||
+                    !std::isfinite(collider.translation_end.y) ||
+                    !std::isfinite(collider.translation_end.z) ||
+                    !std::isfinite(rotation_start_length) ||
+                    !std::isfinite(rotation_end_length) ||
+                    std::abs(rotation_start_length - 1.0) > 1.0e-4 ||
+                    std::abs(rotation_end_length - 1.0) > 1.0e-4 ||
+                    !std::isfinite(collider.angular_axis_and_angle.x) ||
+                    !std::isfinite(collider.angular_axis_and_angle.y) ||
+                    !std::isfinite(collider.angular_axis_and_angle.z) ||
+                    !std::isfinite(collider.angular_axis_and_angle.w) ||
+                    collider.angular_axis_and_angle.w < 0.0f ||
+                    collider.angular_axis_and_angle.w > 3.1416927f ||
+                    !std::isfinite(angular_axis_length) ||
+                    std::abs(angular_axis_length - 1.0) > 1.0e-3 ||
+                    !std::isfinite(collider.duration_seconds) ||
+                    collider.duration_seconds <= 0.0f ||
+                    !approximately_equal_double(
+                        collider.duration_seconds, input.world_time_duration) ||
+                    !std::isfinite(collider.inverse_duration) ||
+                    collider.inverse_duration <= 0.0f ||
+                    !std::isfinite(collider.linear_speed_bound) ||
+                    collider.linear_speed_bound < expected_linear_speed ||
+                    !std::isfinite(collider.angular_speed_bound) ||
+                    collider.angular_speed_bound < expected_angular_speed ||
+                    !std::isfinite(collider.maximum_local_radius) ||
+                    collider.maximum_local_radius < 0.0f ||
+                    !std::isfinite(collider.sagitta_bound) ||
+                    collider.sagitta_bound < expected_sagitta)
+                {
+                    return fail(
+                        animation_trajectory_packet_error::invalid_span,
+                        "Kinematic Collider Record contains a duplicate identity, invalid Transform, mismatched Span duration or non-conservative motion Bound.");
+                }
+                candidate.collider_records.push_back(collider);
+            }
+
             for (const animation_trajectory_track_span_input& track_input :
                 input.tracks)
             {
@@ -4828,7 +4908,10 @@ namespace skin_physics::physics
                 static_cast<uint32_t>(
                     candidate.blend_records.size()) -
                 span_record.first_blend_record;
-            span_record.collider_record_count = 0u;
+            span_record.collider_record_count =
+                static_cast<uint32_t>(
+                    candidate.collider_records.size()) -
+                span_record.first_collider_record;
             if (input.has_blend)
             {
                 const double blend_duration =
