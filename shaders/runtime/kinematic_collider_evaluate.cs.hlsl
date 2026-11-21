@@ -67,7 +67,7 @@ struct kinematic_collider_sample_gpu_record
 cbuffer KinematicColliderEvaluateParameters : register(b0)
 {
     uint span_count;
-    uint collider_count;
+    uint sample_count;
     float tau_seconds;
     uint reserved0;
 };
@@ -75,7 +75,8 @@ cbuffer KinematicColliderEvaluateParameters : register(b0)
 StructuredBuffer<animation_span_gpu_record> animation_spans : register(t0);
 StructuredBuffer<animation_span_cursor_gpu_record> animation_cursor : register(t1);
 StructuredBuffer<kinematic_collider_gpu_record> collider_records : register(t2);
-StructuredBuffer<float4> local_contact_points : register(t3);
+StructuredBuffer<uint> collider_record_indices : register(t3);
+StructuredBuffer<float4> local_contact_points : register(t4);
 RWStructuredBuffer<kinematic_collider_sample_gpu_record> collider_samples : register(u0);
 
 static const uint INVALID_INDEX = 0xffffffffu;
@@ -217,7 +218,7 @@ bool valid_collider_record(
 void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
 {
     const uint local_index = dispatch_thread_id.x;
-    if (local_index >= collider_count)
+    if (local_index >= sample_count)
     {
         return;
     }
@@ -231,16 +232,20 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
     uint cursor_stride = 0u;
     uint collider_buffer_count = 0u;
     uint collider_stride = 0u;
+    uint index_buffer_count = 0u;
+    uint index_stride = 0u;
     uint contact_buffer_count = 0u;
     uint contact_stride = 0u;
     animation_spans.GetDimensions(span_buffer_count, span_stride);
     animation_cursor.GetDimensions(cursor_buffer_count, cursor_stride);
     collider_records.GetDimensions(collider_buffer_count, collider_stride);
+    collider_record_indices.GetDimensions(index_buffer_count, index_stride);
     local_contact_points.GetDimensions(contact_buffer_count, contact_stride);
 
     if (span_count == 0u || span_count > span_buffer_count ||
         cursor_buffer_count != 1u || cursor_stride != 16u ||
-        span_stride != 80u || collider_stride != 128u || contact_stride != 16u ||
+        span_stride != 80u || collider_stride != 128u ||
+        index_stride != 4u || contact_stride != 16u ||
         cursor.span_record_index == INVALID_INDEX ||
         cursor.span_record_index >= span_count ||
         cursor.span_record_index >= span_buffer_count ||
@@ -265,7 +270,8 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         span.animation_input_version_high !=
             cursor.animation_input_version_high ||
         (span.flags & SPAN_FLAG_HAS_KINEMATIC_COLLIDER) == 0u ||
-        span.collider_record_count != collider_count ||
+        sample_count > index_buffer_count ||
+        sample_count > contact_buffer_count ||
         span.first_collider_record > collider_buffer_count ||
         span.collider_record_count >
             collider_buffer_count - span.first_collider_record ||
@@ -285,8 +291,16 @@ void main(uint3 dispatch_thread_id : SV_DispatchThreadID)
         return;
     }
 
-    const kinematic_collider_gpu_record collider =
-        collider_records[span.first_collider_record + local_index];
+    const uint local_collider_record_index =
+        collider_record_indices[local_index];
+    if (local_collider_record_index >= span.collider_record_count)
+    {
+        output_value.status = STATUS_INVALID_INPUT;
+        collider_samples[local_index] = output_value;
+        return;
+    }
+    const kinematic_collider_gpu_record collider = collider_records[
+        span.first_collider_record + local_collider_record_index];
     const float4 local_contact_point = local_contact_points[local_index];
     if (!valid_collider_record(collider, local_contact_point, min(u, 1.0f)))
     {
