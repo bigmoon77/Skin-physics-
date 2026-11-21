@@ -1676,6 +1676,8 @@ namespace skin_physics::runtime
             uint32_t shear_constraint_count = 0u;
             uint32_t bend_constraint_count = 0u;
             uint32_t stretch_color_count = 0u;
+            uint32_t triangle_primitive_count = 0u;
+            uint32_t edge_primitive_count = 0u;
 
             Microsoft::WRL::ComPtr<ID3D11Buffer> rest_positions_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> rest_positions_srv;
@@ -1689,6 +1691,10 @@ namespace skin_physics::runtime
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> shear_constraints_srv;
             Microsoft::WRL::ComPtr<ID3D11Buffer> bend_constraints_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> bend_constraints_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> triangle_primitives_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> triangle_primitives_srv;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> edge_primitives_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> edge_primitives_srv;
             Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_constraint_offsets_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> vertex_constraint_offsets_srv;
             Microsoft::WRL::ComPtr<ID3D11Buffer> vertex_constraint_refs_buffer;
@@ -3267,6 +3273,21 @@ namespace skin_physics::runtime
                 static_cast<uint32_t>(packet.bend_constraints.size());
             candidate.stretch_color_count =
                 static_cast<uint32_t>(packet.stretch_color_ranges.size());
+            if (packet.triangle_primitives.empty() ||
+                packet.edge_primitives.empty() ||
+                packet.triangle_primitives.size() >
+                    std::numeric_limits<uint32_t>::max() ||
+                packet.edge_primitives.size() >
+                    std::numeric_limits<uint32_t>::max())
+            {
+                diagnostic =
+                    "Cloth Position-Writer Epoch requires non-empty, representable Triangle and Edge primitive tables.";
+                return false;
+            }
+            candidate.triangle_primitive_count =
+                static_cast<uint32_t>(packet.triangle_primitives.size());
+            candidate.edge_primitive_count =
+                static_cast<uint32_t>(packet.edge_primitives.size());
 
             const auto upload_srv = [this](
                 const auto& values,
@@ -3328,6 +3349,12 @@ namespace skin_physics::runtime
                 !upload_srv(packet.bend_constraints,
                     candidate.bend_constraints_buffer,
                     candidate.bend_constraints_srv) ||
+                !upload_srv(packet.triangle_primitives,
+                    candidate.triangle_primitives_buffer,
+                    candidate.triangle_primitives_srv) ||
+                !upload_srv(packet.edge_primitives,
+                    candidate.edge_primitives_buffer,
+                    candidate.edge_primitives_srv) ||
                 !upload_srv(packet.vertex_constraint_offsets,
                     candidate.vertex_constraint_offsets_buffer,
                     candidate.vertex_constraint_offsets_srv) ||
@@ -3348,7 +3375,7 @@ namespace skin_physics::runtime
                     candidate.bend_lambdas_uav))
             {
                 diagnostic =
-                    "Cloth immutable topology or Segment-local Lambda GPU buffer creation failed.";
+                    "Cloth immutable topology, Position-Writer Epoch primitive, or Segment-local Lambda GPU buffer creation failed.";
                 return false;
             }
 
