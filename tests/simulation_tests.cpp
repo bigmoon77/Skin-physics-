@@ -419,6 +419,26 @@ namespace
                 invalid_coloring, coloring_diagnostic),
             "Cloth Stretch coloring validation must reject duplicate constraint ownership.");
 
+        std::string csr_diagnostic;
+        require(skin_physics::physics::validate_cloth_vertex_constraint_csr(
+                built.value, csr_diagnostic),
+            "Cloth Vertex-to-Constraint CSR must be valid: " + csr_diagnostic);
+        const std::size_t expected_csr_references =
+            built.value.stretch_constraints.size() * 2u +
+            built.value.shear_constraints.size() * 3u +
+            built.value.bend_constraints.size() * 4u;
+        require(built.value.vertex_constraint_offsets.size() ==
+                built.value.rest_positions.size() + 1u &&
+            built.value.vertex_constraint_refs.size() ==
+                expected_csr_references,
+            "Cloth Vertex-to-Constraint CSR must contain every stretch / shear / bend incidence.");
+        auto invalid_csr = built.value;
+        invalid_csr.vertex_constraint_refs[0u].local_vertex_index =
+            0xffffffffu;
+        require(!skin_physics::physics::validate_cloth_vertex_constraint_csr(
+                invalid_csr, csr_diagnostic),
+            "Cloth Vertex-to-Constraint CSR validation must reject an out-of-range local vertex index.");
+
         const auto& input_edges = input.at("stretch_edges").as_array();
         const auto& expected_lengths = expected.at("rest_edge_lengths").as_array();
         for (std::size_t edge_index = 0; edge_index < input_edges.size(); ++edge_index)
