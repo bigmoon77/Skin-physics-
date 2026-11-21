@@ -56,7 +56,7 @@ void fail_vertex(uint vertex_index)
     target_positions[vertex_index] = (gpu_float4)0;
     target_velocities[vertex_index] = (gpu_float4)0;
     uint previous_status = 0u;
-    InterlockedOr(target_status[0], 1u, previous_status);
+    InterlockedOr(target_status[0], 16u, previous_status);
 }
 
 [numthreads(64, 1, 1)]
