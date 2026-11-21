@@ -6328,6 +6328,127 @@ namespace skin_physics::runtime
                             : asset::invalid_index;
                     const uint32_t maximum_span_count =
                         std::max(1u, desc.maximum_integration_segments_per_tick_hard_limit);
+                    const uint32_t node_count =
+                        static_cast<uint32_t>(model.source_model.nodes.size());
+
+                    const auto rebuild_root_split_clip_span =
+                        [&](
+                            const asset::animation_clip& clip,
+                            const physics::scheduled_animation_clip_span& original,
+                            double split_start,
+                            double split_duration,
+                            physics::scheduled_animation_clip_span& out_span,
+                            std::string& out_error) -> bool
+                    {
+                        const double original_end =
+                            original.world_time_start +
+                            original.world_time_duration;
+                        const double split_end = split_start + split_duration;
+                        const double local_start =
+                            (split_start - original.world_time_start) /
+                            original.world_time_duration;
+                        const double local_end =
+                            (split_end - original.world_time_start) /
+                            original.world_time_duration;
+                        if (!finite_double(local_start) ||
+                            !finite_double(local_end) ||
+                            local_start < 0.0 || local_end > 1.0 ||
+                            local_end <= local_start ||
+                            split_start < original.world_time_start ||
+                            split_end > original_end)
+                        {
+                            out_error =
+                                "Root Sample split cannot be mapped into its source Animation Span.";
+                            return false;
+                        }
+
+                        const double clip_time_start =
+                            original.clip.clip_time_start +
+                            original.clip.clip_time_delta * local_start;
+                        const double clip_time_delta =
+                            original.clip.clip_time_delta *
+                            (local_end - local_start);
+                        const physics::animation_clip_spans_build_result rebuilt =
+                            physics::build_animation_clip_spans(
+                                clip, node_count,
+                                clip_time_start, clip_time_delta);
+                        if (!rebuilt.success || rebuilt.values.size() != 1u)
+                        {
+                            out_error =
+                                "Root Sample split could not rebuild exactly one key-bounded Clip Span: " +
+                                rebuilt.message;
+                            return false;
+                        }
+
+                        out_span.clip = rebuilt.values.front();
+                        out_span.world_time_start = split_start;
+                        out_span.world_time_duration = split_duration;
+                        return true;
+                    };
+
+                    const auto split_playback_spans_at_root_samples =
+                        [&](
+                            const asset::animation_clip& clip,
+                            const std::vector<physics::scheduled_animation_clip_span>& source,
+                            std::vector<physics::scheduled_animation_clip_span>& output) -> bool
+                    {
+                        output.clear();
+                        for (const physics::scheduled_animation_clip_span& original :
+                            source)
+                        {
+                            const double span_start = original.world_time_start;
+                            const double span_end =
+                                span_start + original.world_time_duration;
+                            std::vector<double> boundaries;
+                            boundaries.reserve(
+                                model_snapshot.root_samples.size() + 2u);
+                            boundaries.push_back(span_start);
+                            for (const transform_sample& sample :
+                                model_snapshot.root_samples)
+                            {
+                                if (sample.time > span_start &&
+                                    sample.time < span_end)
+                                {
+                                    boundaries.push_back(sample.time);
+                                }
+                            }
+                            boundaries.push_back(span_end);
+
+                            for (std::size_t index = 0u;
+                                index + 1u < boundaries.size(); ++index)
+                            {
+                                const double segment_start = boundaries[index];
+                                const double segment_duration =
+                                    boundaries[index + 1u] - segment_start;
+                                if (!finite_double(segment_start) ||
+                                    !finite_double(segment_duration) ||
+                                    segment_duration <= 0.0 ||
+                                    output.size() >= maximum_span_count)
+                                {
+                                    diagnostic =
+                                        "Animation Root Sample Span split exceeded finite time or configured Packet Span capacity.";
+                                    return false;
+                                }
+
+                                physics::scheduled_animation_clip_span split_span;
+                                std::string split_diagnostic;
+                                if (!rebuild_root_split_clip_span(
+                                        clip, original, segment_start,
+                                        segment_duration, split_span,
+                                        split_diagnostic))
+                                {
+                                    diagnostic =
+                                        "Animation Root Sample Playback Span split failed: " +
+                                        split_diagnostic;
+                                    return false;
+                                }
+                                split_span.clip.span_index =
+                                    static_cast<uint32_t>(output.size());
+                                output.push_back(std::move(split_span));
+                            }
+                        }
+                        return !output.empty();
+                    };
 
                     if (root_transform_only)
                     {
@@ -6364,67 +6485,15 @@ namespace skin_physics::runtime
                                 root_only_schedule.message;
                             return false;
                         }
-                        schedule.playback_spans.clear();
-                        for (const physics::scheduled_animation_clip_span& root_span :
-                            root_only_schedule.values)
+                        if (!split_playback_spans_at_root_samples(
+                                clip, root_only_schedule.values,
+                                schedule.playback_spans))
                         {
-                            const double root_span_start =
-                                root_span.world_time_start;
-                            const double root_span_end =
-                                root_span.world_time_start +
-                                root_span.world_time_duration;
-                            std::vector<double> root_boundaries;
-                            root_boundaries.reserve(
-                                model_snapshot.root_samples.size() + 2u);
-                            root_boundaries.push_back(root_span_start);
-                            for (const transform_sample& sample :
-                                model_snapshot.root_samples)
+                            if (diagnostic.empty())
                             {
-                                if (sample.time > root_span_start &&
-                                    sample.time < root_span_end)
-                                {
-                                    root_boundaries.push_back(sample.time);
-                                }
+                                diagnostic =
+                                    "Root-only static-pose Packet Span split produced an empty schedule.";
                             }
-                            root_boundaries.push_back(root_span_end);
-
-                            for (std::size_t boundary_index = 0u;
-                                boundary_index + 1u < root_boundaries.size();
-                                ++boundary_index)
-                            {
-                                const double segment_start =
-                                    root_boundaries[boundary_index];
-                                const double segment_end =
-                                    root_boundaries[boundary_index + 1u];
-                                const double segment_duration =
-                                    segment_end - segment_start;
-                                if (!finite_double(segment_start) ||
-                                    !finite_double(segment_duration) ||
-                                    segment_duration <= 0.0 ||
-                                    schedule.playback_spans.size() >=
-                                        maximum_span_count)
-                                {
-                                    diagnostic =
-                                        "Root-only static-pose Packet Span split exceeded its finite time or configured Span capacity.";
-                                    return false;
-                                }
-
-                                physics::scheduled_animation_clip_span split_span =
-                                    root_span;
-                                split_span.clip.span_index =
-                                    static_cast<uint32_t>(
-                                        schedule.playback_spans.size());
-                                split_span.world_time_start = segment_start;
-                                split_span.world_time_duration =
-                                    segment_duration;
-                                schedule.playback_spans.push_back(
-                                    std::move(split_span));
-                            }
-                        }
-                        if (schedule.playback_spans.empty())
-                        {
-                            diagnostic =
-                                "Root-only static-pose Packet Span split produced an empty schedule.";
                             return false;
                         }
                     }
@@ -6470,7 +6539,17 @@ namespace skin_physics::runtime
                                 playback.message;
                             return false;
                         }
-                        schedule.playback_spans = playback.values;
+                        if (!split_playback_spans_at_root_samples(
+                                clip, playback.values,
+                                schedule.playback_spans))
+                        {
+                            if (diagnostic.empty())
+                            {
+                                diagnostic =
+                                    "Animation Playback Root Sample Span split produced an empty schedule.";
+                            }
+                            return false;
+                        }
                     }
                     else
                     {
@@ -6548,7 +6627,131 @@ namespace skin_physics::runtime
                             return false;
                         }
                         schedule.has_blend = true;
-                        schedule.blend_spans = blend_schedule.values;
+                        schedule.blend_spans.clear();
+                        for (const physics::animation_blend_clip_span& original :
+                            blend_schedule.values)
+                        {
+                            const double span_start = original.world_time_start;
+                            const double span_end =
+                                span_start + original.world_time_duration;
+                            std::vector<double> boundaries;
+                            boundaries.reserve(
+                                model_snapshot.root_samples.size() + 2u);
+                            boundaries.push_back(span_start);
+                            for (const transform_sample& sample :
+                                model_snapshot.root_samples)
+                            {
+                                if (sample.time > span_start &&
+                                    sample.time < span_end)
+                                {
+                                    boundaries.push_back(sample.time);
+                                }
+                            }
+                            boundaries.push_back(span_end);
+
+                            for (std::size_t boundary_index = 0u;
+                                boundary_index + 1u < boundaries.size();
+                                ++boundary_index)
+                            {
+                                const double segment_start =
+                                    boundaries[boundary_index];
+                                const double segment_end =
+                                    boundaries[boundary_index + 1u];
+                                const double segment_duration =
+                                    segment_end - segment_start;
+                                if (!finite_double(segment_start) ||
+                                    !finite_double(segment_duration) ||
+                                    segment_duration <= 0.0 ||
+                                    schedule.blend_spans.size() >=
+                                        maximum_span_count)
+                                {
+                                    diagnostic =
+                                        "Animation Blend Root Sample split exceeded finite time or configured Packet Span capacity.";
+                                    return false;
+                                }
+
+                                physics::animation_blend_clip_span split_span;
+                                std::string split_diagnostic;
+                                if (!rebuild_root_split_clip_span(
+                                        source_clip, original.source,
+                                        segment_start, segment_duration,
+                                        split_span.source, split_diagnostic) ||
+                                    !rebuild_root_split_clip_span(
+                                        target_clip, original.target,
+                                        segment_start, segment_duration,
+                                        split_span.target, split_diagnostic))
+                                {
+                                    diagnostic =
+                                        "Animation Blend Root Sample split failed: " +
+                                        split_diagnostic;
+                                    return false;
+                                }
+
+                                const double local_start =
+                                    (segment_start - span_start) /
+                                    original.world_time_duration;
+                                const double local_delta =
+                                    segment_duration /
+                                    original.world_time_duration;
+                                const double u0 = local_start;
+                                const double u_delta = local_delta;
+                                const double u0_squared = u0 * u0;
+                                const double u_delta_squared =
+                                    u_delta * u_delta;
+                                const double c0 =
+                                    original.blend_weight.coefficients[0];
+                                const double c1 =
+                                    original.blend_weight.coefficients[1];
+                                const double c2 =
+                                    original.blend_weight.coefficients[2];
+                                const double c3 =
+                                    original.blend_weight.coefficients[3];
+                                split_span.blend_weight.world_time_start =
+                                    segment_start;
+                                split_span.blend_weight.world_time_duration =
+                                    segment_duration;
+                                split_span.blend_weight.coefficients = {
+                                    ((c3 * u0 + c2) * u0 + c1) * u0 + c0,
+                                    u_delta *
+                                        (c1 + 2.0 * c2 * u0 +
+                                            3.0 * c3 * u0_squared),
+                                    u_delta_squared *
+                                        (c2 + 3.0 * c3 * u0),
+                                    u_delta_squared * u_delta * c3
+                                };
+                                if (!std::all_of(
+                                        split_span.blend_weight.coefficients.begin(),
+                                        split_span.blend_weight.coefficients.end(),
+                                        [](double value)
+                                        {
+                                            return std::isfinite(value);
+                                        }))
+                                {
+                                    diagnostic =
+                                        "Animation Blend Root Sample split produced non-finite Hermite Weight coefficients.";
+                                    return false;
+                                }
+
+                                split_span.span_index =
+                                    static_cast<uint32_t>(
+                                        schedule.blend_spans.size());
+                                split_span.world_time_start = segment_start;
+                                split_span.world_time_duration =
+                                    segment_duration;
+                                split_span.source.clip.span_index =
+                                    split_span.span_index;
+                                split_span.target.clip.span_index =
+                                    split_span.span_index;
+                                schedule.blend_spans.push_back(
+                                    std::move(split_span));
+                            }
+                        }
+                        if (schedule.blend_spans.empty())
+                        {
+                            diagnostic =
+                                "Animation Blend Root Sample split produced an empty schedule.";
+                            return false;
+                        }
                     }
 
                     out_schedules.push_back(std::move(schedule));
