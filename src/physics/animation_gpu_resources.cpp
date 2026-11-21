@@ -502,6 +502,63 @@ namespace skin_physics::physics
                 }
             }
 
+            for (const root_transform_gpu_record& root :
+                packet.root_transform_records)
+            {
+                const auto finite_gpu_vec4 = [](const gpu_float4& value)
+                {
+                    return std::isfinite(value.x) &&
+                        std::isfinite(value.y) &&
+                        std::isfinite(value.z) &&
+                        std::isfinite(value.w);
+                };
+                const double start_length = std::sqrt(
+                    static_cast<double>(root.rotation_start.x) * root.rotation_start.x +
+                    static_cast<double>(root.rotation_start.y) * root.rotation_start.y +
+                    static_cast<double>(root.rotation_start.z) * root.rotation_start.z +
+                    static_cast<double>(root.rotation_start.w) * root.rotation_start.w);
+                const double end_length = std::sqrt(
+                    static_cast<double>(root.rotation_end.x) * root.rotation_end.x +
+                    static_cast<double>(root.rotation_end.y) * root.rotation_end.y +
+                    static_cast<double>(root.rotation_end.z) * root.rotation_end.z +
+                    static_cast<double>(root.rotation_end.w) * root.rotation_end.w);
+                const double axis_length = std::sqrt(
+                    static_cast<double>(root.angular_axis_and_angle.x) * root.angular_axis_and_angle.x +
+                    static_cast<double>(root.angular_axis_and_angle.y) * root.angular_axis_and_angle.y +
+                    static_cast<double>(root.angular_axis_and_angle.z) * root.angular_axis_and_angle.z);
+                if (!finite_gpu_vec4(root.translation_start) ||
+                    !finite_gpu_vec4(root.translation_end) ||
+                    !finite_gpu_vec4(root.rotation_start) ||
+                    !finite_gpu_vec4(root.rotation_end) ||
+                    !finite_gpu_vec4(root.angular_axis_and_angle) ||
+                    root.translation_start.w != 1.0f ||
+                    root.translation_end.w != 1.0f ||
+                    !std::isfinite(start_length) ||
+                    !std::isfinite(end_length) ||
+                    std::abs(start_length - 1.0) > 1.0e-4 ||
+                    std::abs(end_length - 1.0) > 1.0e-4 ||
+                    !std::isfinite(axis_length) ||
+                    !std::isfinite(root.angular_axis_and_angle.w) ||
+                    root.angular_axis_and_angle.w < 0.0f ||
+                    root.angular_axis_and_angle.w > 3.1416927f ||
+                    (root.angular_axis_and_angle.w > 1.0e-6f
+                        ? std::abs(axis_length - 1.0) > 1.0e-3
+                        : axis_length > 1.0e-3) ||
+                    !std::isfinite(root.duration_seconds) ||
+                    root.duration_seconds <= 0.0f ||
+                    !std::isfinite(root.inverse_duration) ||
+                    root.inverse_duration <= 0.0f ||
+                    std::abs(static_cast<double>(root.duration_seconds) *
+                        root.inverse_duration - 1.0) > 1.0e-4 ||
+                    root.flags != root_transform_flag_valid_mask ||
+                    root.reserved != 0u)
+                {
+                    diagnostic =
+                        "Animation Trajectory Packet contains an invalid Root Transform endpoint, Quaternion, World Angular Axis / Angle or duration.";
+                    return false;
+                }
+            }
+
             if (cursor.span_record_index >= packet.span_records.size() ||
                 cursor.animation_input_version_low != version_low ||
                 cursor.animation_input_version_high != version_high ||
