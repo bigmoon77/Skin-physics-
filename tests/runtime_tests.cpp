@@ -2935,6 +2935,266 @@ namespace
             "Runtime must shut down after the thread guard regression.");
     }
 
+    void test_runtime_kinematic_collider_gpu_evaluation()
+    {
+        using skin_physics::physics::kinematic_collider_gpu_record;
+        using skin_physics::physics::kinematic_collider_span_desc;
+        using skin_physics::physics::kinematic_collider_sample_result;
+        using skin_physics::physics::build_kinematic_collider_span;
+        using skin_physics::physics::evaluate_kinematic_collider_span;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        require(create_warp_device(device, context),
+            "Kinematic Collider evaluation requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const std::filesystem::path shader_path =
+            std::filesystem::path(runtime_shader_root()) /
+            "kinematic_collider_evaluate.cs.hlsl";
+        require(std::filesystem::is_regular_file(shader_path),
+            "Kinematic Collider evaluation must compile the production trajectory shader.");
+
+        ComPtr<ID3DBlob> bytecode;
+        ComPtr<ID3DBlob> errors;
+        const HRESULT compile_result = D3DCompileFromFile(
+            shader_path.c_str(),
+            nullptr,
+            D3D_COMPILE_STANDARD_FILE_INCLUDE,
+            "main",
+            "cs_5_0",
+            D3DCOMPILE_ENABLE_STRICTNESS,
+            0u,
+            bytecode.GetAddressOf(),
+            errors.GetAddressOf());
+        std::string compile_diagnostic;
+        if (errors != nullptr && errors->GetBufferSize() > 0u)
+        {
+            compile_diagnostic.assign(
+                static_cast<const char*>(errors->GetBufferPointer()),
+                errors->GetBufferSize());
+        }
+        require(SUCCEEDED(compile_result),
+            "Production Kinematic Collider evaluation shader must compile: " +
+                compile_diagnostic);
+
+        ComPtr<ID3D11ComputeShader> collider_shader;
+        require(SUCCEEDED(device->CreateComputeShader(
+                bytecode->GetBufferPointer(),
+                bytecode->GetBufferSize(),
+                nullptr,
+                collider_shader.GetAddressOf())),
+            "Kinematic Collider evaluation compute shader creation must succeed.");
+
+        static_assert(sizeof(kinematic_collider_gpu_record) == 128u,
+            "Kinematic Collider GPU input ABI must remain 128 bytes.");
+
+        kinematic_collider_span_desc rotating_desc;
+        rotating_desc.stable_collider_id = 0x100000001ull;
+        rotating_desc.span_sample_pair_id = 7u;
+        rotating_desc.world_time_start = 0.0;
+        rotating_desc.world_time_duration = 1.0;
+        rotating_desc.sample_start_time = 0.0;
+        rotating_desc.sample_end_time = 1.0;
+        rotating_desc.sample_start_translation = { 0.0f, 0.0f, 0.0f };
+        rotating_desc.sample_end_translation = { 2.0f, 0.0f, 0.0f };
+        rotating_desc.sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        rotating_desc.sample_end_rotation = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        rotating_desc.maximum_local_radius = 1.0f;
+        const auto rotating_span = build_kinematic_collider_span(rotating_desc);
+        require(rotating_span.success,
+            "CPU Kinematic Collider reference must build the rotating / translating Span: " +
+                rotating_span.message);
+
+        kinematic_collider_span_desc translating_desc;
+        translating_desc.stable_collider_id = 0x200000002ull;
+        translating_desc.span_sample_pair_id = 8u;
+        translating_desc.world_time_start = 2.0;
+        translating_desc.world_time_duration = 0.5;
+        translating_desc.sample_start_time = 1.5;
+        translating_desc.sample_end_time = 2.5;
+        translating_desc.sample_start_translation = { -1.0f, 0.0f, 1.0f };
+        translating_desc.sample_end_translation = { 1.0f, 2.0f, 1.0f };
+        translating_desc.sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        translating_desc.sample_end_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        translating_desc.maximum_local_radius = 0.5f;
+        const auto translating_span = build_kinematic_collider_span(translating_desc);
+        require(translating_span.success,
+            "CPU Kinematic Collider reference must build a translation-only Span: " +
+                translating_span.message);
+
+        std::vector<kinematic_collider_gpu_record> collider_records = {
+            rotating_span.value, translating_span.value, rotating_span.value
+        };
+        collider_records[2u].maximum_local_radius = 0.25f;
+
+        std::vector<test_gpu_float4> local_contact_points = {
+            { 1.0f, 0.0f, 0.0f, 0.0f },
+            { 0.25f, 0.0f, 0.0f, 0.0f },
+            { 1.0f, 0.0f, 0.0f, 0.0f }
+        };
+        const std::vector<float> local_coordinates = {
+            0.5f, 0.25f, 0.5f
+        };
+
+        const kinematic_collider_sample_result expected_rotating =
+            evaluate_kinematic_collider_span(
+                collider_records[0u], local_coordinates[0u],
+                { local_contact_points[0u].x,
+                  local_contact_points[0u].y,
+                  local_contact_points[0u].z });
+        const kinematic_collider_sample_result expected_translating =
+            evaluate_kinematic_collider_span(
+                collider_records[1u], local_coordinates[1u],
+                { local_contact_points[1u].x,
+                  local_contact_points[1u].y,
+                  local_contact_points[1u].z });
+        const kinematic_collider_sample_result rejected_radius =
+            evaluate_kinematic_collider_span(
+                collider_records[2u], local_coordinates[2u],
+                { local_contact_points[2u].x,
+                  local_contact_points[2u].y,
+                  local_contact_points[2u].z });
+        require(expected_rotating.success && expected_translating.success &&
+            !rejected_radius.success,
+            "CPU Kinematic Collider oracle must accept valid motion and reject a contact point outside its certified radius.");
+
+        ComPtr<ID3D11Buffer> collider_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), collider_records, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11ShaderResourceView> collider_srv =
+            create_distribution_test_srv(
+                device.Get(), collider_buffer.Get(),
+                static_cast<uint32_t>(collider_records.size()));
+        ComPtr<ID3D11Buffer> point_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), local_contact_points, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11ShaderResourceView> point_srv =
+            create_distribution_test_srv(
+                device.Get(), point_buffer.Get(),
+                static_cast<uint32_t>(local_contact_points.size()));
+        ComPtr<ID3D11Buffer> coordinate_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), local_coordinates, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11ShaderResourceView> coordinate_srv =
+            create_distribution_test_srv(
+                device.Get(), coordinate_buffer.Get(),
+                static_cast<uint32_t>(local_coordinates.size()));
+
+        struct alignas(16) collider_sample_gpu_record
+        {
+            test_gpu_float4 translation;
+            test_gpu_float4 rotation;
+            test_gpu_float4 linear_velocity;
+            test_gpu_float4 angular_velocity;
+            test_gpu_float4 contact_point_velocity;
+            uint32_t status = 0u;
+            uint32_t reserved[3] = {};
+        };
+        static_assert(sizeof(collider_sample_gpu_record) == 96u,
+            "Kinematic Collider GPU output ABI must remain 96 bytes.");
+
+        const std::vector<collider_sample_gpu_record> initial_output(3u);
+        ComPtr<ID3D11Buffer> output_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), initial_output,
+                D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+        ComPtr<ID3D11ShaderResourceView> output_srv =
+            create_distribution_test_srv(
+                device.Get(), output_buffer.Get(), 3u);
+        ComPtr<ID3D11UnorderedAccessView> output_uav =
+            create_distribution_test_uav(
+                device.Get(), output_buffer.Get(), 3u);
+
+        struct alignas(16) collider_evaluate_parameters
+        {
+            uint32_t collider_count = 0u;
+            uint32_t reserved[3] = {};
+        };
+        static_assert(sizeof(collider_evaluate_parameters) == 16u,
+            "Kinematic Collider evaluation parameters must match the 16-byte HLSL constant-buffer ABI.");
+        collider_evaluate_parameters parameters;
+        parameters.collider_count =
+            static_cast<uint32_t>(collider_records.size());
+        ComPtr<ID3D11Buffer> parameter_buffer =
+            create_distribution_test_constant_buffer(device.Get(), parameters);
+
+        ID3D11ShaderResourceView* shader_resources[] = {
+            collider_srv.Get(), point_srv.Get(), coordinate_srv.Get()
+        };
+        ID3D11UnorderedAccessView* unordered_access_views[] = {
+            output_uav.Get()
+        };
+        ID3D11Buffer* constant_buffers[] = { parameter_buffer.Get() };
+        context->CSSetShader(collider_shader.Get(), nullptr, 0u);
+        context->CSSetShaderResources(0u, 3u, shader_resources);
+        context->CSSetUnorderedAccessViews(
+            0u, 1u, unordered_access_views, nullptr);
+        context->CSSetConstantBuffers(0u, 1u, constant_buffers);
+        context->Dispatch(1u, 1u, 1u);
+
+        ID3D11ShaderResourceView* null_shader_resources[] = {
+            nullptr, nullptr, nullptr
+        };
+        ID3D11UnorderedAccessView* null_unordered_access_views[] = { nullptr };
+        ID3D11Buffer* null_constant_buffers[] = { nullptr };
+        context->CSSetShaderResources(0u, 3u, null_shader_resources);
+        context->CSSetUnorderedAccessViews(
+            0u, 1u, null_unordered_access_views, nullptr);
+        context->CSSetConstantBuffers(0u, 1u, null_constant_buffers);
+        context->CSSetShader(nullptr, nullptr, 0u);
+        context->Flush();
+
+        const std::vector<collider_sample_gpu_record> actual =
+            readback_render_srv<collider_sample_gpu_record>(
+                device.Get(), context.Get(), output_srv.Get(), 3u);
+        require(actual.size() == 3u,
+            "Kinematic Collider GPU readback must return every dispatched sample.");
+
+        const auto near = [](float left, float right, float tolerance)
+        {
+            return std::isfinite(left) && std::isfinite(right) &&
+                std::abs(left - right) <= tolerance;
+        };
+        const auto verify_sample = [&near](
+            const collider_sample_gpu_record& gpu,
+            const kinematic_collider_sample_result& cpu)
+        {
+            return gpu.status == 0u &&
+                near(gpu.translation.x, cpu.value.translation.x, 2.0e-4f) &&
+                near(gpu.translation.y, cpu.value.translation.y, 2.0e-4f) &&
+                near(gpu.translation.z, cpu.value.translation.z, 2.0e-4f) &&
+                near(gpu.rotation.x, cpu.value.rotation.x, 2.0e-4f) &&
+                near(gpu.rotation.y, cpu.value.rotation.y, 2.0e-4f) &&
+                near(gpu.rotation.z, cpu.value.rotation.z, 2.0e-4f) &&
+                near(gpu.rotation.w, cpu.value.rotation.w, 2.0e-4f) &&
+                near(gpu.linear_velocity.x, cpu.value.linear_velocity.x, 2.0e-4f) &&
+                near(gpu.linear_velocity.y, cpu.value.linear_velocity.y, 2.0e-4f) &&
+                near(gpu.linear_velocity.z, cpu.value.linear_velocity.z, 2.0e-4f) &&
+                near(gpu.angular_velocity.x, cpu.value.angular_velocity.x, 2.0e-4f) &&
+                near(gpu.angular_velocity.y, cpu.value.angular_velocity.y, 2.0e-4f) &&
+                near(gpu.angular_velocity.z, cpu.value.angular_velocity.z, 2.0e-4f) &&
+                near(gpu.contact_point_velocity.x,
+                    cpu.value.contact_point_velocity.x, 3.0e-4f) &&
+                near(gpu.contact_point_velocity.y,
+                    cpu.value.contact_point_velocity.y, 3.0e-4f) &&
+                near(gpu.contact_point_velocity.z,
+                    cpu.value.contact_point_velocity.z, 3.0e-4f);
+        };
+
+        require(verify_sample(actual[0u], expected_rotating),
+            "GPU rotating Collider Transform / Linear / Angular / Contact Velocity must match the CPU oracle.");
+        require(verify_sample(actual[1u], expected_translating),
+            "GPU translating Collider Transform / Linear / Angular / Contact Velocity must match the CPU oracle.");
+        require(actual[2u].status != 0u,
+            "GPU Kinematic Collider evaluation must fail closed when the local contact point exceeds the certified radius.");
+
+        std::cout << "[PASS] P09_WARP_KINEMATIC_COLLIDER_EVALUATION\n";
+    }
+
     void test_runtime_animation_span_cursor_gpu_advance()
     {
         ComPtr<ID3D11Device> device;
@@ -3215,6 +3475,7 @@ namespace
 
 int run_runtime_tests()
 {
+    test_runtime_kinematic_collider_gpu_evaluation();
     test_runtime_animation_span_cursor_gpu_advance();
     test_runtime_force_distribution_gpu_cpu_parity();
     std::cout << "[PASS] R1_WARP_FORCE_DISTRIBUTION_CPU_GPU_WEIGHT_PARITY\n";
