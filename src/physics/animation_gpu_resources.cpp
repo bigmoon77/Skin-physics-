@@ -502,9 +502,14 @@ namespace skin_physics::physics
                 }
             }
 
-            for (const root_transform_gpu_record& root :
-                packet.root_transform_records)
+            for (std::size_t root_index = 0u;
+                root_index < packet.root_transform_records.size();
+                ++root_index)
             {
+                const root_transform_gpu_record& root =
+                    packet.root_transform_records[root_index];
+                const animation_span_gpu_record& owning_span =
+                    packet.span_records[root_index];
                 const auto finite_gpu_vec4 = [](const gpu_float4& value)
                 {
                     return std::isfinite(value.x) &&
@@ -546,6 +551,10 @@ namespace skin_physics::physics
                         : axis_length > 1.0e-3) ||
                     !std::isfinite(root.duration_seconds) ||
                     root.duration_seconds <= 0.0f ||
+                    std::abs(static_cast<double>(root.duration_seconds) -
+                        owning_span.span_duration_seconds) >
+                        1.0e-5 * std::max(1.0,
+                            static_cast<double>(owning_span.span_duration_seconds)) ||
                     !std::isfinite(root.inverse_duration) ||
                     root.inverse_duration <= 0.0f ||
                     std::abs(static_cast<double>(root.duration_seconds) *
