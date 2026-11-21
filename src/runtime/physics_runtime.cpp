@@ -933,9 +933,9 @@ namespace skin_physics::runtime
             // q_delta = q_end * conjugate(q_start) expresses the Slerp
             // rotation axis in World Space.
             const std::array<double, 4> q_delta = {
-                q1[3] * q0[0] - q1[0] * q0[3] - q1[1] * q0[2] + q1[2] * q0[1],
-                q1[3] * q0[1] + q1[0] * q0[2] - q1[1] * q0[3] - q1[2] * q0[1],
-                q1[3] * q0[2] - q1[0] * q0[1] + q1[1] * q0[0] - q1[2] * q0[3],
+                -q1[3] * q0[0] + q1[0] * q0[3] - q1[1] * q0[2] + q1[2] * q0[1],
+                -q1[3] * q0[1] + q1[0] * q0[2] + q1[1] * q0[3] - q1[2] * q0[0],
+                -q1[3] * q0[2] - q1[0] * q0[1] + q1[1] * q0[0] + q1[2] * q0[3],
                 q1[3] * q0[3] + q1[0] * q0[0] + q1[1] * q0[1] + q1[2] * q0[2]
             };
             const double vector_length = std::sqrt(
