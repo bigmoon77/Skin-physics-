@@ -3269,6 +3269,16 @@ namespace
                 skin_physics::physics::collision_error::invalid_geometry,
             "Kinematic Collider geometry evaluation must reject out-of-range triangle indices.");
 
+        skin_physics::physics::kinematic_collider_gpu_record invalid_homogeneous =
+            span.value;
+        invalid_homogeneous.translation_end.w = 0.0f;
+        const auto rejected_homogeneous = evaluate_kinematic_collider_geometry(
+            collision_mesh, invalid_homogeneous, 0.5);
+        require(!rejected_homogeneous.success &&
+            rejected_homogeneous.error ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "CPU Kinematic Collider geometry evaluation must reject non-homogeneous Translation endpoints consistently with the GPU evaluator.");
+
         skin_physics::physics::kinematic_collider_gpu_record underbounded =
             span.value;
         underbounded.maximum_local_radius = 0.5f;
