@@ -4250,6 +4250,183 @@ namespace
         std::cout << "[PASS] P09_WARP_ANIMATION_BLEND_LOCAL_TRANSFORMS\n";
     }
 
+    void test_phase09_warp_animation_node_hierarchy()
+    {
+        using skin_physics::asset::invalid_index;
+        using skin_physics::physics::gpu_matrix4x4;
+
+        ComPtr<ID3D11Device> device;
+        ComPtr<ID3D11DeviceContext> context;
+        const HRESULT device_result =
+            create_warp_device(device.GetAddressOf(), context.GetAddressOf());
+        require(SUCCEEDED(device_result),
+            "Animation Node Hierarchy GPU Evaluator requires a D3D11 WARP Feature Level 11_0 device.");
+
+        const ComPtr<ID3D11ComputeShader> shader = compile_compute_shader(
+            device.Get(),
+            test_support::fixture_directory().parent_path().parent_path() /
+                "shaders" / "runtime" / "animation_node_hierarchy_evaluate.cs.hlsl",
+            "main");
+
+        std::vector<gpu_animation_node_local_transform_record> local_transforms(4u);
+        local_transforms[0u].translation = { 1.0f, 0.0f, 0.0f, 0.0f };
+        local_transforms[0u].translation_velocity = { 1.0f, 0.0f, 0.0f, 0.0f };
+        local_transforms[0u].rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        local_transforms[0u].scale = { 1.0f, 1.0f, 1.0f, 0.0f };
+        local_transforms[0u].node_index = 0u;
+        local_transforms[0u].parent_index = invalid_index;
+
+        local_transforms[1u].translation = { 0.0f, 2.0f, 0.0f, 0.0f };
+        local_transforms[1u].translation_velocity = { 0.0f, 2.0f, 0.0f, 0.0f };
+        local_transforms[1u].rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        local_transforms[1u].scale = { 1.0f, 1.0f, 1.0f, 0.0f };
+        local_transforms[1u].node_index = 1u;
+        local_transforms[1u].parent_index = 0u;
+
+        local_transforms[2u].translation = { 0.0f, 0.0f, 3.0f, 0.0f };
+        local_transforms[2u].translation_velocity = { 0.0f, 0.0f, 3.0f, 0.0f };
+        local_transforms[2u].rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        local_transforms[2u].scale = { 1.0f, 1.0f, 1.0f, 0.0f };
+        local_transforms[2u].node_index = 2u;
+        local_transforms[2u].parent_index = 1u;
+
+        local_transforms[3u].node_index = 3u;
+        local_transforms[3u].parent_index = 0u;
+        local_transforms[3u].node_role_flags = 1u << 4u;
+
+        std::vector<gpu_matrix4x4> static_matrices(4u);
+        for (gpu_matrix4x4& matrix : static_matrices)
+        {
+            matrix.column0 = { 1.0f, 0.0f, 0.0f, 0.0f };
+            matrix.column1 = { 0.0f, 1.0f, 0.0f, 0.0f };
+            matrix.column2 = { 0.0f, 0.0f, 1.0f, 0.0f };
+            matrix.column3 = { 0.0f, 0.0f, 0.0f, 1.0f };
+        }
+        static_matrices[3u].column3.x = 5.0f;
+
+        const ComPtr<ID3D11Buffer> local_buffer =
+            create_structured_buffer(
+                device.Get(), local_transforms, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11Buffer> static_buffer =
+            create_structured_buffer(
+                device.Get(), static_matrices, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> local_srv =
+            create_structured_srv<gpu_animation_node_local_transform_record>(
+                device.Get(), local_buffer.Get(),
+                static_cast<uint32_t>(local_transforms.size()));
+        const ComPtr<ID3D11ShaderResourceView> static_srv =
+            create_structured_srv<gpu_matrix4x4>(
+                device.Get(), static_buffer.Get(),
+                static_cast<uint32_t>(static_matrices.size()));
+
+        const std::vector<gpu_matrix4x4> empty_matrices(4u);
+        const std::vector<uint32_t> clear_status(1u, 0u);
+        const ComPtr<ID3D11Buffer> global_buffer =
+            create_structured_buffer(
+                device.Get(), empty_matrices, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> derivative_buffer =
+            create_structured_buffer(
+                device.Get(), empty_matrices, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11Buffer> status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> global_uav =
+            create_structured_uav<gpu_matrix4x4>(
+                device.Get(), global_buffer.Get(), 4u);
+        const ComPtr<ID3D11UnorderedAccessView> derivative_uav =
+            create_structured_uav<gpu_matrix4x4>(
+                device.Get(), derivative_buffer.Get(), 4u);
+        const ComPtr<ID3D11UnorderedAccessView> status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), status_buffer.Get(), 1u);
+
+        struct alignas(16) hierarchy_parameters
+        {
+            uint32_t node_count = 4u;
+            uint32_t static_node_matrix_count = 4u;
+            uint32_t hierarchy_level = 0u;
+            uint32_t reserved = 0u;
+        };
+
+        for (uint32_t hierarchy_level = 0u;
+            hierarchy_level < 3u; ++hierarchy_level)
+        {
+            hierarchy_parameters parameters;
+            parameters.hierarchy_level = hierarchy_level;
+            const ComPtr<ID3D11Buffer> parameter_buffer =
+                create_constant_buffer(
+                    device.Get(), &parameters, sizeof(parameters));
+            dispatch_compute(
+                context.Get(), shader.Get(),
+                { local_srv.Get(), static_srv.Get() },
+                { global_uav.Get(), derivative_uav.Get(), status_uav.Get() },
+                parameter_buffer.Get(),
+                1u);
+        }
+
+        const std::vector<gpu_matrix4x4> global_matrices =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), global_buffer.Get(), 4u);
+        const std::vector<gpu_matrix4x4> global_derivatives =
+            readback_structured_buffer<gpu_matrix4x4>(
+                device.Get(), context.Get(), derivative_buffer.Get(), 4u);
+        const std::vector<uint32_t> status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(status[0u] == 0u,
+            "Valid parent-before-child TRS and static Matrix nodes must not set the GPU Hierarchy failure bit.");
+        require(std::abs(global_matrices[0u].column3.x - 1.0f) <= 1.0e-6f &&
+            std::abs(global_matrices[1u].column3.x - 1.0f) <= 1.0e-6f &&
+            std::abs(global_matrices[1u].column3.y - 2.0f) <= 1.0e-6f &&
+            std::abs(global_matrices[2u].column3.x - 1.0f) <= 1.0e-6f &&
+            std::abs(global_matrices[2u].column3.y - 2.0f) <= 1.0e-6f &&
+            std::abs(global_matrices[2u].column3.z - 3.0f) <= 1.0e-6f &&
+            std::abs(global_matrices[3u].column3.x - 6.0f) <= 1.0e-6f,
+            "GPU Hierarchy must compose parent-before-child Global Matrices and static affine Matrix nodes in Asset Node space.");
+        require(std::abs(global_derivatives[0u].column3.x - 1.0f) <= 1.0e-6f &&
+            std::abs(global_derivatives[1u].column3.x - 1.0f) <= 1.0e-6f &&
+            std::abs(global_derivatives[1u].column3.y - 2.0f) <= 1.0e-6f &&
+            std::abs(global_derivatives[2u].column3.x - 1.0f) <= 1.0e-6f &&
+            std::abs(global_derivatives[2u].column3.y - 2.0f) <= 1.0e-6f &&
+            std::abs(global_derivatives[2u].column3.z - 3.0f) <= 1.0e-6f &&
+            std::abs(global_derivatives[3u].column3.x - 1.0f) <= 1.0e-6f,
+            "GPU Hierarchy must propagate Global Matrix Derivatives with the matrix product rule.");
+
+        std::vector<gpu_animation_node_local_transform_record> invalid_locals =
+            local_transforms;
+        invalid_locals[1u].parent_index = 1u;
+        const ComPtr<ID3D11Buffer> invalid_local_buffer =
+            create_structured_buffer(
+                device.Get(), invalid_locals, D3D11_BIND_SHADER_RESOURCE);
+        const ComPtr<ID3D11ShaderResourceView> invalid_local_srv =
+            create_structured_srv<gpu_animation_node_local_transform_record>(
+                device.Get(), invalid_local_buffer.Get(), 4u);
+        const ComPtr<ID3D11Buffer> invalid_status_buffer =
+            create_structured_buffer(
+                device.Get(), clear_status, D3D11_BIND_UNORDERED_ACCESS);
+        const ComPtr<ID3D11UnorderedAccessView> invalid_status_uav =
+            create_structured_uav<uint32_t>(
+                device.Get(), invalid_status_buffer.Get(), 1u);
+        hierarchy_parameters invalid_parameters;
+        invalid_parameters.hierarchy_level = 0u;
+        const ComPtr<ID3D11Buffer> invalid_parameter_buffer =
+            create_constant_buffer(
+                device.Get(), &invalid_parameters, sizeof(invalid_parameters));
+        dispatch_compute(
+            context.Get(), shader.Get(),
+            { invalid_local_srv.Get(), static_srv.Get() },
+            { global_uav.Get(), derivative_uav.Get(), invalid_status_uav.Get() },
+            invalid_parameter_buffer.Get(),
+            1u);
+        const std::vector<uint32_t> invalid_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), invalid_status_buffer.Get(), 1u);
+        require(invalid_status[0u] == 1u,
+            "Self-parent / non-topological Node references must fail closed before Global Matrix publication.");
+
+        std::cout << "[PASS] P09_WARP_ANIMATION_NODE_HIERARCHY\n";
+    }
+
     void test_phase12_warp_tick_transaction_commit_gate(
         ID3D11Device* device,
         ID3D11DeviceContext* context,
@@ -4474,6 +4651,7 @@ int run_gpu_solver_tests()
     test_phase09_warp_physics_mesh_skinning_targets();
     test_phase09_warp_animation_channel_evaluation();
     test_phase09_warp_animation_blend_local_transforms();
+    test_phase09_warp_animation_node_hierarchy();
     {
         ComPtr<ID3D11Device> device;
         ComPtr<ID3D11DeviceContext> context;
