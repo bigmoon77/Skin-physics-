@@ -384,6 +384,41 @@ namespace
         require(built.value.bend_constraints.size() == 1,
             "Cloth patch should contain one bend hinge.");
 
+        std::string coloring_diagnostic;
+        require(skin_physics::physics::validate_cloth_stretch_coloring(
+                built.value, coloring_diagnostic),
+            "Cloth Stretch coloring must be valid: " + coloring_diagnostic);
+        require(!built.value.stretch_color_ranges.empty() &&
+            built.value.stretch_color_constraint_indices.size() ==
+                built.value.stretch_constraints.size(),
+            "Cloth Stretch coloring must cover every edge in deterministic color batches.");
+        for (const auto& color_range : built.value.stretch_color_ranges)
+        {
+            std::vector<uint8_t> occupied(built.value.rest_positions.size(), 0u);
+            for (uint32_t local_index = 0u;
+                local_index < color_range.constraint_count;
+                ++local_index)
+            {
+                const uint32_t constraint_index =
+                    built.value.stretch_color_constraint_indices[
+                        color_range.first_constraint_index + local_index];
+                const auto& constraint =
+                    built.value.stretch_constraints[constraint_index];
+                require(occupied[constraint.vertices[0]] == 0u &&
+                    occupied[constraint.vertices[1]] == 0u,
+                    "A Stretch color must contain only vertex-disjoint edges.");
+                occupied[constraint.vertices[0]] = 1u;
+                occupied[constraint.vertices[1]] = 1u;
+            }
+        }
+
+        auto invalid_coloring = built.value;
+        invalid_coloring.stretch_color_constraint_indices[1u] =
+            invalid_coloring.stretch_color_constraint_indices[0u];
+        require(!skin_physics::physics::validate_cloth_stretch_coloring(
+                invalid_coloring, coloring_diagnostic),
+            "Cloth Stretch coloring validation must reject duplicate constraint ownership.");
+
         const auto& input_edges = input.at("stretch_edges").as_array();
         const auto& expected_lengths = expected.at("rest_edge_lengths").as_array();
         for (std::size_t edge_index = 0; edge_index < input_edges.size(); ++edge_index)
