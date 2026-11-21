@@ -294,6 +294,87 @@ namespace skin_physics::physics
                         return false;
                     }
                 }
+
+                std::unordered_set<uint64_t> collider_ids;
+                for (uint32_t local_collider_index = 0u;
+                    local_collider_index < span.collider_record_count;
+                    ++local_collider_index)
+                {
+                    const kinematic_collider_gpu_record& collider =
+                        packet.collider_records[
+                            static_cast<std::size_t>(span.first_collider_record) +
+                            local_collider_index];
+                    const uint64_t stable_id =
+                        (static_cast<uint64_t>(collider.stable_collider_id_high) << 32u) |
+                        collider.stable_collider_id_low;
+                    const double rotation_start_length = std::sqrt(
+                        static_cast<double>(collider.rotation_start.x) * collider.rotation_start.x +
+                        static_cast<double>(collider.rotation_start.y) * collider.rotation_start.y +
+                        static_cast<double>(collider.rotation_start.z) * collider.rotation_start.z +
+                        static_cast<double>(collider.rotation_start.w) * collider.rotation_start.w);
+                    const double rotation_end_length = std::sqrt(
+                        static_cast<double>(collider.rotation_end.x) * collider.rotation_end.x +
+                        static_cast<double>(collider.rotation_end.y) * collider.rotation_end.y +
+                        static_cast<double>(collider.rotation_end.z) * collider.rotation_end.z +
+                        static_cast<double>(collider.rotation_end.w) * collider.rotation_end.w);
+                    const double axis_length = std::sqrt(
+                        static_cast<double>(collider.angular_axis_and_angle.x) * collider.angular_axis_and_angle.x +
+                        static_cast<double>(collider.angular_axis_and_angle.y) * collider.angular_axis_and_angle.y +
+                        static_cast<double>(collider.angular_axis_and_angle.z) * collider.angular_axis_and_angle.z);
+                    const double expected_linear_speed = std::sqrt(
+                        std::pow(static_cast<double>(collider.translation_end.x) - collider.translation_start.x, 2.0) +
+                        std::pow(static_cast<double>(collider.translation_end.y) - collider.translation_start.y, 2.0) +
+                        std::pow(static_cast<double>(collider.translation_end.z) - collider.translation_start.z, 2.0)) *
+                        collider.inverse_duration;
+                    const double expected_angular_speed =
+                        static_cast<double>(collider.angular_axis_and_angle.w) *
+                        collider.inverse_duration;
+                    const double expected_sagitta =
+                        static_cast<double>(collider.maximum_local_radius) *
+                        (1.0 - std::cos(
+                            static_cast<double>(collider.angular_axis_and_angle.w) * 0.5));
+                    const double duration_tolerance =
+                        1.0e-5 * std::max(
+                            1.0, static_cast<double>(span.span_duration_seconds));
+                    if (stable_id == 0u ||
+                        !collider_ids.insert(stable_id).second ||
+                        collider.span_sample_pair_id == asset::invalid_index ||
+                        (collider.flags & kinematic_collider_flag_valid) == 0u ||
+                        !std::isfinite(collider.translation_start.x) ||
+                        !std::isfinite(collider.translation_start.y) ||
+                        !std::isfinite(collider.translation_start.z) ||
+                        !std::isfinite(collider.translation_end.x) ||
+                        !std::isfinite(collider.translation_end.y) ||
+                        !std::isfinite(collider.translation_end.z) ||
+                        !std::isfinite(rotation_start_length) ||
+                        !std::isfinite(rotation_end_length) ||
+                        std::abs(rotation_start_length - 1.0) > 1.0e-4 ||
+                        std::abs(rotation_end_length - 1.0) > 1.0e-4 ||
+                        !std::isfinite(axis_length) ||
+                        std::abs(axis_length - 1.0) > 1.0e-3 ||
+                        !std::isfinite(collider.angular_axis_and_angle.w) ||
+                        collider.angular_axis_and_angle.w < 0.0f ||
+                        collider.angular_axis_and_angle.w > 3.1416927f ||
+                        !std::isfinite(collider.duration_seconds) ||
+                        collider.duration_seconds <= 0.0f ||
+                        std::abs(static_cast<double>(collider.duration_seconds) -
+                            span.span_duration_seconds) > duration_tolerance ||
+                        !std::isfinite(collider.inverse_duration) ||
+                        collider.inverse_duration <= 0.0f ||
+                        !std::isfinite(collider.linear_speed_bound) ||
+                        collider.linear_speed_bound < expected_linear_speed ||
+                        !std::isfinite(collider.angular_speed_bound) ||
+                        collider.angular_speed_bound < expected_angular_speed ||
+                        !std::isfinite(collider.maximum_local_radius) ||
+                        collider.maximum_local_radius < 0.0f ||
+                        !std::isfinite(collider.sagitta_bound) ||
+                        collider.sagitta_bound < expected_sagitta)
+                    {
+                        diagnostic =
+                            "Animation Trajectory Packet contains an invalid Kinematic Collider identity, Transform, Span duration or non-conservative motion Bound.";
+                        return false;
+                    }
+                }
             }
 
             for (const animation_track_gpu_record& track : packet.track_records)
