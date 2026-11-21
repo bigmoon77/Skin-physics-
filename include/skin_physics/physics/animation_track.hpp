@@ -580,6 +580,71 @@ namespace skin_physics::physics
         float reserved1 = 0.0f;
     };
 
+    constexpr uint32_t kinematic_collider_flag_valid = 1u << 0u;
+
+    struct kinematic_collider_span_desc
+    {
+        uint64_t stable_collider_id = 0u;
+        uint32_t span_sample_pair_id = asset::invalid_index;
+        double world_time_start = 0.0;
+        double world_time_duration = 0.0;
+        double sample_start_time = 0.0;
+        double sample_end_time = 0.0;
+        asset::vec3 sample_start_translation;
+        asset::vec3 sample_end_translation;
+        asset::vec4 sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        asset::vec4 sample_end_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        bool sample_end_is_teleport = false;
+        float maximum_local_radius = 0.0f;
+    };
+
+    enum class kinematic_collider_span_error : uint8_t
+    {
+        none,
+        invalid_identity,
+        invalid_time,
+        sample_pair_does_not_bracket_span,
+        teleport_crossing,
+        invalid_transform,
+        invalid_bounds,
+        gpu_float_range
+    };
+
+    struct kinematic_collider_span_build_result
+    {
+        kinematic_collider_gpu_record value;
+        kinematic_collider_span_error error =
+            kinematic_collider_span_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    struct kinematic_collider_sample
+    {
+        asset::vec3 translation;
+        asset::vec4 rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        asset::vec3 linear_velocity;
+        asset::vec3 angular_velocity;
+        asset::vec3 contact_point_velocity;
+    };
+
+    struct kinematic_collider_sample_result
+    {
+        kinematic_collider_sample value;
+        kinematic_collider_span_error error =
+            kinematic_collider_span_error::none;
+        std::string message;
+        bool success = false;
+    };
+
+    kinematic_collider_span_build_result build_kinematic_collider_span(
+        const kinematic_collider_span_desc& desc);
+
+    kinematic_collider_sample_result evaluate_kinematic_collider_span(
+        const kinematic_collider_gpu_record& span,
+        double span_local_u,
+        const asset::vec3& local_contact_point = {});
+
     // Static mapping from each Skinned Mesh Node to its ordered Joint set.
     // Channel offsets are relative to a Track's first_channel_record so the
     // same immutable Skin table works for every Track / Span in the Packet.
@@ -722,6 +787,7 @@ namespace skin_physics::physics
         uint32_t source_track_index = 0u;
         uint32_t target_track_index = 1u;
         animation_blend_weight_curve_desc blend_curve;
+        std::vector<kinematic_collider_gpu_record> colliders;
         animation_trajectory_span_bounds bounds;
         // False is permitted for skinning-only Packets. CCD / no-miss consumers
         // must reject Spans without the Bounds-Certified flag.
