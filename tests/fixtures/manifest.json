@@ -298,6 +298,16 @@
             "WARP output Positions match the CPU simultaneous Shear / Bend XPBD reference for the same Segment duration, Compliance and relaxation",
             "Zero inverse-mass pinned vertices receive no Shear / Bend correction while the surrounding movable vertices retain CPU / GPU parity"
           ]
+        },
+        {
+          "id": "P05_CLOTH_GPU_TOPOLOGY_PACKET",
+          "checks": [
+            "CPU Cloth topology is packed into explicit 16-byte Stretch and 32-byte Shear / Bend StructuredBuffer records matching the production Shader Model 5 layouts",
+            "Deterministic Stretch color ranges / flattened indices and Vertex-to-Constraint CSR offsets / references preserve exact CPU ordering",
+            "Shear / Bend records preserve local Vertex mapping, Rest values, normalization and their configured Compliance coefficients",
+            "Stretch / Shear / Bend Lambda arrays are independently allocated and initialized to zero for a new Segment",
+            "Invalid Compliance, non-finite Rest data, invalid Stretch coloring or malformed CSR reject packet construction transactionally"
+          ]
         }
       ],
       "automated_cases": [
