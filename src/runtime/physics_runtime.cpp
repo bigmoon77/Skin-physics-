@@ -3941,147 +3941,670 @@ namespace skin_physics::runtime
                 return false;
             }
 
-            physics::animation_hierarchy_sample_result pose;
+            physics::animation_trajectory_span_input span_input;
+            span_input.span_id = 0u;
+            span_input.bounds_are_certified = false;
             if (blend_span != nullptr)
             {
-                pose = physics::evaluate_animation_blend_clip_hierarchy(
-                    model.source_model,
-                    *source_clip,
-                    *target_clip,
-                    *blend_span,
-                    span_local_u);
+                physics::animation_trajectory_track_span_input source_input;
+                source_input.clip_index =
+                    model_snapshot.animation_blend.source_track.clip_index;
+                source_input.scheduled = blend_span->source;
+                source_input.loop = model_snapshot.animation_blend.source_track.loop;
+                source_input.reverse_playback =
+                    blend_span->source.clip.clip_time_delta < 0.0;
+                physics::animation_trajectory_track_span_input target_input;
+                target_input.clip_index =
+                    model_snapshot.animation_blend.target_track.clip_index;
+                target_input.scheduled = blend_span->target;
+                target_input.loop = model_snapshot.animation_blend.target_track.loop;
+                target_input.reverse_playback =
+                    blend_span->target.clip.clip_time_delta < 0.0;
+                span_input.tracks.push_back(std::move(source_input));
+                span_input.tracks.push_back(std::move(target_input));
+                span_input.has_blend = true;
+                span_input.source_track_index = 0u;
+                span_input.target_track_index = 1u;
+                span_input.blend_curve.blend_start_time =
+                    model_snapshot.animation_blend.blend_start_time;
+                span_input.blend_curve.blend_end_time =
+                    model_snapshot.animation_blend.blend_end_time;
+                span_input.blend_curve.weight_start =
+                    model_snapshot.animation_blend.weight_start;
+                span_input.blend_curve.weight_end =
+                    model_snapshot.animation_blend.weight_end;
+                span_input.blend_curve.tangent_start =
+                    model_snapshot.animation_blend.tangent_start;
+                span_input.blend_curve.tangent_end =
+                    model_snapshot.animation_blend.tangent_end;
             }
             else
             {
-                pose = physics::evaluate_animation_clip_hierarchy(
-                    model.source_model,
-                    *source_clip,
-                    playback_span->clip,
-                    span_local_u,
-                    span_duration);
+                physics::animation_trajectory_track_span_input playback_input;
+                playback_input.clip_index =
+                    model_snapshot.animation_playback.track.clip_index;
+                playback_input.scheduled = *playback_span;
+                playback_input.loop =
+                    model_snapshot.animation_playback.track.loop;
+                playback_input.reverse_playback =
+                    playback_span->clip.clip_time_delta < 0.0;
+                span_input.tracks.push_back(std::move(playback_input));
             }
-            if (!pose.success)
+            span_input.world_time_start =
+                blend_span != nullptr
+                    ? blend_span->world_time_start
+                    : playback_span->world_time_start;
+            span_input.world_time_duration = span_duration;
+
+            physics::animation_trajectory_packet_build_desc packet_desc;
+            packet_desc.animation_input_version = animation_input_version;
+            packet_desc.spans.push_back(std::move(span_input));
+            const physics::animation_trajectory_packet_build_result packet_build =
+                physics::build_animation_trajectory_packet(
+                    model.source_model, packet_desc);
+            if (!packet_build.success)
             {
                 diagnostic =
-                    "CPU Animation Hierarchy / Skin Matrix evaluation failed before GPU Submission: " +
-                    pose.message;
+                    "Immutable GPU Animation Packet construction failed before Segment Submission: " +
+                    packet_build.message;
                 return false;
             }
 
-            const auto skin_pose_iterator = std::find_if(
-                pose.value.skin_poses.begin(),
-                pose.value.skin_poses.end(),
-                [&gpu_mesh](const physics::animation_skin_pose& value)
-                {
-                    return value.mesh_node_index == gpu_mesh.skin_node_index &&
-                        value.skin_index == gpu_mesh.skin_index;
-                });
-            if (skin_pose_iterator == pose.value.skin_poses.end() ||
-                skin_pose_iterator->skin_matrices.size() !=
-                    gpu_mesh.skin_joint_count ||
-                skin_pose_iterator->skin_matrix_derivatives.size() !=
-                    gpu_mesh.skin_joint_count)
+            physics::animation_span_cursor_gpu_record initial_cursor;
+            if (!physics::initialize_animation_span_cursor(
+                    packet_build.value, 0u, world_time,
+                    initial_cursor, diagnostic))
             {
                 diagnostic =
-                    "Animation Hierarchy did not publish the exact Mesh Node / Skin Joint mapping required by the registered Physics Mesh.";
+                    "Unable to initialize the immutable Packet's Segment Cursor: " +
+                    diagnostic;
                 return false;
             }
 
-            const asset::mat4 root_matrix =
-                make_root_transform_matrix(model_snapshot.root_transform);
-            std::vector<physics::gpu_matrix4x4> skin_matrices(
-                gpu_mesh.skin_joint_count);
-            std::vector<physics::gpu_matrix4x4> skin_matrix_derivatives(
-                gpu_mesh.skin_joint_count);
-            for (uint32_t joint_index = 0u;
-                joint_index < gpu_mesh.skin_joint_count;
-                ++joint_index)
+            out_animation_packet_resources.emplace_back();
+            physics::animation_trajectory_gpu_resources& packet_resources =
+                out_animation_packet_resources.back();
+            if (!physics::upload_animation_trajectory_packet(
+                    device.Get(),
+                    packet_build.value,
+                    initial_cursor,
+                    packet_resources,
+                    diagnostic))
             {
-                const asset::mat4 world_skin_matrix = multiply_asset_matrices(
-                    root_matrix,
-                    skin_pose_iterator->skin_matrices[joint_index]);
-                const asset::mat4 world_skin_derivative = multiply_asset_matrices(
-                    root_matrix,
-                    skin_pose_iterator->skin_matrix_derivatives[joint_index]);
-                if (!finite_asset_matrix(world_skin_matrix) ||
-                    !finite_asset_matrix(world_skin_derivative))
+                diagnostic =
+                    "Unable to upload the immutable Animation Packet for GPU evaluation: " +
+                    diagnostic;
+                return false;
+            }
+
+            const uint32_t node_count = static_cast<uint32_t>(
+                model.source_model.nodes.size());
+            const physics::animation_span_gpu_record& packet_span =
+                packet_build.value.span_records[0u];
+            if (node_count == 0u ||
+                packet_span.track_record_count == 0u ||
+                packet_span.track_record_count > 2u ||
+                packet_span.channel_record_count != node_count ||
+                packet_build.value.static_node_matrices.size() != node_count)
+            {
+                diagnostic =
+                    "GPU Animation Packet does not contain one dense topological Channel table for this Model.";
+                return false;
+            }
+
+            struct alignas(16) channel_evaluation_parameters
+            {
+                uint32_t channel_count = 0u;
+                uint32_t first_channel_record = 0u;
+                float span_local_u = 0.0f;
+                float inverse_span_duration = 0.0f;
+            };
+            struct alignas(16) blend_evaluation_parameters
+            {
+                uint32_t node_count = 0u;
+                float span_duration_seconds = 0.0f;
+                float span_local_u = 0.0f;
+                uint32_t reserved = 0u;
+            };
+            struct alignas(16) hierarchy_evaluation_parameters
+            {
+                uint32_t node_count = 0u;
+                uint32_t static_node_matrix_count = 0u;
+                uint32_t hierarchy_level = 0u;
+                uint32_t reserved = 0u;
+            };
+            struct alignas(16) skin_matrix_evaluation_parameters
+            {
+                uint32_t skin_record_index = 0u;
+                uint32_t skin_record_count = 0u;
+                uint32_t track_channel_count = 0u;
+                uint32_t skin_joint_record_count = 0u;
+                uint32_t inverse_bind_matrix_count = 0u;
+                uint32_t expected_mesh_node_index = asset::invalid_index;
+                uint32_t reserved[2] = {};
+                physics::gpu_matrix4x4 root_transform;
+            };
+            static_assert(sizeof(channel_evaluation_parameters) == 16u);
+            static_assert(sizeof(blend_evaluation_parameters) == 16u);
+            static_assert(sizeof(hierarchy_evaluation_parameters) == 16u);
+            static_assert(sizeof(skin_matrix_evaluation_parameters) == 96u);
+
+            const double normalized_span_coordinate =
+                (world_time - span_input.world_time_start) / span_duration;
+            if (!finite_double(normalized_span_coordinate) ||
+                normalized_span_coordinate < 0.0 ||
+                normalized_span_coordinate > 1.0 ||
+                !finite_double(1.0 / span_duration))
+            {
+                diagnostic =
+                    "GPU Animation Segment normalized coordinate or inverse duration is invalid.";
+                return false;
+            }
+            const float span_local_u =
+                static_cast<float>(normalized_span_coordinate);
+            const float inverse_span_duration =
+                static_cast<float>(1.0 / span_duration);
+            if (!std::isfinite(span_local_u) ||
+                !std::isfinite(inverse_span_duration) ||
+                inverse_span_duration <= 0.0f)
+            {
+                diagnostic =
+                    "GPU Animation Segment coordinate exceeds finite float range.";
+                return false;
+            }
+
+            const auto create_rw_buffer =
+                [this](
+                    uint32_t element_count,
+                    uint32_t element_stride,
+                    const void* initial_data,
+                    Microsoft::WRL::ComPtr<ID3D11Buffer>& out_buffer,
+                    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& out_srv,
+                    Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView>& out_uav)
+            {
+                if (element_count == 0u ||
+                    element_stride == 0u ||
+                    element_count >
+                        std::numeric_limits<uint32_t>::max() / element_stride)
                 {
-                    diagnostic =
-                        "Animation Skin Matrix / analytic derivative became non-finite after Model Root composition.";
                     return false;
                 }
-                skin_matrices[joint_index] =
-                    to_gpu_matrix(world_skin_matrix);
-                skin_matrix_derivatives[joint_index] =
-                    to_gpu_matrix(world_skin_derivative);
-            }
-
-            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_matrix_buffer;
-            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> skin_matrix_srv;
-            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_matrix_derivative_buffer;
-            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>
-                skin_matrix_derivative_srv;
-            if (!create_structured_buffer_from_vector(
-                    device.Get(),
-                    skin_matrices,
-                    D3D11_BIND_SHADER_RESOURCE,
-                    skin_matrix_buffer.GetAddressOf()) ||
-                !create_structured_srv(
-                    device.Get(),
-                    skin_matrix_buffer.Get(),
-                    gpu_mesh.skin_joint_count,
-                    skin_matrix_srv.GetAddressOf()) ||
-                !create_structured_buffer_from_vector(
-                    device.Get(),
-                    skin_matrix_derivatives,
-                    D3D11_BIND_SHADER_RESOURCE,
-                    skin_matrix_derivative_buffer.GetAddressOf()) ||
-                !create_structured_srv(
-                    device.Get(),
-                    skin_matrix_derivative_buffer.Get(),
-                    gpu_mesh.skin_joint_count,
-                    skin_matrix_derivative_srv.GetAddressOf()))
-            {
-                diagnostic =
-                    "Unable to allocate immutable per-Segment GPU Skin Matrix / derivative buffers.";
-                return false;
-            }
-
-            gpu_soft_body_skinning_parameters parameters;
-            parameters.vertex_count = gpu_mesh.vertex_count;
-            parameters.joint_count = gpu_mesh.skin_joint_count;
-            Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
-            if (!create_constant_buffer(
-                    device.Get(),
-                    static_cast<uint32_t>(sizeof(parameters)),
-                    &parameters,
-                    parameter_buffer.GetAddressOf()))
-            {
-                diagnostic =
-                    "Unable to allocate immutable per-Segment GPU Skinning Parameters.";
-                return false;
-            }
+                const uint32_t byte_width =
+                    element_count * element_stride;
+                return create_structured_buffer(
+                        device.Get(),
+                        byte_width,
+                        element_stride,
+                        D3D11_BIND_SHADER_RESOURCE |
+                            D3D11_BIND_UNORDERED_ACCESS,
+                        initial_data,
+                        out_buffer.GetAddressOf()) &&
+                    create_structured_srv(
+                        device.Get(),
+                        out_buffer.Get(),
+                        element_count,
+                        out_srv.GetAddressOf()) &&
+                    create_structured_uav(
+                        device.Get(),
+                        out_buffer.Get(),
+                        element_count,
+                        out_uav.GetAddressOf());
+            };
 
             const uint32_t clear_status = 0u;
             Microsoft::WRL::ComPtr<ID3D11Buffer> segment_status_buffer;
             Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> segment_status_srv;
             Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> segment_status_uav;
-            if (!create_structured_buffer(
-                    device.Get(),
-                    static_cast<uint32_t>(sizeof(clear_status)),
-                    static_cast<uint32_t>(sizeof(clear_status)),
-                    D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
-                    &clear_status,
-                    segment_status_buffer.GetAddressOf()) ||
-                !create_structured_srv(
-                    device.Get(), segment_status_buffer.Get(), 1u,
-                    segment_status_srv.GetAddressOf()) ||
-                !create_structured_uav(
-                    device.Get(), segment_status_buffer.Get(), 1u,
-                    segment_status_uav.GetAddressOf()))
+            if (!create_rw_buffer(
+                    1u, static_cast<uint32_t>(sizeof(clear_status)),
+                    &clear_status, segment_status_buffer,
+                    segment_status_srv, segment_status_uav))
             {
                 diagnostic =
-                    "Unable to allocate a Segment-owned Animation Target Validation Status Buffer.";
+                    "Unable to allocate the shared Segment Animation Evaluation Status.";
+                return false;
+            }
+
+            std::vector<physics::animation_node_local_transform_gpu_record>
+                initial_local_transforms(node_count);
+            Microsoft::WRL::ComPtr<ID3D11Buffer> source_local_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> source_local_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> source_local_uav;
+            if (!create_rw_buffer(
+                    node_count,
+                    static_cast<uint32_t>(sizeof(
+                        physics::animation_node_local_transform_gpu_record)),
+                    initial_local_transforms.data(),
+                    source_local_buffer, source_local_srv, source_local_uav))
+            {
+                diagnostic =
+                    "Unable to allocate the GPU Source Local Transform / Derivative output.";
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> target_local_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> target_local_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> target_local_uav;
+            if (packet_span.track_record_count == 2u &&
+                !create_rw_buffer(
+                    node_count,
+                    static_cast<uint32_t>(sizeof(
+                        physics::animation_node_local_transform_gpu_record)),
+                    initial_local_transforms.data(),
+                    target_local_buffer, target_local_srv, target_local_uav))
+            {
+                diagnostic =
+                    "Unable to allocate the GPU Target Local Transform / Derivative output.";
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<ID3D11Buffer> blended_local_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> blended_local_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> blended_local_uav;
+            if (packet_span.track_record_count == 2u &&
+                !create_rw_buffer(
+                    node_count,
+                    static_cast<uint32_t>(sizeof(
+                        physics::animation_node_local_transform_gpu_record)),
+                    initial_local_transforms.data(),
+                    blended_local_buffer, blended_local_srv, blended_local_uav))
+            {
+                diagnostic =
+                    "Unable to allocate the GPU Blended Local Transform / Derivative output.";
+                return false;
+            }
+
+            for (uint32_t track_index = 0u;
+                track_index < packet_span.track_record_count;
+                ++track_index)
+            {
+                const physics::animation_track_gpu_record& track_record =
+                    packet_build.value.track_records[
+                        packet_span.first_track_record + track_index];
+                if (track_record.channel_record_count != node_count ||
+                    track_record.first_channel_record >
+                        packet_build.value.channel_records.size() ||
+                    track_record.channel_record_count >
+                        packet_build.value.channel_records.size() -
+                            track_record.first_channel_record)
+                {
+                    diagnostic =
+                        "GPU Animation Track does not reference a complete dense Node Channel range.";
+                    return false;
+                }
+
+                channel_evaluation_parameters parameters;
+                parameters.channel_count = track_record.channel_record_count;
+                parameters.first_channel_record =
+                    track_record.first_channel_record;
+                parameters.span_local_u = span_local_u;
+                parameters.inverse_span_duration =
+                    inverse_span_duration;
+                Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
+                if (!create_constant_buffer(
+                        device.Get(),
+                        static_cast<uint32_t>(sizeof(parameters)),
+                        &parameters,
+                        parameter_buffer.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate GPU Animation Channel Evaluation Parameters.";
+                    return false;
+                }
+
+                simulation::compute_pass_desc channel_pass;
+                channel_pass.name =
+                    "animation_channel_evaluate_m" +
+                    std::to_string(schedule.model_index) + "_mesh" +
+                    std::to_string(gpu_mesh.mesh_index) + "_track" +
+                    std::to_string(track_index) + "_world_time" +
+                    std::to_string(world_time);
+                channel_pass.shader = animation_channel_evaluate_shader.Get();
+                channel_pass.shader_resources = {
+                    { 0u, packet_resources.channel_srv() }
+                };
+                channel_pass.unordered_access_views = {
+                    { 0u,
+                        track_index == 0u
+                            ? source_local_uav.Get()
+                            : target_local_uav.Get(),
+                        0xffffffffu },
+                    { 1u, segment_status_uav.Get(), 0xffffffffu }
+                };
+                channel_pass.constant_buffers = {
+                    { 0u, parameter_buffer.Get() }
+                };
+                channel_pass.group_count_x =
+                    std::max(1u, (node_count + 63u) / 64u);
+                if (!graph.add_pass(channel_pass, diagnostic))
+                {
+                    return false;
+                }
+                out_segment_parameter_buffers.push_back(
+                    std::move(parameter_buffer));
+            }
+
+            ID3D11ShaderResourceView* local_transform_srv =
+                source_local_srv.Get();
+            ID3D11UnorderedAccessView* local_transform_uav =
+                source_local_uav.Get();
+            if (packet_span.track_record_count == 2u)
+            {
+                blend_evaluation_parameters parameters;
+                parameters.node_count = node_count;
+                parameters.span_duration_seconds =
+                    static_cast<float>(span_duration);
+                parameters.span_local_u = span_local_u;
+                if (!std::isfinite(parameters.span_duration_seconds) ||
+                    parameters.span_duration_seconds <= 0.0f)
+                {
+                    diagnostic =
+                        "GPU Animation Blend Span duration exceeds finite float range.";
+                    return false;
+                }
+                Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
+                if (!create_constant_buffer(
+                        device.Get(),
+                        static_cast<uint32_t>(sizeof(parameters)),
+                        &parameters,
+                        parameter_buffer.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate GPU Animation Blend Parameters.";
+                    return false;
+                }
+
+                simulation::compute_pass_desc blend_pass;
+                blend_pass.name =
+                    "animation_blend_local_transform_m" +
+                    std::to_string(schedule.model_index) + "_mesh" +
+                    std::to_string(gpu_mesh.mesh_index) + "_world_time" +
+                    std::to_string(world_time);
+                blend_pass.shader =
+                    animation_blend_local_transform_shader.Get();
+                blend_pass.shader_resources = {
+                    { 0u, source_local_srv.Get() },
+                    { 1u, target_local_srv.Get() },
+                    { 2u, packet_resources.blend_srv() }
+                };
+                blend_pass.unordered_access_views = {
+                    { 0u, blended_local_uav.Get(), 0xffffffffu },
+                    { 1u, segment_status_uav.Get(), 0xffffffffu }
+                };
+                blend_pass.constant_buffers = {
+                    { 0u, parameter_buffer.Get() }
+                };
+                blend_pass.group_count_x =
+                    std::max(1u, (node_count + 63u) / 64u);
+                if (!graph.add_pass(blend_pass, diagnostic))
+                {
+                    return false;
+                }
+                out_segment_parameter_buffers.push_back(
+                    std::move(parameter_buffer));
+                local_transform_srv = blended_local_srv.Get();
+                local_transform_uav = blended_local_uav.Get();
+            }
+
+            std::vector<physics::gpu_matrix4x4> initial_global_matrices(
+                node_count);
+            Microsoft::WRL::ComPtr<ID3D11Buffer> global_matrix_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> global_matrix_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> global_matrix_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> global_derivative_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> global_derivative_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> global_derivative_uav;
+            if (!create_rw_buffer(
+                    node_count,
+                    static_cast<uint32_t>(sizeof(physics::gpu_matrix4x4)),
+                    initial_global_matrices.data(),
+                    global_matrix_buffer, global_matrix_srv, global_matrix_uav) ||
+                !create_rw_buffer(
+                    node_count,
+                    static_cast<uint32_t>(sizeof(physics::gpu_matrix4x4)),
+                    initial_global_matrices.data(),
+                    global_derivative_buffer,
+                    global_derivative_srv,
+                    global_derivative_uav))
+            {
+                diagnostic =
+                    "Unable to allocate GPU Animation Global Matrix / Derivative outputs.";
+                return false;
+            }
+
+            uint32_t maximum_hierarchy_depth = 0u;
+            for (const physics::animation_channel_gpu_record& channel :
+                packet_build.value.channel_records)
+            {
+                uint32_t depth = 0u;
+                uint32_t parent_index = channel.parent_index;
+                while (parent_index != asset::invalid_index)
+                {
+                    if (parent_index >= node_count || depth >= node_count)
+                    {
+                        diagnostic =
+                            "GPU Animation Packet contains a non-topological Parent Channel reference.";
+                        return false;
+                    }
+                    ++depth;
+                    parent_index =
+                        packet_build.value.channel_records[
+                            static_cast<std::size_t>(
+                                channel.parent_index == asset::invalid_index
+                                    ? 0u
+                                    : channel.parent_index)].parent_index;
+                    // The immutable builder guarantees parent-before-child
+                    // ordering; calculate depth through the dense Channel table.
+                    if (depth > node_count)
+                    {
+                        diagnostic =
+                            "GPU Animation hierarchy depth exceeds the Node count.";
+                        return false;
+                    }
+                    uint32_t ancestor_index = channel.parent_index;
+                    for (uint32_t step = 1u; step < depth; ++step)
+                    {
+                        ancestor_index =
+                            packet_build.value.channel_records[ancestor_index].parent_index;
+                    }
+                    parent_index =
+                        depth == 1u
+                            ? asset::invalid_index
+                            : packet_build.value.channel_records[ancestor_index].parent_index;
+                }
+                maximum_hierarchy_depth =
+                    std::max(maximum_hierarchy_depth, depth);
+            }
+
+            for (uint32_t hierarchy_level = 0u;
+                hierarchy_level <= maximum_hierarchy_depth;
+                ++hierarchy_level)
+            {
+                hierarchy_evaluation_parameters parameters;
+                parameters.node_count = node_count;
+                parameters.static_node_matrix_count =
+                    static_cast<uint32_t>(
+                        packet_build.value.static_node_matrices.size());
+                parameters.hierarchy_level = hierarchy_level;
+                Microsoft::WRL::ComPtr<ID3D11Buffer> parameter_buffer;
+                if (!create_constant_buffer(
+                        device.Get(),
+                        static_cast<uint32_t>(sizeof(parameters)),
+                        &parameters,
+                        parameter_buffer.GetAddressOf()))
+                {
+                    diagnostic =
+                        "Unable to allocate GPU Animation Hierarchy Parameters.";
+                    return false;
+                }
+
+                simulation::compute_pass_desc hierarchy_pass;
+                hierarchy_pass.name =
+                    "animation_node_hierarchy_evaluate_m" +
+                    std::to_string(schedule.model_index) + "_mesh" +
+                    std::to_string(gpu_mesh.mesh_index) + "_depth" +
+                    std::to_string(hierarchy_level) + "_world_time" +
+                    std::to_string(world_time);
+                hierarchy_pass.shader =
+                    animation_node_hierarchy_evaluate_shader.Get();
+                hierarchy_pass.shader_resources = {
+                    { 0u, local_transform_srv },
+                    { 1u, packet_resources.static_node_matrix_srv() }
+                };
+                hierarchy_pass.unordered_access_views = {
+                    { 0u, global_matrix_uav.Get(), 0xffffffffu },
+                    { 1u, global_derivative_uav.Get(), 0xffffffffu },
+                    { 2u, segment_status_uav.Get(), 0xffffffffu }
+                };
+                hierarchy_pass.constant_buffers = {
+                    { 0u, parameter_buffer.Get() }
+                };
+                hierarchy_pass.group_count_x =
+                    std::max(1u, (node_count + 63u) / 64u);
+                if (!graph.add_pass(hierarchy_pass, diagnostic))
+                {
+                    return false;
+                }
+                out_segment_parameter_buffers.push_back(
+                    std::move(parameter_buffer));
+            }
+
+            uint32_t skin_record_index = asset::invalid_index;
+            for (uint32_t skin_index = 0u;
+                skin_index < packet_build.value.skin_records.size();
+                ++skin_index)
+            {
+                const physics::animation_skin_gpu_record& skin_record =
+                    packet_build.value.skin_records[skin_index];
+                if (skin_record.skin_index != gpu_mesh.skin_index ||
+                    skin_record.mesh_node_channel_offset >= node_count)
+                {
+                    continue;
+                }
+                const uint32_t track_channel_start =
+                    packet_build.value.track_records[
+                        packet_span.first_track_record].first_channel_record;
+                const uint32_t mesh_channel_record =
+                    track_channel_start +
+                    skin_record.mesh_node_channel_offset;
+                if (mesh_channel_record <
+                        packet_build.value.channel_records.size() &&
+                    packet_build.value.channel_records[
+                        mesh_channel_record].node_index ==
+                        gpu_mesh.skin_node_index)
+                {
+                    skin_record_index = skin_index;
+                    break;
+                }
+            }
+            if (skin_record_index == asset::invalid_index ||
+                packet_build.value.skin_records[skin_record_index].joint_count !=
+                    gpu_mesh.skin_joint_count)
+            {
+                diagnostic =
+                    "Immutable GPU Animation Packet does not contain the exact registered Mesh Node / Skin Joint mapping.";
+                return false;
+            }
+
+            const uint32_t skin_joint_count =
+                gpu_mesh.skin_joint_count;
+            std::vector<physics::gpu_matrix4x4> initial_skin_matrices(
+                skin_joint_count);
+            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_matrix_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> skin_matrix_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> skin_matrix_uav;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_derivative_buffer;
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> skin_derivative_srv;
+            Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> skin_derivative_uav;
+            if (!create_rw_buffer(
+                    skin_joint_count,
+                    static_cast<uint32_t>(sizeof(physics::gpu_matrix4x4)),
+                    initial_skin_matrices.data(),
+                    skin_matrix_buffer, skin_matrix_srv, skin_matrix_uav) ||
+                !create_rw_buffer(
+                    skin_joint_count,
+                    static_cast<uint32_t>(sizeof(physics::gpu_matrix4x4)),
+                    initial_skin_matrices.data(),
+                    skin_derivative_buffer,
+                    skin_derivative_srv,
+                    skin_derivative_uav))
+            {
+                diagnostic =
+                    "Unable to allocate GPU Animation Skin Matrix / Derivative outputs.";
+                return false;
+            }
+
+            skin_matrix_evaluation_parameters skin_parameters;
+            skin_parameters.skin_record_index = skin_record_index;
+            skin_parameters.skin_record_count =
+                static_cast<uint32_t>(
+                    packet_build.value.skin_records.size());
+            skin_parameters.track_channel_count = node_count;
+            skin_parameters.skin_joint_record_count =
+                static_cast<uint32_t>(
+                    packet_build.value.skin_joint_records.size());
+            skin_parameters.inverse_bind_matrix_count =
+                static_cast<uint32_t>(
+                    packet_build.value.inverse_bind_matrices.size());
+            skin_parameters.expected_mesh_node_index =
+                gpu_mesh.skin_node_index;
+            skin_parameters.root_transform =
+                to_gpu_matrix(root_matrix);
+            Microsoft::WRL::ComPtr<ID3D11Buffer> skin_parameter_buffer;
+            if (!create_constant_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(skin_parameters)),
+                    &skin_parameters,
+                    skin_parameter_buffer.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate GPU Animation Skin Matrix Parameters.";
+                return false;
+            }
+
+            simulation::compute_pass_desc skin_matrix_pass;
+            skin_matrix_pass.name =
+                "animation_skin_matrix_evaluate_m" +
+                std::to_string(schedule.model_index) + "_mesh" +
+                std::to_string(gpu_mesh.mesh_index) + "_world_time" +
+                std::to_string(world_time);
+            skin_matrix_pass.shader =
+                animation_skin_matrix_evaluate_shader.Get();
+            skin_matrix_pass.shader_resources = {
+                { 0u, global_matrix_srv.Get() },
+                { 1u, global_derivative_srv.Get() },
+                { 2u, packet_resources.skin_srv() },
+                { 3u, packet_resources.skin_joint_srv() },
+                { 4u, packet_resources.inverse_bind_matrix_srv() },
+                { 5u, local_transform_srv }
+            };
+            skin_matrix_pass.unordered_access_views = {
+                { 0u, skin_matrix_uav.Get(), 0xffffffffu },
+                { 1u, skin_derivative_uav.Get(), 0xffffffffu },
+                { 2u, segment_status_uav.Get(), 0xffffffffu }
+            };
+            skin_matrix_pass.constant_buffers = {
+                { 0u, skin_parameter_buffer.Get() }
+            };
+            skin_matrix_pass.group_count_x =
+                std::max(1u, (skin_joint_count + 63u) / 64u);
+            if (!graph.add_pass(skin_matrix_pass, diagnostic))
+            {
+                return false;
+            }
+
+            gpu_soft_body_skinning_parameters skinning_parameters;
+            skinning_parameters.vertex_count = gpu_mesh.vertex_count;
+            skinning_parameters.joint_count = skin_joint_count;
+            Microsoft::WRL::ComPtr<ID3D11Buffer> skinning_parameter_buffer;
+            if (!create_constant_buffer(
+                    device.Get(),
+                    static_cast<uint32_t>(sizeof(skinning_parameters)),
+                    &skinning_parameters,
+                    skinning_parameter_buffer.GetAddressOf()))
+            {
+                diagnostic =
+                    "Unable to allocate GPU Soft Body Skinning Parameters.";
                 return false;
             }
 
@@ -4091,12 +4614,13 @@ namespace skin_physics::runtime
                 std::to_string(schedule.model_index) + "_mesh" +
                 std::to_string(gpu_mesh.mesh_index) + "_world_time" +
                 std::to_string(world_time);
-            skinning_pass.shader = soft_body_animation_skinning_shader.Get();
+            skinning_pass.shader =
+                soft_body_animation_skinning_shader.Get();
             skinning_pass.shader_resources = {
                 { 0u, gpu_mesh.rest_positions_srv.Get() },
                 { 1u, gpu_mesh.skin_weights_srv.Get() },
                 { 2u, skin_matrix_srv.Get() },
-                { 3u, skin_matrix_derivative_srv.Get() }
+                { 3u, skin_derivative_srv.Get() }
             };
             skinning_pass.unordered_access_views = {
                 { 0u, gpu_mesh.animation_target_positions_uav.Get(), 0xffffffffu },
@@ -4104,23 +4628,61 @@ namespace skin_physics::runtime
                 { 2u, segment_status_uav.Get(), 0xffffffffu }
             };
             skinning_pass.constant_buffers = {
-                { 0u, parameter_buffer.Get() }
+                { 0u, skinning_parameter_buffer.Get() }
             };
-            skinning_pass.group_count_x = std::max(
-                1u, (gpu_mesh.vertex_count + 63u) / 64u);
+            skinning_pass.group_count_x =
+                std::max(1u, (gpu_mesh.vertex_count + 63u) / 64u);
             if (!graph.add_pass(skinning_pass, diagnostic))
             {
                 return false;
             }
 
             out_segment_parameter_buffers.push_back(
-                std::move(parameter_buffer));
+                std::move(skin_parameter_buffer));
+            out_segment_parameter_buffers.push_back(
+                std::move(skinning_parameter_buffer));
+            out_segment_shader_resource_views.push_back(
+                std::move(source_local_srv));
+            if (target_local_srv)
+            {
+                out_segment_shader_resource_views.push_back(
+                    std::move(target_local_srv));
+            }
+            if (blended_local_srv)
+            {
+                out_segment_shader_resource_views.push_back(
+                    std::move(blended_local_srv));
+            }
+            out_segment_shader_resource_views.push_back(
+                std::move(global_matrix_srv));
+            out_segment_shader_resource_views.push_back(
+                std::move(global_derivative_srv));
             out_segment_shader_resource_views.push_back(
                 std::move(skin_matrix_srv));
             out_segment_shader_resource_views.push_back(
-                std::move(skin_matrix_derivative_srv));
+                std::move(skin_derivative_srv));
             out_segment_shader_resource_views.push_back(
                 std::move(segment_status_srv));
+            out_segment_unordered_access_views.push_back(
+                std::move(source_local_uav));
+            if (target_local_uav)
+            {
+                out_segment_unordered_access_views.push_back(
+                    std::move(target_local_uav));
+            }
+            if (blended_local_uav)
+            {
+                out_segment_unordered_access_views.push_back(
+                    std::move(blended_local_uav));
+            }
+            out_segment_unordered_access_views.push_back(
+                std::move(global_matrix_uav));
+            out_segment_unordered_access_views.push_back(
+                std::move(global_derivative_uav));
+            out_segment_unordered_access_views.push_back(
+                std::move(skin_matrix_uav));
+            out_segment_unordered_access_views.push_back(
+                std::move(skin_derivative_uav));
             out_segment_unordered_access_views.push_back(
                 std::move(segment_status_uav));
             work.animation_target_status_srv =
