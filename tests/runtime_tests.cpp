@@ -1208,8 +1208,10 @@ namespace
         tracking_parameters.tracking_stiffness = 0.0f;
         tracking_parameters.tracking_damping = 1000.0f;
         require(runtime.set_mesh_physics_parameters(
-                world, model, 0u, tracking_parameters).success(),
-            "Skinned Runtime Mesh must accept a non-zero Kelvin-Voigt tracking damping coefficient.");
+                world, model, 0u, tracking_parameters).success() &&
+            runtime.set_mesh_physics_parameters(
+                world, model, 1u, tracking_parameters).success(),
+            "Every Skinned Runtime Mesh sharing the Model Animation Cursor must use the same non-zero Kelvin-Voigt tracking parameters.");
         skin_physics::runtime::animation_playback_desc playback;
         playback.track.clip_index = 0u;
         playback.track.time = 0.0;
