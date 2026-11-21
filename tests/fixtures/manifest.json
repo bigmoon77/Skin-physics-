@@ -812,7 +812,9 @@
             "An exact scheduled Span boundary advances to the next Span at u=0 while preserving the immutable Animation Input Version",
             "The final Packet Span holds u=1 without reading beyond the Span table",
             "A Segment that overshoots the current Span and a stale Cursor Packet Version set the stage diagnostic and leave the Cursor unchanged",
-            "GPU Cursor results match the CPU double/float-boundary reference over multiple contiguous Spans"
+            "GPU Cursor results match the CPU double/float-boundary reference over multiple contiguous Spans",
+            "Runtime GPU Channel and Blend evaluation consume the same immutable Packet Span / mutable Segment Cursor SRVs and validate the Cursor Packet Version",
+            "Runtime graph advances the Cursor once per Mesh / Integration Segment after LBS and before Soft Body Integrate; Cursor diagnostics share the Segment Status consumed by Integrate"
           ]
         }
       ],
