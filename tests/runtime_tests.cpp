@@ -1212,6 +1212,85 @@ namespace
             runtime.set_mesh_physics_parameters(
                 world, model, 1u, tracking_parameters).success(),
             "Every Skinned Runtime Mesh sharing the Model Animation Cursor must use the same non-zero Kelvin-Voigt tracking parameters.");
+        require(runtime.set_playback_state(
+                world, skin_physics::runtime::playback_state::playing).success(),
+            "Root-only Model Transform Runtime World must enter Playing without an Animation Track.");
+        skin_physics::runtime::advance_report root_only_report;
+        const skin_physics::runtime::status root_only_advance =
+            runtime.advance(world, 0.01, &root_only_report);
+        require(root_only_advance.success() &&
+            root_only_report.submitted_tick_count == 1u &&
+            root_only_report.in_flight_tick_count == 1u &&
+            root_only_report.pending_tick_count == 0u,
+            "A fully skinned Soft Body Model must submit a static-pose GPU Packet when only Root Transform Samples are active. diagnostic=" +
+                root_only_advance.diagnostic);
+        skin_physics::runtime::world_status root_only_status;
+        bool root_only_observed = false;
+        for (uint32_t attempt = 0u; attempt < 2048u; ++attempt)
+        {
+            context->Flush();
+            require(runtime.poll(world, &root_only_status).success(),
+                "Root-only Animation Status polling must remain non-blocking.");
+            if (root_only_status.in_flight_tick_count == 0u)
+            {
+                root_only_observed = true;
+                break;
+            }
+            std::this_thread::yield();
+        }
+        require(root_only_observed &&
+            root_only_status.state == skin_physics::runtime::tick_state::committed &&
+            root_only_status.gpu_committed_sequence == 1u &&
+            root_only_status.planned_integration_segments == 2u,
+            "Root-only Transform Samples must split exact Segment boundaries and commit through the static-pose Skin Matrix / LBS path. state=" +
+                std::to_string(static_cast<uint32_t>(root_only_status.state)) +
+                " status=" +
+                std::to_string(static_cast<uint32_t>(root_only_status.last_tick_status)) +
+                " planned=" +
+                std::to_string(root_only_status.planned_integration_segments) +
+                " diagnostic=" + root_only_status.diagnostic);
+
+        skin_physics::runtime::render_binding root_only_binding;
+        skin_physics::runtime::render_binding root_only_second_binding;
+        require(runtime.get_render_binding(
+                world, model, 0u, &root_only_binding).success() &&
+            runtime.get_render_binding(
+                world, model, 1u, &root_only_second_binding).success() &&
+            root_only_binding.lease_generation ==
+                root_only_second_binding.lease_generation,
+            "Root-only Motion must publish both Skinned Mesh Render Candidates under one World Host Lease.");
+        const std::vector<test_gpu_float4> root_only_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), root_only_binding.position_srv,
+                root_only_binding.vertex_count);
+        const std::vector<test_gpu_float4> root_only_second_positions =
+            readback_render_srv<test_gpu_float4>(
+                device.Get(), context.Get(), root_only_second_binding.position_srv,
+                root_only_second_binding.vertex_count);
+        require(!root_only_positions.empty() &&
+            !root_only_second_positions.empty() &&
+            root_only_positions[0u].x > 1.0e-5f &&
+            root_only_second_positions[0u].x > 1.0e-5f,
+            "Root-only Transform Motion must produce non-zero LBS Target Velocity and move every skinned Soft Body Mesh.");
+        require(runtime.release_render_bindings(
+                world, root_only_binding.lease_generation).success(),
+            "Root-only Motion Render Candidates must release their shared World Host Lease once after both Mesh readbacks.");
+        require(runtime.reset_world(world).success(),
+            "Reset must return the root-only Model to its initial State Bank and clear its Root Transform Samples.");
+
+        require(runtime.set_model_transform_sample(
+                world, model, 0.0, root_sample_start, false).success() &&
+            runtime.set_model_transform_sample(
+                world, model, 0.005, root_sample_middle, false).success() &&
+            runtime.set_model_transform_sample(
+                world, model, 0.01, root_sample_end, false).success(),
+            "Reset must permit the same ordered Root Transform Samples to be submitted in the new World Time epoch.");
+        require(runtime.set_mesh_physics_parameters(
+                world, model, 0u, tracking_parameters).success() &&
+            runtime.set_mesh_physics_parameters(
+                world, model, 1u, tracking_parameters).success(),
+            "Reset must preserve valid per-Mesh Tracking parameters for the subsequent Playback regression.");
+
         skin_physics::runtime::animation_playback_desc playback;
         playback.track.clip_index = 0u;
         playback.track.time = 0.0;
