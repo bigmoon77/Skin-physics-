@@ -803,6 +803,17 @@
             "One-joint Translation Playback and synchronized two-Clip Blend both commit and move the Physics Vertex toward the animated target",
             "Ordered Model Root Transform Samples split Integration Segments at exact sample times, interpolate translation / shortest-arc Quaternion values, and provide analytic World-Time Root Matrix derivatives to GPU Skin Matrix Evaluation; teleport samples reset the derivative at their boundary"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATION_SPAN_CURSOR_ADVANCE",
+          "checks": [
+            "The production Shader Model 5 Cursor Advance shader consumes the frozen 80-byte Span and 16-byte Cursor ABIs without mutating immutable Packet records",
+            "A positive Integration Segment advances normalized Span-local u by World-Time delta divided by the current Span duration",
+            "An exact scheduled Span boundary advances to the next Span at u=0 while preserving the immutable Animation Input Version",
+            "The final Packet Span holds u=1 without reading beyond the Span table",
+            "A Segment that overshoots the current Span and a stale Cursor Packet Version set the stage diagnostic and leave the Cursor unchanged",
+            "GPU Cursor results match the CPU double/float-boundary reference over multiple contiguous Spans"
+          ]
         }
       ],
       "automated_cases": [
