@@ -608,6 +608,14 @@ namespace skin_physics::physics
         kinematic_collider_flag_kinematic |
         kinematic_collider_flag_shortest_arc_slerp;
 
+    struct kinematic_collider_transform_sample
+    {
+        double world_time = 0.0;
+        asset::vec3 translation;
+        asset::vec4 rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        bool is_teleport = false;
+    };
+
     struct kinematic_collider_span_desc
     {
         uint64_t stable_collider_id = 0u;
@@ -665,6 +673,17 @@ namespace skin_physics::physics
 
     kinematic_collider_span_build_result build_kinematic_collider_span(
         const kinematic_collider_span_desc& desc);
+
+    // Selects exactly one sample pair that brackets the complete requested
+    // World-Time Span. A Span crossing a sample boundary is rejected so the
+    // Runtime Scheduler can split it first. A teleport-ending pair holds the
+    // old Pose on its left side; the next pair starts from the teleported Pose.
+    kinematic_collider_span_build_result build_kinematic_collider_span_from_samples(
+        uint64_t stable_collider_id,
+        const std::vector<kinematic_collider_transform_sample>& samples,
+        double world_time_start,
+        double world_time_duration,
+        float maximum_local_radius);
 
     kinematic_collider_sample_result evaluate_kinematic_collider_span(
         const kinematic_collider_gpu_record& span,
