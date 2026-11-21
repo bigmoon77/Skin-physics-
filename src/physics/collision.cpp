@@ -888,6 +888,29 @@ namespace skin_physics::physics
         return result;
     }
 
+
+    kinematic_collider_broadphase_primitive_result
+    make_kinematic_collider_broadphase_primitive(
+        uint32_t collider_mesh_id,
+        const kinematic_collider_geometry_result& geometry)
+    {
+        kinematic_collider_broadphase_primitive_result result;
+        if (collider_mesh_id == asset::invalid_index ||
+            !geometry.success ||
+            !aabb_valid(geometry.swept_bounds))
+        {
+            result.error = collision_error::invalid_geometry;
+            result.diagnostic =
+                "Kinematic Collider Broadphase Primitive requires a valid Mesh ID and a successful finite swept-geometry result.";
+            return result;
+        }
+
+        result.value.mesh_id = collider_mesh_id;
+        result.value.bounds = geometry.swept_bounds;
+        result.success = true;
+        return result;
+    }
+
     broadphase_result generate_broadphase_candidates(
         const std::vector<broadphase_primitive>& primitives,
         const std::vector<broadphase_mesh_pair>& mesh_pairs,
