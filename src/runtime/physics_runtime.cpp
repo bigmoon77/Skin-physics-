@@ -4206,20 +4206,23 @@ namespace skin_physics::runtime
                             world_time <
                                 value.world_time_start + value.world_time_duration;
                     });
+                const uint32_t playback_clip_index =
+                    schedule.root_transform_only
+                        ? schedule.root_only_clip_index
+                        : model_snapshot.animation_playback.track.clip_index;
                 if (iterator == schedule.playback_spans.end() ||
-                    !model_snapshot.has_animation_playback ||
-                    model_snapshot.animation_playback.track.clip_index >=
-                        model.source_model.animations.size())
+                    (!model_snapshot.has_animation_playback &&
+                        !schedule.root_transform_only) ||
+                    playback_clip_index >= model.source_model.animations.size())
                 {
                     diagnostic =
-                        "Animation Playback Segment start does not resolve an immutable Key-bounded Clip Span.";
+                        "Animation Playback / Root-only Segment start does not resolve an immutable Key-bounded Clip Span.";
                     return false;
                 }
                 playback_span = &(*iterator);
                 selected_span_record_index = static_cast<uint32_t>(
                     std::distance(schedule.playback_spans.begin(), iterator));
-                source_clip = &model.source_model.animations[
-                    model_snapshot.animation_playback.track.clip_index];
+                source_clip = &model.source_model.animations[playback_clip_index];
                 span_duration = playback_span->world_time_duration;
                 span_local_u =
                     (world_time - playback_span->world_time_start) / span_duration;
@@ -4340,10 +4343,14 @@ namespace skin_physics::runtime
 
                         physics::animation_trajectory_track_span_input playback_input;
                         playback_input.clip_index =
-                            model_snapshot.animation_playback.track.clip_index;
+                            schedule.root_transform_only
+                                ? schedule.root_only_clip_index
+                                : model_snapshot.animation_playback.track.clip_index;
                         playback_input.scheduled = scheduled;
                         playback_input.loop =
-                            model_snapshot.animation_playback.track.loop;
+                            schedule.root_transform_only
+                                ? false
+                                : model_snapshot.animation_playback.track.loop;
                         playback_input.reverse_playback =
                             scheduled.clip.clip_time_delta < 0.0;
                         span_input.tracks.push_back(std::move(playback_input));
