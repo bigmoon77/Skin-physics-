@@ -3253,6 +3253,7 @@ namespace
             span_srv.Get(), nullptr, collider_srv.Get(),
             collider_index_srv.Get(), point_srv.Get()
         };
+        context->CSSetShader(collider_shader.Get(), nullptr, 0u);
         context->CSSetShaderResources(0u, 5u, missing_cursor_resources);
         context->CSSetUnorderedAccessViews(
             0u, 1u, unordered_access_views, nullptr);
