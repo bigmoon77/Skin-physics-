@@ -949,6 +949,31 @@ namespace
         require(prediction_status[0] == 0u,
             "Valid Cloth Segment prediction must not raise solver diagnostics.");
 
+        const std::vector<uint32_t> clear_status = { 0u };
+        context->UpdateSubresource(
+            status_buffer.Get(), 0u, nullptr, clear_status.data(), 0u, 0u);
+        predict_constants.delta_time = 0.0f;
+        const ComPtr<ID3D11Buffer> invalid_predict_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &predict_constants,
+                static_cast<UINT>(sizeof(predict_constants)));
+        dispatch_compute(
+            context.Get(), predict_shader.Get(),
+            { start_position_srv.Get(), start_velocity_srv.Get(),
+                inverse_mass_srv.Get() },
+            { predicted_position_uav.Get(), predicted_velocity_uav.Get(),
+                status_uav.Get() },
+            invalid_predict_constant_buffer.Get(), 1u);
+        const std::vector<uint32_t> invalid_prediction_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(invalid_prediction_status[0] != 0u,
+            "Cloth Segment prediction must fail closed for a non-positive Segment duration.");
+
+        context->UpdateSubresource(
+            status_buffer.Get(), 0u, nullptr, clear_status.data(), 0u, 0u);
+        predict_constants.delta_time = 0.25f;
+
         std::vector<gpu_float4> solved_positions = predicted_positions;
         solved_positions[0].x += 0.1f;
         solved_positions[0].y -= 0.05f;
@@ -1043,6 +1068,28 @@ namespace
                 device.Get(), context.Get(), status_buffer.Get(), 1u);
         require(reset_status[0] == 0u,
             "Valid Cloth Lambda reset must not raise solver diagnostics.");
+
+        context->UpdateSubresource(
+            status_buffer.Get(), 0u, nullptr, clear_status.data(), 0u, 0u);
+        reconstruct_constants.delta_time = 0.0f;
+        const ComPtr<ID3D11Buffer> invalid_reconstruct_constant_buffer =
+            create_constant_buffer(
+                device.Get(), &reconstruct_constants,
+                static_cast<UINT>(sizeof(reconstruct_constants)));
+        const ComPtr<ID3D11ShaderResourceView> solved_position_srv =
+            create_structured_srv<gpu_float4>(
+                device.Get(), predicted_position_buffer.Get(), 3u);
+        dispatch_compute(
+            context.Get(), reconstruct_shader.Get(),
+            { start_position_srv.Get(), solved_position_srv.Get(),
+                inverse_mass_srv.Get() },
+            { reconstructed_velocity_uav.Get(), status_uav.Get() },
+            invalid_reconstruct_constant_buffer.Get(), 1u);
+        const std::vector<uint32_t> invalid_reconstruction_status =
+            readback_structured_buffer<uint32_t>(
+                device.Get(), context.Get(), status_buffer.Get(), 1u);
+        require(invalid_reconstruction_status[0] != 0u,
+            "Cloth Velocity reconstruction must fail closed for a non-positive Segment duration.");
 
         std::cout << "[PASS] P05_WARP_CLOTH_SEGMENT_STATE_PASSES\n";
     }
