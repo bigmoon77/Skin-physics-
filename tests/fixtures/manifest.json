@@ -860,6 +860,16 @@
             "Root-only input on an unsupported unskinned Soft Body path remains BLOCKED_BY_INPUT without GPU submission or Commit",
             "Reset restores the initial State Bank and clears Root Transform Sample history"
           ]
+        },
+        {
+          "id": "P09_WARP_KINEMATIC_COLLIDER_EVALUATION",
+          "checks": [
+            "The production Shader Model 5 Kinematic Collider evaluator consumes the immutable 128-byte Collider Span Record and evaluates arbitrary Span-local u",
+            "GPU Translation and shortest-arc Quaternion match the CPU trajectory evaluator at interior Span coordinates",
+            "GPU Linear Velocity, World Angular Velocity and rotated contact-point velocity match the CPU analytic derivative reference",
+            "The evaluator validates stable Collider identity, sample-pair identity, flags, normalized endpoint quaternions, angular axis / angle, duration and certified motion bounds",
+            "A local contact point outside Maximum Local Radius fails closed and does not publish a valid sample"
+          ]
         }
       ],
       "automated_cases": [
