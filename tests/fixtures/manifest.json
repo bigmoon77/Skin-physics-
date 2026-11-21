@@ -789,6 +789,19 @@
             "Singular / non-affine Mesh Node Global Matrix, invalid Skin / Joint / IBM ranges and mismatched Node identities fail closed",
             "The constant Model Root Transform is applied to Skin Matrices while Skin Matrix Derivatives remain correctly transformed with zero Root Transform derivative"
           ]
+        },
+        {
+          "id": "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING",
+          "checks": [
+            "A fully skinned Soft Body Mesh Runtime Tick builds an immutable Animation Trajectory Packet from the retained Tick Snapshot and uploads Span / Track / Channel / Blend / Skin / Skin Joint / IBM / Static Matrix tables plus a separately versioned Segment Cursor",
+            "Each Source / Target Track runs the production GPU Channel Evaluator with Track-local Parent Channel offsets and analytic World-Time Translation / Scale / Quaternion derivatives",
+            "Two-Clip Blend runs the production GPU Hermite Local Transform Blend and includes the analytic Blend Weight derivative at exact Blend Start / End boundaries",
+            "Parent-before-child GPU Hierarchy dispatch composes Global Matrices / derivatives; GPU Skin Matrix dispatch applies the constant Model Root Transform and each Skin-specific Inverse Bind Matrix",
+            "Production GPU LBS consumes GPU Skin Matrices / derivatives and emits Physics Vertex Target Position / Velocity before Kelvin-Voigt Tracking Integration",
+            "Stage-specific Channel / Blend / Hierarchy / Skin Matrix / LBS status bits propagate to Tick failure diagnostics; any invalid stage prevents Commit and preserves the active State Bank",
+            "Immutable Packet and Segment output resources remain retained through In-flight Tick Event Query observation and Render Candidate publication / lease release",
+            "One-joint Translation Playback and synchronized two-Clip Blend both commit and move the Physics Vertex toward the animated target"
+          ]
         }
       ],
       "automated_cases": [
@@ -797,12 +810,16 @@
         "P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER",
         "P09_WARP_ANIMATION_TRAJECTORY_PACKET_ABI",
         "P09_ANIMATION_SKIN_JOINT_MAPPING",
-        "P09_WARP_ANIMATION_SKIN_JOINT_ABI"
+        "P09_WARP_ANIMATION_SKIN_JOINT_ABI",
+        "P09_WARP_ANIMATED_SOFT_BODY_RUNTIME_TRACKING"
       ],
       "unimplemented": [
-        "Multi-key runtime clip sampling, cubic curves and node-hierarchy binding in the GPU path",
-        "Quaternion/angular target velocity interface",
-        "Substepped animation-physics coupling"
+        "Shader-side mutable Segment Cursor advancement and multi-Span packet reuse across multiple Integration Segments / Mesh consumers",
+        "Animated Root Transform Sample trajectory evaluation, discontinuity velocity policy and Root Transform derivative propagation",
+        "Kinematic Collider trajectory packet generation and GPU Collider trajectory evaluation",
+        "Quaternion / angular target-velocity interface for Animation Tracking",
+        "Substepped animation-physics coupling and full production Runtime CPU-oracle trajectory parity",
+        "Physical target-GPU numerical qualification, performance profiling and cross-vendor validation"
       ]
     },
     {
