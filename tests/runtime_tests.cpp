@@ -813,9 +813,6 @@ namespace
         require(cloth_registration.success(),
             std::string("Runtime must validate and upload the immutable Cloth topology, CSR and Segment-local Lambda resources. diagnostic=") +
                 cloth_registration.diagnostic);
-        require(runtime.destroy_model(first_world, cloth_model).success(),
-            "An idle Cloth Model must release its retained topology and GPU State Bank resources.");
-
         skin_physics::runtime::model_desc invalid_cloth_model_desc =
             cloth_model_desc;
         invalid_cloth_model_desc.cloth_mesh_assets[0].inverse_masses = { 1.0f };
@@ -853,6 +850,8 @@ namespace
                 std::to_string(cloth_blocked_status.pending_tick_count));
         require(runtime.reset_world(first_world).success(),
             "The explicitly blocked Cloth Reservation must be resettable without publishing a GPU Commit.");
+        require(runtime.destroy_model(first_world, cloth_model).success(),
+            "An idle Cloth Model must release its retained topology and GPU State Bank resources after Reservation Reset.");
 
         skin_physics::runtime::world_desc second_desc;
         second_desc.maximum_in_flight_ticks = 4u;
