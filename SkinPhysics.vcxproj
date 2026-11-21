@@ -149,6 +149,7 @@
     <None Include="shaders\runtime\tick_transaction_control.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_fem.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_animation_skinning.cs.hlsl" />
+    <None Include="shaders\runtime\animation_channel_evaluate.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_force_gather.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_force_distribution.cs.hlsl" />
     <None Include="shaders\runtime\soft_body_integrate.cs.hlsl" />
