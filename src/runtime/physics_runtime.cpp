@@ -5548,6 +5548,38 @@ namespace skin_physics::runtime
                 // Packet Cursor for this Segment. Advance that Cursor once,
                 // after all Mesh consumers have evaluated their Targets and
                 // before any Mesh integrates the Segment.
+                for (const collider_input_snapshot& collider_snapshot :
+                    input_snapshot.colliders)
+                {
+                    if (!collider_snapshot.kinematic)
+                    {
+                        continue;
+                    }
+                    for (std::size_t sample_index = 0u;
+                        sample_index < collider_snapshot.pose_samples.size();
+                        ++sample_index)
+                    {
+                        const transform_sample& sample =
+                            collider_snapshot.pose_samples[sample_index];
+                        if (!finite_double(sample.time) || sample.time < 0.0 ||
+                            !valid_transform(sample.value) ||
+                            (sample_index > 0u &&
+                                sample.time <=
+                                    collider_snapshot.pose_samples[
+                                        sample_index - 1u].time))
+                        {
+                            diagnostic =
+                                "Immutable Kinematic Collider Pose Sample times / transforms must be finite and strictly increasing.";
+                            return false;
+                        }
+                        if (sample.time > tick_start &&
+                            sample.time < tick_end)
+                        {
+                            boundaries.push_back(sample.time);
+                        }
+                    }
+                }
+
                 for (const model_animation_tick_schedule& schedule :
                     reservation.animation_schedules)
                 {
@@ -6317,6 +6349,32 @@ namespace skin_physics::runtime
                 return false;
             }
             maximum_boundary_count += root_sample_boundary_count;
+            std::size_t collider_sample_boundary_count = 0u;
+            for (const collider_input_snapshot& collider_snapshot :
+                input_snapshot.colliders)
+            {
+                if (!collider_snapshot.kinematic)
+                {
+                    continue;
+                }
+                if (collider_snapshot.pose_samples.size() >
+                    maximum_size - collider_sample_boundary_count)
+                {
+                    diagnostic =
+                        "Kinematic Collider Sample boundary count overflows size_t.";
+                    return false;
+                }
+                collider_sample_boundary_count +=
+                    collider_snapshot.pose_samples.size();
+            }
+            if (collider_sample_boundary_count >
+                maximum_size - maximum_boundary_count)
+            {
+                diagnostic =
+                    "Combined Root / Collider / Substep boundary count overflows size_t.";
+                return false;
+            }
+            maximum_boundary_count += collider_sample_boundary_count;
             std::size_t animation_boundary_count = 0u;
             for (const model_animation_tick_schedule& schedule :
                 reservation.animation_schedules)
@@ -9072,7 +9130,8 @@ namespace skin_physics::runtime
         world_handle world_handle_value,
         collider_handle collider_handle_value,
         double sample_time,
-        const transform& pose)
+        const transform& pose,
+        bool is_teleport)
     {
         if (_implementation == nullptr || !_implementation->initialized)
             return make_status(status_code::not_ready, "Runtime is not initialized.");
@@ -9112,11 +9171,15 @@ namespace skin_physics::runtime
         if (!collider->pose_samples.empty() &&
             sample_time == collider->pose_samples.back().time)
         {
-            collider->pose_samples.back() = { sample_time, normalized_pose, false };
+            collider->pose_samples.back() = {
+                sample_time, normalized_pose, is_teleport
+            };
         }
         else
         {
-            collider->pose_samples.push_back({ sample_time, normalized_pose, false });
+            collider->pose_samples.push_back({
+                sample_time, normalized_pose, is_teleport
+            });
         }
         return make_status(status_code::ok, {});
     }
