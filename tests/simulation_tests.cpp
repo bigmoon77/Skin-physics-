@@ -3529,6 +3529,50 @@ namespace
             rejected_dynamic_edge.contacts.empty(),
             "Moving Collider EE generation must reject out-of-range Dynamic Edge indices atomically.");
 
+        const std::vector<std::array<uint32_t, 2>> degenerate_dynamic_edges = {
+            { 0u, 1u }
+        };
+        const std::vector<skin_physics::asset::vec3> coincident_dynamic_positions = {
+            dynamic_edge_positions[0u],
+            dynamic_edge_positions[0u]
+        };
+        const auto rejected_degenerate_dynamic_edge =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                coincident_dynamic_positions,
+                dynamic_edge_velocities,
+                degenerate_dynamic_edges,
+                collision_mesh,
+                evaluated,
+                0.1f,
+                1u);
+        require(!rejected_degenerate_dynamic_edge.success &&
+            rejected_degenerate_dynamic_edge.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_degenerate_dynamic_edge.contacts.empty(),
+            "Moving Collider EE generation must reject coincident Dynamic Edge endpoint positions.");
+
+        mesh degenerate_collider_triangle = collision_mesh;
+        degenerate_collider_triangle.vertices[2u].position =
+            collision_mesh.vertices[0u].position;
+        const auto degenerate_collider_geometry =
+            evaluate_kinematic_collider_geometry(
+                degenerate_collider_triangle, span.value, 0.5);
+        const auto rejected_degenerate_collider =
+            skin_physics::physics::generate_kinematic_collider_edge_edge_contacts(
+                dynamic_edge_positions,
+                dynamic_edge_velocities,
+                degenerate_dynamic_edges,
+                degenerate_collider_triangle,
+                degenerate_collider_geometry,
+                0.1f,
+                1u);
+        require(degenerate_collider_geometry.success &&
+            !rejected_degenerate_collider.success &&
+            rejected_degenerate_collider.error ==
+                skin_physics::physics::collision_error::invalid_geometry &&
+            rejected_degenerate_collider.contacts.empty(),
+            "Moving Collider EE generation must reject a degenerate Collider Triangle without publishing partial contacts.");
+
         mesh invalid_indices = collision_mesh;
         invalid_indices.indices[2u] = 99u;
         const auto rejected_index = evaluate_kinematic_collider_geometry(
