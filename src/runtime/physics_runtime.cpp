@@ -773,7 +773,10 @@ namespace skin_physics::runtime
 
             out_derivative = make_root_transform_derivative_matrix(
                 out_transform, rotation_derivative, translation_derivative);
-            if (!finite_asset_matrix(out_derivative))
+            if (!std::all_of(
+                    out_derivative.value.begin(),
+                    out_derivative.value.end(),
+                    [](float value) { return std::isfinite(value); }))
             {
                 diagnostic =
                     "Root Transform analytic derivative matrix is non-finite.";
