@@ -3178,6 +3178,97 @@ namespace
             "Kinematic Collider evaluation must reject corrupted / under-conservative trajectory bounds.");
     }
 
+
+    void test_phase09_kinematic_collider_geometry_reference()
+    {
+        using skin_physics::asset::mesh;
+        using skin_physics::asset::vertex;
+        using skin_physics::physics::kinematic_collider_span_desc;
+        using skin_physics::physics::build_kinematic_collider_span;
+        using skin_physics::physics::evaluate_kinematic_collider_geometry;
+
+        kinematic_collider_span_desc description;
+        description.stable_collider_id = 0x0000000100000007ull;
+        description.span_sample_pair_id = 17u;
+        description.world_time_start = 0.0;
+        description.world_time_duration = 1.0;
+        description.sample_start_time = 0.0;
+        description.sample_end_time = 1.0;
+        description.sample_start_translation = { 1.0f, 0.0f, 0.0f };
+        description.sample_end_translation = { 3.0f, 0.0f, 0.0f };
+        description.sample_start_rotation = { 0.0f, 0.0f, 0.0f, 1.0f };
+        description.sample_end_rotation = {
+            0.0f, 0.0f,
+            std::sin(3.14159265358979323846f / 4.0f),
+            std::cos(3.14159265358979323846f / 4.0f)
+        };
+        description.maximum_local_radius = 1.0f;
+        const auto span = build_kinematic_collider_span(description);
+        require(span.success,
+            "Kinematic Collider geometry reference requires a valid immutable Span.");
+
+        mesh collision_mesh;
+        collision_mesh.vertices.resize(3u);
+        collision_mesh.vertices[0u].position = { 1.0f, 0.0f, 0.0f };
+        collision_mesh.vertices[1u].position = { 0.0f, 1.0f, 0.0f };
+        collision_mesh.vertices[2u].position = { -1.0f, 0.0f, 0.0f };
+        collision_mesh.indices = { 0u, 1u, 2u };
+
+        const auto evaluated = evaluate_kinematic_collider_geometry(
+            collision_mesh, span.value, 0.5);
+        const float quarter_angle = 3.14159265358979323846f / 8.0f;
+        require(evaluated.success &&
+            evaluated.world_vertices.size() == 3u,
+            "Kinematic Collider geometry evaluation must transform every indexed local vertex.");
+        require(std::abs(evaluated.world_vertices[0u].x -
+                (2.0f + std::cos(quarter_angle))) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertices[0u].y -
+                std::sin(quarter_angle)) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertices[1u].x +
+                std::sin(quarter_angle) - 2.0f) <= 2.0e-5f &&
+            std::abs(evaluated.world_vertices[1u].y -
+                std::cos(quarter_angle)) <= 2.0e-5f,
+            "Kinematic Collider world vertices must apply the same shortest-arc pose used by the analytic trajectory evaluator.");
+
+        require(evaluated.swept_bounds.minimum.x <= 0.0f &&
+            evaluated.swept_bounds.maximum.x >= 4.0f &&
+            evaluated.swept_bounds.minimum.y <= -1.0f &&
+            evaluated.swept_bounds.maximum.y >= 1.0f &&
+            evaluated.swept_bounds.minimum.z <= -1.0f &&
+            evaluated.swept_bounds.maximum.z >= 1.0f,
+            "Kinematic Collider swept AABB must conservatively enclose the complete translation segment expanded by its certified local radius.");
+
+        for (const skin_physics::asset::vec3& world_vertex :
+            evaluated.world_vertices)
+        {
+            require(world_vertex.x >= evaluated.swept_bounds.minimum.x &&
+                world_vertex.x <= evaluated.swept_bounds.maximum.x &&
+                world_vertex.y >= evaluated.swept_bounds.minimum.y &&
+                world_vertex.y <= evaluated.swept_bounds.maximum.y &&
+                world_vertex.z >= evaluated.swept_bounds.minimum.z &&
+                world_vertex.z <= evaluated.swept_bounds.maximum.z,
+                "Every evaluated Kinematic Collider vertex must lie inside its conservative swept AABB.");
+        }
+
+        mesh invalid_indices = collision_mesh;
+        invalid_indices.indices[2u] = 99u;
+        const auto rejected_index = evaluate_kinematic_collider_geometry(
+            invalid_indices, span.value, 0.5);
+        require(!rejected_index.success &&
+            rejected_index.error ==
+                skin_physics::physics::collision_error::invalid_geometry,
+            "Kinematic Collider geometry evaluation must reject out-of-range triangle indices.");
+
+        skin_physics::physics::kinematic_collider_gpu_record underbounded =
+            span.value;
+        underbounded.maximum_local_radius = 0.5f;
+        const auto rejected_radius = evaluate_kinematic_collider_geometry(
+            collision_mesh, underbounded, 0.5);
+        require(!rejected_radius.success &&
+            rejected_radius.world_vertices.empty(),
+            "Kinematic Collider geometry evaluation must reject a Mesh outside its certified local radius without publishing partial vertices.");
+    }
+
     void test_phase09_physics_mesh_skinning_cpu_reference()
     {
         using skin_physics::asset::mat4;
@@ -5370,6 +5461,8 @@ int run_simulation_tests()
     std::cout << "[PASS] P09_IMMUTABLE_GPU_TRAJECTORY_PACKET_BUILDER\n";
     test_phase09_kinematic_collider_trajectory();
     std::cout << "[PASS] P09_KINEMATIC_COLLIDER_TRAJECTORY\n";
+    test_phase09_kinematic_collider_geometry_reference();
+    std::cout << "[PASS] P09_KINEMATIC_COLLIDER_GEOMETRY_REFERENCE\n";
     test_phase09_physics_mesh_skinning_cpu_reference();
     std::cout << "[PASS] P09_PHYSICS_MESH_SKINNING_CPU_REFERENCE\n";
     test_phase10_attribute_paint_and_serialization();
