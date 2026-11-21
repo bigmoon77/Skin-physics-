@@ -6408,8 +6408,11 @@ namespace
 int run_gpu_solver_tests()
 {
     test_phase05_warp_cloth_segment_state_passes();
+    std::cout << "[RUN] P05_WARP_COLORED_STRETCH_XPBD\\n";
     test_phase05_warp_colored_cloth_stretch();
+    std::cout << "[RUN] P05_WARP_STRETCH_SHEAR_BEND\\n";
     test_phase05_warp_cloth_all_constraint_types();
+    std::cout << "[RUN] P05_WARP_JACOBI_CONTRIBUTION_GATHER\\n";
     test_phase05_warp_cloth_jacobi_contribution_gather();
     test_phase06_warp_corotational_fem();
     test_r1_warp_runtime_soft_body_fem_svd_parity();
