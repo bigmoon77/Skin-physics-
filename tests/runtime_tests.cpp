@@ -3068,6 +3068,14 @@ namespace
             create_distribution_test_srv(
                 device.Get(), collider_buffer.Get(),
                 static_cast<uint32_t>(collider_records.size()));
+        const std::vector<uint32_t> collider_record_indices = { 0u, 1u, 2u };
+        ComPtr<ID3D11Buffer> collider_index_buffer =
+            create_distribution_test_structured_buffer(
+                device.Get(), collider_record_indices, D3D11_BIND_SHADER_RESOURCE);
+        ComPtr<ID3D11ShaderResourceView> collider_index_srv =
+            create_distribution_test_srv(
+                device.Get(), collider_index_buffer.Get(),
+                static_cast<uint32_t>(collider_record_indices.size()));
         ComPtr<ID3D11Buffer> point_buffer =
             create_distribution_test_structured_buffer(
                 device.Get(), local_contact_points, D3D11_BIND_SHADER_RESOURCE);
@@ -3139,7 +3147,7 @@ namespace
         struct alignas(16) collider_evaluate_parameters
         {
             uint32_t span_count = 0u;
-            uint32_t collider_count = 0u;
+            uint32_t sample_count = 0u;
             float tau_seconds = 0.0f;
             uint32_t reserved = 0u;
         };
@@ -3147,32 +3155,33 @@ namespace
             "Kinematic Collider evaluation parameters must match the 16-byte HLSL constant-buffer ABI.");
         collider_evaluate_parameters parameters;
         parameters.span_count = 1u;
-        parameters.collider_count =
+        parameters.sample_count =
             static_cast<uint32_t>(collider_records.size());
         parameters.tau_seconds = 0.5f;
         ComPtr<ID3D11Buffer> parameter_buffer =
             create_distribution_test_constant_buffer(device.Get(), parameters);
 
         ID3D11ShaderResourceView* shader_resources[] = {
-            span_srv.Get(), cursor_srv.Get(), collider_srv.Get(), point_srv.Get()
+            span_srv.Get(), cursor_srv.Get(), collider_srv.Get(),
+            collider_index_srv.Get(), point_srv.Get()
         };
         ID3D11UnorderedAccessView* unordered_access_views[] = {
             output_uav.Get()
         };
         ID3D11Buffer* constant_buffers[] = { parameter_buffer.Get() };
         context->CSSetShader(collider_shader.Get(), nullptr, 0u);
-        context->CSSetShaderResources(0u, 4u, shader_resources);
+        context->CSSetShaderResources(0u, 5u, shader_resources);
         context->CSSetUnorderedAccessViews(
             0u, 1u, unordered_access_views, nullptr);
         context->CSSetConstantBuffers(0u, 1u, constant_buffers);
         context->Dispatch(1u, 1u, 1u);
 
         ID3D11ShaderResourceView* null_shader_resources[] = {
-            nullptr, nullptr, nullptr, nullptr
+            nullptr, nullptr, nullptr, nullptr, nullptr
         };
         ID3D11UnorderedAccessView* null_unordered_access_views[] = { nullptr };
         ID3D11Buffer* null_constant_buffers[] = { nullptr };
-        context->CSSetShaderResources(0u, 4u, null_shader_resources);
+        context->CSSetShaderResources(0u, 5u, null_shader_resources);
         context->CSSetUnorderedAccessViews(
             0u, 1u, null_unordered_access_views, nullptr);
         context->CSSetConstantBuffers(0u, 1u, null_constant_buffers);
