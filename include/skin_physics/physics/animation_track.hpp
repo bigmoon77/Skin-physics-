@@ -792,4 +792,14 @@ namespace skin_physics::physics
         animation_span_cursor_gpu_record& out_cursor,
         std::string& diagnostic);
 
+    // Advances one positive World-Time Integration Segment. The Segment must
+    // remain inside the current Span or end exactly at its next boundary.
+    // The Packet and input version are immutable; output is transactional.
+    bool advance_animation_span_cursor(
+        const animation_trajectory_packet& packet,
+        const animation_span_cursor_gpu_record& cursor,
+        double segment_duration_seconds,
+        animation_span_cursor_gpu_record& out_cursor,
+        std::string& diagnostic);
+
 }
